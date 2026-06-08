@@ -1,5 +1,5 @@
 # INTEVIA / README.md v0.1 (Draft)
-*INTEVIA – a living organisational platform built with a Human–AI Triad operating model (HAT)*
+*INTEVIA — a human‑centred organisational evolution platform developed through a Human–AI Triad (HAT) operating model.*
 
 INTEVIA is a human‑centred organisational evolution platform.  
 It explores how workflow, learning, collaboration, knowledge, service, and AI‑supported guidance can operate as one coherent Living Organism.
@@ -47,7 +47,7 @@ It does *not* contain the full INTEVIA Corpus, Human–AI Triad methodology, or 
 
 INTEVIA is developed using a Human‑AI Triad (HAT) governance model, where:
 
-- **The Human** holds authorship, judgement, and governance authority.  
+- **Human / Governance Continuity** holds authorship, judgement, and governance authority.  
 - **Meaning continuity** preserves narrative, conceptual boundaries, and public/private clarity.  
 - **Making continuity** supports implementation, scaffolding, and technical execution.
 
