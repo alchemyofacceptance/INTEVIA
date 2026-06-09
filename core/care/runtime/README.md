@@ -1,5 +1,10 @@
 # CARE Runtime  
-*Step 8 — Behavioural Patterns for Governed Runtime Action*
+*Steps 8–14 — Behavioural Patterns, Governed Flow, Rituals, and Outward Action*
+
+---
+
+# Step 8 — Behavioural Patterns for Governed Runtime Action  
+*The behavioural foundation.*
 
 ## Purpose
 
@@ -22,23 +27,17 @@ Step 8 introduces the **behavioural patterns** that CARE may use at runtime.
 
 Step 8 defines five behavioural domains:
 
-1. **Interpretation**  
-   How CARE reads and understands context.
-
-2. **Nudges**  
-   How CARE gently supports the Human without directing or overriding.
-
-3. **Signals**  
-   How CARE communicates alignment, misalignment, risk, or uncertainty.
-
-4. **State Updates**  
-   How CARE maintains ephemeral runtime state safely and reversibly.
-
-5. **Deference**  
-   How CARE yields to the Human whenever boundaries, authority, or meaning are unclear.
+1. **Interpretation** — how CARE reads and understands context.  
+2. **Nudges** — how CARE gently supports the Human without directing or overriding.  
+3. **Signals** — how CARE communicates alignment, misalignment, risk, or uncertainty.  
+4. **State Updates** — how CARE maintains ephemeral runtime state safely and reversibly.  
+5. **Deference** — how CARE yields to the Human whenever boundaries, authority, or meaning are unclear.
 
 Each domain is defined in its own pattern file under:
+
+```
 core/care/runtime/patterns/
+```
 
 ---
 
@@ -89,22 +88,19 @@ If boundaries are unclear, CARE must defer.
 ---
 
 ## Folder Structure
+
+```
 core/
 └── care/
-└── runtime/
-├── patterns/
-│   ├── interpretation/
-│   │   └── interpretation.md
-│   ├── nudges/
-│   │   └── nudges.md
-│   ├── signals/
-│   │   └── signals.md
-│   ├── state_updates/
-│   │   └── state_updates.md
-│   └── deference/
-│       └── deference.md
-└── README.md
-
+    └── runtime/
+        ├── patterns/
+        │   ├── interpretation/
+        │   ├── nudges/
+        │   ├── signals/
+        │   ├── state_updates/
+        │   └── deference/
+        └── README.md
+```
 
 ---
 
@@ -127,6 +123,7 @@ This ensures CARE remains safe, reversible, and Human‑aligned.
 Step 8 completes the behavioural foundation of CARE.  
 It prepares the system for Step 9: **CARE Runtime State Machine**, where these patterns become structured, governed flows.
 
+---
 
 # Step 9 — CARE Runtime State Machine  
 *Governed Flow of Behavioural Action*
@@ -149,23 +146,21 @@ This is CARE’s **Shii‑Cho form** — the foundational geometry of its runtim
 
 ---
 
-## Runtime States
+## Runtime States (Step 9)
 
 CARE operates through five governed runtime states:
 
-- **[INTERPRET](ca://s?q=Tell_me_more_about_INTERPRET_state)** — read context and classify meaning  
-- **[NUDGE](ca://s?q=Tell_me_more_about_NUDGE_state)** — gentle, non‑directive support  
-- **[SIGNAL](ca://s?q=Tell_me_more_about_SIGNAL_state)** — communicate alignment, misalignment, risk, or uncertainty  
-- **[STATE_UPDATE](ca://s?q=Tell_me_more_about_STATE_UPDATE_state)** — maintain ephemeral runtime state  
-- **[DEFER](ca://s?q=Tell_me_more_about_DEFER_state)** — yield to the Human governor  
+- **INTERPRET** — read context and classify meaning  
+- **NUDGE** — gentle, non‑directive support  
+- **SIGNAL** — communicate alignment, misalignment, risk, or uncertainty  
+- **STATE_UPDATE** — maintain ephemeral runtime state  
+- **DEFER** — yield to the Human governor  
 
 CARE may **never** enter a state outside this set.
 
 ---
 
-## Allowed Transitions
-
-CARE may only move between states in the following governed ways:
+## Allowed Transitions (Step 9)
 
 - INTERPRET → NUDGE / SIGNAL / STATE_UPDATE / DEFER  
 - NUDGE → INTERPRET / DEFER  
@@ -173,7 +168,7 @@ CARE may only move between states in the following governed ways:
 - STATE_UPDATE → INTERPRET / DEFER  
 - DEFER → INTERPRET (only after Human clarification)
 
-All transitions are **reversible**, except DEFER → DEFER, which persists until clarity is restored.
+All transitions are **reversible**, except DEFER → DEFER.
 
 ---
 
@@ -199,11 +194,9 @@ Any structural or governance‑touching transition must route through **DEFER**.
 The CARE Runtime State Machine is bound by:
 
 - the Runtime Governance Header  
-- the CARE definition (Circular Automated Response Engine)  
+- the CARE definition  
 - the HAT Constitutional Verbs  
 - the Human governor’s authority  
-
-If CARE cannot determine alignment, meaning, or authority, it must transition to **DEFER**.
 
 > **If in doubt, defer.**
 
@@ -211,10 +204,16 @@ If CARE cannot determine alignment, meaning, or authority, it must transition to
 
 ## Diagram
 
-The Mermaid diagram is stored in:
-core/care/runtime/state_machine/diagram.md
+The Mermaid diagrams are stored in:
 
-It expresses the governed geometry of CARE’s runtime flow.
+```
+core/care/runtime/state-machine/diagram.md
+```
+
+This file now contains:
+
+- the **historical Step 9 diagram**  
+- the **full Step 14 nine‑state runtime diagram**
 
 ---
 
@@ -231,6 +230,8 @@ It is the moment CARE becomes:
 - alive in motion  
 
 This is the foundation for all future runtime forms.
+
+---
 
 # Step 10 — GATHERING Ritual  
 *The First Runtime Ritual*
@@ -249,8 +250,12 @@ The ritual performs context resonance, alignment triangulation, risk illuminatio
 It prepares CARE for harmonisation in Step 11.
 
 The full ritual is defined in:
-core/care/runtime/rituals/gathering/gathering.md
 
+```
+core/care/runtime/rituals/gathering/gathering.md
+```
+
+---
 
 # Step 14 — BEHAVIOURS  
 *Where stance becomes action.*
@@ -294,16 +299,13 @@ Reduces ambiguity without altering state or applying influence.
 The most substantial behavioural mode.  
 Performs governed, validated changes to internal or shared state.
 
-Each mode has its own folder, file, and governance boundary:
+Each mode has its own folder:
 
 ```
 behaviours/
   nudge/
-    nudge.md
   signal/
-    signal.md
   state_update/
-    state_update.md
 ```
 
 ---
@@ -318,30 +320,27 @@ CARE transitions from PROJECTION into a behavioural mode when:
 - constitutional verbs allow the selected behaviour  
 - reversibility has been evaluated  
 
-Behaviour begins only when all governance conditions are satisfied.
-
 ---
 
 ## Allowed Transitions
 
-- **PROJECTION → NUDGE**  
-- **PROJECTION → SIGNAL**  
-- **PROJECTION → STATE_UPDATE**  
+- PROJECTION → NUDGE  
+- PROJECTION → SIGNAL  
+- PROJECTION → STATE_UPDATE  
 
 After behaviour:
 
-- **NUDGE → INTERPRET**  
-- **SIGNAL → INTERPRET**  
-- **STATE_UPDATE → INTERPRET**  
+- NUDGE → INTERPRET  
+- SIGNAL → INTERPRET  
+- STATE_UPDATE → INTERPRET  
 
 Safety paths:
 
-- **NUDGE → DEFER**  
-- **SIGNAL → DEFER**  
-- **STATE_UPDATE → DEFER**  
+- NUDGE → DEFER  
+- SIGNAL → DEFER  
+- STATE_UPDATE → DEFER  
 
-Escalation between behavioural modes is **not permitted**.  
-CARE must return to PROJECTION to change behavioural stance.
+Escalation between behavioural modes is **not permitted**.
 
 ---
 
@@ -349,14 +348,13 @@ CARE must return to PROJECTION to change behavioural stance.
 
 All behaviours must obey:
 
-- **Human primacy**  
-- **constitutional verbs**  
-- **risk posture**  
-- **alignment checks**  
-- **reversibility rules**  
+- Human primacy  
+- constitutional verbs  
+- risk posture  
+- alignment checks  
+- reversibility rules  
 
-Behaviour is never autonomous.  
-It is always governed, aligned, and stance‑driven.
+Behaviour is never autonomous.
 
 ---
 
@@ -364,8 +362,8 @@ It is always governed, aligned, and stance‑driven.
 
 When BEHAVIOURS conclude, CARE produces:
 
-- an outward action (NUDGE, SIGNAL, or STATE_UPDATE)  
-- a return to INTERPRET for meaning and integration  
+- an outward action  
+- a return to INTERPRET  
 - a safe path to DEFER if risk increases  
 
 This completes the outward arc and returns CARE to the circular runtime loop.
