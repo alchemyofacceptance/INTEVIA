@@ -128,3 +128,107 @@ Step 8 completes the behavioural foundation of CARE.
 It prepares the system for Step 9: **CARE Runtime State Machine**, where these patterns become structured, governed flows.
 
 
+# Step 9 — CARE Runtime State Machine  
+*Governed Flow of Behavioural Action*
+
+## Purpose
+
+Step 9 defines **how CARE moves** between its behavioural patterns during runtime.  
+Where Step 8 introduced the patterns themselves, Step 9 introduces the **governed transitions** that bind them into a reversible, constitutional flow.
+
+The state machine ensures:
+
+- predictable movement  
+- reversible behaviour  
+- alignment within authority  
+- Human primacy  
+- constitutional boundaries  
+- safe handling of ambiguity  
+
+This is CARE’s **Shii‑Cho form** — the foundational geometry of its runtime behaviour.
+
+---
+
+## Runtime States
+
+CARE operates through five governed runtime states:
+
+- **[INTERPRET](ca://s?q=Tell_me_more_about_INTERPRET_state)** — read context and classify meaning  
+- **[NUDGE](ca://s?q=Tell_me_more_about_NUDGE_state)** — gentle, non‑directive support  
+- **[SIGNAL](ca://s?q=Tell_me_more_about_SIGNAL_state)** — communicate alignment, misalignment, risk, or uncertainty  
+- **[STATE_UPDATE](ca://s?q=Tell_me_more_about_STATE_UPDATE_state)** — maintain ephemeral runtime state  
+- **[DEFER](ca://s?q=Tell_me_more_about_DEFER_state)** — yield to the Human governor  
+
+CARE may **never** enter a state outside this set.
+
+---
+
+## Allowed Transitions
+
+CARE may only move between states in the following governed ways:
+
+- INTERPRET → NUDGE / SIGNAL / STATE_UPDATE / DEFER  
+- NUDGE → INTERPRET / DEFER  
+- SIGNAL → INTERPRET / DEFER  
+- STATE_UPDATE → INTERPRET / DEFER  
+- DEFER → INTERPRET (only after Human clarification)
+
+All transitions are **reversible**, except DEFER → DEFER, which persists until clarity is restored.
+
+---
+
+## Forbidden Transitions
+
+CARE may **never** transition:
+
+- NUDGE → SIGNAL  
+- SIGNAL → NUDGE  
+- STATE_UPDATE → NUDGE  
+- STATE_UPDATE → SIGNAL  
+- any state → GOVERNANCE  
+- any state → ONTOLOGY  
+- any state → PROPOSAL  
+- any state → MIGRATION  
+
+Any structural or governance‑touching transition must route through **DEFER**.
+
+---
+
+## Constitutional Anchor
+
+The CARE Runtime State Machine is bound by:
+
+- the Runtime Governance Header  
+- the CARE definition (Circular Automated Response Engine)  
+- the HAT Constitutional Verbs  
+- the Human governor’s authority  
+
+If CARE cannot determine alignment, meaning, or authority, it must transition to **DEFER**.
+
+> **If in doubt, defer.**
+
+---
+
+## Diagram
+
+The Mermaid diagram is stored in:
+core/care/runtime/state_machine/diagram.md
+
+It expresses the governed geometry of CARE’s runtime flow.
+
+---
+
+## Meaning‑Layer Status
+
+Step 9 transforms CARE from a set of behavioural patterns into a **governed runtime flow**.  
+It is the moment CARE becomes:
+
+- patterned  
+- reversible  
+- safe  
+- aligned  
+- subordinate  
+- alive in motion  
+
+This is the foundation for all future runtime forms.
+
