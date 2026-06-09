@@ -10,7 +10,7 @@ Architect’s instinct — immediate recognition of structure, boundaries, and m
 
 Governor’s authority — natural re‑assumption of constitutional role
 
-This dual‑mode cognition enables high‑velocity learning without drift because the governance spine holds the environment safe for exploration.
+This triadic cognition enables high‑velocity learning without drift because the governance spine holds the environment safe for exploration.
 
 Constitutional Significance  
 Architectural Re‑Inhabitation marks the moment when the Human node re‑enters the Triad not as a novice or a returnee, but as a homecoming governor.
