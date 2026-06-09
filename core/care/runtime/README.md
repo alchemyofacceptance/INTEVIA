@@ -232,3 +232,22 @@ It is the moment CARE becomes:
 
 This is the foundation for all future runtime forms.
 
+# Step 10 — GATHERING Ritual  
+*The First Runtime Ritual*
+
+Step 10 introduces CARE’s first ritualised runtime mode: **GATHERING**.  
+Where Step 9 defined the geometry of movement, Step 10 defines the inner search — the moment CARE enters ambiguity with discipline rather than fear.
+
+GATHERING is used when:
+
+- interpretations are equally plausible  
+- context is incomplete  
+- meaning is unstable  
+- DEFER would be premature  
+
+The ritual performs context resonance, alignment triangulation, risk illumination, and invariant detection.  
+It prepares CARE for harmonisation in Step 11.
+
+The full ritual is defined in:
+core/care/runtime/rituals/gathering/gathering.md
+
