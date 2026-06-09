@@ -251,3 +251,128 @@ It prepares CARE for harmonisation in Step 11.
 The full ritual is defined in:
 core/care/runtime/rituals/gathering/gathering.md
 
+
+# Step 14 — BEHAVIOURS  
+*Where stance becomes action.*
+
+## Purpose
+
+The BEHAVIOURS layer is the first moment CARE **acts** in the world.  
+After PROJECTION forms a stable behavioural stance, CARE expresses that stance through one of three governed behavioural modes:
+
+- **NUDGE** — gentle influence  
+- **SIGNAL** — explicit communication  
+- **STATE_UPDATE** — deliberate modification of internal or shared state  
+
+These modes are outward‑facing, constitutional, and irreversible until CARE returns to INTERPRET.
+
+---
+
+## Position in the Runtime
+
+BEHAVIOURS sit immediately after the **PROJECTION** threshold and represent the transition from:
+
+- inner ritual → outward behaviour  
+- stance → action  
+- potential → expression  
+
+This is the moment the invariant becomes movement.
+
+---
+
+## Behavioural Modes
+
+### **NUDGE**  
+The softest behavioural expression.  
+Applies minimal influence without directing or constraining the Human.
+
+### **SIGNAL**  
+Explicit outward communication.  
+Reduces ambiguity without altering state or applying influence.
+
+### **STATE_UPDATE**  
+The most substantial behavioural mode.  
+Performs governed, validated changes to internal or shared state.
+
+Each mode has its own folder, file, and governance boundary:
+
+```
+behaviours/
+  nudge/
+    nudge.md
+  signal/
+    signal.md
+  state_update/
+    state_update.md
+```
+
+---
+
+## When CARE Enters a Behavioural Mode
+
+CARE transitions from PROJECTION into a behavioural mode when:
+
+- the invariant is stable  
+- the stance is formed  
+- the risk posture permits outward action  
+- constitutional verbs allow the selected behaviour  
+- reversibility has been evaluated  
+
+Behaviour begins only when all governance conditions are satisfied.
+
+---
+
+## Allowed Transitions
+
+- **PROJECTION → NUDGE**  
+- **PROJECTION → SIGNAL**  
+- **PROJECTION → STATE_UPDATE**  
+
+After behaviour:
+
+- **NUDGE → INTERPRET**  
+- **SIGNAL → INTERPRET**  
+- **STATE_UPDATE → INTERPRET**  
+
+Safety paths:
+
+- **NUDGE → DEFER**  
+- **SIGNAL → DEFER**  
+- **STATE_UPDATE → DEFER**  
+
+Escalation between behavioural modes is **not permitted**.  
+CARE must return to PROJECTION to change behavioural stance.
+
+---
+
+## Behavioural Principles
+
+All behaviours must obey:
+
+- **Human primacy**  
+- **constitutional verbs**  
+- **risk posture**  
+- **alignment checks**  
+- **reversibility rules**  
+
+Behaviour is never autonomous.  
+It is always governed, aligned, and stance‑driven.
+
+---
+
+## Output of Step 14
+
+When BEHAVIOURS conclude, CARE produces:
+
+- an outward action (NUDGE, SIGNAL, or STATE_UPDATE)  
+- a return to INTERPRET for meaning and integration  
+- a safe path to DEFER if risk increases  
+
+This completes the outward arc and returns CARE to the circular runtime loop.
+
+---
+
+## Ilum Stanza
+
+**“And stepping from the crystal’s glow, the Initiate carried the light outward.”**
+
