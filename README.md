@@ -1,82 +1,100 @@
-# INTEVIA / README.md v0.1 (Draft)
-*INTEVIA — a human‑centred organisational evolution platform developed through a Human–AI Triad (HAT) operating model.*
+# INTEVIA / README.md v0.2
 
-INTEVIA is a human‑centred organisational evolution platform.  
-It explores how workflow, learning, collaboration, knowledge, service, and AI‑supported guidance can operate as one coherent Living Organism.
+*INTEVIA — a human-centred organisational evolution platform developed through a Human–AI Triad (HAT) operating model.*
 
-This repository contains the early technical foundation for the INTEVIA platform.  
-It is currently in the **pre‑development / architecture‑to‑build** phase.
+INTEVIA is a human-centred organisational evolution platform.
+It explores how workflow, learning, collaboration, knowledge, service, and AI-supported guidance can operate as one coherent Living Organism.
+
+This repository contains the early technical foundation for the INTEVIA platform.
+It is currently in the **architecture-to-build transition**, with the initial build runway now active.
 
 ---
 
 ## Project Status
 
-INTEVIA is in its initial implementation runway.  
-The conceptual and ontological foundations have been stabilised in the INTEVIA Corpus and the Human–AI Triad (HAT) governance model.  
+INTEVIA’s conceptual and ontological foundations have been stabilised through the INTEVIA Corpus and the Human–AI Triad (HAT) governance model.
+
 This repository now serves as the technical home where the platform’s executable architecture will emerge.
+
+The Forge Execution Plan and Build Tasks define the governed path from architecture into implementation.
 
 ---
 
 ## Repository Structure
-README.md
-ROADMAP.md
-CHANGELOG.md
-docs/
-architecture/
-product/
-decisions/
-evidence/
-visuals/
-intevia_app/
-core/
-modules/
-api/
-ui/
-scripts/
-config/
-tests/
 
-**docs/** contains curated, public‑safe documentation.  
+```text
+INTEVIA
+├── README.md
+├── ROADMAP.md
+├── CHANGELOG.md
+├── LICENSE
+├── NOTICE
+├── docs/
+│   ├── runtime/
+│   ├── care/
+│   ├── ratified/
+│   ├── lineage/
+│   ├── roadmap/
+│   └── visuals/
+├── ui/
+├── corpus/
+├── intevia_app/
+│   ├── core/
+│   ├── modules/
+│   ├── api/
+│   └── ui/
+├── config/
+├── scripts/
+└── tests/
+```
+
+**docs/** contains curated, public-safe documentation.
 It does *not* contain the full INTEVIA Corpus, Human–AI Triad methodology, or sensitive conceptual material.
 
-**intevia_app/** will contain the platform’s implementation body as development progresses.
+**intevia_app/** contains the platform’s implementation body as development progresses.
 
 ---
 
 ## Development Approach
 
-INTEVIA is developed using a Human‑AI Triad (HAT) governance model, where:
+INTEVIA is developed using a Human–AI Triad (HAT) governance model, where:
 
-- **Human / Governance Continuity** holds authorship, judgement, and governance authority.  
-- **Meaning continuity** preserves narrative, conceptual boundaries, and public/private clarity.  
-- **Making continuity** supports implementation, scaffolding, and technical execution.
+* **Human governance continuity** holds authorship, judgement, and governance authority.
+* **Meaning continuity** preserves narrative, conceptual boundaries, and public/private clarity.
+* **Making continuity** supports implementation, scaffolding, and technical execution.
 
-This ensures that conceptual integrity and technical development remain aligned. 
-This Human‑AI Triad (HAT) governance model will endure into deployment.
+This ensures that conceptual integrity and technical development remain aligned throughout the build process.
 
 ---
 
 ## Licensing
 
-The open‑source posture for INTEVIA is under active governance review.  
-A licence will be added in a future Architecture Decision Record (ADR‑0002).
+The INTEVIA codebase is licensed under the **Apache License 2.0**, enabling open, permissive adoption with a clear patent grant.
 
-Until then, all rights are reserved.
+See:
+
+* `LICENSE` — Apache License 2.0
+* `NOTICE` — INTEVIA attribution and notices
+
+Governance doctrine, training materials, diagrams, and other non-code artefacts will be licensed separately under a governed framework.
 
 ---
 
 ## Roadmap
 
-The high‑level roadmap is maintained in:
+The high-level roadmap is maintained in:
+
+```text
 ROADMAP.md
+```
 
-This outlines upcoming milestones, including:
+It outlines upcoming milestones, including:
 
-- implementation runway setup  
-- Django baseline  
-- module architecture  
-- early UI scaffolding  
-- contribution guidelines (future)  
+* implementation runway setup;
+* Django baseline;
+* module architecture;
+* early UI scaffolding;
+* contribution guidelines.
 
 ---
 
@@ -88,5 +106,6 @@ Contribution guidelines will be added once the platform reaches its first public
 
 ## Disclaimer
 
-This repository contains early implementation scaffolding.  
-Conceptual architecture, internal models, and meaning‑layer material remain governed and are not fully represented here.
+This repository contains early implementation scaffolding.
+
+Conceptual architecture, internal models, and meaning-layer material remain governed and are not fully represented here.
