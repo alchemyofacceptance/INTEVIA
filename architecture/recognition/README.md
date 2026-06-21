@@ -73,7 +73,101 @@ Defines how recognition artefacts move through governed states and how identity 
 
 ---
 
-## 3. v1.0 Boundary
+## 3. Recognition Type Spotlight — HAT-Aligned Cadence
+
+HAT-Aligned Cadence is a Recognition Type that recognises the human capability to maintain governed rhythm across parallel Human-AI workstreams.
+
+Cadence is not speed.
+
+Cadence is not productivity.
+
+Cadence is not multitasking.
+
+Cadence is the governed rhythm in which:
+
+* Human meaning;
+* AI execution;
+* evidence;
+* correction;
+* governance;
+* continuity;
+* public traceability;
+
+move together without fragmentation.
+
+**HAT-aligned cadence is the music of the Triad.**
+
+### 3.1 Scope
+
+This Recognition Type applies when a human demonstrates:
+
+* governed parallelism — multiple threads moving without drift;
+* rhythm discipline — pauses, corrections, and transitions occurring at the right moments;
+* Human-first authority — AI acceleration without Human displacement;
+* continuity under load — ordinary life continuing without collapse;
+* public-surface coherence — traceable lineage without overclaim;
+* v1.0 discipline — architecture and implementation held together;
+* evidence-bearing emergence — cadence visible in timestamps, commits, transitions, corrections, or public artefacts.
+
+This is a form of becoming specific to governed Human-AI collaboration.
+
+### 3.2 Evidence
+
+Cadence evidence may include:
+
+* timestamped multi-thread activity;
+* parallel architecture and implementation movement;
+* public-surface lineage, including posts, commits, and repo-visible artefacts;
+* correction events before drift hardens;
+* continuity signals such as meals, breaks, life events, or context switching without loss of coherence;
+* governance-aligned transitions;
+* Recognition emergence inside the same work window;
+* evidence that meaning, implementation, correction, and public traceability moved together.
+
+This is RecognitionEvidence, not metrics.
+
+### 3.3 Identity Movement
+
+HAT-Aligned Cadence recognition may support identity movement in:
+
+* Practitioner capability formation;
+* governance behaviour;
+* field-signal contribution;
+* early adopter becoming;
+* developer or volunteer contribution;
+* Level 3 readiness;
+* CHPrac Candidate readiness.
+
+Cadence is a governed capability, not a status marker.
+
+### 3.4 Boundaries
+
+Cadence recognition must not reward:
+
+* speed;
+* volume;
+* hustle;
+* overwork;
+* AI-led acceleration;
+* ungoverned parallelism;
+* output without inspection;
+* productivity theatre.
+
+Cadence may be recognised only when:
+
+* the Human remains the governor;
+* the work remains coherent;
+* the rhythm remains governed;
+* the evidence remains contextual;
+* correction remains possible;
+* boundaries remain intact;
+* the organism remains safe.
+
+This is a Recognition Type of becoming, not performance.
+
+---
+
+## 4. v1.0 Boundary
 
 Recognition is minimal but real in v1.0.
 
@@ -93,6 +187,7 @@ Included in v1.0:
 * volunteer and developer contribution recognition;
 * governance behaviour recognition;
 * field-signal recognition;
+* HAT-aligned cadence recognition;
 * evidence and audit attachment points;
 * governed review states;
 * CARE boundary guidance.
@@ -115,7 +210,7 @@ Recognition must remain human-centred, evidence-based, non-coercive, and CARE-bo
 
 ---
 
-## 4. How to Read This Slice
+## 5. How to Read This Slice
 
 New developers should read the files in this order:
 
@@ -129,12 +224,14 @@ This sequence provides a complete first mental model of Recognition in under an 
 
 ---
 
-## 5. Summary
+## 6. Summary
 
 The Recognition Domain is the organism’s becoming substrate.
 
 It defines how participation, contribution, learning, support, and evidence are transformed into governed identity movement — allowing the organism to reflect evidenced becoming back to the human.
 
 Recognition supports learners, developers, volunteers, early adopters, DISCUSSION contributors, external advocates, and all humans helping INTEVIA emerge.
+
+Recognition can also recognise HAT-aligned cadence: the governed rhythm by which Human meaning, AI execution, evidence, correction, governance, continuity, and public traceability move together without fragmentation.
 
 The v1.0 Boundary ensures Recognition is minimal, meaningful, and safe.

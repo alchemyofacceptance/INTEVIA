@@ -29,6 +29,28 @@ Recognition transforms evidence into identity movement.
 
 ---
 
+## Cadence as Recognised Becoming
+
+Recognition also sees **HAT-Aligned Cadence** — the governed rhythm in which:
+
+* Human meaning;
+* AI execution;
+* evidence;
+* correction;
+* governance;
+* continuity;
+* public traceability;
+
+move together without fragmentation.
+
+Cadence is not speed, productivity, or multitasking.
+
+Cadence is a form of becoming specific to governed Human-AI collaboration.
+
+HAT-aligned cadence is the music of the Triad.
+
+---
+
 ## v0.1 Status
 
 This is a placeholder architecture file.
@@ -58,6 +80,7 @@ The next version should define:
 * relationship to Corpus learning evidence;
 * relationship to Governance Engine;
 * relationship to CARE guidance;
+* relationship to HAT-aligned cadence as recognised becoming;
 * public-safe versus governed/internal recognition boundaries;
 * v1.0 implementation constraints.
 
@@ -68,6 +91,8 @@ The next version should define:
 For v1.0, Recognition should remain minimal, explicit, and meaningful.
 
 The priority is to support evidence-linked recognition for learners, developers, volunteers, early adopters, DISCUSSION contributors, advocates, governance participants, and other humans helping INTEVIA emerge.
+
+Recognition may include HAT-aligned cadence where evidence shows governed rhythm across parallel Human-AI workstreams without fragmentation, overclaim, or Human displacement.
 
 Recognition must remain human-centred, evidence-based, non-coercive, non-gamified, and CARE-bounded.
 

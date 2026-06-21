@@ -21,7 +21,67 @@ Recognition transitions apply to:
 * developer and volunteer contribution;
 * external advocacy;
 * field-signal contribution;
-* capability formation.
+* capability formation;
+* HAT-aligned cadence.
+
+---
+
+## Cadence Recognition State Transitions
+
+HAT-Aligned Cadence recognition moves through governed, evidence-bound transitions.
+
+Cadence transitions must remain Human-reviewed, contextual, and non-automatic.
+
+Cadence is not recognised because work moved quickly.
+
+Cadence is recognised only when evidence shows that Human meaning, AI execution, evidence, correction, governance, continuity, and public traceability moved together without fragmentation.
+
+### Valid Transitions
+
+* **proposed** — cadence is observed and initial evidence is surfaced;
+* **reviewed** — cadence evidence is examined for coherence, governance alignment, Human authority, and contextual integrity;
+* **granted** — cadence recognition is approved when the Human’s governed rhythm is clearly evidenced;
+* **revised** — cadence recognition is adjusted when evidence is clarified, narrowed, corrected, or reinterpreted;
+* **withdrawn** — cadence recognition is removed if evidence is invalidated, misinterpreted, overclaimed, or contradicted by later behaviour;
+* **archived** — cadence recognition is preserved as lineage once its active relevance concludes.
+
+### Transition Evidence Requirements
+
+Cadence transitions may require evidence of:
+
+* timestamped multi-thread activity;
+* parallel architecture and implementation movement;
+* public-surface lineage, including posts, commits, and repo-visible artefacts;
+* correction events before drift hardens;
+* governance-aligned transitions;
+* continuity under ordinary Human life conditions;
+* Human-first authority preserved under acceleration;
+* public traceability without overclaim;
+* evidence that meaning, implementation, correction, and governance moved together.
+
+### Transition Boundaries
+
+Cadence transitions must not be:
+
+* automatic;
+* metric-driven;
+* performance-based;
+* triggered by speed, volume, or productivity signals;
+* granted without contextual evidence;
+* granted without Human-first authority being preserved;
+* used to create status competition;
+* used to reward overwork or hustle.
+
+Cadence transitions must always:
+
+* remain evidence-bound;
+* remain Human-interpreted;
+* preserve governance and safety boundaries;
+* allow correction before drift hardens;
+* maintain the integrity of the Recognition organ;
+* protect humans from careless recognition as much as from invisibility.
+
+Cadence is a governed form of becoming, not a reward mechanism.
 
 ---
 
@@ -45,6 +105,7 @@ The next version should define:
 * transition evidence requirements;
 * transition audit events;
 * proposed, reviewed, granted, revised, withdrawn, and archived states;
+* Cadence Recognition state transitions;
 * relationship to RecognitionRecord;
 * relationship to RecognitionEvidence;
 * relationship to RecognitionType;
@@ -70,7 +131,9 @@ For v1.0, Recognition state transitions should remain minimal, explicit, and rev
 
 The priority is to ensure that recognition artefacts can move through a small set of governed states such as proposed, reviewed, granted, revised, withdrawn, and archived without losing evidence, auditability, lineage, or meaning.
 
-Recognition transitions must not enable automatic promotion, automated reputation inference, ranking escalation, public status competition, or unguided identity movement.
+Recognition transitions may include HAT-aligned cadence where evidence shows governed rhythm across parallel Human-AI workstreams without fragmentation, overclaim, or Human displacement.
+
+Recognition transitions must not enable automatic promotion, automated reputation inference, ranking escalation, public status competition, productivity scoring, or unguided identity movement.
 
 Recognition should move only where evidence, governance, CARE boundaries, and appropriate review support the transition.
 
