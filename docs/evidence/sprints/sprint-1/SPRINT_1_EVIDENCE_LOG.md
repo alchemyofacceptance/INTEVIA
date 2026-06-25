@@ -53,7 +53,21 @@ Receipt format:
 
 ### Day 1 — 2026-06-25
 
-Day 1 build objective: TBD.
+Day 1 build objective: Establish a minimum runnable INTEVIA organism surface that breathes, reports governed context, and can be externally verified.
+
+#### Study Events
+
+- 2026-06-25 06:30 BST — Sprint 1 evidence surface created at `docs/evidence/sprints/sprint-1/SPRINT_1_EVIDENCE_LOG.md` and committed as `0adf46b chore: initialise Sprint 1 evidence log`. This moved Sprint 1 continuity from chat into repo artefact and established bounded memory / auditability.
+
+- 2026-06-25 06:26 BST — First runnable INTEVIA organism skeleton created under `src/intevia/`, with `run.py` calling `breathe()`. Human verified `python run.py` returned `INTEVIA organism initialised`. Python generated `__pycache__` artefacts during execution; these were identified as non-source runtime artefacts and excluded from commit. This established the first observable execution surface for Sprint 1.
+
+- 2026-06-25 06:3X BST — Governance status surface added at `src/intevia/governance/status.py`. Human verified `current_status()` returned sprint context, Human authority, and operating frame. This introduced governance as inspectable data rather than hidden behaviour.
+
+- 2026-06-25 06:3X BST — Human-readable governance output added through `format_status()`. A PowerShell newline marker issue was caught during echo inspection and corrected before commit. This confirmed echo/inspect pacing as a live governance control.
+
+- 2026-06-25 06:4X BST — First external verification tests added at `tests/test_first_breath.py`. Initial `pytest` attempt failed because `pytest` was not installed. The team chose built-in `unittest` to avoid premature dependency sprawl. First default discovery ran 0 tests; explicit discovery with `python -m unittest discover -s tests -p "test_*.py"` ran 3 tests OK.
+
+- 2026-06-25 06:4X BST — Human-caused artefact drift occurred during direct manual editing of `SPRINT_1_EVIDENCE_LOG.md`: terminal command text was accidentally inserted into the Markdown artefact. Echo inspection detected the corruption before commit. Mutation halted; the contaminated file was restored from Git baseline using `git restore`, returning the working tree to clean state. This is recorded as a Breakers / Auditability event: the Human can cause drift too, and the HAT protects the work by noticing.
 
 ## Commit / Artefact Register
 
@@ -86,4 +100,4 @@ The Human governs.
 The AI nodes assist.  
 The work remains accountable.
 
-- 2026-06-25 06:26 BST — First runnable INTEVIA organism skeleton created under `src/intevia/`, with `run.py` calling `breathe()`. Human verified `python run.py` returned `INTEVIA organism initialised`. Python generated `__pycache__` artefacts during execution; these were identified as non-source runtime artefacts and excluded from commit. This establishes the first observable execution surface for Sprint 1 and anchors the organism’s first breath in repo artefacts.
+
