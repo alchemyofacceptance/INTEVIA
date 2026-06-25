@@ -85,3 +85,5 @@ It must leave evidence of how it breathes.
 The Human governs.  
 The AI nodes assist.  
 The work remains accountable.
+
+- 2026-06-25 06:26 BST — First runnable INTEVIA organism skeleton created under `src/intevia/`, with `run.py` calling `breathe()`. Human verified `python run.py` returned `INTEVIA organism initialised`. Python generated `__pycache__` artefacts during execution; these were identified as non-source runtime artefacts and excluded from commit. This establishes the first observable execution surface for Sprint 1 and anchors the organism’s first breath in repo artefacts.
