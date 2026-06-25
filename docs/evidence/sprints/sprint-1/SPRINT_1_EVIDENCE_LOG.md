@@ -142,3 +142,15 @@ This entry does not claim organismal maturity, architectural completion, general
 
 > The manifest makes the evidence easier to find.  
 > The evidence log makes the manifest easier to trust.
+
+#### Work Block 9 — Boundary Charter Evidence
+
+**Status:** Closed  
+**Commit:** `fa73ad6`  
+**Artefact:** `docs/evidence/sprints/sprint-1/WORK_BLOCK_9_BOUNDARY_CHARTER.md`  
+**Scope:** Definition-only boundary charter  
+**Runtime impact:** None  
+**Governance:** Preserves Sprint 1 pattern — clarity before capability  
+**Visibility arc:** Placed inside the observed Sprint 1 visibility arc so far  
+**Forbidden:** No src changes, no routing, no scanning, no help behaviour, no capability expansion  
+**Keeper:** The next surface should not make INTEVIA stronger before it makes INTEVIA clearer.
