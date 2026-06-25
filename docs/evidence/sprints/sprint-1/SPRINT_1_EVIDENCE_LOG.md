@@ -105,3 +105,40 @@ The work remains accountable.
 
 
 
+
+#### Work Block 8 — Sprint 1 Manifest Visibility Artefact
+
+**Timestamp:** 2026-06-25  
+**Status:** Closed — committed and pushed  
+**Commit:** `f60c08d` — `docs: add Sprint 1 manifest`  
+**Remote update:** `6523b3b..f60c08d main -> main`
+
+**Observation:**
+
+Work Block 8 created a static Sprint 1 manifest at:
+
+`docs/evidence/sprints/sprint-1/SPRINT_1_MANIFEST.md`
+
+The manifest consolidates current Sprint 1 runtime surfaces, governance surfaces, command surfaces, verification surfaces, evidence artefacts, governance rails, and key commit lineage into a human-readable visibility artefact.
+
+**Evidence basis:**
+
+- Manifest file created at `docs/evidence/sprints/sprint-1/SPRINT_1_MANIFEST.md`
+- Manifest content echoed and validated before commit
+- Mutation scope confirmed as limited to the manifest file
+- Commit created: `f60c08d`
+- Push confirmed: `6523b3b..f60c08d main -> main`
+- Clean working tree confirmed by `git status --short` with no output
+
+**Evidence-safe interpretation:**
+
+The manifest improves Sprint 1 public visibility, auditability, and re-entry without adding runtime behaviour, routing, inference, hidden state, dependency expansion, or new command capability.
+
+**Boundary:**
+
+This entry does not claim organismal maturity, architectural completion, general OPC validity, autonomous behaviour, or expanded runtime capability.
+
+**Keeper:**
+
+> The manifest makes the evidence easier to find.  
+> The evidence log makes the manifest easier to trust.
