@@ -21,3 +21,13 @@ def current_status() -> GovernanceStatus:
         human_authority="Human Governor retains final authority",
         operating_frame="Build INTEVIA. Instrument INTEVIA.",
     )
+
+
+def format_status(status: GovernanceStatus) -> str:
+    """Return a Human-readable governance status summary."""
+    return (
+        f"Sprint: {status.sprint}\n"
+        f"Status: {status.status}\n"
+        f"Authority: {status.human_authority}\n"
+        f"Operating frame: {status.operating_frame}"
+    )
