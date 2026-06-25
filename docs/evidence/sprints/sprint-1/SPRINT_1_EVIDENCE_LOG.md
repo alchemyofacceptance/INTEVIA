@@ -154,3 +154,15 @@ This entry does not claim organismal maturity, architectural completion, general
 **Visibility arc:** Placed inside the observed Sprint 1 visibility arc so far  
 **Forbidden:** No src changes, no routing, no scanning, no help behaviour, no capability expansion  
 **Keeper:** The next surface should not make INTEVIA stronger before it makes INTEVIA clearer.
+
+#### Work Block 9 — Static Command Index Candidate Evidence
+
+**Status:** Closed  
+**Commit:** `9d4bdc2`  
+**Artefact:** `docs/evidence/sprints/sprint-1/WORK_BLOCK_9_CANDIDATE_COMMAND_INDEX.md`  
+**Scope:** Definition-only candidate document  
+**Runtime impact:** None  
+**Governance:** Preserves Sprint 1 pattern — clarity before capability  
+**Visibility arc:** Follows the observed Sprint 1 visibility arc so far  
+**Forbidden:** No src changes, no new command modules, no routing, no scanning, no runtime help behaviour, no capability expansion  
+**Keeper:** The next surface should not make INTEVIA stronger before it makes INTEVIA clearer.
