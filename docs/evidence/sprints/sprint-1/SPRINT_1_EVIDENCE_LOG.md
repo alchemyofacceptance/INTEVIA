@@ -249,3 +249,15 @@ The next safest surface remains Human-selected. Current options include:
 > The field is clean.  
 > The lineage is stable.  
 > The Human chooses the next surface.
+
+#### START_HERE Boundary Charter Evidence
+
+**Status:** Closed  
+**Commit:** `e3dd033`  
+**Artefact:** `docs/evidence/sprints/sprint-1/START_HERE_BOUNDARY_CHARTER.md`  
+**Scope:** Public orientation boundary charter only  
+**Runtime impact:** None  
+**Governance:** Defines rails for a future `docs/START_HERE.md` public orientation candidate  
+**Boundary:** Does not authorise creation of `docs/START_HERE.md`  
+**Forbidden:** No runtime behaviour, no README change, no orientation content, no onboarding claim, no maturity claim, no capability expansion  
+**Keeper:** The public trail should become easier to understand before the system becomes more powerful.
