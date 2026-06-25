@@ -69,6 +69,7 @@ Day 1 build objective: Establish a minimum runnable INTEVIA organism surface tha
 
 - 2026-06-25 06:4X BST — Human-caused artefact drift occurred during direct manual editing of `SPRINT_1_EVIDENCE_LOG.md`: terminal command text was accidentally inserted into the Markdown artefact. Echo inspection detected the corruption before commit. Mutation halted; the contaminated file was restored from Git baseline using `git restore`, returning the working tree to clean state. This is recorded as a Breakers / Auditability event: the Human can cause drift too, and the HAT protects the work by noticing.
 
+- 2026-06-25 07:5X BST — Work Block 6 established INTEVIA’s first named governed command surface: `heartbeat`. The command can be invoked with `python -m src.intevia.commands.heartbeat` and returns both the organism’s first breath and the governed Sprint 1 context. Human verified the command output, then verified the test surface with `python -m unittest discover -s tests -p "test_*.py"` returning 4 tests OK. The change was committed and pushed as `40a3908 feat: add heartbeat command surface`, extending the remote continuity substrate with the first governed runtime invocation surface. Evidence buckets: External Verification, Bounded Memory, Auditability, Human Comprehension.
 ## Commit / Artefact Register
 
 ## Open Questions / Breakers
@@ -99,5 +100,6 @@ It must leave evidence of how it breathes.
 The Human governs.  
 The AI nodes assist.  
 The work remains accountable.
+
 
 
