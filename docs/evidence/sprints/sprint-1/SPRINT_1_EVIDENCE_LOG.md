@@ -166,3 +166,86 @@ This entry does not claim organismal maturity, architectural completion, general
 **Visibility arc:** Follows the observed Sprint 1 visibility arc so far  
 **Forbidden:** No src changes, no new command modules, no routing, no scanning, no runtime help behaviour, no capability expansion  
 **Keeper:** The next surface should not make INTEVIA stronger before it makes INTEVIA clearer.
+
+#### Sprint 1 Progress Checkpoint — Re-entry / Progress Reflection
+
+**Status:** Captured  
+**Scope:** Reflection-only progress checkpoint  
+**Runtime impact:** None  
+**Mutation impact:** Evidence log only  
+
+**Purpose:**
+
+This checkpoint consolidates the current Sprint 1 field state before any further surface is opened.
+
+It answers only:
+
+- What exists?
+- What is proven by receipt?
+- What remains non-claim?
+- What is the next safest surface?
+
+**Observed field state:**
+
+Sprint 1 has produced visible runtime, governance, command, verification, evidence, manifest, boundary, and candidate surfaces, including:
+
+- `breathe`
+- `current_status`
+- `format_status`
+- `heartbeat`
+- `inspect`
+- Sprint 1 evidence log
+- Sprint 1 constitutional checkpoint
+- Sprint 1 bounded OPC doctrine note
+- Work Block 7 boundary charter
+- Sprint 1 manifest
+- Work Block 9 boundary charter
+- Work Block 9 static command-index candidate
+
+**Evidence basis:**
+
+The following are supported by terminal echo, Git lineage, public commits, pushes, and clean-state checks:
+
+- runnable initial organism surface;
+- governed status surface;
+- heartbeat command surface;
+- inspect command surface;
+- test coverage for first breath, heartbeat, and inspect;
+- static Sprint 1 manifest;
+- Work Block 9 boundary charter;
+- definition-only static command-index candidate;
+- repeated clean working tree verification after closure cycles.
+
+Recent closure pattern:
+
+`boundary charter -> boundary evidence -> candidate document -> candidate evidence`
+
+**Non-claims:**
+
+This checkpoint does not claim organismal maturity, architectural completion, general OPC validity, autonomous governance, autonomous recovery, hidden state, runtime help behaviour, command routing, dynamic scanning, auto-discovery, capability expansion, production readiness, or external scientific validation.
+
+**Governance / interface note:**
+
+The Human-governed handling pattern applies across the HAT field. Each node may propose, refine, or prepare, but the Human controls timing, authorisation, execution, and mutation.
+
+The Sprint 1 workflow has also continued while the Human adapted interface use and physical comfort conditions, including copy/paste lag adjustment, right-click terminal paste discovery, hydration, heat management, hand-fan use, break/re-entry, and ordinary-life context.
+
+This supports a bounded observation only: the observed Sprint 1 workflow has so far remained coherent while the Human adapted the operating environment.
+
+**Evidence-safe interpretation:**
+
+Sprint 1 has so far produced a coherent public evidence trail of Human-governed, node-assisted, terminal-verified, Git-remembered mutation.
+
+**Next safest surface:**
+
+The next safest surface remains Human-selected. Current options include:
+
+- record this checkpoint into the evidence log;
+- prepare a boundary charter for any future implementation of a static command index;
+- pause and review the public repo arc before opening the next block.
+
+**Keeper:**
+
+> The field is clean.  
+> The lineage is stable.  
+> The Human chooses the next surface.
