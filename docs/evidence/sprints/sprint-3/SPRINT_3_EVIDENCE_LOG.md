@@ -1139,3 +1139,94 @@ It may claim:
 Keeper:
 
 > A sprint in closeout proper is no longer deciding - it is descending.
+
+## Work Block 16 - Closeout-Completion
+
+### Context
+
+Sprint 3 Work Blocks 1-15 are complete, pushed, and origin-aligned.
+
+Work Block 14 initiated the closeout corridor.
+
+Work Block 15 recorded that Sprint 3 entered closeout proper and committed the sprint to the closing trajectory.
+
+Work Block 16 now records that Sprint 3 is entering closeout-completion preparation.
+
+### Closeout-Completion
+
+Sprint 3 has moved through shaping, checkpointing, consolidation, closeout-initiation, and closeout proper.
+
+The sprint now enters the final narrowing phase before formal closeout completion.
+
+This block does not seal Sprint 3.
+
+This block does not seal-lock Sprint 3.
+
+This block prepares the evidence spine for closeout-completion by recording that no further shaping or narrowing entries are required before the completion step.
+
+### Closeout-Completion Posture
+
+Sprint 3 closeout-completion establishes that:
+
+- shaping is complete;
+- structural-map expansion remains frozen;
+- closeout-initiation is complete;
+- closeout proper is complete;
+- no new expansion surfaces are opened;
+- no further narrowing entries are required before closeout completion;
+- the sprint is ready to proceed toward the completion block if later authorised;
+- the evidence spine remains the authoritative record of Sprint 3 progression.
+
+### Constraints
+
+Work Block 16 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts;
+- Sprint 3 sealing;
+- Sprint 3 seal-lock.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this closeout-completion block.
+
+Measure continuously: the evidence log records the final narrowing state before completion.
+
+Interpret carefully: this block records readiness for completion, not sealing or validation.
+
+Publish only what the evidence can carry: Work Block 16 confirms closeout-completion posture, not seal-lock.
+
+### Boundary
+
+This entry does not claim:
+
+- Sprint 3 is sealed;
+- Sprint 3 is seal-locked;
+- no correction is possible;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has entered closeout-completion posture;
+- the sprint has completed the narrowing sequence before formal completion;
+- expansion and shaping remain frozen unless explicitly reopened by the Human Governor;
+- the evidence spine remains the authoritative record;
+- future work should proceed only through bounded completion, sealing, seal-lock, or explicit correction.
+
+Keeper:
+
+> Completion is not the end - it is the moment before the end becomes real.
