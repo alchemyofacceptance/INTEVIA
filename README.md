@@ -18,6 +18,34 @@ This repository now serves as the technical home where the platform’s executab
 
 The Forge Execution Plan and Build Tasks define the governed path from architecture into implementation.
 
+
+---
+
+## Sprint 1 — Current Repository Orientation
+
+Sprint 1 is currently focused on minimal, governed build scaffolding.
+
+The live command surfaces are intentionally small:
+
+- `heartbeat` — returns the organism first-breath signal and governed Sprint 1 condition.
+- `inspect` — reports visible Sprint 1 surfaces, governance surfaces, evidence artefacts, and boundary note.
+
+A static internal command index is maintained at:
+
+```text
+docs/internal/COMMAND_INDEX.md
+```
+
+Sprint 1 evidence, boundary charters, and work block records are maintained under:
+
+```text
+docs/evidence/sprints/sprint-1/
+```
+
+This section reflects the repository as it exists now. It does not describe imagined, planned, or future command surfaces.
+
+Runtime authority remains static and v1.0-bounded.
+
 ---
 
 ## Repository Structure
