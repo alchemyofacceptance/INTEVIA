@@ -311,3 +311,38 @@ Operational realisation: sealing is the organism accepting its own shape — the
 Keeper:
 
 > Sealing is the organism accepting its own shape — the moment before history becomes fixed.
+
+#### Work Block 17 — Seal-Lock
+
+- 2026-06-26 — Continued the Sprint 2 evidence spine as part of Work Block 17.
+- This entry records Sprint 2 moving from sealing into seal-lock.
+- Work Block 16 recorded sealing initiated; this Work Block records Sprint 2 as seal-locked and complete as governed historical lineage.
+- Sprint 2 has completed its bounded documentation-only expansion arc, consolidation arc, readiness declaration, closeout arc, and sealing arc:
+  - Work Block 1 initiated the Sprint 2 evidence spine;
+  - Work Blocks 2–6 completed the bounded Sprint 2 documentation surfaces;
+  - Work Block 7 recorded expansion consolidation;
+  - Work Blocks 8–11 recorded consolidation continuation, stability, plateau, and final stillness;
+  - Work Block 12 recorded closeout-readiness;
+  - Work Block 13 recorded closeout initiation;
+  - Work Block 14 recorded closeout proper;
+  - Work Block 15 recorded closeout-completion;
+  - Work Block 16 recorded sealing.
+- No new conceptual surfaces are being introduced in this Work Block.
+- No boundary, manifest, candidate-surface, command, introspection, instrumentation, index, primitive, or evidence-spine structure was changed beyond this evidence entry.
+- The completed Sprint 2 surface set remains coherent and aligned:
+  - `status`;
+  - `structural-map`;
+  - `governance-valve`;
+  - `COMMAND_INDEX.md` Sprint 2 extension;
+  - `organismal-mode`.
+- The evidence spine remains aligned with sprint movement and now records seal-lock.
+- No governance shift occurred.
+- No behavioural changes, runtime surfaces, routing, parsing, discovery, dynamic registration, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry declares Sprint 2 seal-locked as a documentation-only historical artefact; it does not declare runtime capability, implementation authority, or behavioural activation.
+- Sprint 2 remains documentation-only, v1.0-bounded, and aligned with the sealed Sprint 1 lineage.
+
+Operational realisation: seal-lock is the moment the organism becomes history — not dead, but complete.
+
+Keeper:
+
+> Seal-lock is the moment the organism becomes history — not dead, but complete.
