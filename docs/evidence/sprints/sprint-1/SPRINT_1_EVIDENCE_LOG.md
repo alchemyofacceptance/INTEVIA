@@ -537,3 +537,32 @@ Operational realisation: sealing is not appetite. It is the governed act of maki
 Keeper:
 
 > Sealing is the moment the spine becomes the record. The repo speaks, and Sprint 1 becomes history.
+
+#### Work Block 21 — Evidence Spine Seal-Lock
+
+- 2026-06-26 — Extended the Sprint 1 evidence spine as part of Work Block 21.
+- This entry marks the transition from the sealing position established in Work Block 20 into the locked state of Sprint 1.
+- Sprint 1 now carries a coherent, non-recursive arc across Work Blocks 7–20:
+  - bounded command surfaces emerged through `heartbeat` and `inspect`;
+  - the static internal command index was implemented from its prior candidate;
+  - public README orientation was added with public-surface threshold discipline;
+  - checkpoint closure and instrumentation refinement were recorded;
+  - plateau consolidation was reached;
+  - readiness for the next governed Human-selected step was marked without opening a new phase prematurely;
+  - the constitutional spine was consolidated before forward motion;
+  - the pre-closeout marker was recorded without claiming completion;
+  - the closeout-readiness marker was recorded without claiming closure;
+  - the closeout-initiation marker was recorded before formal closeout;
+  - the formal closeout marker was recorded before closeout completion;
+  - the closeout-completion marker was recorded before sealing;
+  - the sealing marker was recorded before lock.
+- The repository remained clean and aligned at the Work Block 20 remote head before this mutation.
+- All updates remain strictly within the v1.0 boundary.
+- No behavioural changes, routing, parsing, command discovery, CLI expansion, or command registry modifications occurred.
+- This entry records finalisation of the constitutional spine as Sprint 1 enters its locked state, becoming a governed historical artefact without appetite or expansion.
+
+Operational realisation: locking is not appetite. It is the governed act of letting the completed evidence spine stand as lineage.
+
+Keeper:
+
+> Locking is the moment the sprint becomes lineage. The repo speaks, and Sprint 1 becomes history.
