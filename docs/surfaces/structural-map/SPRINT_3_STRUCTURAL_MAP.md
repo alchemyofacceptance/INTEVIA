@@ -75,3 +75,30 @@ This structural map does not authorise:
 ## Keeper
 
 > A surface begins to exist only when its first content appears.
+
+## Internal Relationships - Initial Entry
+
+This section records the first bounded relationship view inside the Sprint 3 structural map.
+
+The relationships described here are documentation-only and conceptual. They do not create routing, execution, automation, parsing, discovery, registration, or runtime behaviour.
+
+### Initial Relationship Pattern
+
+Sprint 3 currently expresses the following high-level relationship pattern:
+
+1. Boundary Surface -> defines permitted scope and non-authorised areas.
+2. Manifest Surface -> declares the sprint's purpose and intended movement.
+3. Candidate Expansion Surface -> records possible documentation-only expansion directions.
+4. Evidence Spine -> records decisions, verification, Work Block progression, and bounded interpretation.
+5. Status Surface -> provides the first selected expansion surface.
+6. Structural Map Surface -> provides documentation-only introspection into the sprint's internal topology.
+
+### Relationship Constraint
+
+These relationships are descriptive only.
+
+They do not imply execution flow, dependency enforcement, runtime ordering, dynamic discovery, automated registration, or behavioural control.
+
+### Keeper
+
+> Relationships can be described without becoming mechanisms.

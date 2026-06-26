@@ -556,3 +556,93 @@ It may claim:
 Keeper:
 
 > Hygiene protects the surface so the structure can grow.
+
+## Work Block 10 - Second Structural Map Content Section
+
+### Context
+
+Sprint 3 Work Blocks 1-9 are complete, pushed, and origin-aligned.
+
+Work Block 8 created the first bounded structural map content entry.
+
+Work Block 9 performed a text-hygiene correction to keep the structural map surface clean before further growth.
+
+Work Block 10 now adds the second bounded content section to the structural map.
+
+### Mutation
+
+Work Block 10 updates:
+
+`docs/surfaces/structural-map/SPRINT_3_STRUCTURAL_MAP.md`
+
+The structural map receives a second content section:
+
+`Internal Relationships - Initial Entry`
+
+This section records a documentation-only relationship view between the current Sprint 3 surfaces:
+
+- boundary surface;
+- manifest surface;
+- candidate expansion surface;
+- evidence spine;
+- status surface;
+- structural map surface.
+
+### Constraints
+
+The new section remains:
+
+- static;
+- documentation-only;
+- conceptual;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- non-runtime;
+- non-behavioural.
+
+Work Block 10 does not authorise:
+
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: a single bounded structural map section is added.
+
+Measure continuously: repo diff, commit, push, and GitHub visibility remain the verification surfaces.
+
+Interpret carefully: the section describes relationships without converting them into mechanisms.
+
+Publish only what the evidence can carry: Work Block 10 records a documentation-only relationship view.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map is complete;
+- topology has been fully mapped;
+- relationship descriptions are execution flows;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 added a second bounded structural map content section;
+- the section describes initial internal relationships conceptually;
+- the structural map remains documentation-only and v1.0-bounded;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Relationships can be described without becoming mechanisms.
