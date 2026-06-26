@@ -212,3 +212,35 @@ Operational realisation: closeout begins not with motion, but with the decision 
 Keeper:
 
 > Closeout begins not with motion — but with the decision that nothing more may grow.
+
+#### Work Block 14 — Closeout
+
+- 2026-06-26 — Continued the Sprint 2 evidence spine as part of Work Block 14.
+- This entry records Sprint 2 moving from closeout initiation into closeout proper.
+- Work Block 12 declared closeout-readiness, and Work Block 13 initiated the closeout arc; this Work Block records closeout underway without declaring closeout-completion, sealing, or lock.
+- Sprint 2 has completed its bounded documentation-only expansion arc, consolidation arc, readiness declaration, and closeout initiation:
+  - Work Block 1 initiated the Sprint 2 evidence spine;
+  - Work Blocks 2–6 completed the bounded Sprint 2 documentation surfaces;
+  - Work Block 7 recorded expansion consolidation;
+  - Work Blocks 8–11 recorded consolidation continuation, stability, plateau, and final stillness;
+  - Work Block 12 recorded closeout-readiness;
+  - Work Block 13 recorded closeout initiation.
+- No new conceptual surfaces are being introduced in this Work Block.
+- No boundary, manifest, candidate-surface, command, introspection, instrumentation, index, primitive, or evidence-spine structure was changed beyond this evidence entry.
+- The completed Sprint 2 surface set remains coherent and aligned:
+  - `status`;
+  - `structural-map`;
+  - `governance-valve`;
+  - `COMMAND_INDEX.md` Sprint 2 extension;
+  - `organismal-mode`.
+- The evidence spine remains aligned with sprint movement and now records closeout proper.
+- No governance shift occurred.
+- No behavioural changes, runtime surfaces, routing, parsing, discovery, dynamic registration, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry declares closeout underway only; it does not declare closeout-completion, sealing, lock, runtime capability, or implementation authority.
+- Sprint 2 remains documentation-only, v1.0-bounded, and aligned with the sealed Sprint 1 lineage.
+
+Operational realisation: closeout is the organism turning inward — not to shrink, but to finish.
+
+Keeper:
+
+> Closeout is the organism turning inward — not to shrink, but to finish.
