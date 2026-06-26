@@ -950,3 +950,98 @@ It may claim:
 Keeper:
 
 > Consolidation is how a sprint remembers what it has earned.
+
+## Work Block 14 - Closeout-Initiation
+
+### Context
+
+Sprint 3 Work Blocks 1-13 are complete, pushed, and origin-aligned.
+
+Work Block 12 checkpointed the structural map shaping arc.
+
+Work Block 13 consolidated the sprint-level plateau after the structural map had been selected, defined, planned, populated, corrected, integrated, checkpointed, and consolidated.
+
+Sprint 3 now enters the closeout corridor.
+
+### Closeout-Initiation
+
+Work Block 14 records the transition from shaping and consolidation into closeout-initiation.
+
+This block does not close Sprint 3.
+
+It begins the narrowing phase that prepares Sprint 3 for closeout, closeout-completion, sealing, and eventual seal-lock.
+
+At this point, Sprint 3 shifts from expansion posture to closure-preparation posture.
+
+No new expansion surfaces are opened in this block.
+
+No new structural map content is added in this block.
+
+No existing structural map sections are modified in this block.
+
+### Closeout Posture
+
+Sprint 3 closeout-initiation establishes that:
+
+- the structural map shaping arc has reached a stable consolidation plateau;
+- shaping is complete unless a later correction block is explicitly authorised;
+- future Work Blocks should narrow, verify, consolidate, close, seal, or lock;
+- expansion surfaces are frozen unless the Human Governor explicitly reopens the lane;
+- the evidence spine remains the authoritative record of Sprint 3 progression.
+
+### Constraints
+
+Work Block 14 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts;
+- final Sprint 3 closure;
+- Sprint 3 sealing;
+- Sprint 3 seal-lock.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this closeout-initiation block.
+
+Measure continuously: the evidence log records the transition into the closeout corridor.
+
+Interpret carefully: this block records narrowing, not completion.
+
+Publish only what the evidence can carry: Work Block 14 confirms that Sprint 3 has entered closeout-initiation, not that the sprint is closed.
+
+### Boundary
+
+This entry does not claim:
+
+- Sprint 3 is closed;
+- Sprint 3 is sealed;
+- Sprint 3 is seal-locked;
+- the structural map is complete;
+- no further correction is possible;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has entered the closeout corridor;
+- the sprint has shifted from shaping posture to narrowing posture;
+- no new expansion surface is opened by this block;
+- the evidence spine remains the authoritative record;
+- future work should proceed through bounded closeout steps.
+
+Keeper:
+
+> Closeout begins not with finishing, but with narrowing.
