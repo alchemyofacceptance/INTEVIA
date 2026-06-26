@@ -292,3 +292,29 @@ Keeper:
 > Public text is a threshold surface. The lantern is trimmed before it is raised.
 >
 > The stress did not just test the governance. It improved the instrument.
+
+#### Work Block 11 — Evidence Spine Continuation and Checkpoint Closure
+
+- 2026-06-26 — Continued the Sprint 1 evidence spine after completion of Work Block 10.
+- Prior published sequence:
+  - `7b1e529` — `docs: add static Sprint 1 command index`.
+  - `6de8c19` — `docs: add Sprint 1 repository orientation`.
+  - `b0520af` — `docs: record Work Block 10 README orientation evidence`.
+- This entry records the checkpoint closure following the public README orientation lifecycle.
+- The published README orientation describes only the live Sprint 1 command surfaces: `heartbeat` and `inspect`.
+- The published static command index remains internal documentation only.
+- The Work Block 10 evidence entry recorded the public-surface threshold, Velvet Gloves language discipline, and Terminal Echo instrumentation improvement.
+- No runtime behaviour changed during this evidence-spine continuation.
+- No routing, parsing, command discovery, CLI expansion, or command registry change occurred.
+- Local `main` and `origin/main` were verified aligned at `b0520af` before this Work Block 11 mutation.
+- Working tree was clean before mutation.
+
+Operational realisation: evidence continuation should close the checkpoint without inflating the claim.
+
+Sprint 1 is no longer only building artefacts. It is improving its own governance instruments.
+
+Work Block 11 records that Sprint 1 gained reliability through governed inspection, public-surface restraint, and clearer Terminal Echo instrumentation, while remaining inside the existing v1.0 boundary.
+
+Keeper:
+
+> The instrument sharpened. The spine continues. The boundary holds.
