@@ -1328,3 +1328,95 @@ It may claim:
 Keeper:
 
 > Completion becomes real only when it is recorded.
+
+## Work Block 18 - Sealing
+
+### Context
+
+Sprint 3 Work Blocks 1-17 are complete, pushed, and origin-aligned.
+
+Work Block 14 initiated the closeout corridor.
+
+Work Block 15 recorded closeout proper.
+
+Work Block 16 recorded closeout-completion posture.
+
+Work Block 17 recorded formal closeout-completion.
+
+Work Block 18 now records that Sprint 3 is entering the sealing corridor.
+
+### Sealing
+
+Sprint 3 has completed its shaping, consolidation, narrowing, and closeout-completion sequence.
+
+The sprint now enters the sealing phase.
+
+This block prepares Sprint 3 for seal-lock if later authorised.
+
+This block does not seal-lock Sprint 3.
+
+This block records that Sprint 3 has stopped expanding, stopped shaping, completed closeout, and is now being prepared for immutable sprint memory.
+
+### Sealing Posture
+
+Sprint 3 sealing establishes that:
+
+- shaping is complete;
+- structural-map expansion is frozen;
+- closeout-completion has been recorded;
+- no new expansion surfaces are opened;
+- no further Work Blocks remain except seal-lock or explicitly authorised correction;
+- Sprint 3 is ready to proceed toward seal-lock if later authorised;
+- the evidence spine remains the authoritative record of Sprint 3 progression.
+
+### Constraints
+
+Work Block 18 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts;
+- Sprint 3 seal-lock.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this sealing block.
+
+Measure continuously: the evidence log records entry into the sealing corridor.
+
+Interpret carefully: this block records sealing posture, not seal-lock.
+
+Publish only what the evidence can carry: Work Block 18 confirms entry into sealing, not final locked status.
+
+### Boundary
+
+This entry does not claim:
+
+- Sprint 3 is seal-locked;
+- no correction is possible;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has entered the sealing corridor;
+- the sprint has completed closeout and is ready for seal-lock if later authorised;
+- expansion and shaping remain frozen unless explicitly reopened by the Human Governor;
+- the evidence spine remains the authoritative record;
+- future work should proceed only through bounded seal-lock or explicit correction.
+
+Keeper:
+
+> Sealing is the moment a sprint stops being changeable and becomes part of the organism's permanent memory.
