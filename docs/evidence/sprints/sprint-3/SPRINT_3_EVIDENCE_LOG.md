@@ -837,3 +837,116 @@ It may claim:
 Keeper:
 
 > A map becomes trustworthy when its layers are sealed, not when they are many.
+
+## Work Block 13 - Sprint-Level Consolidation
+
+### Context
+
+Sprint 3 Work Blocks 1-12 are complete, pushed, and origin-aligned.
+
+Work Block 12 checkpointed the Sprint 3 structural map after a bounded shaping arc that included:
+
+- structural map expansion decision;
+- structural map definition stub;
+- structural map content planning;
+- first bounded structural map content entry;
+- structural map text-hygiene correction;
+- second bounded structural map content section;
+- third bounded structural map content section;
+- structural map checkpoint seal.
+
+Work Block 13 now consolidates this arc at the sprint level.
+
+### Consolidation
+
+Sprint 3 has reached a stable consolidation plateau.
+
+The structural map has been:
+
+- selected;
+- defined;
+- planned;
+- populated with bounded content;
+- corrected for text hygiene;
+- extended through bounded relationship and evidence-integration sections;
+- checkpointed without overextension.
+
+This consolidation records that the current structural map shaping arc is stable up to Work Block 12.
+
+No new structural map content is added in this block.
+
+No existing structural map sections are modified in this block.
+
+No new expansion surface is opened in this block.
+
+### Current Sprint-Level State
+
+At this consolidation point, Sprint 3 contains:
+
+- a boundary charter;
+- a manifest;
+- candidate expansion surfaces;
+- an active evidence spine;
+- a selected status surface;
+- a structural map surface;
+- three bounded structural map content layers;
+- a structural map checkpoint;
+- a documented continuity-seam recovery;
+- repeated terminal / Git / push / GitHub verification cycles.
+
+The evidence spine remains the authoritative record of Work Block progression, decisions, corrections, boundaries, and keeper lines.
+
+The structural map remains a documentation-only introspection surface.
+
+### Constraints
+
+Work Block 13 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this consolidation block.
+
+Measure continuously: the evidence log records the sprint-level plateau.
+
+Interpret carefully: this block records consolidation, not completion, validation, or proof.
+
+Publish only what the evidence can carry: Work Block 13 confirms a stable Sprint 3 plateau after structural-map shaping.
+
+### Boundary
+
+This entry does not claim:
+
+- Sprint 3 is complete;
+- the structural map is complete;
+- no further Sprint 3 work is needed;
+- topology has been fully mapped;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has reached a stable consolidation plateau after the structural-map shaping arc;
+- the current structural map state is checkpointed and evidence-backed;
+- the evidence spine remains the authoritative record;
+- future work should begin from fresh state confirmation and bounded lane selection;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Consolidation is how a sprint remembers what it has earned.
