@@ -340,3 +340,25 @@ Operational realisation: the spine should not feed on itself. It should mark the
 Keeper:
 
 > The spine extends only when the checkpoint is real. The boundary holds because the repo speaks.
+
+#### Work Block 13 — Evidence Spine Continuation and Next Selection Readiness
+
+- 2026-06-26 — Extended the Sprint 1 evidence spine after the checkpoint plateau recorded in Work Block 12.
+- This entry records readiness for the next governed selection point without opening a new phase prematurely.
+- The organism now carries a coherent arc across Work Blocks 7–12:
+  - bounded command surfaces emerged through `heartbeat` and `inspect`;
+  - the static internal command index was implemented from its prior candidate;
+  - public README orientation was added with public-surface threshold discipline;
+  - Work Block 10 evidence recorded Velvet Gloves language discipline and Terminal Echo instrumentation improvement;
+  - Work Block 11 recorded checkpoint closure and improved governance instrumentation;
+  - Work Block 12 recorded the Sprint 1 checkpoint plateau without turning the evidence spine into self-reference.
+- The repository remained clean and aligned after each governed mutation lifecycle.
+- All updates remained strictly within the v1.0 boundary.
+- No behavioural changes, routing, parsing, command discovery, CLI expansion, or command registry modifications occurred.
+- This entry records continuation of the constitutional spine by marking real ground reached and preparing Sprint 1 for its next Human-selected step.
+
+Operational realisation: readiness is not expansion. A governed next step begins only after the ground beneath it has been named.
+
+Keeper:
+
+> The spine extends when the plateau is understood. The next step is real because the ground beneath it is real.
