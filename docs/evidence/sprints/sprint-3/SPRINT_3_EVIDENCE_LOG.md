@@ -396,3 +396,91 @@ It may claim:
 Keeper:
 
 > Planning is the bridge between naming and shaping.
+
+## Work Block 8 - First Structural Map Content Entry
+
+### Context
+
+Sprint 3 Work Blocks 1-7 are complete, pushed, and origin-aligned.
+
+Work Block 5 recorded the decision to adopt the structural map introspection surface as the next expansion vector.
+
+Work Block 6 defined the structural map surface at stub level.
+
+Work Block 7 planned the content categories that may later populate the structural map surface.
+
+Work Block 8 now creates the first bounded structural map content entry.
+
+### Mutation
+
+Work Block 8 creates or updates:
+
+`docs/surfaces/structural-map/SPRINT_3_STRUCTURAL_MAP.md`
+
+The structural map receives its first documentation-only content section.
+
+This content describes high-level Sprint 3 topology categories, including:
+
+- boundary surface;
+- manifest surface;
+- candidate expansion surface;
+- evidence spine;
+- status surface;
+- structural map surface.
+
+### Constraints
+
+The structural map content remains:
+
+- static;
+- documentation-only;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- non-runtime;
+- non-behavioural.
+
+Work Block 8 does not authorise:
+
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: the first structural map content is created as a bounded documentation surface only.
+
+Measure continuously: repo diff, commit, push, and GitHub visibility remain the verification surfaces.
+
+Interpret carefully: Work Block 8 records first content appearance, not operational capability.
+
+Publish only what the evidence can carry: the structural map exists as documentation content only.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map is complete;
+- topology has been fully mapped;
+- runtime or behavioural capability has changed;
+- HAT, INTEVIA, or any associated method has been validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has created its first bounded structural map content entry;
+- the structural map file exists as a documentation-only introspection surface;
+- the initial content records high-level topology categories;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> A surface begins to exist only when its first content appears.
