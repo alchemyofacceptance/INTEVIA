@@ -29,3 +29,22 @@ Operational realisation: a sprint is not alive until its evidence spine begins.
 Keeper:
 
 > A sprint is not alive until its evidence spine begins.
+
+#### Work Block 3 — First Expansion Surface Selection: `status`
+
+- 2026-06-26 — Continued the Sprint 3 evidence spine as part of Work Block 3.
+- This entry records the selection of `status` as Sprint 3's first documentation-only expansion surface.
+- Sprint 3 now moves from evidence-spine initiation into its first bounded expansion movement.
+- This selection follows the Sprint 3 Boundary Charter, Sprint 3 Manifest, and Sprint 3 Candidate Expansion Surfaces.
+- `status` is selected as an internal documentation surface only.
+- This entry does not create, modify, or implement runtime `status` behaviour.
+- Sprint 1 remains sealed historical lineage and is not reopened by this entry.
+- Sprint 2 remains sealed historical lineage and is not reopened by this entry.
+- No behavioural changes, routing, parsing, discovery, dynamic command registration, runtime surfaces, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry records the first Sprint 3 expansion selection while preserving documentation-only, v1.0-bounded governance.
+
+Operational realisation: the first expansion surface is the sprint's first breath.
+
+Keeper:
+
+> The first expansion surface is the sprint's first breath.
