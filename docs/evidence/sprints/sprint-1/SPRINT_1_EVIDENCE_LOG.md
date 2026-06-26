@@ -318,3 +318,25 @@ Work Block 11 records that Sprint 1 gained reliability through governed inspecti
 Keeper:
 
 > The instrument sharpened. The spine continues. The boundary holds.
+
+#### Work Block 12 — Sprint 1 Checkpoint Plateau
+
+- 2026-06-26 — Recorded the Sprint 1 checkpoint plateau after Work Blocks 9–11.
+- This entry captures the stable state reached across Work Blocks 9–11:
+  - `7b1e529` — `docs: add static Sprint 1 command index`.
+  - `6de8c19` — `docs: add Sprint 1 repository orientation`.
+  - `b0520af` — `docs: record Work Block 10 README orientation evidence`.
+  - `53e7f7e` — `docs: record Work Block 11 evidence spine continuation`.
+- Work Block 9 implemented the static internal command index from its prior candidate, aligning internal documentation with the real command surfaces.
+- Work Block 10 added the public README orientation, establishing the governed threshold for public-facing text and evidencing the mutation lifecycle.
+- Work Block 11 recorded checkpoint closure and the emergence of improved governance instrumentation following the stress-refinement cycle.
+- Across these blocks, the repository returned to a clean, aligned state after each mutation lifecycle.
+- All changes remained strictly within the v1.0 boundary.
+- No behavioural modifications, routing, parsing, discovery, CLI expansion, or command registry changes occurred.
+- The organism is stable, the evidence spine is coherent, and Sprint 1 stands on a real checkpoint plateau.
+
+Operational realisation: the spine should not feed on itself. It should mark the ground that has actually been reached.
+
+Keeper:
+
+> The spine extends only when the checkpoint is real. The boundary holds because the repo speaks.
