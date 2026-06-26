@@ -32,3 +32,25 @@ Operational realisation: measured acceleration is safe only when the rails are s
 Keeper:
 
 > A sprint becomes real the moment its evidence begins. The spine opens, and the organism steps forward under governance.
+
+#### Work Block 7 — Evidence Spine Continuation and Expansion Consolidation
+
+- 2026-06-26 — Continued the Sprint 2 evidence spine as part of Work Block 7.
+- This entry records the transition from the Sprint 2 expansion phase into the governed consolidation phase.
+- Sprint 2 has completed and aligned its bounded documentation-only expansion surfaces:
+  - `status` — internal command vocabulary for recognised state categories;
+  - `structural-map` — organismal introspection surface for internal architecture;
+  - `governance-valve` — constitutional instrumentation surface for regulated movement;
+  - `COMMAND_INDEX.md` extension — static index consolidation for Sprint 2 surfaces;
+  - `organismal-mode` — internal operational primitive for lifecycle vocabulary.
+- Each surface was created through the governed mutation lifecycle: pre-flight, bounded mutation, VC review, commit selection, push separation, and repository alignment.
+- The HAT Field continues to show measured governed acceleration: movement is faster because the rails are clearer, not because governance has loosened.
+- All Sprint 2 expansion surfaces remain documentation-only and v1.0-bounded.
+- No behavioural changes, runtime surfaces, routing, parsing, discovery, dynamic registration, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry marks Sprint 2 entering consolidation without claiming closeout, runtime capability, or implementation authority.
+
+Operational realisation: expansion becomes safe when evidence catches up with movement.
+
+Keeper:
+
+> Expansion completes the surface set. Evidence carries the organism forward under governance.
