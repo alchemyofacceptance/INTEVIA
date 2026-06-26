@@ -54,3 +54,27 @@ Operational realisation: expansion becomes safe when evidence catches up with mo
 Keeper:
 
 > Expansion completes the surface set. Evidence carries the organism forward under governance.
+
+#### Work Block 8 — Consolidation Evidence Continuation
+
+- 2026-06-26 — Continued the Sprint 2 evidence spine as part of Work Block 8.
+- This entry records the stable post-expansion state reached after Work Block 7.
+- Sprint 2 is no longer adding new expansion surfaces in this movement.
+- The sprint remains in governed consolidation, with the evidence spine aligned to the completed expansion arc.
+- The completed Sprint 2 documentation-only surfaces remain present and bounded:
+  - `status`;
+  - `structural-map`;
+  - `governance-valve`;
+  - `COMMAND_INDEX.md` Sprint 2 extension;
+  - `organismal-mode`.
+- No new boundary, manifest, candidate-surface, command, introspection, instrumentation, index, or primitive surface was introduced by this Work Block.
+- No governance shift occurred.
+- No behavioural changes, runtime surfaces, routing, parsing, discovery, dynamic registration, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry records governed deceleration: the organism is settling the expansion arc before any closeout-readiness claim.
+- Sprint 2 remains documentation-only, v1.0-bounded, and aligned with the sealed Sprint 1 lineage.
+
+Operational realisation: consolidation is the organism breathing out — a governed settling before the next gate.
+
+Keeper:
+
+> Consolidation is the organism breathing out. The spine holds because movement has become evidence.
