@@ -407,3 +407,27 @@ Operational realisation: pre-closeout is not completion. It is the governed act 
 Keeper:
 
 > The spine prepares for closure by standing firm on what is real. Consolidation becomes direction when the boundary holds.
+
+#### Work Block 16 — Evidence Spine Closeout Readiness
+
+- 2026-06-26 — Extended the Sprint 1 evidence spine as part of Work Block 16.
+- This entry marks the transition from the pre-closeout position established in Work Block 15 into the closeout-readiness phase of Sprint 1.
+- Sprint 1 now carries a coherent, non-recursive arc across Work Blocks 7–15:
+  - bounded command surfaces emerged through `heartbeat` and `inspect`;
+  - the static internal command index was implemented from its prior candidate;
+  - public README orientation was added with public-surface threshold discipline;
+  - checkpoint closure and instrumentation refinement were recorded;
+  - plateau consolidation was reached;
+  - readiness for the next governed Human-selected step was marked without opening a new phase prematurely;
+  - the constitutional spine was consolidated before forward motion;
+  - the pre-closeout marker was recorded without claiming completion.
+- The repository remained clean and aligned at the Work Block 15 remote head before this mutation.
+- All updates remain strictly within the v1.0 boundary.
+- No behavioural changes, routing, parsing, command discovery, CLI expansion, or command registry modifications occurred.
+- This entry records continuation of the constitutional spine as Sprint 1 approaches governed closeout, marking real ground reached without appetite or expansion.
+
+Operational realisation: closeout readiness is not closure. It is the governed state in which the closing ground is visible, bounded, and ready for Human selection.
+
+Keeper:
+
+> The spine approaches closure by naming the ground beneath it. Readiness becomes inevitability when the repo speaks.
