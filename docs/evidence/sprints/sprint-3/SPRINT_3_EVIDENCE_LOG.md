@@ -1230,3 +1230,101 @@ It may claim:
 Keeper:
 
 > Completion is not the end - it is the moment before the end becomes real.
+
+## Work Block 17 - Closeout-Completion Record
+
+### Context
+
+Sprint 3 Work Blocks 1-16 are complete, pushed, and origin-aligned.
+
+Work Block 14 initiated the closeout corridor.
+
+Work Block 15 recorded closeout proper.
+
+Work Block 16 recorded closeout-completion posture and prepared Sprint 3 for formal closeout completion.
+
+Work Block 17 now formally records Sprint 3 closeout-completion.
+
+### Closeout-Completion Record
+
+Sprint 3 has completed its shaping, consolidation, narrowing, and closeout-completion sequence.
+
+The structural map shaping arc has been checkpointed and consolidated.
+
+The closeout corridor has progressed through closeout-initiation, closeout proper, and closeout-completion posture.
+
+This block records that Sprint 3 is now complete for closeout purposes and ready to proceed toward sealing if later authorised.
+
+This block does not seal Sprint 3.
+
+This block does not seal-lock Sprint 3.
+
+### Closeout-Completion State
+
+At closeout-completion, Sprint 3 has:
+
+- established its boundary charter;
+- recorded its manifest;
+- identified candidate expansion surfaces;
+- initiated its evidence spine;
+- selected the status surface;
+- recorded continuity-seam recovery and planning;
+- selected, defined, planned, populated, corrected, checkpointed, and consolidated the structural map surface;
+- entered the closeout corridor;
+- entered closeout proper;
+- recorded closeout-completion posture;
+- reached formal closeout-completion readiness for sealing.
+
+### Constraints
+
+Work Block 17 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts;
+- Sprint 3 sealing;
+- Sprint 3 seal-lock.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this closeout-completion record.
+
+Measure continuously: the evidence log records formal closeout-completion.
+
+Interpret carefully: this block records completion of the sprint arc before sealing, not sealed status.
+
+Publish only what the evidence can carry: Work Block 17 confirms closeout-completion, not seal-lock.
+
+### Boundary
+
+This entry does not claim:
+
+- Sprint 3 is sealed;
+- Sprint 3 is seal-locked;
+- no correction is possible;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 closeout-completion has been recorded;
+- the sprint is ready to proceed toward sealing if later authorised;
+- expansion and shaping remain frozen unless explicitly reopened by the Human Governor;
+- the evidence spine remains the authoritative record;
+- future work should proceed only through bounded sealing, seal-lock, or explicit correction.
+
+Keeper:
+
+> Completion becomes real only when it is recorded.
