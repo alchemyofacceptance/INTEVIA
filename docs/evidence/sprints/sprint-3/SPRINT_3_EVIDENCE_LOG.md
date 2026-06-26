@@ -646,3 +646,95 @@ It may claim:
 Keeper:
 
 > Relationships can be described without becoming mechanisms.
+
+## Work Block 11 - Third Structural Map Content Section
+
+### Context
+
+Sprint 3 Work Blocks 1-10 are complete, pushed, and origin-aligned.
+
+Work Block 8 created the first bounded structural map content entry.
+
+Work Block 9 performed a text-hygiene correction.
+
+Work Block 10 added the internal relationships section.
+
+Work Block 11 now adds the third bounded content section to the structural map.
+
+### Mutation
+
+Work Block 11 updates:
+
+`docs/surfaces/structural-map/SPRINT_3_STRUCTURAL_MAP.md`
+
+The structural map receives a third content section:
+
+`Evidence Spine Integration Points`
+
+This section records how the structural map relates to the Sprint 3 evidence spine, including:
+
+- Work Block entries;
+- verification events;
+- decision records;
+- correction records;
+- boundary records;
+- keeper lines.
+
+### Constraints
+
+The new section remains:
+
+- static;
+- documentation-only;
+- conceptual;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- non-runtime;
+- non-behavioural.
+
+Work Block 11 does not authorise:
+
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: a single bounded structural map section is added.
+
+Measure continuously: repo diff, commit, push, and GitHub visibility remain the verification surfaces.
+
+Interpret carefully: the section describes evidence integration without converting it into automation or authority.
+
+Publish only what the evidence can carry: Work Block 11 records a documentation-only evidence-spine relationship view.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map is complete;
+- the evidence spine has been replaced;
+- integration points are automation or enforcement mechanisms;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 added a third bounded structural map content section;
+- the section describes evidence spine integration points conceptually;
+- the structural map remains documentation-only and v1.0-bounded;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Evidence gives topology something to stand on.

@@ -102,3 +102,32 @@ They do not imply execution flow, dependency enforcement, runtime ordering, dyna
 ### Keeper
 
 > Relationships can be described without becoming mechanisms.
+
+## Evidence Spine Integration Points
+
+This section records how the Sprint 3 structural map relates to the evidence spine.
+
+The evidence spine remains the primary record of Work Block progression, verification events, decisions, constraints, corrections, and bounded interpretation.
+
+The structural map does not replace the evidence spine. It provides a documentation-only topology view that helps describe how evidence-bearing surfaces relate to one another.
+
+### Integration Points
+
+Sprint 3 currently recognises the following evidence spine integration points:
+
+1. Work Block Entries -> record governed progression through the sprint.
+2. Verification Events -> record terminal, Git, push, and GitHub confirmation surfaces.
+3. Decision Records -> record bounded choices before implementation.
+4. Correction Records -> record hygiene and recovery actions without hiding seam events.
+5. Boundary Records -> preserve what each Work Block does not authorise.
+6. Keeper Lines -> preserve compact operational meaning across the sprint.
+
+### Integration Constraint
+
+These integration points are descriptive only.
+
+They do not create automation, enforcement, routing, validation, runtime behaviour, or governance authority outside the written evidence trail.
+
+### Keeper
+
+> Evidence gives topology something to stand on.
