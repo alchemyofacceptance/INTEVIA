@@ -296,3 +296,103 @@ It may claim:
 Keeper:
 
 > Definition precedes implementation. A surface must be named before it can be shaped.
+
+## Work Block 7 - Structural Map Content Planning
+
+### Context
+
+Sprint 3 Work Blocks 1-6 are complete, pushed, and origin-aligned.
+
+Sprint 3 has established:
+
+- a boundary charter;
+- a manifest;
+- candidate expansion surfaces;
+- an initiated evidence spine;
+- first expansion surface selection: `status`;
+- continuity-seam recovery and planning posture;
+- structural map expansion decision;
+- structural map definition stub.
+
+Work Block 7 now plans the content categories that may later populate the structural map introspection surface.
+
+### Planning Purpose
+
+The purpose of Work Block 7 is to identify the intended documentation-only content categories for the structural map surface before any content is implemented.
+
+This block bridges the movement from naming the surface to later shaping it.
+
+It does not populate the structural map, create a structural map file, define final structure, or implement content.
+
+### Planned Content Categories
+
+A later authorised Work Block may use the structural map surface to describe:
+
+- high-level organismal components;
+- relationships between documentation surfaces;
+- evidence surfaces and their role in sprint progression;
+- governance surfaces and their lineage function;
+- introspection pathways;
+- conceptual topology of the v1.0-bounded organism;
+- links between sprint artefacts, evidence logs, and expansion surfaces.
+
+These categories are planning anchors only.
+
+They do not yet define final structural map content.
+
+### Constraints
+
+All future structural map content must remain:
+
+- static;
+- documentation-only;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- non-runtime;
+- non-behavioural.
+
+Work Block 7 does not authorise:
+
+- behavioural logic;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: structural map content remains deferred.
+
+Measure continuously: later Work Blocks must show evidence of any structural map content before interpretation.
+
+Interpret carefully: Work Block 7 records planned content categories only.
+
+Publish only what the evidence can carry: this entry documents planning, not implementation.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map has been populated;
+- structural map content has been implemented;
+- topology has been formally mapped;
+- runtime or behavioural capability has changed;
+- HAT, INTEVIA, or any associated method has been validated.
+
+It may claim:
+
+- Sprint 3 has planned the categories that may later populate the structural map surface;
+- those categories remain documentation-only and v1.0-bounded;
+- implementation remains deferred to later authorised Work Blocks;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Planning is the bridge between naming and shaping.
