@@ -143,3 +143,64 @@ It may claim:
 - Human governance was the continuity carrier;
 - repo evidence allowed the receiving node to reattach correctly;
 - Sprint 3 is ready to continue toward bounded structural map planning.
+
+## Work Block 5 - Structural Map Expansion Decision
+
+### Context
+
+Sprint 3 Work Blocks 1-4 are complete, pushed, and origin-aligned.
+
+Work Block 4 captured the continuity seam, the successful recovery through Human-carried evidence, and the planning / measurement posture for the resumed Sprint 3 window.
+
+The structural map introspection surface remains the leading candidate for the next Sprint 3 expansion surface.
+
+### Decision
+
+Sprint 3 will adopt the structural map introspection surface as its next expansion vector.
+
+This decision is documentation-only, v1.0-bounded, and internal-first.
+
+Work Block 5 records the decision to proceed toward the structural map surface, but it does not implement, define, populate, activate, or expose any structural map content.
+
+No behavioural logic, runtime surface, routing, parsing, discovery, execution, dynamic registration, or `src/` mutation is authorised by this entry.
+
+### Constraints
+
+Structural map content will be defined in a later Work Block.
+
+Work Block 5 records decision and posture only.
+
+Repo state remains the verification surface for this decision.
+
+The decision does not alter Sprint 1 or Sprint 2 artefacts, does not reinterpret sealed sprint lineage, and does not authorise Article 3 drafting or publication.
+
+### Measurement Posture
+
+Build first: structural map implementation remains deferred.
+
+Measure continuously: a later Work Block will carry the structural map evidence if and when implementation is authorised.
+
+Interpret carefully: Work Block 5 avoids normative claims beyond the bounded expansion decision.
+
+Publish only what the evidence can carry: this entry documents the choice, not its execution.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map surface has been implemented;
+- the structural map content has been defined;
+- any runtime behaviour has changed;
+- Sprint 3 has produced Article 3 evidence beyond the recorded decision;
+- HAT, INTEVIA, or any associated method has been validated.
+
+It may claim:
+
+- Sprint 3 has selected the structural map introspection surface as the next expansion vector;
+- the decision is documentation-only, v1.0-bounded, and internal-first;
+- implementation remains deferred to a later authorised Work Block;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> A decision is not an implementation. It is the governed doorway before implementation.
