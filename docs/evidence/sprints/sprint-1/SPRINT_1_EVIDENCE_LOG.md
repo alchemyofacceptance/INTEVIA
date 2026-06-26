@@ -1,4 +1,4 @@
-﻿# INTEVIA Sprint 1 Evidence Log
+# INTEVIA Sprint 1 Evidence Log
 
 Start: 2026-06-25 06:30 BST  
 End: 2026-07-02 06:30 BST  
@@ -261,3 +261,34 @@ The next safest surface remains Human-selected. Current options include:
 **Boundary:** Does not authorise creation of `docs/START_HERE.md`  
 **Forbidden:** No runtime behaviour, no README change, no orientation content, no onboarding claim, no maturity claim, no capability expansion  
 **Keeper:** The public trail should become easier to understand before the system becomes more powerful.
+
+#### Work Block 10 — README Orientation and Public-Surface Threshold
+
+- 2026-06-26 — Added public Sprint 1 repository orientation to `README.md` as part of Work Block 10.
+- Commit: `6de8c19` — `docs: add Sprint 1 repository orientation`.
+- The update introduces a minimal, static overview of the current Sprint 1 organism.
+- It describes only the live governed command surfaces: `heartbeat` and `inspect`.
+- It references the static internal command index at `docs/internal/COMMAND_INDEX.md`.
+- It references the Sprint 1 evidence spine at `docs/evidence/sprints/sprint-1/`.
+- The change is documentation-only.
+- It does not modify runtime behaviour.
+- It does not introduce routing, parsing, discovery, CLI expansion, or command registry changes.
+- It does not describe imagined, planned, or future command surfaces.
+- Verification included UTF-8 inspection, public-surface diff review, EOF cleanup, commit, push, Terminal Echo, and GitHub visual confirmation.
+- Final state: local `main` and `origin/main` aligned at `6de8c19`; working tree clean.
+
+Operational realisation: public-facing text is a threshold surface.
+
+During Work Block 10, README mutation was held until encoding, placement, and diff cleanliness were inspected. This reinforced the use of Velvet Gloves for public-facing language: precise governance, careful language, no overclaim, and no unnecessary harshness.
+
+A second operational improvement was confirmed during Sprint 1: PowerShell inspection scripts now include explicit Terminal Echo landmarks. These landmarks reduce ambiguity in evidence capture by helping the Human anchor copied terminal output from the correct inspection point.
+
+This reduces risk of copy/paste error, wrong echo capture, missing output, narrative reconstruction, terminal ambiguity, and Human cognitive load.
+
+The system did not expand scope. It improved the reliability of inspection and evidence capture inside the existing v1.0 boundary.
+
+Keeper:
+
+> Public text is a threshold surface. The lantern is trimmed before it is raised.
+>
+> The stress did not just test the governance. It improved the instrument.
