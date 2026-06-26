@@ -738,3 +738,102 @@ It may claim:
 Keeper:
 
 > Evidence gives topology something to stand on.
+
+## Work Block 12 - Structural Map Checkpoint
+
+### Context
+
+Sprint 3 Work Blocks 1-11 are complete, pushed, and origin-aligned.
+
+The Sprint 3 structural map surface has now passed through a bounded shaping arc:
+
+- structural map expansion decision;
+- structural map definition stub;
+- structural map content planning;
+- first bounded structural map content entry;
+- text-hygiene correction;
+- second bounded structural map content section;
+- third bounded structural map content section.
+
+The structural map currently contains three bounded content layers:
+
+1. Initial topology categories.
+2. Internal relationships.
+3. Evidence spine integration points.
+
+### Checkpoint
+
+Work Block 12 records a checkpoint on the current state of the Sprint 3 structural map.
+
+No new structural map content is added in this block.
+
+No existing structural map sections are modified in this block.
+
+The checkpoint records that the structural map has reached a stable multi-layer state and is suitable for future bounded expansion if later authorised.
+
+### Current Structural Map State
+
+At this checkpoint, the structural map is:
+
+- documentation-only;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- static;
+- conceptual;
+- non-runtime;
+- non-behavioural.
+
+The map describes topology and relationships without creating mechanisms.
+
+The evidence spine remains the primary record of Work Block progression, verification events, decisions, corrections, boundaries, and keeper lines.
+
+### Constraints
+
+Work Block 12 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: no new content is built in this checkpoint block.
+
+Measure continuously: the evidence log records the checkpoint state.
+
+Interpret carefully: this block seals the current structural map layer state without expanding it.
+
+Publish only what the evidence can carry: Work Block 12 records stability, not completion or validation.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map is complete;
+- no further structural map work is needed;
+- topology has been fully mapped;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated;
+- Article 3 drafting has begun.
+
+It may claim:
+
+- Sprint 3 has checkpointed the current structural map state;
+- the structural map currently contains three bounded content layers;
+- the current map state is stable enough for future governed expansion;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> A map becomes trustworthy when its layers are sealed, not when they are many.
