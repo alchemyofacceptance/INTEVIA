@@ -456,3 +456,29 @@ Operational realisation: closeout initiation is not closure. It is the governed 
 Keeper:
 
 > The spine steps into closure only when the ground is fully prepared. Closeout begins because the repo speaks.
+
+#### Work Block 18 — Evidence Spine Closeout
+
+- 2026-06-26 — Extended the Sprint 1 evidence spine as part of Work Block 18.
+- This entry marks the transition from the closeout-initiation position established in Work Block 17 into the formal closeout phase of Sprint 1.
+- Sprint 1 now carries a coherent, non-recursive arc across Work Blocks 7–17:
+  - bounded command surfaces emerged through `heartbeat` and `inspect`;
+  - the static internal command index was implemented from its prior candidate;
+  - public README orientation was added with public-surface threshold discipline;
+  - checkpoint closure and instrumentation refinement were recorded;
+  - plateau consolidation was reached;
+  - readiness for the next governed Human-selected step was marked without opening a new phase prematurely;
+  - the constitutional spine was consolidated before forward motion;
+  - the pre-closeout marker was recorded without claiming completion;
+  - the closeout-readiness marker was recorded without claiming closure;
+  - the closeout-initiation marker was recorded before formal closeout.
+- The repository remained clean and aligned at the Work Block 17 remote head before this mutation.
+- All updates remain strictly within the v1.0 boundary.
+- No behavioural changes, routing, parsing, command discovery, CLI expansion, or command registry modifications occurred.
+- This entry records continuation of the constitutional spine as Sprint 1 enters governed closeout, marking real ground reached without appetite or expansion.
+
+Operational realisation: closeout is not an ending. It is the governed state in which the evidence spine stands complete enough for Human review.
+
+Keeper:
+
+> Closeout is not an ending. It is the moment the spine stands complete because the repo speaks.
