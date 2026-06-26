@@ -1,4 +1,4 @@
-﻿# Sprint 3 Structural Map
+# Sprint 3 Structural Map
 
 Status: Active structural map surface
 Sprint: Sprint 3

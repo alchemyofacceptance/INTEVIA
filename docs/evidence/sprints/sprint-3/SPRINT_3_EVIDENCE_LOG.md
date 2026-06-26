@@ -484,3 +484,75 @@ It may claim:
 Keeper:
 
 > A surface begins to exist only when its first content appears.
+
+## Work Block 9 - Structural Map Text Hygiene
+
+### Context
+
+Sprint 3 Work Blocks 1-8 are complete, pushed, and origin-aligned.
+
+Work Block 8 created the first bounded structural map content entry and introduced the structural map file:
+
+`docs/surfaces/structural-map/SPRINT_3_STRUCTURAL_MAP.md`
+
+During review, minor text-hygiene issues were identified.
+
+### Mutation
+
+Work Block 9 performs bounded text-hygiene corrections only.
+
+Corrections are limited to spacing, punctuation, or formatting issues, including:
+
+- correcting `andexpansion surfaces` to `and expansion surfaces`;
+- correcting similar spacing-only issues such as `mapcontent` to `map content`, if present.
+
+No new conceptual content is added.
+
+### Constraints
+
+Work Block 9 does not alter the meaning, structure, topology categories, or governance interpretation of the structural map.
+
+It does not authorise:
+
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: only the text surface is corrected.
+
+Measure continuously: repo diff, commit, push, and GitHub visibility remain the verification surfaces.
+
+Interpret carefully: this block records hygiene, not expansion.
+
+Publish only what the evidence can carry: Work Block 9 confirms the surface was cleaned, not extended.
+
+### Boundary
+
+This entry does not claim:
+
+- new structural map content was added;
+- the structural map was expanded;
+- topology was further defined;
+- runtime or behavioural capability changed;
+- HAT, INTEVIA, or any associated method was validated.
+
+It may claim:
+
+- Sprint 3 performed a bounded text-hygiene correction;
+- the structural map surface was cleaned for readability;
+- the evidence log records the correction;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Hygiene protects the surface so the structure can grow.
