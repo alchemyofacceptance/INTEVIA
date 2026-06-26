@@ -1420,3 +1420,108 @@ It may claim:
 Keeper:
 
 > Sealing is the moment a sprint stops being changeable and becomes part of the organism's permanent memory.
+
+## Work Block 19 - Seal-Lock
+
+### Context
+
+Sprint 3 Work Blocks 1-18 are complete, pushed, and origin-aligned.
+
+Work Block 14 initiated the closeout corridor.
+
+Work Block 15 recorded closeout proper.
+
+Work Block 16 recorded closeout-completion posture.
+
+Work Block 17 recorded formal closeout-completion.
+
+Work Block 18 recorded Sprint 3 sealing.
+
+Work Block 19 now records Sprint 3 seal-lock.
+
+### Seal-Lock
+
+Sprint 3 has completed its shaping, consolidation, narrowing, closeout-completion, and sealing sequence.
+
+Seal-lock records the final immutability point of Sprint 3.
+
+After this entry, Sprint 3 is no longer an active mutable sprint.
+
+Its surfaces, evidence spine, structural map shaping arc, closeout corridor, and sealing sequence are recorded as sealed lineage.
+
+No further Sprint 3 Work Blocks remain after seal-lock unless the Human Governor explicitly authorises a correction record under a separate corrective governance lane.
+
+### Seal-Lock State
+
+At seal-lock, Sprint 3 has:
+
+- established its boundary charter;
+- recorded its manifest;
+- identified candidate expansion surfaces;
+- initiated its evidence spine;
+- selected the status surface;
+- recorded continuity-seam recovery and planning;
+- selected the structural map expansion surface;
+- defined the structural map surface;
+- planned structural map content categories;
+- created the first structural map content entry;
+- corrected structural map text hygiene;
+- added relationship and evidence-integration sections;
+- checkpointed and consolidated the structural map shaping arc;
+- entered closeout-initiation;
+- entered closeout proper;
+- recorded closeout-completion posture;
+- recorded closeout-completion;
+- entered sealing;
+- reached seal-lock.
+
+### Constraints
+
+Work Block 19 does not authorise:
+
+- new structural map content;
+- modification of existing structural map sections;
+- new expansion surface selection;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- validation claims;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+### Measurement Posture
+
+Build first: no new structural content is built in this seal-lock block.
+
+Measure continuously: the evidence log records the final seal-lock state.
+
+Interpret carefully: this block records Sprint 3 immutability as sprint lineage, not external validation.
+
+Publish only what the evidence can carry: Work Block 19 confirms Sprint 3 seal-lock, not scientific proof, public claim, or Article 3 completion.
+
+### Boundary
+
+This entry does not claim:
+
+- HAT, INTEVIA, or any associated method was validated;
+- runtime or behavioural capability changed;
+- Article 3 drafting has begun;
+- no future correction record can ever be authorised by the Human Governor;
+- Sprint 1 or Sprint 2 artefacts are reinterpreted.
+
+It may claim:
+
+- Sprint 3 has been seal-locked;
+- Sprint 3 is no longer an active mutable sprint;
+- the Sprint 3 Work Block sequence is complete;
+- the evidence spine records Sprint 3 as sealed lineage;
+- future work should proceed through a new authorised lane, not by extending Sprint 3.
+
+Keeper:
+
+> Seal-lock is the moment a sprint becomes part of the organism's permanent spine - a history that will never move again.
