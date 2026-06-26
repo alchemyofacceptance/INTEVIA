@@ -204,3 +204,95 @@ It may claim:
 Keeper:
 
 > A decision is not an implementation. It is the governed doorway before implementation.
+
+## Work Block 6 - Structural Map Definition Stub
+
+### Context
+
+Sprint 3 Work Blocks 1-5 are complete, pushed, and origin-aligned.
+
+Sprint 3 has established:
+
+- a boundary charter;
+- a manifest;
+- candidate expansion surfaces;
+- an initiated evidence spine;
+- first expansion surface selection: `status`;
+- continuity-seam recovery and planning posture;
+- structural map expansion decision.
+
+Work Block 6 now defines the structural map introspection surface at a documentation-only level before any structural map content is implemented.
+
+### Definition Stub
+
+The structural map introspection surface is a documentation-only surface intended to describe the organism's internal topology conceptually.
+
+At this stage, the surface is defined only as a bounded future documentation surface.
+
+It may later be used to describe relationships between internal documentation surfaces, evidence surfaces, governance surfaces, and sprint artefacts.
+
+Work Block 6 does not populate the structural map, define its final structure, or implement any structural map content.
+
+### Purpose
+
+The purpose of this definition stub is to establish the structural map surface as:
+
+- static;
+- documentation-only;
+- introspective;
+- internal-first;
+- v1.0-bounded;
+- evidence-led;
+- non-runtime;
+- non-behavioural.
+
+The definition stub prepares the ground for later structural map content without prematurely designing or implementing that content.
+
+### Constraints
+
+The structural map introspection surface does not authorise:
+
+- behavioural logic;
+- runtime execution;
+- routing;
+- parsing;
+- discovery;
+- dynamic registration;
+- automation;
+- `src/` mutation;
+- public claim;
+- Article 3 drafting;
+- reinterpretation of Sprint 1 or Sprint 2 artefacts.
+
+The surface remains bounded to documentation-level introspection only.
+
+### Measurement Posture
+
+Build first: implementation remains deferred.
+
+Measure continuously: later Work Blocks must show evidence of any structural map content before it is interpreted.
+
+Interpret carefully: this definition stub names the surface without inflating its meaning.
+
+Publish only what the evidence can carry: Work Block 6 records definition, not implementation or validation.
+
+### Boundary
+
+This entry does not claim:
+
+- the structural map has been built;
+- structural map content exists;
+- the internal topology has been fully described;
+- any runtime or behavioural capability has changed;
+- the structural map validates HAT, INTEVIA, or any associated method.
+
+It may claim:
+
+- Sprint 3 has defined the structural map introspection surface at stub level;
+- the surface is documentation-only and v1.0-bounded;
+- future content remains deferred to later authorised Work Blocks;
+- repo evidence remains the verification surface.
+
+Keeper:
+
+> Definition precedes implementation. A surface must be named before it can be shaped.
