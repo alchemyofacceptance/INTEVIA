@@ -152,3 +152,32 @@ Operational realisation: stillness is not inactivity. It is the organism prepari
 Keeper:
 
 > Stillness is not inactivity — it is the organism preparing to close.
+
+#### Work Block 12 — Closeout Readiness
+
+- 2026-06-26 — Continued the Sprint 2 evidence spine as part of Work Block 12.
+- This entry records Sprint 2 entering closeout-readiness after the final consolidation stillness recorded in Work Block 11.
+- Sprint 2 has completed its bounded documentation-only expansion arc and consolidation arc:
+  - Work Block 1 initiated the Sprint 2 evidence spine;
+  - Work Blocks 2–6 completed the bounded Sprint 2 documentation surfaces;
+  - Work Block 7 recorded expansion consolidation;
+  - Work Blocks 8–11 recorded consolidation continuation, stability, plateau, and final stillness.
+- No new conceptual surfaces are being introduced in this Work Block.
+- No boundary, manifest, candidate-surface, command, introspection, instrumentation, index, primitive, or evidence-spine structure was changed beyond this evidence entry.
+- The completed Sprint 2 surface set remains coherent and aligned:
+  - `status`;
+  - `structural-map`;
+  - `governance-valve`;
+  - `COMMAND_INDEX.md` Sprint 2 extension;
+  - `organismal-mode`.
+- The evidence spine remains aligned with sprint movement and now records closeout-readiness.
+- No governance shift occurred.
+- No behavioural changes, runtime surfaces, routing, parsing, discovery, dynamic registration, telemetry, automation, state mutation, or `src/` mutation occurred.
+- This entry declares closeout-readiness only; it does not declare closeout, sealing, lock, runtime capability, or implementation authority.
+- Sprint 2 remains documentation-only, v1.0-bounded, and aligned with the sealed Sprint 1 lineage.
+
+Operational realisation: readiness is not motion. It is the organism recognising that nothing more must move before closeout can begin.
+
+Keeper:
+
+> Readiness is not motion — it is the organism recognising that nothing more must move.
