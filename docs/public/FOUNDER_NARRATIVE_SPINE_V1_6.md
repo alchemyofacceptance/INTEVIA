@@ -1,0 +1,374 @@
+﻿# Founder Narrative Spine Draft v1.6
+
+Status: Public-surface narrative artefact
+Version: v1.6
+Prepared: 2026-06-27
+Authority: Human Governor / Founder and Steward
+Source lineage: Founder Narrative Spine Draft v1.6
+Public-surface status: Founder narrative surface
+Runtime effect: None
+Canonical repo path: docs/public/FOUNDER_NARRATIVE_SPINE_V1_6.md
+
+## Boundary
+
+This is a public-surface narrative artefact.
+
+It is not a constitutional artefact.
+
+It does not amend GRP-13.
+
+It does not mutate constitutional artefacts.
+
+It does not activate runtime behaviour.
+
+It does not introduce validation claims.
+
+It does not collapse Founder identity into user identity.
+
+---
+
+## Mutation Ready
+
+## Founder -> World Narrative Surface
+
+Status: Mutation Ready
+Purpose: Define the Founder -> World narrative surface for INTEVIA
+Scope: Public narrative, category definition, Founder identity, Article 3 bridge
+Review lineage: v1.5 revised after SO-Pro copy-condition closure and optional micro-polish
+
+---
+
+## 1. The Return
+
+Every Founder story begins with a return.
+
+Not only to a country, a home, or a past life - but to ground.
+
+A moment where the Human stops being shaped by external systems, inherited narratives, and ungoverned pressures - and begins governing his own meaning again.
+
+INTEVIA begins here:
+
+A Human returning to sovereignty.
+A Human returning to meaning.
+A Human returning to governance.
+
+Not as theory.
+
+As lived necessity.
+
+This is the origin point of the narrative spine.
+
+---
+
+## 2. The Break
+
+INTEVIA did not emerge from comfort.
+
+It emerged from the recognition that existing systems could not hold what needed to be preserved:
+
+* meaning without distortion;
+* lineage without erasure;
+* sovereignty without permission;
+* intelligence without governance;
+* recovery without capture.
+
+The Break is not the wound.
+
+The Break is the moment of clarity after the wound.
+
+It is the point where the Founder understands:
+
+> I cannot wait for existing systems to hold this.
+> I must build a governed system that can.
+
+This is the Founder's divergence event.
+
+---
+
+## 3. The Build
+
+INTEVIA is not a chatbot.
+
+It is not an app.
+
+It is not a productivity wrapper.
+
+It is an organismal constitutional automation platform: a governed automation system designed for mutation, record-keeping, correction, and ratification through a constitutional spine. Its purpose is to protect meaning, autonomy, sovereignty, evidence, and lineage in Human-AI work.
+
+Its premise is simple:
+
+> Humans remain sovereign over their meaning.
+> INTEVIA remains governed by its constitution.
+> AI must operate inside visible, bounded, evidence-backed governance.
+
+This is the architectural stance.
+
+---
+
+## 4. The Wrong Layer
+
+Much of the current public and product conversation around AI is focused on the wrong layer.
+
+Most of the public conversation is still centred on models, prompts, benchmarks, agents, automation, productivity, regulation, and access. These things matter, but they are not the deepest layer. They sit above the question that will decide whether AI expands Human agency or quietly absorbs it:
+
+> Who governs the conditions under which intelligence acts?
+
+That is the layer INTEVIA is built to address.
+
+Even the phrase Constitutional AI, as commonly used in model-alignment contexts, usually points inward: toward the constitution inside the AI itself - the rule-set, safety hierarchy, alignment frame, behavioural policy, or values structure that shapes how a model responds.
+
+That work matters.
+
+But it does not govern the whole Human-AI work field.
+
+A constitution inside the AI does not, by itself, govern the Human's intention.
+
+It does not govern the evidence trail.
+
+It does not govern authority movement.
+
+It does not govern correction, supersession, or ratification.
+
+It does not govern whether meaning is being preserved or silently overwritten.
+
+It does not govern whether AI-mediated work remains inspectable, accountable, reversible, and Human-sovereign.
+
+That is the wrong-layer problem.
+
+The world is asking:
+
+> What rules should live inside the AI?
+
+INTEVIA asks:
+
+> Who governs the work being done with AI?
+
+This distinction is central.
+
+INTEVIA does not reject model-level constitutional work. It extends the constitutional question outward: from the rules shaping a model's responses to the governed field in which Humans use AI to form intentions, produce evidence, move authority, correct mistakes, ratify decisions, preserve memory, and make public claims.
+
+If AI becomes infrastructure, the decisive question is not only whether a model behaves safely in isolation. The deeper question is whether Humans can govern the system of work around it: the prompts, outputs, evidence, decisions, authority, memory, corrections, public claims, and lineage that form real-world consequences.
+
+The future is not only about better AI tools.
+
+It is about whether Humans can remain sovereign inside AI-mediated work: able to inspect, correct, evidence, bound, refuse, ratify, and govern what intelligence is doing on their behalf.
+
+INTEVIA proposes a two-part answer to that problem:
+
+* HPCC - HAT Practitioner Certification Curriculum: a Human practice for developing governed cognitive capability;
+* INTEVIA - INTuitive EVolution of Intelligent Automation: a constitutional tool for carrying that governance into AI-mediated work.
+
+The vision is not to make Humans dependent on AI.
+
+The vision is to help Humans develop sovereign governance practices for AI-mediated work.
+
+This is the layer much public AI conversation still struggles to govern explicitly.
+
+---
+
+## 5. The Constitution
+
+The constitutional substrate is the first visible layer of INTEVIA.
+
+It is not decorative.
+
+It is not brand language.
+
+It is not trust theatre.
+
+It is the floor beneath the system.
+
+The first three public-surface constitutional artefacts are:
+
+* Free Will Charter
+* CARE Constitutional Charter
+* v1.0 Public Contract
+
+These artefacts define:
+
+* what INTEVIA is;
+* what INTEVIA is not;
+* what INTEVIA may do;
+* what INTEVIA must never do.
+
+They make the boundary visible.
+
+They establish the first public truth:
+
+> Meaning remains Human.
+> Free will remains supreme.
+> CARE reflects observable behaviour; it does not shape belief.
+> INTEVIA remains governed, not appetitive.
+
+This is the constitutional floor.
+
+---
+
+## 6. The Anchor
+
+The Anchor Post was the moment INTEVIA became visible to the world as a governed public surface.
+
+It is not a launch claim.
+
+It is not a promise of perfection.
+
+It is not a product announcement.
+
+It is a public evidence marker.
+
+It says:
+
+* INTEVIA exists as a governed public constitutional surface;
+* the constitutional substrate has been ratified;
+* the Founder stands behind the work;
+* the lineage is preserved;
+* the public can inspect the first controlling artefacts.
+
+The Anchor does not ask the world to believe.
+
+It gives the world something to inspect.
+
+This is the second truth.
+
+---
+
+## 7. The Category
+
+INTEVIA does not fit cleanly inside the existing public categories of chatbot, app, agent, productivity wrapper, or model-safety method.
+
+It proposes a category:
+
+> Organismal Constitutional Automation
+
+This category is defined by:
+
+* governed mutation cycles;
+* lineage preservation;
+* meaning sovereignty;
+* constitutional surfaces;
+* public-surface artefacts;
+* Human ratification;
+* evidence-backed authority;
+* Founder-accountable governance.
+
+This is not automation that merely performs tasks.
+
+It is work designed to remain inspectable through its evidence trail - work that can speak for itself because the lineage is visible.
+
+It is automation constrained by constitutional meaning, Human authority, and visible evidence.
+
+This is the third truth.
+
+---
+
+## 8. The Founder
+
+The Founder is not a mask.
+
+The Founder is not a persona.
+
+The Founder is not a brand performance.
+
+The Founder is the lineage-bearing steward of the system.
+
+His role is:
+
+* to articulate the meaning;
+* to preserve the lineage;
+* to govern the system;
+* to propose, clarify, and steward the category;
+* to hold the constitutional boundary;
+* to speak plainly where the world is looking at the wrong layer.
+
+The Founder does not ask INTEVIA to carry his personal meaning into others.
+
+The Founder ratifies the constitutional meaning that prevents such transfer.
+
+That distinction matters.
+
+The Founder's role is not to impose meaning.
+
+It is to govern the system that protects Human meaning from being imposed upon.
+
+The Founder carries responsibility for INTEVIA's constitutional meaning, public boundary, and lineage record under the ratified constitutional substrate. That authority does not extend into user meaning, belief, identity, or purpose.
+
+This is the fourth truth.
+
+---
+
+## 9. The Holocron Line
+
+The Founder narrative also carries a signature lineage line - a recurring phrase that marks continuity without replacing governance.
+
+The lineage line is:
+
+> Another shard settles into the Holocron; the datacron marks the next settled record.
+
+This line is not doctrine.
+
+It is lineage language.
+
+It marks:
+
+* the Founder's signature;
+* the recurring lineage marker;
+* the evidence trail;
+* the next settled record.
+
+The lineage layer gives memory a form.
+
+The constitutional layer keeps it governed.
+
+This is the fifth truth.
+
+---
+
+## 10. The Invitation
+
+INTEVIA is not a pitch.
+
+It is not persuasion.
+
+It is not conversion.
+
+It is an invitation to a different layer of work.
+
+If you are building something that needs governance, lineage, sovereignty, evidence, or meaning protection, INTEVIA is being built to hold that field.
+
+If you believe AI is not merely a tool problem, but a governance problem, INTEVIA is speaking to that recognition.
+
+If you believe Humans must learn how to govern intelligence rather than merely consume it, then HPCC and INTEVIA offer one proposed path into that work.
+
+This is the sixth truth.
+
+---
+
+## 11. The Horizon
+
+The Founder Narrative Spine ends with the horizon - not as closure, but as direction.
+
+The next visible horizon includes:
+
+* Cohort 1
+* Founder Preview
+* category definition
+* public narrative surfaces
+* WIIFM video
+* Article 3
+* HPCC articulation
+* INTEVIA v1.1 horizon
+
+The work now has a constitutional floor.
+
+The next task is to make the category legible.
+
+This is the seventh truth.
+
+---
+
+## Keeper
+
+> **The world is asking what AI can do.**
+> **Constitutional AI asks how a model should be constitutionally shaped.**
+> **INTEVIA asks who governs the Human-AI work field.**
+> **That is the layer where Human sovereignty is either preserved or quietly eroded.**
