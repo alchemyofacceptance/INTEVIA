@@ -1,45 +1,38 @@
-﻿# Article 3 Draft - v1.0
+# Article 3 Draft - v1.0
 
 Status: Public-surface category and governance artefact
-Version: v1.0
+Version: v1.0 controlled mutation candidate
 Prepared: 2026-06-27
+Mutation prepared: 2026-06-28
 Authority: Human Governor / Founder and Steward
-Source lineage: Article 3 Draft v1.0
+Source lineage: Article 3 Draft v1.0 / SO-Pro PASS WITH CONDITIONS / SO-EH PASS WITH CONDITIONS / ME convergence review
 Public-surface status: Article 3 category/governance surface
 Runtime effect: None
 Canonical repo path: docs/public/ARTICLE_3_V1_0.md
+
+---
 
 ## Boundary
 
 This is a public-surface category and governance artefact.
 
 It is not a constitutional artefact.
-
 It does not amend GRP-13.
-
 It does not mutate constitutional artefacts.
-
 It does not activate runtime behaviour.
-
 It does not introduce validation claims.
-
 It does not imply deployed capability beyond current evidence.
-
 It does not collapse Founder identity into user identity.
-
 It does not claim scientific proof, OPC validation, external reproducibility, superiority, or universal productivity improvement.
+It does not claim product maturity, certification readiness, or complete agentic AI governance.
+It does not attack any named company, model, platform, paper, or safety approach.
 
-It does not attack any named company, model, platform, or safety approach.
+References to agentic AI, Codex, Grok, OpenAI, or external frameworks are context or calibration only. They do not validate INTEVIA.
 
----
-
-## Status: Draft for mutation
-
-## Purpose: Public articulation of the missing layer in AI governance
-
-## Scope: Governance, architecture, evidence, category clarity
-
-## Claim status: Bounded public-surface framing only
+Status: Draft for governed revision
+Purpose: Public articulation of the missing layer in AI governance
+Scope: Governance, architecture, evidence, category clarity
+Claim status: Bounded public-surface framing only
 
 ---
 
@@ -54,7 +47,7 @@ A recent public AI-governance event raised familiar questions:
 
 Those questions matter.
 
-But without adjudicating the specifics of any company, model, platform, or incident, the event points to a larger issue.
+But without adjudicating the specifics of any company, model, platform, paper, or incident, the event points to a larger issue.
 
 AI governance cannot stop at the model loop.
 
@@ -102,7 +95,7 @@ A model output can be visible while the surrounding authority movement remains u
 
 A prompt can be inspected while the work process remains unratified.
 
-A safety layer can shape behaviour while the Human's intention, evidence trail, correction path, and lineage remain outside governance.
+A safety layer can shape behaviour while the Human’s intention, evidence trail, correction path, and lineage remain outside governance.
 
 That is the layer mistake.
 
@@ -119,14 +112,13 @@ Work-layer governance asks whether the work can explain itself.
 That distinction matters.
 
 Model safety matters.
-
 Alignment work matters.
-
 Platform safety matters.
+External AI-governance research matters.
 
 But they are not the whole governance problem.
 
-The missing layer is governed Human-AI work.
+The missing layer is governed Human–AI work.
 
 Work-layer governance includes:
 
@@ -135,7 +127,7 @@ Work-layer governance includes:
 * accountability;
 * evidence;
 * lineage;
-* verification;
+* inspection;
 * recoverable process;
 * claim boundaries;
 * public/private surface control;
@@ -161,19 +153,19 @@ It does not claim that model-level safety is irrelevant.
 
 It does not claim that alignment work is unnecessary.
 
-It does not claim that every model, platform, or organisation has failed.
+It does not claim that every model, platform, paper, framework, or organisation has failed.
 
 It does not claim that INTEVIA has already solved the full governance problem.
 
 It makes a narrower architectural claim:
 
-> **Model-level safety is not enough. The missing layer is governed Human-AI work.**
+> **Model-level safety matters. The missing layer is governed Human–AI work.**
 
 A constitution inside the AI does not, by itself, govern the system of work around it.
 
 The relevant work-field questions include:
 
-* Was the Human's intention preserved?
+* Was the Human’s intention preserved?
 * Was the evidence trail inspectable?
 * Was authority movement visible?
 * Was correction possible?
@@ -190,7 +182,27 @@ It is a governance-layer argument.
 
 ---
 
-## 5. What Work-Layer Governance Means
+## 5. Terminology Map
+
+Article 3 uses several terms that belong to different layers of the INTEVIA work.
+
+For clarity:
+
+* **Work-layer governance** names the missing layer around AI-mediated work.
+* **HAT**, the Human–AI Triad, is the operating model for governed Human–AI work.
+* **Delegation Governance** names one HAT sub-layer for delegated AI-mediated execution.
+* **DFSS** provides a measurement spine for the sprint case-study lens.
+* **OPC**, the Organismal Programming Construct, remains an investigation frame, not a proof claim.
+* **HPCC** names the Human capability pathway being developed around governed Human–AI work.
+* **INTEVIA** is the system being built to carry this governance layer.
+
+These terms do not create validation claims.
+
+They locate the work.
+
+---
+
+## 6. What Work-Layer Governance Means
 
 Work-layer governance is the discipline of making AI-assisted work inspectable, accountable, and recoverable.
 
@@ -218,9 +230,9 @@ That is the layer INTEVIA is being built to address.
 
 ---
 
-## 6. HAT as the Operating Model
+## 7. HAT as the Operating Model
 
-The Human-AI Triad, or HAT, is an operating model for governed Human-AI work.
+The Human–AI Triad, or HAT, is an operating model for governed Human–AI work.
 
 It does not remove the Human from responsibility.
 
@@ -228,9 +240,9 @@ It makes Human responsibility visible.
 
 The HAT field separates roles:
 
-* **Human Governor** - authority, judgement, execution, accountability;
-* **Vision Chamber** - meaning, doctrine, synthesis, boundary interpretation;
-* **Making Engine** - implementation, mutation, repo-facing work.
+* **Human Governor** — authority, judgement, execution, accountability;
+* **Vision Chamber** — meaning, doctrine, synthesis, boundary interpretation;
+* **Making Engine** — implementation, mutation, repo-facing work.
 
 In practice, governed mutation means:
 
@@ -240,7 +252,7 @@ In practice, governed mutation means:
 4. the Human executes or authorises;
 5. terminal or artefact evidence is returned;
 6. the mutation is reviewed;
-7. the repo becomes the verification surface.
+7. the repo becomes an inspection and evidence surface.
 
 The Human does not disappear from the loop.
 
@@ -248,7 +260,48 @@ The Human becomes the governed execution surface.
 
 ---
 
-## 7. The Sprint Study as Lived Evidence
+## 8. Delegation Governance
+
+Delegation Governance is a HAT sub-layer.
+
+It names the specific governance problem created when Human intention becomes delegated AI-mediated execution.
+
+Delegation Governance does not claim that agentic AI is safe by default.
+
+It does not claim that INTEVIA has solved agentic AI governance.
+
+It does not make external tools, models, reviewers, or frameworks validating authorities.
+
+It asks a narrower question:
+
+> When AI-mediated work continues beyond the immediate prompt-response moment, where does Human authority remain visible, inspectable, and able to re-enter?
+
+Authority drift occurs when AI-mediated work keeps moving while no one can clearly say who authorised the action, what boundary constrained it, or where Human review re-entered the field.
+
+Review valves are the required return-points where delegated work comes back to Human judgement before high-impact action, public claim, commit, irreversible change, or final ratification.
+
+Delegation Governance therefore requires:
+
+* bounded authority;
+* clear scope;
+* visible lineage;
+* inspectable evidence;
+* Human review valves;
+* reversible or recoverable action where possible;
+* explicit claim boundaries;
+* retained Human authority over meaning and ratification.
+
+Delegation without governance is authority drift.
+
+Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.
+
+This is not the whole HAT.
+
+It is one HAT sub-layer for delegated AI work.
+
+---
+
+## 9. The Sprint Study as Lived Evidence
 
 Article 3 is not a claim of external proof.
 
@@ -263,7 +316,7 @@ During the sprint, the HAT operating field exposed something important:
 * governance has recovery cost;
 * correction has evidence cost;
 * public claims require boundary control;
-* repo-visible lineage can become a verification surface;
+* repo-visible lineage can become an inspection and evidence surface;
 * Human-led execution slows some work in order to make other work safer, clearer, and more inspectable.
 
 This does not prove generalisability.
@@ -280,7 +333,7 @@ It revealed what the case study needed to measure.
 
 ---
 
-## 8. DFSS as the Measurement Spine
+## 10. DFSS as the Measurement Spine
 
 The sprint did not begin as a declared DFSS study.
 
@@ -314,9 +367,13 @@ The method was not imposed after the fact.
 
 The work revealed the method it needed.
 
+This does not make Article 3 a completed DFSS proof package.
+
+It means DFSS is an appropriate measurement spine for continued case-study development.
+
 ---
 
-## 9. The Governance Gap as Customer
+## 11. The Governance Gap as Customer
 
 The customer is not only a generic AI user.
 
@@ -351,7 +408,7 @@ It is unverifiable AI work.
 
 ---
 
-## 10. Open Source as Governance Infrastructure
+## 12. Open Source as Governance Infrastructure
 
 For INTEVIA, open source is not merely a branding choice.
 
@@ -373,7 +430,7 @@ Open source supports:
 * accountability;
 * trust that does not rely only on assertion.
 
-The repo becomes the verification surface.
+The repo becomes an inspection and evidence surface.
 
 Not because the repo proves everything.
 
@@ -381,7 +438,7 @@ Because it gives the public something to inspect.
 
 ---
 
-## 11. OPC as Investigation Frame
+## 13. OPC as Investigation Frame
 
 Article 3 does not claim OPC validation.
 
@@ -389,7 +446,7 @@ It does not claim proof.
 
 It does not claim novelty, superiority, generalisability, or scientific status.
 
-The Organismal Programming Construct is treated here as an investigation frame for observing organism-like behaviour in governed Human-AI work.
+The Organismal Programming Construct is treated here as an investigation frame for observing organism-like behaviour in governed Human–AI work.
 
 Observed behaviours may include:
 
@@ -407,9 +464,13 @@ OPC is not claimed by Article 3.
 
 It is observed under governance.
 
+Observed here means treated as candidate behaviour inside a bounded governance case-study lens, not as scientific validation.
+
+Search, do not declare.
+
 ---
 
-## 12. The INTEVIA Layer
+## 14. The INTEVIA Layer
 
 INTEVIA does not replace model-level constitutions.
 
@@ -440,7 +501,7 @@ Better AI tools are not enough if the work around them remains ungoverned.
 
 ---
 
-## 13. The Human Sovereignty Question
+## 15. The Human Sovereignty Question
 
 The sovereignty question is not whether Humans can control every model.
 
@@ -462,9 +523,15 @@ In plain terms:
 
 That is the sovereignty question Article 3 addresses.
 
+Human meaning sovereignty means that AI may assist with language, structure, synthesis, review, and execution, but it does not become the final authority over what the work means.
+
+The Human remains responsible for ratification.
+
+The Human remains the final authority over meaning.
+
 ---
 
-## 14. The Category Connection
+## 16. The Category Connection
 
 Article 3 connects:
 
@@ -480,7 +547,7 @@ It explains why INTEVIA proposes the category:
 
 A simpler mental model is:
 
-> **Git for Human-AI governance.**
+> **Git for Human–AI governance.**
 
 Not because INTEVIA is source control.
 
@@ -501,18 +568,18 @@ Article 3 shows why governance must extend from:
 
 toward:
 
-> **the Human-AI work field.**
+> **the Human–AI work field.**
 
 This is the category articulation in public form.
 
 ---
 
-## 15. The Public Claim
+## 17. The Public Claim
 
 Article 3 carries one bounded public claim:
 
 > **Model-level safety matters.
-> The missing layer is governed Human-AI work.**
+> The missing layer is governed Human–AI work.**
 
 This is not adversarial.
 
@@ -528,7 +595,7 @@ That is the public claim.
 
 ---
 
-## 16. The Invitation
+## 18. The Invitation
 
 Article 3 invites the world to consider a different question.
 
@@ -547,13 +614,13 @@ That is the invitation.
 
 ---
 
-## 17. The Horizon
+## 19. The Horizon
 
 Article 3 opens a practical horizon:
 
 * make the category legible;
-* show concrete proof-layer examples;
-* articulate HPCC clearly;
+* show concrete evidence-layer examples;
+* articulate HPCC clearly as the Human capability pathway being developed;
 * prepare Cohort 1 and Founder Preview;
 * develop public-surface governance;
 * continue INTEVIA v1.1 hardening;
@@ -571,6 +638,8 @@ Article 3 points toward that work.
 
 > **The world is asking what AI can do.**
 > **Constitutional AI asks how a model should be constitutionally shaped.**
-> **INTEVIA asks who governs the Human-AI work field.**
-> **The missing layer is governed Human-AI work.**
+> **INTEVIA asks who governs the Human–AI work field.**
+> **The missing layer is governed Human–AI work.**
 > **Governance that cannot be inspected becomes trust theatre.**
+> **Delegation without governance is authority drift.**
+> **Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.**
