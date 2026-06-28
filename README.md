@@ -2,6 +2,27 @@
 
 *INTEVIA — a governed Human–AI collaboration system for making AI-mediated work inspectable, accountable, and recoverable.*
 
+## Public Surface Statement
+
+INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.
+
+It provides a clear, governed method for working with AI systems so organisations can adopt modern tools with greater confidence, clearer oversight, and stronger accountability.
+
+INTEVIA gives teams a practical way to integrate AI into daily work while maintaining the standards that matter:
+
+* structured workflows;
+* evidence-based decision making;
+* clear oversight;
+* human judgment at key decision points.
+
+As AI becomes embedded in professional work, INTEVIA helps people stay in control. It teaches a repeatable discipline for responsible AI use — one that strengthens professional practice rather than replacing it.
+
+INTEVIA is being built for organisations that want the benefits of AI without losing sight of safety, trust, or quality.
+
+> **This is how professionals learn to govern AI, not just use it.**
+
+---
+
 INTEVIA is being built at the layer where Human intention, AI-supported execution, evidence, authority, correction, lineage, and public claims must remain governable.
 
 The public AI conversation often focuses on the model, the prompt, the output, or the platform. Those layers matter. But real-world AI work also depends on the system of work around the model:
@@ -15,8 +36,8 @@ The public AI conversation often focuses on the model, the prompt, the output, o
 
 INTEVIA addresses this missing layer:
 
-> **Model-level safety matters.
-> The missing layer is governed Human–AI work.**
+> **Model-level safety matters.**
+> **The missing layer is governed Human–AI work.**
 
 This repository contains the early public and technical foundation for INTEVIA v1.0.
 
@@ -39,11 +60,11 @@ The repository has moved beyond minimal scaffold and is now forming a coherent p
 
 The current posture is:
 
-> **v1.0 build formation active.
-> Public surfaces emerging.
-> Runtime seed present.
-> Cohorts not yet launched.
-> Certification not yet active.**
+> **v1.0 build formation active.**
+> **Public surfaces emerging.**
+> **Runtime seed present.**
+> **Cohorts not yet launched.**
+> **Certification not yet active.**
 
 This repository does not claim completed product maturity, scientific validation, certification readiness, or universal productivity improvement.
 
@@ -136,8 +157,8 @@ Authority drift occurs when AI-mediated work keeps moving while no one can clear
 
 Review valves are required return-points where delegated work comes back to Human judgement before high-impact action, public claim, commit, irreversible change, or final ratification.
 
-> **Delegation without governance is authority drift.
-> Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.**
+> **Delegation without governance is authority drift.**
+> **Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.**
 
 Delegation Governance is one HAT sub-layer. It is not the whole model, and it does not claim that agentic AI is safe by default.
 
@@ -331,10 +352,10 @@ The immediate roadmap remains focused on v1.0 formation:
 
 The current sequence is:
 
-> Article 3 names the missing layer.
-> HPCC trains the Human side of the layer.
-> Organism Cohorts test the layer in living fields.
-> INTEVIA v1.0 gives the layer a system to inhabit.
+> **Article 3 names the missing layer.**
+> **HPCC trains the Human side of the layer.**
+> **Organism Cohorts test the layer in living fields.**
+> **INTEVIA v1.0 gives the layer a system to inhabit.**
 
 ---
 
@@ -362,6 +383,8 @@ It is not yet a completed product, active certification body, deployed organisat
 
 ## Keeper
 
+> **INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.**
+> **This is how professionals learn to govern AI, not just use it.**
 > **The world is asking what AI can do.**
 > **Constitutional AI asks how a model should be constitutionally shaped.**
 > **INTEVIA asks who governs the Human–AI work field.**
