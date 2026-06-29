@@ -1,9 +1,13 @@
 # Queue Surface v1.0
 
-Status: v1.0 structural surface  
-Scope: Queue Surface Skeleton / test-case protection  
-Runtime state: Not activated  
-Public-surface posture: Articulation surface, not functional queue system
+Status: v1.0 public documentation surface (non-activating)
+
+Purpose: Define the documentation-only role and boundaries of queue state within
+the INTEVIA v1.0 protective spine. This surface supports Human interpretation
+and external inspectability without activating runtime behaviour, workflow
+logic, routing logic, review logic, audit logic, readiness claims, queue
+sequencing, queue ordering, queue movement, or operational queue-state
+assignment.
 
 ---
 
@@ -85,7 +89,7 @@ The Queue Surface Skeleton is governed by the same authority boundary as the wid
 
 The Human remains the governor.
 
-AI-assisted structures may help describe, organise, inspect, and prepare queue-related data, but they do not authorise queue movement, interpret queue state, prioritise queue items, schedule actions, route review, trigger notifications, trigger CARE workflows, start evidence cadence, move cohorts, or activate runtime behaviour.
+AI-assisted structures may help describe, organise, inspect, and prepare queue-related data, but they do not authorise queue movement, interpret queue state, prioritise queue items, schedule actions, route review, trigger notifications, trigger CARE workflows, start evidence cadence, move queues, move cohorts, or activate runtime behaviour.
 
 The skeleton exists to make later queue governance more inspectable, not to replace governance.
 
@@ -277,8 +281,6 @@ Future v1.1 work may consider:
 None of these are activated by v1.0.
 
 ---
-
-## 16. Keeper
 
 A queue is not movement.
 
