@@ -1,9 +1,13 @@
 # Review Surface v1.0
 
-Status: v1.0 structural surface  
-Scope: Review Surface Skeleton / test-case protection  
-Runtime state: Not activated  
-Public-surface posture: Articulation surface, not functional review system
+Status: v1.0 public documentation surface (non-activating)
+
+Purpose: Define the documentation-only role and boundaries of the Review
+Surface within the INTEVIA v1.0 protective spine. This surface supports
+Human interpretation and external inspectability without activating runtime
+behaviour, workflow logic, routing logic, evaluation logic, decision authority,
+review execution, audit behaviour, readiness claims, or operational
+review-state assignment.
 
 ---
 
