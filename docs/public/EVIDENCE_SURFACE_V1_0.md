@@ -1,9 +1,13 @@
 # Evidence Surface v1.0
 
-Status: v1.0 structural surface  
-Scope: Evidence Surface Skeleton / test-case protection  
-Runtime state: Not activated  
-Public-surface posture: Articulation surface, not functional evidence system
+Status: v1.0 public documentation surface (non-activating)
+
+Purpose: Define the documentation-only role and boundaries of evidence within
+the INTEVIA v1.0 protective spine. This surface supports Human interpretation
+and external inspectability without activating runtime behaviour, workflow
+logic, routing logic, review logic, audit logic, readiness claims, evidence
+verification, evidence validation, compliance checking, audit execution, or
+operational evidence-state assignment.
 
 ---
 
