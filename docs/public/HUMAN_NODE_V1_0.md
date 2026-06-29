@@ -7,6 +7,13 @@ Public-surface posture: Articulation surface, not functional dashboard
 
 ---
 
+## Documentation Boundary
+
+This surface is documentation only. It preserves inspectability and Human
+authority without activating runtime behaviour, product, pilot, certification,
+deployment, workflow, routing, review, audit, or readiness claims.
+
+
 ## 1. Definition
 
 The Human Node Skeleton is the minimal governed structure required to unify an Identity Profile and a Relationship Surface for v1.0 test-case protection.
