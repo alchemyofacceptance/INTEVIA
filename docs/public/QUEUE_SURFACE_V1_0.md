@@ -89,7 +89,7 @@ The Queue Surface Skeleton is governed by the same authority boundary as the wid
 
 The Human remains the governor.
 
-AI-assisted structures may help describe, organise, inspect, and prepare queue-related data, but they do not authorise queue movement, interpret queue state, prioritise queue items, schedule actions, route review, trigger notifications, trigger CARE workflows, start evidence cadence, move queues, move cohorts, or activate runtime behaviour.
+AI-assisted structures may help describe, organise, inspect, and prepare queue-related data, but they do not authorise queue movement, interpret queue state, prioritise queue items, schedule actions, route review, trigger notifications, trigger CARE workflows, start evidence cadence, move cohorts, or activate runtime behaviour.
 
 The skeleton exists to make later queue governance more inspectable, not to replace governance.
 
@@ -281,6 +281,8 @@ Future v1.1 work may consider:
 None of these are activated by v1.0.
 
 ---
+
+## 16. Keeper
 
 A queue is not movement.
 
