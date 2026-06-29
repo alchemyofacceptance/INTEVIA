@@ -1,7 +1,12 @@
 # Identity Profile Skeleton v1.0
 
-Status: v1.0
-Purpose: Define the minimal governed identity structure required for v1.0 test-case protection
+Status: v1.0 public documentation surface (non-activating)
+
+Purpose: Define the documentation-only role and boundaries of the Identity
+Profile within the INTEVIA v1.0 protective spine. This surface supports Human
+interpretation and external inspectability without activating runtime behaviour,
+workflow logic, routing logic, review logic, audit logic, readiness claims, or
+operational identity assignment.
 Surface type: Public articulation surface
 Runtime effect: None
 Cohort effect: None
