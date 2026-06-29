@@ -1,9 +1,12 @@
 # Consent Surface v1.0
 
-Status: v1.0 structural surface  
-Scope: Consent Surface Skeleton / test-case protection  
-Runtime state: Not activated  
-Public-surface posture: Articulation surface, not functional consent system
+Status: v1.0 public documentation surface (non-activating)
+
+Purpose: Define the documentation-only role and boundaries of consent within
+the INTEVIA v1.0 protective spine. This surface supports Human interpretation
+and external inspectability without activating runtime behaviour, workflow
+logic, routing logic, review logic, audit logic, readiness claims, permission
+handling, authority handling, or operational consent-state assignment.
 
 ---
 
