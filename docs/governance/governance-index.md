@@ -50,6 +50,28 @@ System governance may include root-level or future governance folders such as:
 
 Folder placement may evolve as INTEVIA matures.
 
+### 2.4 WB2 Control Outcomes
+
+Sprint 2 / WB2 established additional governance controls for Human-governed AI execution.
+
+These controls strengthen the current Governance Spine by making execution control, external reality anchoring, compression safety, and scaling discipline explicit.
+
+WB2 control outcomes:
+
+- Role Separation Lock — Human authority, structuring, verification, execution, and external truth anchoring must remain distinct.
+- Execution Reality Rule — no execution claim is valid until confirmed by GitHub or an equivalent external reality anchor.
+- STF Mandatory Rule — no valid STF means no authorised G4 mutation.
+- SCF / HOLOCRON Plane Separation — STF controls execution, SCF records confirmed execution, and HOLOCRON traces lineage.
+- Compression Drift Control — compression is valid only when role separation, plane separation, Human authority, and external truth anchoring remain intact.
+- Boundary Recursion Rule — when a boundary is reached, state it once, then route or transfer; repeated refusal language is not valid governance when the next route is known.
+- WB3 Gating Rule — WB3 scaling is earned through observed stability, not assumed from architecture or compression performance.
+- LanesFlow Measurement Rule — LanesFlow measures safe acceleration, not speed alone.
+
+Source evidence:
+
+- docs/evidence/sprints/sprint-2/SPRINT_2_WB2_PIP_PROJECT_SUMMARY_AND_CONTROL_OUTCOMES_20260702.md
+- G4 Read-Only Inspection Report — Governance Spine Content Verification
+
 ---
 
 ## 3. Current Governance Spine
