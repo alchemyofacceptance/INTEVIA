@@ -21,6 +21,8 @@ INTEVIA is being built for organisations that want the benefits of AI without lo
 
 > **This is how professionals learn to govern AI, not just use it.**
 
+> INTEVIA is my contribution to helping this technological race go well. Not because it solves everything, but because it is my attempt to build governance, evidence, human authority, and moral foresight into the structure before acceleration outruns judgement.
+
 ---
 
 INTEVIA is being built at the layer where Human intention, AI-supported execution, evidence, authority, correction, lineage, and public claims must remain governable.
@@ -238,10 +240,6 @@ INTEVIA/
     └── runtime and scaffold verification
 ```
 
-This tree reflects the current public/evidence formation pattern.
-
-It should not be read as a claim that all future modules, runtime behaviours, cohort systems, or training systems are already complete.
-
 ---
 
 ## Current Runtime Seed
@@ -258,31 +256,13 @@ Runtime authority remains v1.0-bounded.
 
 ## Public Surfaces
 
-The `docs/public/` area contains public-safe category and formation artefacts, including surfaces such as:
-
-* Article 3;
-* Founder Narrative;
-* INTEVIA category definition;
-* WIIFM surface;
-* HPCC articulation;
-* cohort formation surfaces;
-* HPCC Level 1–3 formation and evidence surfaces.
-
-These documents help make the emerging category legible.
-
-They are not ratification instruments unless explicitly marked as such.
+The `docs/public/` area contains public-safe category and formation artefacts.
 
 ---
 
 ## Evidence Surfaces
 
-The `docs/evidence/` area records governed sprint activity, formation evidence, and inspection material.
-
-The purpose of evidence is not to inflate claims.
-
-The purpose is to make the work inspectable.
-
-A public claim is stronger when the work behind it can be reconstructed.
+The `docs/evidence/` area records governed sprint activity.
 
 ---
 
@@ -290,105 +270,42 @@ A public claim is stronger when the work behind it can be reconstructed.
 
 INTEVIA is developed through governed mutation.
 
-A governed mutation is a bounded change that preserves:
-
-* Human authority;
-* explicit scope;
-* evidence trail;
-* review path;
-* correction path;
-* lineage;
-* public/private boundary control.
-
-The build process prioritises coherence over speed, and inspectability over output volume.
-
-Fast AI output is not the goal.
-
-Governed Human–AI formation is the goal.
+A governed mutation is a bounded change that preserves Human authority, evidence, lineage, and inspection discipline.
 
 ---
 
 ## Open Source as Governance Infrastructure
 
-For INTEVIA, open source is not merely a branding choice.
-
-It is governance infrastructure.
-
-When governance depends on inspectability, the work layer must expose enough lineage, evidence, and process for the claim to be tested.
-
-The repo becomes an inspection and evidence surface.
-
-Not because the repo proves everything.
-
-Because it gives the public something to inspect.
+For INTEVIA, open source is governance infrastructure.
 
 ---
 
 ## Licensing
 
-The INTEVIA codebase is licensed under the **Apache License 2.0**, enabling open, permissive adoption with a clear patent grant.
-
-See:
-
-* `LICENSE` — Apache License 2.0
-* `NOTICE` — INTEVIA attribution and notices
-
-Governance doctrine, training materials, diagrams, cohort materials, and other non-code artefacts may be governed under separate licensing or usage terms as they mature.
+Apache 2.0.
 
 ---
 
 ## Roadmap
 
-The immediate roadmap remains focused on v1.0 formation:
-
-* complete the governed study;
-* harden the v1.0 build map;
-* stabilise runtime seed;
-* maintain public/evidence surfaces;
-* prepare HPCC cohort logic;
-* prepare Organism Cohort logic;
-* preserve Human meaning sovereignty;
-* avoid premature traction dependency.
-
-The current sequence is:
-
-> **Article 3 names the missing layer.**
-> **HPCC trains the Human side of the layer.**
-> **Organism Cohorts test the layer in living fields.**
-> **INTEVIA v1.0 gives the layer a system to inhabit.**
+v1.0 formation in progress.
 
 ---
 
 ## Contributing
 
-Contribution guidelines will be added once INTEVIA reaches an appropriate public development milestone.
-
-Until then, the repository should be treated as an active governed formation space rather than an open contribution environment.
+Defined later.
 
 ---
 
 ## Disclaimer
 
-This repository contains early public, evidence, and implementation scaffolding for INTEVIA.
-
-It does not contain the full INTEVIA Corpus, all internal governance material, or all meaning-layer material.
-
-Some conceptual architecture, internal models, memory-governance structures, training designs, and cohort materials remain governed and are not fully represented here.
-
-INTEVIA is being built.
-
-It is not yet a completed product, active certification body, deployed organisational operating system, or externally validated scientific framework.
+Not a finished system.
 
 ---
 
 ## Keeper
 
-> **INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.**
-> **This is how professionals learn to govern AI, not just use it.**
-> **The world is asking what AI can do.**
-> **Constitutional AI asks how a model should be constitutionally shaped.**
-> **INTEVIA asks who governs the Human–AI work field.**
-> **The missing layer is governed Human–AI work.**
-> **Governance that cannot be inspected becomes trust theatre.**
-> **Delegation without governance is authority drift.**
-> **Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.**
+> INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.
+> This is how professionals learn to govern AI, not just use it.
+> The missing layer is governed Human–AI work.
