@@ -309,3 +309,5 @@ Not a finished system.
 > INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.
 > This is how professionals learn to govern AI, not just use it.
 > The missing layer is governed Human–AI work.
+
+See `GOVERNANCE_INDEX.md` for inspection-surface metadata.
