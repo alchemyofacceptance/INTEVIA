@@ -256,6 +256,8 @@ Runtime authority remains v1.0-bounded.
 
 ## Public Surfaces
 
+[Whitepaper WHY: Human Judgement in the Age of AI Acceleration](whitepapers/WHITEPAPER_WHY_V2_0_HUMAN_JUDGEMENT_AI_ACCELERATION.md)
+
 The `docs/public/` area contains public-safe category and formation artefacts.
 
 ---
