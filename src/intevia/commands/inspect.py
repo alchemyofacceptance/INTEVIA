@@ -1,5 +1,5 @@
 ﻿def inspect_surfaces() -> str:
-    """Return a static report of visible INTEVIA Sprint 1 surfaces."""
+    """Return a static report of visible INTEVIA implementation surfaces."""
     report = [
         "INTEVIA inspection surface",
         "",

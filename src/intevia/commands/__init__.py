@@ -1,1 +1,1 @@
-﻿# Command surfaces for INTEVIA Sprint 1.
+﻿# Command surfaces for INTEVIA v1.0 implementation.

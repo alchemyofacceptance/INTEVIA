@@ -1,32 +1,32 @@
-﻿"""Governance status surface for INTEVIA Sprint 1."""
+﻿"""Current governance status surface for INTEVIA v1.0 implementation."""
 
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class GovernanceStatus:
-    """Report the current governed sprint context."""
+    """Report the current governed implementation context."""
 
-    sprint: str
+    workstream: str
     status: str
     human_authority: str
     operating_frame: str
 
 
 def current_status() -> GovernanceStatus:
-    """Return the current governed status for the first sprint surface."""
+    """Return the current governed INTEVIA implementation status."""
     return GovernanceStatus(
-        sprint="INTEVIA Sprint 1",
-        status="governed build-study active",
+        workstream="INTEVIA v1.0 Implementation",
+        status="implementation active",
         human_authority="Human Governor retains final authority",
-        operating_frame="Build INTEVIA. Instrument INTEVIA.",
+        operating_frame="Run steadily. Observe consciously. Redesign only from recorded evidence.",
     )
 
 
 def format_status(status: GovernanceStatus) -> str:
     """Return a Human-readable governance status summary."""
     return (
-        f"Sprint: {status.sprint}\n"
+        f"Workstream: {status.workstream}\n"
         f"Status: {status.status}\n"
         f"Authority: {status.human_authority}\n"
         f"Operating frame: {status.operating_frame}"

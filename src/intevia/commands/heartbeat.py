@@ -8,7 +8,7 @@ def heartbeat() -> str:
     status = current_status()
     return (
         f"{breath}\n"
-        f"Sprint: {status.sprint}\n"
+        f"Workstream: {status.workstream}\n"
         f"Status: {status.status}\n"
         f"Authority: {status.human_authority}\n"
         f"Operating frame: {status.operating_frame}"
