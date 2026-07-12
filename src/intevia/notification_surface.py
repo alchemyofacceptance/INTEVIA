@@ -25,9 +25,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from intevia.consent_surface import ConsentSurface
-from intevia.human_node import HumanNode
-from intevia.relationship_surface import NotificationChannel
+from src.intevia.consent_surface import ConsentSurface
+from src.intevia.human_node import HumanNode
+from src.intevia.relationship_surface import NotificationChannel
 
 
 @dataclass(slots=True)

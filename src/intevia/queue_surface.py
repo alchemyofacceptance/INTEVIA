@@ -28,9 +28,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from intevia.consent_surface import ConsentSurface
-from intevia.human_node import HumanNode
-from intevia.notification_surface import NotificationSurface
+from src.intevia.consent_surface import ConsentSurface
+from src.intevia.human_node import HumanNode
+from src.intevia.notification_surface import NotificationSurface
 
 
 class QueueState(str, Enum):

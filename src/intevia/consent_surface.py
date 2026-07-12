@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from intevia.human_node import HumanNode
-from intevia.relationship_surface import ConsentState
+from src.intevia.human_node import HumanNode
+from src.intevia.relationship_surface import ConsentState
 
 
 class ConsentBand(str, Enum):

@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from intevia.identity_profile import IdentityProfile
-from intevia.relationship_surface import (
+from src.intevia.identity_profile import IdentityProfile
+from src.intevia.relationship_surface import (
     CareChannel,
     ConsentState,
     EvidenceChannel,

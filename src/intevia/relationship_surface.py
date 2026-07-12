@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from intevia.identity_profile import IdentityProfile
+from src.intevia.identity_profile import IdentityProfile
 
 
 class RelationshipState(str, Enum):
