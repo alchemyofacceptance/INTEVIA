@@ -13,6 +13,11 @@ from src.intevia.core.contribution import (
     HumanDecision,
     TransitionRecord,
 )
+from src.intevia.observation.journal import (
+    ObservationEntry,
+    ObservationEventKind,
+    ObservationJournal,
+)
 
 
 class ContributionServiceError(Exception):
@@ -35,6 +40,23 @@ class DuplicateContribution(ContributionServiceError):
     """Raised when attempting to create a Contribution with an existing id."""
 
 
+class ObservationEmissionError(ContributionServiceError):
+    """Raised after a governed operation succeeds but observation fails."""
+
+    def __init__(
+        self,
+        *,
+        operation_result: object,
+        event_kind: ObservationEventKind,
+    ) -> None:
+        self.operation_result = operation_result
+        self.event_kind = event_kind
+        super().__init__(
+            "Governed operation completed successfully, but observation "
+            "emission failed; automatic retry may be unsafe."
+        )
+
+
 @dataclass(eq=False)
 class ContributionService:
     """In-memory orchestration surface for Activities and Contributions.
@@ -43,15 +65,35 @@ class ContributionService:
     - Maintain internal, instance-isolated registries; privacy is conventional rather than enforced.
     - Delegate all domain rules to Unit 1 domain objects.
     - Enforce orchestration concerns: canonical keys, duplicate ids, lookup, decision-input mode.
+    - Optionally emit current-process operational observations after successful operations.
 
     The service does not claim exclusive access to domain objects; direct domain use remains
     subject to all Unit 1 invariants.
     """
 
-    _activities: Dict[str, Activity] = field(default_factory=dict, init=False, repr=False)
-    _contributions: Dict[str, Contribution] = field(default_factory=dict, init=False, repr=False)
+    observation_journal: Optional[ObservationJournal] = field(
+        default=None,
+        repr=False,
+    )
+    _activities: Dict[str, Activity] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _contributions: Dict[str, Contribution] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
-    # --- helpers ---------------------------------------------------------
+    def __post_init__(self) -> None:
+        if (
+            self.observation_journal is not None
+            and not isinstance(self.observation_journal, ObservationJournal)
+        ):
+            raise ContributionServiceError(
+                "observation_journal must be an ObservationJournal or None"
+            )
 
     @staticmethod
     def _canonical_id(value: str) -> str:
@@ -64,7 +106,23 @@ class ContributionService:
             raise ContributionServiceError("id cannot be empty or whitespace")
         return canonical
 
-    # --- activity lifecycle ---------------------------------------------
+    def _emit_observation(
+        self,
+        *,
+        entry: ObservationEntry,
+        operation_result: object,
+        event_kind: ObservationEventKind,
+    ) -> None:
+        if self.observation_journal is None:
+            return
+
+        try:
+            self.observation_journal.append(entry)
+        except Exception as exc:
+            raise ObservationEmissionError(
+                operation_result=operation_result,
+                event_kind=event_kind,
+            ) from exc
 
     def create_activity(
         self,
@@ -78,7 +136,6 @@ class ContributionService:
         if activity_id in self._activities:
             raise DuplicateActivity(f"activity {activity_id} already exists")
 
-        # Only treat explicit None as "no timestamp provided"; do not use truthiness.
         if created_at is None:
             activity = Activity(
                 activity_id=activity_id,
@@ -86,7 +143,6 @@ class ContributionService:
                 completion_criteria=completion_criteria,
             )
         else:
-            # Pass supplied datetime through to domain; domain enforces tz and chronology.
             activity = Activity(
                 activity_id=activity_id,
                 title=title,
@@ -95,6 +151,28 @@ class ContributionService:
             )
 
         self._activities[activity_id] = activity
+
+        if self.observation_journal is not None:
+            event_kind = ObservationEventKind.ACTIVITY_CREATED
+            try:
+                entry = ObservationEntry(
+                    event_kind=event_kind,
+                    activity_id=activity.activity_id,
+                    occurred_at=activity.created_at,
+                )
+                self._emit_observation(
+                    entry=entry,
+                    operation_result=activity,
+                    event_kind=event_kind,
+                )
+            except ObservationEmissionError:
+                raise
+            except Exception as exc:
+                raise ObservationEmissionError(
+                    operation_result=activity,
+                    event_kind=event_kind,
+                ) from exc
+
         return activity
 
     def get_activity(self, activity_id: str) -> Activity:
@@ -103,8 +181,6 @@ class ContributionService:
             return self._activities[activity_id]
         except KeyError:
             raise ActivityNotFound(f"activity {activity_id} not found")
-
-    # --- contribution lifecycle -----------------------------------------
 
     def create_contribution(
         self,
@@ -119,7 +195,9 @@ class ContributionService:
         activity_id = self._canonical_id(activity_id)
 
         if contribution_id in self._contributions:
-            raise DuplicateContribution(f"contribution {contribution_id} already exists")
+            raise DuplicateContribution(
+                f"contribution {contribution_id} already exists"
+            )
 
         if activity_id not in self._activities:
             raise ActivityNotFound(f"activity {activity_id} not found")
@@ -143,6 +221,30 @@ class ContributionService:
             )
 
         self._contributions[contribution_id] = contribution
+
+        if self.observation_journal is not None:
+            event_kind = ObservationEventKind.CONTRIBUTION_CREATED
+            try:
+                entry = ObservationEntry(
+                    event_kind=event_kind,
+                    activity_id=contribution.activity_ref.activity_id,
+                    contribution_id=contribution.contribution_id,
+                    actor_ref=contribution.contributor_ref,
+                    occurred_at=contribution.created_at,
+                )
+                self._emit_observation(
+                    entry=entry,
+                    operation_result=contribution,
+                    event_kind=event_kind,
+                )
+            except ObservationEmissionError:
+                raise
+            except Exception as exc:
+                raise ObservationEmissionError(
+                    operation_result=contribution,
+                    event_kind=event_kind,
+                ) from exc
+
         return contribution
 
     def get_contribution(self, contribution_id: str) -> Contribution:
@@ -150,9 +252,9 @@ class ContributionService:
         try:
             return self._contributions[contribution_id]
         except KeyError:
-            raise ContributionNotFound(f"contribution {contribution_id} not found")
-
-    # --- submission and decision orchestration --------------------------
+            raise ContributionNotFound(
+                f"contribution {contribution_id} not found"
+            )
 
     def submit_contribution(
         self,
@@ -163,11 +265,36 @@ class ContributionService:
         canonical_contribution_id = self._canonical_id(contribution_id)
         contribution = self.get_contribution(canonical_contribution_id)
 
-        # Only pass submitted_at if explicitly provided; domain will validate tz and chronology.
         if submitted_at is None:
             transition = contribution.submit()
         else:
             transition = contribution.submit(submitted_at=submitted_at)
+
+        if self.observation_journal is not None:
+            event_kind = ObservationEventKind.CONTRIBUTION_SUBMITTED
+            try:
+                entry = ObservationEntry(
+                    event_kind=event_kind,
+                    activity_id=contribution.activity_ref.activity_id,
+                    contribution_id=contribution.contribution_id,
+                    actor_ref=transition.actor_ref,
+                    prior_state=transition.prior_state.value,
+                    new_state=transition.new_state.value,
+                    occurred_at=transition.timestamp,
+                )
+                self._emit_observation(
+                    entry=entry,
+                    operation_result=transition,
+                    event_kind=event_kind,
+                )
+            except ObservationEmissionError:
+                raise
+            except Exception as exc:
+                raise ObservationEmissionError(
+                    operation_result=transition,
+                    event_kind=event_kind,
+                ) from exc
+
         return transition
 
     def record_human_decision(
@@ -185,26 +312,34 @@ class ContributionService:
         canonical_contribution_id = self._canonical_id(contribution_id)
         contribution = self.get_contribution(canonical_contribution_id)
 
-        # Enforce single input mode
-        primitives_provided = any([human_actor_ref is not None, outcome is not None, reason is not None, decided_at is not None])
+        primitives_provided = any(
+            [
+                human_actor_ref is not None,
+                outcome is not None,
+                reason is not None,
+                decided_at is not None,
+            ]
+        )
         if decision is not None and primitives_provided:
-            raise ContributionServiceError("provide either a pre-built decision or primitive fields, not both")
+            raise ContributionServiceError(
+                "provide either a pre-built decision or primitive fields, not both"
+            )
 
         if decision is None:
-            # primitives mode: require human_actor_ref and outcome
             if human_actor_ref is None or outcome is None:
-                raise ContributionServiceError("either decision or (human_actor_ref and outcome) must be provided")
+                raise ContributionServiceError(
+                    "either decision or (human_actor_ref and outcome) must be provided"
+                )
 
-            # Construct decision bound to the canonical target contribution
             if decided_at is None:
-                decision = HumanDecision(
+                effective_decision = HumanDecision(
                     human_actor_ref=human_actor_ref,
                     contribution_ref=canonical_contribution_id,
                     outcome=outcome,
                     reason=reason,
                 )
             else:
-                decision = HumanDecision(
+                effective_decision = HumanDecision(
                     human_actor_ref=human_actor_ref,
                     contribution_ref=canonical_contribution_id,
                     outcome=outcome,
@@ -212,10 +347,34 @@ class ContributionService:
                     decided_at=decided_at,
                 )
         else:
-            # pre-built decision mode: do not duplicate domain target validation;
-            # delegate target integrity to the domain by passing the decision unchanged.
-            pass
+            effective_decision = decision
 
-        # Delegate to domain; domain enforces self-review, chronology, tz, reasons, etc.
-        transition = contribution.record_human_decision(decision)
+        transition = contribution.record_human_decision(effective_decision)
+
+        if self.observation_journal is not None:
+            event_kind = ObservationEventKind.HUMAN_DECISION_RECORDED
+            try:
+                entry = ObservationEntry(
+                    event_kind=event_kind,
+                    activity_id=contribution.activity_ref.activity_id,
+                    contribution_id=contribution.contribution_id,
+                    actor_ref=transition.actor_ref,
+                    outcome=effective_decision.outcome.value,
+                    prior_state=transition.prior_state.value,
+                    new_state=transition.new_state.value,
+                    occurred_at=transition.timestamp,
+                )
+                self._emit_observation(
+                    entry=entry,
+                    operation_result=transition,
+                    event_kind=event_kind,
+                )
+            except ObservationEmissionError:
+                raise
+            except Exception as exc:
+                raise ObservationEmissionError(
+                    operation_result=transition,
+                    event_kind=event_kind,
+                ) from exc
+
         return transition
