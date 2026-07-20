@@ -781,3 +781,359 @@ class LibraryResourceEvidenceReference(models.Model):
         raise ValidationError(
             "LibraryResourceEvidenceReference cannot be deleted"
         )
+
+
+class Service(models.Model):
+    class State(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        RETIRED = "retired", "Retired"
+
+    service_id = models.CharField(max_length=120, unique=True)
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.DRAFT,
+        db_index=True,
+    )
+    current_version = models.ForeignKey(
+        "ServiceVersion",
+        on_delete=models.PROTECT,
+        related_name="current_for_services",
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="created_services",
+    )
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+    retired_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def clean(self):
+        if (
+            self.current_version_id is not None
+            and self.current_version.service_id != self.pk
+        ):
+            raise ValidationError("current_version must belong to this Service")
+
+    def __str__(self):
+        return self.service_id
+
+
+class ServiceVersion(models.Model):
+    class EnactmentMode(models.TextChoices):
+        EVENT = "event", "Event"
+
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.PROTECT,
+        related_name="versions",
+    )
+    version_number = models.PositiveIntegerField()
+    capability_purpose = models.CharField(max_length=270)
+    domain_intent = models.TextField()
+    description = models.TextField(blank=True)
+    constraints = models.TextField(blank=True)
+    permitted_enactment_mode = models.CharField(
+        max_length=24,
+        choices=EnactmentMode.choices,
+        default=EnactmentMode.EVENT,
+    )
+    predecessor = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="successor",
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="created_service_versions",
+    )
+    created_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("service", "version_number"),
+                name="unique_service_version",
+            ),
+        ]
+
+    def clean(self):
+        if self.predecessor_id is None:
+            if self.version_number != 1:
+                raise ValidationError("an initial Service version must be version 1")
+            return
+        if self.predecessor.service_id != self.service_id:
+            raise ValidationError("predecessor must belong to the same Service")
+        if self.version_number != self.predecessor.version_number + 1:
+            raise ValidationError("Service version lineage must be sequential")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceVersion is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceVersion cannot be deleted")
+
+    def __str__(self):
+        return f"{self.service.service_id}:v{self.version_number}"
+
+
+class ServiceTransition(models.Model):
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    version = models.ForeignKey(
+        ServiceVersion,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    from_state = models.CharField(max_length=24)
+    to_state = models.CharField(max_length=24)
+    command = models.CharField(max_length=48, db_index=True)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="service_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    lineage_reference = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("service", "occurred_at"),
+                name="service_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.version.service_id != self.service_id:
+            raise ValidationError("version must belong to the transition Service")
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.service_id != self.service_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same Service"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceTransition is append-only")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceTransition cannot be deleted")
+
+
+class ServiceEvidenceReference(models.Model):
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    version = models.ForeignKey(
+        ServiceVersion,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    transition = models.ForeignKey(
+        ServiceTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    reference = models.CharField(max_length=255)
+    reference_type = models.CharField(max_length=40, db_index=True)
+    supplied_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="supplied_service_evidence_references",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("service", "reference"),
+                name="unique_service_evidence_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("service", "occurred_at"),
+                name="service_evidence_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.version.service_id != self.service_id:
+            raise ValidationError("version must belong to the evidence Service")
+        if self.transition.service_id != self.service_id:
+            raise ValidationError("transition must belong to the evidence Service")
+        if self.transition.version_id != self.version_id:
+            raise ValidationError(
+                "transition and evidence must reference the same Service version"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceEvidenceReference is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceEvidenceReference cannot be deleted")
+
+
+class LibraryServiceAssociation(models.Model):
+    service_version = models.ForeignKey(
+        ServiceVersion,
+        on_delete=models.PROTECT,
+        related_name="library_associations",
+    )
+    library_resource_version = models.ForeignKey(
+        LibraryResourceVersion,
+        on_delete=models.PROTECT,
+        related_name="service_associations",
+    )
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="library_service_associations",
+    )
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("service_version", "library_resource_version"),
+                name="unique_library_service_association",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("LibraryServiceAssociation is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("LibraryServiceAssociation cannot be deleted")
+
+
+class ServiceEventAssociation(models.Model):
+    service_version = models.ForeignKey(
+        ServiceVersion,
+        on_delete=models.PROTECT,
+        related_name="event_associations",
+    )
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="service_associations",
+    )
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="service_event_associations",
+    )
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("service_version", "event"),
+                name="unique_service_event_association",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceEventAssociation is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceEventAssociation cannot be deleted")
+
+
+class ServiceDeliveryEvidenceReference(models.Model):
+    service_event_association = models.ForeignKey(
+        ServiceEventAssociation,
+        on_delete=models.PROTECT,
+        related_name="delivery_evidence_references",
+    )
+    completed_event_transition = models.ForeignKey(
+        EventTransition,
+        on_delete=models.PROTECT,
+        related_name="service_delivery_evidence_references",
+    )
+    reference = models.CharField(max_length=255)
+    supplied_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="supplied_service_delivery_evidence_references",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("service_event_association", "reference"),
+                name="unique_service_delivery_evidence",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("service_event_association", "occurred_at"),
+                name="service_delivery_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.completed_event_transition.event_id
+            != self.service_event_association.event_id
+        ):
+            raise ValidationError(
+                "completed transition must belong to the associated Event"
+            )
+        if self.completed_event_transition.to_state != Event.State.COMPLETED:
+            raise ValidationError("delivery evidence requires a completed Event")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceDeliveryEvidenceReference is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceDeliveryEvidenceReference cannot be deleted")
