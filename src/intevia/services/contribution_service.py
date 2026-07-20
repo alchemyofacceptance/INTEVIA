@@ -1,380 +1,483 @@
-"""Thin application service for Contribution orchestration (Unit 2)."""
+"""Transactional orchestration for the governed Contribution lifecycle."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Optional
+from uuid import uuid4
 
-from src.intevia.core.activity import Activity
-from src.intevia.core.contribution import (
+from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
+
+from core.models import (
     Contribution,
-    DecisionOutcome,
-    HumanDecision,
-    TransitionRecord,
+    ContributionDecision,
+    ContributionTransition,
+    ContributionVersion,
+    EvidenceReference,
 )
-from src.intevia.observation.journal import (
-    ObservationEntry,
-    ObservationEventKind,
-    ObservationJournal,
-)
+from src.intevia.services.contribution_authority import ContributionAuthority
 
 
 class ContributionServiceError(Exception):
-    """Base service error for orchestration failures."""
+    """Base failure for Contribution orchestration."""
 
 
-class ActivityNotFound(ContributionServiceError):
-    """Raised when an Activity id is unknown to the service."""
+class InvalidContributionTransition(ContributionServiceError):
+    """Raised when a command is invalid for the current lifecycle state."""
 
 
-class ContributionNotFound(ContributionServiceError):
-    """Raised when a Contribution id is unknown to the service."""
+class LegalHoldPreventsErasure(ContributionServiceError):
+    """Raised when protected content is under legal hold."""
 
 
-class DuplicateActivity(ContributionServiceError):
-    """Raised when attempting to create an Activity with an existing id."""
-
-
-class DuplicateContribution(ContributionServiceError):
-    """Raised when attempting to create a Contribution with an existing id."""
-
-
-class ObservationEmissionError(ContributionServiceError):
-    """Raised after a governed operation succeeds but observation fails."""
-
-    def __init__(
-        self,
-        *,
-        operation_result: object,
-        event_kind: ObservationEventKind,
-    ) -> None:
-        self.operation_result = operation_result
-        self.event_kind = event_kind
-        super().__init__(
-            "Governed operation completed successfully, but observation "
-            "emission failed; automatic retry may be unsafe."
-        )
-
-
-@dataclass(eq=False)
 class ContributionService:
-    """In-memory orchestration surface for Activities and Contributions.
+    """Persist authority-gated lifecycle changes and lineage atomically."""
 
-    Responsibilities:
-    - Maintain internal, instance-isolated registries; privacy is conventional rather than enforced.
-    - Delegate all domain rules to Unit 1 domain objects.
-    - Enforce orchestration concerns: canonical keys, duplicate ids, lookup, decision-input mode.
-    - Optionally emit current-process operational observations after successful operations.
-
-    The service does not claim exclusive access to domain objects; direct domain use remains
-    subject to all Unit 1 invariants.
-    """
-
-    observation_journal: Optional[ObservationJournal] = field(
-        default=None,
-        repr=False,
-    )
-    _activities: Dict[str, Activity] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-    )
-    _contributions: Dict[str, Contribution] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-    )
-
-    def __post_init__(self) -> None:
-        if (
-            self.observation_journal is not None
-            and not isinstance(self.observation_journal, ObservationJournal)
-        ):
-            raise ContributionServiceError(
-                "observation_journal must be an ObservationJournal or None"
-            )
+    def __init__(self, *, authority: ContributionAuthority) -> None:
+        if not isinstance(authority, ContributionAuthority):
+            raise TypeError("authority must be a ContributionAuthority")
+        self.authority = authority
 
     @staticmethod
-    def _canonical_id(value: str) -> str:
-        if value is None:
-            raise ContributionServiceError("id cannot be None")
-        if not isinstance(value, str):
-            raise ContributionServiceError("id must be a string")
-        canonical = value.strip()
-        if not canonical:
-            raise ContributionServiceError("id cannot be empty or whitespace")
-        return canonical
+    def _at(value: datetime | None) -> datetime:
+        value = value or timezone.now()
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValidationError("timestamp must be timezone-aware")
+        return value
 
-    def _emit_observation(
-        self,
-        *,
-        entry: ObservationEntry,
-        operation_result: object,
-        event_kind: ObservationEventKind,
-    ) -> None:
-        if self.observation_journal is None:
-            return
+    @staticmethod
+    def _text(value: str, name: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError(f"{name} is required")
+        return value.strip()
 
-        try:
-            self.observation_journal.append(entry)
-        except Exception as exc:
-            raise ObservationEmissionError(
-                operation_result=operation_result,
-                event_kind=event_kind,
-            ) from exc
+    @staticmethod
+    def _locked(contribution_id: str) -> Contribution:
+        return (
+            Contribution.objects.select_for_update()
+            .select_related("contributor", "current_version")
+            .get(contribution_id=contribution_id)
+        )
 
-    def create_activity(
-        self,
-        *,
-        activity_id: str,
-        title: str,
-        completion_criteria: str,
-        created_at: Optional[datetime] = None,
-    ) -> Activity:
-        activity_id = self._canonical_id(activity_id)
-        if activity_id in self._activities:
-            raise DuplicateActivity(f"activity {activity_id} already exists")
-
-        if created_at is None:
-            activity = Activity(
-                activity_id=activity_id,
-                title=title,
-                completion_criteria=completion_criteria,
-            )
-        else:
-            activity = Activity(
-                activity_id=activity_id,
-                title=title,
-                completion_criteria=completion_criteria,
-                created_at=created_at,
+    @staticmethod
+    def _require(contribution: Contribution, *states: str) -> None:
+        if contribution.state not in states:
+            raise InvalidContributionTransition(
+                f"command not permitted from {contribution.state}"
             )
 
-        self._activities[activity_id] = activity
+    def _record_transition(
+        self,
+        *,
+        contribution: Contribution,
+        version: ContributionVersion,
+        prior: str,
+        new: str,
+        command: str,
+        actor,
+        authority_reference: str,
+        occurred_at: datetime,
+    ) -> ContributionTransition:
+        previous = contribution.transitions.order_by("occurred_at", "pk").last()
+        prior = prior.value if hasattr(prior, "value") else prior
+        new = new.value if hasattr(new, "value") else new
+        return ContributionTransition.objects.create(
+            contribution=contribution,
+            version=version,
+            from_state=prior,
+            to_state=new,
+            command=command,
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+            previous_transition=previous,
+            lineage_reference=f"transition:{uuid4()}",
+        )
 
-        if self.observation_journal is not None:
-            event_kind = ObservationEventKind.ACTIVITY_CREATED
-            try:
-                entry = ObservationEntry(
-                    event_kind=event_kind,
-                    activity_id=activity.activity_id,
-                    occurred_at=activity.created_at,
-                )
-                self._emit_observation(
-                    entry=entry,
-                    operation_result=activity,
-                    event_kind=event_kind,
-                )
-            except ObservationEmissionError:
-                raise
-            except Exception as exc:
-                raise ObservationEmissionError(
-                    operation_result=activity,
-                    event_kind=event_kind,
-                ) from exc
+    @staticmethod
+    def _record_evidence(
+        *,
+        contribution: Contribution,
+        version: ContributionVersion,
+        actor,
+        reference: str,
+        reference_type: str,
+        decision: ContributionDecision | None = None,
+    ) -> EvidenceReference:
+        return EvidenceReference.objects.create(
+            contribution=contribution,
+            version=version,
+            decision=decision,
+            reference=ContributionService._text(reference, "evidence_reference"),
+            reference_type=reference_type,
+            added_by=actor,
+        )
 
-        return activity
-
-    def get_activity(self, activity_id: str) -> Activity:
-        activity_id = self._canonical_id(activity_id)
-        try:
-            return self._activities[activity_id]
-        except KeyError:
-            raise ActivityNotFound(f"activity {activity_id} not found")
-
+    @transaction.atomic
     def create_contribution(
         self,
         *,
+        identity: User,
         contribution_id: str,
-        activity_id: str,
-        contributor_ref: str,
         content: str,
-        created_at: Optional[datetime] = None,
+        occurred_at: datetime | None = None,
     ) -> Contribution:
-        contribution_id = self._canonical_id(contribution_id)
-        activity_id = self._canonical_id(activity_id)
-
-        if contribution_id in self._contributions:
-            raise DuplicateContribution(
-                f"contribution {contribution_id} already exists"
-            )
-
-        if activity_id not in self._activities:
-            raise ActivityNotFound(f"activity {activity_id} not found")
-
-        activity = self._activities[activity_id]
-
-        if created_at is None:
-            contribution = Contribution(
-                contribution_id=contribution_id,
-                activity_ref=activity,
-                contributor_ref=contributor_ref,
-                content=content,
-            )
-        else:
-            contribution = Contribution(
-                contribution_id=contribution_id,
-                activity_ref=activity,
-                contributor_ref=contributor_ref,
-                content=content,
-                created_at=created_at,
-            )
-
-        self._contributions[contribution_id] = contribution
-
-        if self.observation_journal is not None:
-            event_kind = ObservationEventKind.CONTRIBUTION_CREATED
-            try:
-                entry = ObservationEntry(
-                    event_kind=event_kind,
-                    activity_id=contribution.activity_ref.activity_id,
-                    contribution_id=contribution.contribution_id,
-                    actor_ref=contribution.contributor_ref,
-                    occurred_at=contribution.created_at,
-                )
-                self._emit_observation(
-                    entry=entry,
-                    operation_result=contribution,
-                    event_kind=event_kind,
-                )
-            except ObservationEmissionError:
-                raise
-            except Exception as exc:
-                raise ObservationEmissionError(
-                    operation_result=contribution,
-                    event_kind=event_kind,
-                ) from exc
-
+        occurred_at = self._at(occurred_at)
+        contribution_id = self._text(contribution_id, "contribution_id")
+        content = self._text(content, "content")
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="create_contribution",
+            target=contribution_id,
+            timestamp=occurred_at,
+        )
+        contribution = Contribution.objects.create(
+            contribution_id=contribution_id,
+            contributor=actor,
+        )
+        version = ContributionVersion.objects.create(
+            contribution=contribution,
+            version_number=1,
+            content=content,
+            created_by=actor,
+        )
+        contribution.current_version = version
+        contribution.full_clean()
+        contribution.save(update_fields=("current_version", "updated_at"))
+        self._record_transition(
+            contribution=contribution,
+            version=version,
+            prior="creation",
+            new=Contribution.State.DRAFT,
+            command="create_contribution",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
         return contribution
 
-    def get_contribution(self, contribution_id: str) -> Contribution:
-        contribution_id = self._canonical_id(contribution_id)
-        try:
-            return self._contributions[contribution_id]
-        except KeyError:
-            raise ContributionNotFound(
-                f"contribution {contribution_id} not found"
-            )
-
-    def submit_contribution(
+    def _move(
         self,
         *,
+        identity: User,
         contribution_id: str,
-        submitted_at: Optional[datetime] = None,
-    ) -> TransitionRecord:
-        canonical_contribution_id = self._canonical_id(contribution_id)
-        contribution = self.get_contribution(canonical_contribution_id)
+        command: str,
+        allowed: tuple[str, ...],
+        new_state: str,
+        occurred_at: datetime | None,
+    ) -> ContributionTransition:
+        occurred_at = self._at(occurred_at)
+        with transaction.atomic():
+            contribution = self._locked(contribution_id)
+            self._require(contribution, *allowed)
+            actor, authority_reference = self.authority.evaluate(
+                identity=identity,
+                action=command,
+                target=contribution,
+                timestamp=occurred_at,
+            )
+            prior = contribution.state
+            contribution.state = new_state
+            contribution.save(update_fields=("state", "updated_at"))
+            return self._record_transition(
+                contribution=contribution,
+                version=contribution.current_version,
+                prior=prior,
+                new=new_state,
+                command=command,
+                actor=actor,
+                authority_reference=authority_reference,
+                occurred_at=occurred_at,
+            )
 
-        if submitted_at is None:
-            transition = contribution.submit()
-        else:
-            transition = contribution.submit(submitted_at=submitted_at)
+    def submit_contribution(self, *, identity: User, contribution_id: str, occurred_at=None):
+        return self._move(
+            identity=identity,
+            contribution_id=contribution_id,
+            command="submit_contribution",
+            allowed=(Contribution.State.DRAFT, Contribution.State.CORRECTION_PENDING_REVIEW),
+            new_state=Contribution.State.SUBMITTED,
+            occurred_at=occurred_at,
+        )
 
-        if self.observation_journal is not None:
-            event_kind = ObservationEventKind.CONTRIBUTION_SUBMITTED
-            try:
-                entry = ObservationEntry(
-                    event_kind=event_kind,
-                    activity_id=contribution.activity_ref.activity_id,
-                    contribution_id=contribution.contribution_id,
-                    actor_ref=transition.actor_ref,
-                    prior_state=transition.prior_state.value,
-                    new_state=transition.new_state.value,
-                    occurred_at=transition.timestamp,
-                )
-                self._emit_observation(
-                    entry=entry,
-                    operation_result=transition,
-                    event_kind=event_kind,
-                )
-            except ObservationEmissionError:
-                raise
-            except Exception as exc:
-                raise ObservationEmissionError(
-                    operation_result=transition,
-                    event_kind=event_kind,
-                ) from exc
+    def begin_review(self, *, identity: User, contribution_id: str, occurred_at=None):
+        return self._move(
+            identity=identity,
+            contribution_id=contribution_id,
+            command="begin_review",
+            allowed=(Contribution.State.SUBMITTED,),
+            new_state=Contribution.State.UNDER_REVIEW,
+            occurred_at=occurred_at,
+        )
 
-        return transition
-
+    @transaction.atomic
     def record_human_decision(
         self,
         *,
+        identity: User,
         contribution_id: str,
-        decision: Optional[HumanDecision] = None,
-        human_actor_ref: Optional[str] = None,
-        outcome: Optional[DecisionOutcome] = None,
-        reason: Optional[str] = None,
-        decided_at: Optional[datetime] = None,
-    ) -> TransitionRecord:
-        """Accept either a pre-built HumanDecision OR primitive fields — never both."""
-
-        canonical_contribution_id = self._canonical_id(contribution_id)
-        contribution = self.get_contribution(canonical_contribution_id)
-
-        primitives_provided = any(
-            [
-                human_actor_ref is not None,
-                outcome is not None,
-                reason is not None,
-                decided_at is not None,
-            ]
+        decision_type: str,
+        evidence_reference: str,
+        rationale_reference: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> ContributionDecision:
+        outcomes = {
+            "accepted": Contribution.State.ACCEPTED,
+            "rejected": Contribution.State.REJECTED,
+        }
+        if decision_type not in outcomes:
+            raise ValidationError("decision_type must be accepted or rejected")
+        occurred_at = self._at(occurred_at)
+        contribution = self._locked(contribution_id)
+        self._require(contribution, Contribution.State.UNDER_REVIEW)
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action=f"{decision_type}_contribution",
+            target=contribution.current_version,
+            timestamp=occurred_at,
         )
-        if decision is not None and primitives_provided:
-            raise ContributionServiceError(
-                "provide either a pre-built decision or primitive fields, not both"
-            )
+        if actor.pk == contribution.contributor_id:
+            raise ValidationError("a contributor cannot decide their own Contribution")
+        decision = ContributionDecision.objects.create(
+            contribution=contribution,
+            version=contribution.current_version,
+            decision_actor=actor,
+            decision_type=decision_type,
+            authority_reference=authority_reference,
+            rationale_reference=rationale_reference,
+            decided_at=occurred_at,
+        )
+        self._record_evidence(
+            contribution=contribution,
+            version=contribution.current_version,
+            actor=actor,
+            reference=evidence_reference,
+            reference_type="decision",
+            decision=decision,
+        )
+        prior = contribution.state
+        contribution.state = outcomes[decision_type]
+        contribution.save(update_fields=("state", "updated_at"))
+        self._record_transition(
+            contribution=contribution,
+            version=contribution.current_version,
+            prior=prior,
+            new=contribution.state,
+            command=f"{decision_type}_contribution",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
+        return decision
 
-        if decision is None:
-            if human_actor_ref is None or outcome is None:
-                raise ContributionServiceError(
-                    "either decision or (human_actor_ref and outcome) must be provided"
-                )
+    @transaction.atomic
+    def request_correction(
+        self, *, identity: User, contribution_id: str, evidence_reference: str, occurred_at=None
+    ) -> ContributionTransition:
+        occurred_at = self._at(occurred_at)
+        contribution = self._locked(contribution_id)
+        self._require(contribution, Contribution.State.ACCEPTED, Contribution.State.REJECTED)
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="request_correction",
+            target=contribution.current_version,
+            timestamp=occurred_at,
+        )
+        self._record_evidence(
+            contribution=contribution,
+            version=contribution.current_version,
+            actor=actor,
+            reference=evidence_reference,
+            reference_type="correction_request",
+        )
+        prior = contribution.state
+        contribution.state = Contribution.State.CORRECTION_REQUESTED
+        contribution.save(update_fields=("state", "updated_at"))
+        return self._record_transition(
+            contribution=contribution,
+            version=contribution.current_version,
+            prior=prior,
+            new=contribution.state,
+            command="request_correction",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
 
-            if decided_at is None:
-                effective_decision = HumanDecision(
-                    human_actor_ref=human_actor_ref,
-                    contribution_ref=canonical_contribution_id,
-                    outcome=outcome,
-                    reason=reason,
-                )
-            else:
-                effective_decision = HumanDecision(
-                    human_actor_ref=human_actor_ref,
-                    contribution_ref=canonical_contribution_id,
-                    outcome=outcome,
-                    reason=reason,
-                    decided_at=decided_at,
-                )
-        else:
-            effective_decision = decision
+    @transaction.atomic
+    def create_correction(
+        self, *, identity: User, contribution_id: str, content: str, occurred_at=None
+    ) -> ContributionVersion:
+        occurred_at = self._at(occurred_at)
+        contribution = self._locked(contribution_id)
+        self._require(contribution, Contribution.State.CORRECTION_REQUESTED)
+        predecessor = ContributionVersion.objects.select_for_update().get(
+            pk=contribution.current_version_id
+        )
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="create_correction",
+            target=predecessor,
+            timestamp=occurred_at,
+        )
+        if actor.pk != contribution.contributor_id:
+            raise ValidationError("only the contributor may create a correction")
+        successor = ContributionVersion.objects.create(
+            contribution=contribution,
+            version_number=predecessor.version_number + 1,
+            content=self._text(content, "content"),
+            supersedes=predecessor,
+            created_by=actor,
+        )
+        predecessor.state = ContributionVersion.State.SUPERSEDED
+        predecessor.save(update_fields=("state",))
+        prior = contribution.state
+        contribution.current_version = successor
+        contribution.state = Contribution.State.CORRECTION_PENDING_REVIEW
+        contribution.save(update_fields=("current_version", "state", "updated_at"))
+        self._record_transition(
+            contribution=contribution,
+            version=successor,
+            prior=prior,
+            new=contribution.state,
+            command="create_correction",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
+        return successor
 
-        transition = contribution.record_human_decision(effective_decision)
+    def withdraw_contribution(self, *, identity: User, contribution_id: str, occurred_at=None):
+        return self._move(
+            identity=identity,
+            contribution_id=contribution_id,
+            command="withdraw_contribution",
+            allowed=(
+                Contribution.State.DRAFT,
+                Contribution.State.SUBMITTED,
+                Contribution.State.UNDER_REVIEW,
+                Contribution.State.CORRECTION_REQUESTED,
+                Contribution.State.CORRECTION_PENDING_REVIEW,
+            ),
+            new_state=Contribution.State.WITHDRAWN,
+            occurred_at=occurred_at,
+        )
 
-        if self.observation_journal is not None:
-            event_kind = ObservationEventKind.HUMAN_DECISION_RECORDED
-            try:
-                entry = ObservationEntry(
-                    event_kind=event_kind,
-                    activity_id=contribution.activity_ref.activity_id,
-                    contribution_id=contribution.contribution_id,
-                    actor_ref=transition.actor_ref,
-                    outcome=effective_decision.outcome.value,
-                    prior_state=transition.prior_state.value,
-                    new_state=transition.new_state.value,
-                    occurred_at=transition.timestamp,
-                )
-                self._emit_observation(
-                    entry=entry,
-                    operation_result=transition,
-                    event_kind=event_kind,
-                )
-            except ObservationEmissionError:
-                raise
-            except Exception as exc:
-                raise ObservationEmissionError(
-                    operation_result=transition,
-                    event_kind=event_kind,
-                ) from exc
+    @transaction.atomic
+    def archive_contribution(
+        self, *, identity: User, contribution_id: str, evidence_reference: str, occurred_at=None
+    ) -> ContributionTransition:
+        occurred_at = self._at(occurred_at)
+        contribution = self._locked(contribution_id)
+        self._require(
+            contribution,
+            Contribution.State.ACCEPTED,
+            Contribution.State.REJECTED,
+            Contribution.State.WITHDRAWN,
+        )
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="archive_contribution",
+            target=contribution,
+            timestamp=occurred_at,
+        )
+        self._record_evidence(
+            contribution=contribution,
+            version=contribution.current_version,
+            actor=actor,
+            reference=evidence_reference,
+            reference_type="archive",
+        )
+        prior = contribution.state
+        contribution.state = Contribution.State.ARCHIVED
+        contribution.archived_at = occurred_at
+        contribution.save(update_fields=("state", "archived_at", "updated_at"))
+        return self._record_transition(
+            contribution=contribution,
+            version=contribution.current_version,
+            prior=prior,
+            new=contribution.state,
+            command="archive_contribution",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
 
-        return transition
+    @transaction.atomic
+    def restrict_content(self, *, identity: User, version_id: int, occurred_at=None):
+        occurred_at = self._at(occurred_at)
+        version = ContributionVersion.objects.select_for_update().select_related(
+            "contribution"
+        ).get(pk=version_id)
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="restrict_content",
+            target=version,
+            timestamp=occurred_at,
+        )
+        if version.state != ContributionVersion.State.CURRENT:
+            raise InvalidContributionTransition("only current content may be restricted")
+        prior = version.state
+        version.state = ContributionVersion.State.RESTRICTED
+        version.restricted_at = occurred_at
+        version.save(update_fields=("state", "restricted_at"))
+        self._record_transition(
+            contribution=version.contribution,
+            version=version,
+            prior=prior,
+            new=version.state,
+            command="restrict_content",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
+        return version
+
+    @transaction.atomic
+    def erase_content(self, *, identity: User, version_id: int, occurred_at=None):
+        occurred_at = self._at(occurred_at)
+        version = ContributionVersion.objects.select_for_update().select_related(
+            "contribution"
+        ).get(pk=version_id)
+        actor, authority_reference = self.authority.evaluate(
+            identity=identity,
+            action="erase_content",
+            target=version,
+            timestamp=occurred_at,
+        )
+        if version.legal_hold:
+            raise LegalHoldPreventsErasure("legal hold prevents erasure")
+        if version.state not in (
+            ContributionVersion.State.CURRENT,
+            ContributionVersion.State.RESTRICTED,
+        ):
+            raise InvalidContributionTransition("content cannot be erased")
+        prior = version.state
+        version.content = None
+        version.attachment_references = []
+        version.state = ContributionVersion.State.ERASED_CONTENT
+        version.erased_at = occurred_at
+        version.save(
+            update_fields=("content", "attachment_references", "state", "erased_at")
+        )
+        self._record_transition(
+            contribution=version.contribution,
+            version=version,
+            prior=prior,
+            new=version.state,
+            command="erase_content",
+            actor=actor,
+            authority_reference=authority_reference,
+            occurred_at=occurred_at,
+        )
+        return version
+
+
+__all__ = [
+    "ContributionService",
+    "ContributionServiceError",
+    "InvalidContributionTransition",
+    "LegalHoldPreventsErasure",
+]

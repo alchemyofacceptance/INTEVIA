@@ -21,33 +21,28 @@ class DemoActivityReviewTests(unittest.TestCase):
         self.assertEqual(exit_code_2, 0)
         self.assertEqual(rendered_1, rendered_2)
 
-        self.assertIn("Activity: activity:demo-review", rendered_1)
-        self.assertIn("Contribution: contribution:demo-001", rendered_1)
-        self.assertIn("Contributor: human:contributor-001", rendered_1)
-        self.assertIn("Reviewer: human:reviewer-001", rendered_1)
-
-        self.assertIn("Flow:", rendered_1)
-        self.assertIn("draft -> submitted -> accepted", rendered_1)
-        self.assertIn("Final state: accepted", rendered_1)
-
-        self.assertIn("Transition history:", rendered_1)
-        self.assertIn("1. draft -> submitted", rendered_1)
-        self.assertIn("2. submitted -> accepted", rendered_1)
-        self.assertIn("Actor: human:contributor-001", rendered_1)
-        self.assertIn("Actor: human:reviewer-001", rendered_1)
-
         self.assertIn(
-            "Timestamp: 2026-07-13T08:30:02+00:00",
+            "Identity: authenticated Django User and Profile",
             rendered_1,
         )
         self.assertIn(
-            "Timestamp: 2026-07-13T08:30:03+00:00",
+            "Authority: role assignment plus entitlement capability",
             rendered_1,
         )
-
-        self.assertIn("Human decision: accepted", rendered_1)
         self.assertIn(
-            "Authority: explicit Human decision recorded",
+            "Attribution: actor strings do not establish authority",
+            rendered_1,
+        )
+        self.assertIn(
+            "draft -> submitted -> under_review -> accepted|rejected",
+            rendered_1,
+        )
+        self.assertIn(
+            "correction_pending_review -> submitted",
+            rendered_1,
+        )
+        self.assertIn(
+            "Every successor version requires a new Human decision.",
             rendered_1,
         )
 
@@ -59,7 +54,7 @@ class DemoActivityReviewTests(unittest.TestCase):
 
         rendered = buffer.getvalue()
         self.assertIn(
-            "INTEVIA v1.0 — Governed Activity Review Demo",
+            "INTEVIA v1.0 — Governed Contribution Lifecycle",
             rendered,
         )
 

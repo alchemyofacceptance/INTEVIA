@@ -18,12 +18,27 @@ class ObservationEventKind(str, Enum):
     CONTRIBUTION_CREATED = "contribution_created"
     CONTRIBUTION_SUBMITTED = "contribution_submitted"
     HUMAN_DECISION_RECORDED = "human_decision_recorded"
+    CONTRIBUTION_TRANSITION_RECORDED = "contribution_transition_recorded"
 
 
 _ALLOWED_STATES = frozenset(
-    {"draft", "submitted", "accepted", "returned", "rejected"}
+    {
+        "draft",
+        "submitted",
+        "under_review",
+        "accepted",
+        "rejected",
+        "correction_requested",
+        "correction_pending_review",
+        "withdrawn",
+        "archived",
+        "current",
+        "superseded",
+        "restricted",
+        "erased_content",
+    }
 )
-_ALLOWED_OUTCOMES = frozenset({"accepted", "returned", "rejected"})
+_ALLOWED_OUTCOMES = frozenset({"accepted", "rejected"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +105,17 @@ class ObservationEntry:
                 "new_state",
             }
             irrelevant_fields = set()
+        elif (
+            self.event_kind
+            is ObservationEventKind.CONTRIBUTION_TRANSITION_RECORDED
+        ):
+            required_fields = {
+                "contribution_id",
+                "actor_ref",
+                "prior_state",
+                "new_state",
+            }
+            irrelevant_fields = {"activity_id", "outcome"}
         else:
             raise InvalidObservationEntry("unhandled observation event kind")
 

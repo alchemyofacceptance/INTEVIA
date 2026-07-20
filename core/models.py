@@ -1,4 +1,6 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.contrib.auth.models import User
 
 # ---------------------------------------------------------
@@ -82,3 +84,303 @@ class ProfileRole(models.Model):
 
     def __str__(self):
         return f"{self.profile} → {self.role}"
+
+
+class Contribution(models.Model):
+    class State(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        UNDER_REVIEW = "under_review", "Under review"
+        ACCEPTED = "accepted", "Accepted"
+        REJECTED = "rejected", "Rejected"
+        CORRECTION_REQUESTED = "correction_requested", "Correction requested"
+        CORRECTION_PENDING_REVIEW = (
+            "correction_pending_review",
+            "Correction pending review",
+        )
+        WITHDRAWN = "withdrawn", "Withdrawn"
+        ARCHIVED = "archived", "Archived"
+
+    contribution_id = models.CharField(max_length=120, unique=True)
+    contributor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="contributions",
+    )
+    state = models.CharField(
+        max_length=32,
+        choices=State.choices,
+        default=State.DRAFT,
+        db_index=True,
+    )
+    current_version = models.ForeignKey(
+        "ContributionVersion",
+        on_delete=models.PROTECT,
+        related_name="current_for_contributions",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def clean(self):
+        if (
+            self.current_version_id is not None
+            and self.current_version.contribution_id != self.pk
+        ):
+            raise ValidationError(
+                "current_version must belong to this Contribution"
+            )
+
+    def __str__(self):
+        return self.contribution_id
+
+
+class ContributionVersion(models.Model):
+    class State(models.TextChoices):
+        CURRENT = "current", "Current"
+        SUPERSEDED = "superseded", "Superseded"
+        RESTRICTED = "restricted", "Restricted"
+        ERASED_CONTENT = "erased_content", "Erased content"
+
+    contribution = models.ForeignKey(
+        Contribution,
+        on_delete=models.PROTECT,
+        related_name="versions",
+    )
+    version_number = models.PositiveIntegerField()
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.CURRENT,
+        db_index=True,
+    )
+    content = models.TextField(null=True, blank=True)
+    attachment_references = models.JSONField(default=list, blank=True)
+    supersedes = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="superseded_by",
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="created_contribution_versions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    restricted_at = models.DateTimeField(null=True, blank=True)
+    erased_at = models.DateTimeField(null=True, blank=True)
+    legal_hold = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("contribution", "version_number"),
+                name="unique_contribution_version_number",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("contribution", "version_number"),
+                name="contrib_version_order_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.supersedes_id is None:
+            return
+        if self.supersedes_id == self.pk:
+            raise ValidationError("a version cannot supersede itself")
+        if self.supersedes.contribution_id != self.contribution_id:
+            raise ValidationError(
+                "supersedes must belong to the same Contribution"
+            )
+
+    def __str__(self):
+        return f"{self.contribution.contribution_id}:v{self.version_number}"
+
+
+class ContributionTransition(models.Model):
+    contribution = models.ForeignKey(
+        Contribution,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    version = models.ForeignKey(
+        ContributionVersion,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+        null=True,
+        blank=True,
+    )
+    from_state = models.CharField(max_length=32)
+    to_state = models.CharField(max_length=32)
+    command = models.CharField(max_length=40, db_index=True)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="contribution_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    lineage_reference = models.CharField(max_length=255)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("contribution", "occurred_at"),
+                name="contrib_transition_time_idx",
+            ),
+            models.Index(
+                fields=("version", "occurred_at"),
+                name="version_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.version_id is not None
+            and self.version.contribution_id != self.contribution_id
+        ):
+            raise ValidationError(
+                "version must belong to the transition Contribution"
+            )
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.contribution_id
+            != self.contribution_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same Contribution"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ContributionTransition is append-only")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ContributionTransition cannot be deleted")
+
+
+class ContributionDecision(models.Model):
+    contribution = models.ForeignKey(
+        Contribution,
+        on_delete=models.PROTECT,
+        related_name="decisions",
+    )
+    version = models.ForeignKey(
+        ContributionVersion,
+        on_delete=models.PROTECT,
+        related_name="decisions",
+    )
+    decision_actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="contribution_decisions",
+    )
+    decision_type = models.CharField(max_length=32, db_index=True)
+    authority_reference = models.CharField(max_length=255)
+    rationale_reference = models.CharField(max_length=255, null=True, blank=True)
+    decided_at = models.DateTimeField(db_index=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("version",),
+                condition=Q(active=True),
+                name="one_active_decision_per_version",
+            ),
+        ]
+
+    def clean(self):
+        if self.version.contribution_id != self.contribution_id:
+            raise ValidationError(
+                "version must belong to the decision Contribution"
+            )
+        if self.decision_actor_id == self.contribution.contributor_id:
+            raise ValidationError(
+                "a contributor cannot decide their own Contribution"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ContributionDecision is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ContributionDecision cannot be deleted")
+
+
+class EvidenceReference(models.Model):
+    contribution = models.ForeignKey(
+        Contribution,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    version = models.ForeignKey(
+        ContributionVersion,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+        null=True,
+        blank=True,
+    )
+    decision = models.ForeignKey(
+        ContributionDecision,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+        null=True,
+        blank=True,
+    )
+    reference = models.CharField(max_length=255)
+    reference_type = models.CharField(max_length=40, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    added_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="added_evidence_references",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("contribution", "reference"),
+                name="unique_contribution_evidence_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("contribution", "created_at"),
+                name="contrib_evidence_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.version_id is not None
+            and self.version.contribution_id != self.contribution_id
+        ):
+            raise ValidationError(
+                "version must belong to the evidence Contribution"
+            )
+        if (
+            self.decision_id is not None
+            and self.decision.contribution_id != self.contribution_id
+        ):
+            raise ValidationError(
+                "decision must belong to the evidence Contribution"
+            )

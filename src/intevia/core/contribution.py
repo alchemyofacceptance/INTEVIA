@@ -26,23 +26,35 @@ class ContributionState(str, Enum):
     """States supported by the first governed Contribution slice."""
     DRAFT = "draft"
     SUBMITTED = "submitted"
+    UNDER_REVIEW = "under_review"
     ACCEPTED = "accepted"
-    RETURNED = "returned"
     REJECTED = "rejected"
+    CORRECTION_REQUESTED = "correction_requested"
+    CORRECTION_PENDING_REVIEW = "correction_pending_review"
+    WITHDRAWN = "withdrawn"
+    ARCHIVED = "archived"
+
+
+class ContributionVersionState(str, Enum):
+    """Privacy-aware states of one immutable Contribution version."""
+
+    CURRENT = "current"
+    SUPERSEDED = "superseded"
+    RESTRICTED = "restricted"
+    ERASED_CONTENT = "erased_content"
 class DecisionOutcome(str, Enum):
     """Human decision outcomes supported by Slice 1."""
     ACCEPTED = "accepted"
-    RETURNED = "returned"
     REJECTED = "rejected"
 class TransitionType(str, Enum):
     """Transition classifications recorded by the domain."""
     SUBMISSION = "submission"
+    REVIEW = "review"
     HUMAN_DECISION = "human_decision"
 OUTCOME_TO_STATE: Final[Mapping[DecisionOutcome, ContributionState]] = (
     MappingProxyType(
         {
             DecisionOutcome.ACCEPTED: ContributionState.ACCEPTED,
-            DecisionOutcome.RETURNED: ContributionState.RETURNED,
             DecisionOutcome.REJECTED: ContributionState.REJECTED,
         }
     )
@@ -114,16 +126,16 @@ class TransitionRecord:
             ),
             (
                 ContributionState.SUBMITTED,
+                ContributionState.UNDER_REVIEW,
+                TransitionType.REVIEW,
+            ),
+            (
+                ContributionState.UNDER_REVIEW,
                 ContributionState.ACCEPTED,
                 TransitionType.HUMAN_DECISION,
             ),
             (
-                ContributionState.SUBMITTED,
-                ContributionState.RETURNED,
-                TransitionType.HUMAN_DECISION,
-            ),
-            (
-                ContributionState.SUBMITTED,
+                ContributionState.UNDER_REVIEW,
                 ContributionState.REJECTED,
                 TransitionType.HUMAN_DECISION,
             ),
@@ -152,10 +164,7 @@ class TransitionRecord:
                 f"({self.transition_type.value}) is not a permitted transition"
             )
         if (
-            self.new_state in {
-                ContributionState.RETURNED,
-                ContributionState.REJECTED,
-            }
+            self.new_state is ContributionState.REJECTED
             and not _optional_reason(self.reason)
         ):
             raise DecisionReasonRequired(
@@ -232,10 +241,7 @@ class HumanDecision:
             ),
         )
         if (
-            self.outcome in {
-                DecisionOutcome.RETURNED,
-                DecisionOutcome.REJECTED,
-            }
+            self.outcome is DecisionOutcome.REJECTED
             and not normalized_reason
         ):
             raise DecisionReasonRequired(
@@ -243,10 +249,7 @@ class HumanDecision:
             )
 @dataclass(frozen=True, eq=False, slots=True)
 class Contribution:
-    """A governed contribution submitted against an Activity.
-    ``RETURNED`` is non-terminal, but resubmission behaviour is deliberately
-    deferred beyond Unit 1.
-    """
+    """A governed contribution submitted against an Activity."""
     contribution_id: str
     activity_ref: Activity
     contributor_ref: str
@@ -366,16 +369,47 @@ class Contribution:
             self._transition_history + (transition,),
         )
         return transition
+    def begin_review(
+        self,
+        *,
+        reviewer_ref: str,
+        reviewed_at: datetime | None = None,
+    ) -> TransitionRecord:
+        """Record that an attributed Human reviewer began review."""
+        if self.state is not ContributionState.SUBMITTED:
+            raise InvalidContributionTransition(
+                f"cannot begin review from {self.state.value}"
+            )
+        if reviewed_at is None:
+            reviewed_at = datetime.now(timezone.utc)
+        effective_time = self._require_non_regressing_time(
+            reviewed_at,
+            field_name="reviewed_at",
+        )
+        transition = TransitionRecord(
+            prior_state=self.state,
+            new_state=ContributionState.UNDER_REVIEW,
+            actor_ref=reviewer_ref,
+            timestamp=effective_time,
+            transition_type=TransitionType.REVIEW,
+        )
+        object.__setattr__(self, "state", ContributionState.UNDER_REVIEW)
+        object.__setattr__(
+            self,
+            "_transition_history",
+            self._transition_history + (transition,),
+        )
+        return transition
     def record_human_decision(
         self,
         decision: HumanDecision,
     ) -> TransitionRecord:
-        """Record an explicit Human decision against a submitted Contribution."""
+        """Record an explicit Human decision after review has begun."""
         if not isinstance(decision, HumanDecision):
             raise ContributionValidationError(
                 "an explicit HumanDecision is required"
             )
-        if self.state is not ContributionState.SUBMITTED:
+        if self.state is not ContributionState.UNDER_REVIEW:
             raise InvalidContributionTransition(
                 f"cannot record a Human decision from {self.state.value}"
             )
@@ -411,6 +445,7 @@ __all__ = [
     "Contribution",
     "ContributionDomainError",
     "ContributionState",
+    "ContributionVersionState",
     "ContributionValidationError",
     "DecisionOutcome",
     "DecisionReasonRequired",
