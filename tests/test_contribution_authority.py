@@ -20,8 +20,10 @@ NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
 class Capability:
     def __init__(self, denied: set[str] | None = None) -> None:
         self.denied = denied or set()
+        self.actions: list[str] = []
 
     def authorise(self, *, identity, action, target, timestamp):
+        self.actions.append(action)
         if action in self.denied:
             return None
         return f"authority:{identity.pk}:{action}"
@@ -129,3 +131,46 @@ class ContributionAuthorityTests(TestCase):
                 evidence_reference="evidence:self-review",
                 occurred_at=NOW,
             )
+
+    def test_denied_decision_persists_no_decision_or_transition(self):
+        contributor, contributor_profile = self.make_identity("contributor")
+        reviewer, reviewer_profile = self.make_identity("reviewer")
+        self.assign_role(contributor_profile)
+        self.assign_role(reviewer_profile)
+        capability = Capability({"accepted_contribution"})
+        service = ContributionService(
+            authority=ContributionAuthority(capability)
+        )
+        contribution = service.create_contribution(
+            identity=contributor,
+            contribution_id="contribution:denied-decision",
+            content="Protected content",
+            occurred_at=NOW,
+        )
+        service.submit_contribution(
+            identity=contributor,
+            contribution_id=contribution.contribution_id,
+            occurred_at=NOW,
+        )
+        service.begin_review(
+            identity=reviewer,
+            contribution_id=contribution.contribution_id,
+            occurred_at=NOW,
+        )
+        decision_count = contribution.decisions.count()
+        transition_count = contribution.transitions.count()
+
+        with self.assertRaises(NotAuthorised):
+            service.record_human_decision(
+                identity=reviewer,
+                contribution_id=contribution.contribution_id,
+                decision_type="accepted",
+                evidence_reference="evidence:denied-decision",
+                occurred_at=NOW,
+            )
+
+        contribution.refresh_from_db()
+        self.assertEqual(capability.actions[-1], "accepted_contribution")
+        self.assertEqual(contribution.decisions.count(), decision_count)
+        self.assertEqual(contribution.transitions.count(), transition_count)
+        self.assertEqual(contribution.state, contribution.State.UNDER_REVIEW)
