@@ -384,3 +384,172 @@ class EvidenceReference(models.Model):
             raise ValidationError(
                 "decision must belong to the evidence Contribution"
             )
+
+
+class Event(models.Model):
+    class State(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+        ARCHIVED = "archived", "Archived"
+
+    event_id = models.CharField(max_length=120, unique=True)
+    title = models.CharField(max_length=270)
+    description = models.TextField(blank=True)
+    owner = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="owned_events",
+    )
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.DRAFT,
+        db_index=True,
+    )
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def __str__(self):
+        return self.event_id
+
+
+class EventTransition(models.Model):
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    from_state = models.CharField(max_length=24)
+    to_state = models.CharField(max_length=24)
+    command = models.CharField(max_length=40, db_index=True)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="event_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    rationale_reference = models.CharField(max_length=255, null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    lineage_reference = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("event", "occurred_at"),
+                name="event_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.event_id != self.event_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same Event"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventTransition is append-only")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventTransition cannot be deleted")
+
+
+class EventParticipation(models.Model):
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="participations",
+    )
+    participant = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="event_participations",
+    )
+    attached_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="attached_event_participations",
+    )
+    authority_reference = models.CharField(max_length=255)
+    attached_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("event", "participant"),
+                name="unique_event_participant",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventParticipation is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventParticipation cannot be deleted")
+
+
+class EventEvidenceReference(models.Model):
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    transition = models.ForeignKey(
+        EventTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    reference = models.CharField(max_length=255)
+    reference_type = models.CharField(max_length=40, db_index=True)
+    supplied_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="supplied_event_evidence_references",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("event", "reference"),
+                name="unique_event_evidence_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("event", "occurred_at"),
+                name="event_evidence_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.transition.event_id != self.event_id:
+            raise ValidationError("transition must belong to the evidence Event")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventEvidenceReference is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventEvidenceReference cannot be deleted")

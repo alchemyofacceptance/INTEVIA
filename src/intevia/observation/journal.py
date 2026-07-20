@@ -19,6 +19,8 @@ class ObservationEventKind(str, Enum):
     CONTRIBUTION_SUBMITTED = "contribution_submitted"
     HUMAN_DECISION_RECORDED = "human_decision_recorded"
     CONTRIBUTION_TRANSITION_RECORDED = "contribution_transition_recorded"
+    EVENT_CREATED = "event_created"
+    EVENT_TRANSITION_RECORDED = "event_transition_recorded"
 
 
 _ALLOWED_STATES = frozenset(
@@ -36,6 +38,9 @@ _ALLOWED_STATES = frozenset(
         "superseded",
         "restricted",
         "erased_content",
+        "published",
+        "active",
+        "completed",
     }
 )
 _ALLOWED_OUTCOMES = frozenset({"accepted", "rejected"})
@@ -47,6 +52,7 @@ class ObservationEntry:
     occurred_at: datetime
     activity_id: str | None = None
     contribution_id: str | None = None
+    event_id: str | None = None
     actor_ref: str | None = None
     outcome: str | None = None
     prior_state: str | None = None
@@ -74,6 +80,7 @@ class ObservationEntry:
             required_fields = {"activity_id"}
             irrelevant_fields = {
                 "contribution_id",
+                "event_id",
                 "actor_ref",
                 "outcome",
                 "prior_state",
@@ -85,7 +92,7 @@ class ObservationEntry:
                 "contribution_id",
                 "actor_ref",
             }
-            irrelevant_fields = {"outcome", "prior_state", "new_state"}
+            irrelevant_fields = {"event_id", "outcome", "prior_state", "new_state"}
         elif self.event_kind is ObservationEventKind.CONTRIBUTION_SUBMITTED:
             required_fields = {
                 "activity_id",
@@ -94,7 +101,7 @@ class ObservationEntry:
                 "prior_state",
                 "new_state",
             }
-            irrelevant_fields = {"outcome"}
+            irrelevant_fields = {"event_id", "outcome"}
         elif self.event_kind is ObservationEventKind.HUMAN_DECISION_RECORDED:
             required_fields = {
                 "activity_id",
@@ -104,7 +111,7 @@ class ObservationEntry:
                 "prior_state",
                 "new_state",
             }
-            irrelevant_fields = set()
+            irrelevant_fields = {"event_id"}
         elif (
             self.event_kind
             is ObservationEventKind.CONTRIBUTION_TRANSITION_RECORDED
@@ -115,14 +122,35 @@ class ObservationEntry:
                 "prior_state",
                 "new_state",
             }
-            irrelevant_fields = {"activity_id", "outcome"}
+            irrelevant_fields = {"activity_id", "event_id", "outcome"}
+        elif self.event_kind is ObservationEventKind.EVENT_CREATED:
+            required_fields = {"event_id", "actor_ref", "new_state"}
+            irrelevant_fields = {
+                "activity_id",
+                "contribution_id",
+                "outcome",
+                "prior_state",
+            }
+        elif self.event_kind is ObservationEventKind.EVENT_TRANSITION_RECORDED:
+            required_fields = {
+                "event_id",
+                "actor_ref",
+                "prior_state",
+                "new_state",
+            }
+            irrelevant_fields = {"activity_id", "contribution_id", "outcome"}
         else:
             raise InvalidObservationEntry("unhandled observation event kind")
 
         for field_name in required_fields:
             value = getattr(self, field_name)
 
-            if field_name in {"activity_id", "contribution_id", "actor_ref"}:
+            if field_name in {
+                "activity_id",
+                "contribution_id",
+                "event_id",
+                "actor_ref",
+            }:
                 if type(value) is not str or not value.strip():
                     raise InvalidObservationEntry(
                         f"{field_name} must be a non-blank plain string"
