@@ -553,3 +553,231 @@ class EventEvidenceReference(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("EventEvidenceReference cannot be deleted")
+
+
+class LibraryResource(models.Model):
+    class State(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        DEPRECATED = "deprecated", "Deprecated"
+        ARCHIVED = "archived", "Archived"
+
+    resource_id = models.CharField(max_length=120, unique=True)
+    created_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="created_library_resources",
+    )
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.DRAFT,
+        db_index=True,
+    )
+    current_version = models.ForeignKey(
+        "LibraryResourceVersion",
+        on_delete=models.PROTECT,
+        related_name="current_for_resources",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    def clean(self):
+        if (
+            self.current_version_id is not None
+            and self.current_version.resource_id != self.pk
+        ):
+            raise ValidationError(
+                "current_version must belong to this LibraryResource"
+            )
+
+    def __str__(self):
+        return self.resource_id
+
+
+class LibraryResourceVersion(models.Model):
+    resource = models.ForeignKey(
+        LibraryResource,
+        on_delete=models.PROTECT,
+        related_name="versions",
+    )
+    version_number = models.PositiveIntegerField()
+    content = models.TextField()
+    predecessor = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="successor",
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="created_library_resource_versions",
+    )
+    created_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("resource", "version_number"),
+                name="unique_library_resource_version",
+            ),
+        ]
+
+    def clean(self):
+        if self.predecessor_id is None:
+            if self.version_number != 1:
+                raise ValidationError("an initial Library version must be version 1")
+            return
+        if self.predecessor.resource_id != self.resource_id:
+            raise ValidationError(
+                "predecessor must belong to the same LibraryResource"
+            )
+        if self.version_number != self.predecessor.version_number + 1:
+            raise ValidationError("Library version lineage must be sequential")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("LibraryResourceVersion is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("LibraryResourceVersion cannot be deleted")
+
+    def __str__(self):
+        return f"{self.resource.resource_id}:v{self.version_number}"
+
+
+class LibraryResourceTransition(models.Model):
+    resource = models.ForeignKey(
+        LibraryResource,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    version = models.ForeignKey(
+        LibraryResourceVersion,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    from_state = models.CharField(max_length=24)
+    to_state = models.CharField(max_length=24)
+    command = models.CharField(max_length=48, db_index=True)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="library_resource_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    rationale_reference = models.CharField(max_length=255, null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    lineage_reference = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("resource", "occurred_at"),
+                name="library_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.version.resource_id != self.resource_id:
+            raise ValidationError(
+                "version must belong to the transition LibraryResource"
+            )
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.resource_id != self.resource_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same LibraryResource"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("LibraryResourceTransition is append-only")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("LibraryResourceTransition cannot be deleted")
+
+
+class LibraryResourceEvidenceReference(models.Model):
+    resource = models.ForeignKey(
+        LibraryResource,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    version = models.ForeignKey(
+        LibraryResourceVersion,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    transition = models.ForeignKey(
+        LibraryResourceTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    reference = models.CharField(max_length=255)
+    reference_type = models.CharField(max_length=40, db_index=True)
+    supplied_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="supplied_library_evidence_references",
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("resource", "reference"),
+                name="unique_library_evidence_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("resource", "occurred_at"),
+                name="library_evidence_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.version.resource_id != self.resource_id:
+            raise ValidationError(
+                "version must belong to the evidence LibraryResource"
+            )
+        if self.transition.resource_id != self.resource_id:
+            raise ValidationError(
+                "transition must belong to the evidence LibraryResource"
+            )
+        if self.transition.version_id != self.version_id:
+            raise ValidationError(
+                "transition and evidence must reference the same Library version"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(
+                "LibraryResourceEvidenceReference is immutable"
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "LibraryResourceEvidenceReference cannot be deleted"
+        )
