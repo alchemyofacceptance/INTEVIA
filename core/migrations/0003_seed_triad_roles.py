@@ -57,7 +57,7 @@ def remove_triad_roles(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0001_initial'),
+        ('core', '0002_role_alter_profile_display_name_profilerole'),
     ]
 
     operations = [
