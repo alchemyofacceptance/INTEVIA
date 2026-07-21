@@ -67,10 +67,8 @@ class LibraryService:
 
     @staticmethod
     def _locked(resource_id: str) -> LibraryResource:
-        return (
-            LibraryResource.objects.select_for_update()
-            .select_related("current_version")
-            .get(resource_id=resource_id)
+        return LibraryResource.objects.select_for_update().get(
+            resource_id=resource_id
         )
 
     @staticmethod

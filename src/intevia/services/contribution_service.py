@@ -55,10 +55,8 @@ class ContributionService:
 
     @staticmethod
     def _locked(contribution_id: str) -> Contribution:
-        return (
-            Contribution.objects.select_for_update()
-            .select_related("contributor", "current_version")
-            .get(contribution_id=contribution_id)
+        return Contribution.objects.select_for_update().get(
+            contribution_id=contribution_id
         )
 
     @staticmethod

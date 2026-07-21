@@ -66,11 +66,7 @@ class GovernedService:
 
     @staticmethod
     def _locked(service_id: str) -> Service:
-        return (
-            Service.objects.select_for_update()
-            .select_related("current_version")
-            .get(service_id=service_id)
-        )
+        return Service.objects.select_for_update().get(service_id=service_id)
 
     @staticmethod
     def _require_current_published(version: ServiceVersion) -> Service:
