@@ -1137,3 +1137,107 @@ class ServiceDeliveryEvidenceReference(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("ServiceDeliveryEvidenceReference cannot be deleted")
+
+
+class CareResponse(models.Model):
+    class TriggerType(models.TextChoices):
+        HUMAN_REQUEST = "human_request", "Human request"
+        GOVERNED_SYSTEM_EVENT = "governed_system_event", "Governed system event"
+
+    class ContextSource(models.TextChoices):
+        HUMAN_DECLARED = "human_declared", "Human declared"
+        EXPLICIT_PREFERENCE = "explicit_preference", "Explicit preference"
+        AUTHORISED_ORGANISM = "authorised_organism", "Authorised organism"
+
+    class OutputType(models.TextChoices):
+        ORIENTATION_GUIDANCE = "orientation_guidance", "Orientation guidance"
+        CLARIFICATION_PROMPT = "clarification_prompt", "Clarification prompt"
+        NEXT_STEP_SUGGESTION = "next_step_suggestion", "Next step suggestion"
+        BOUNDARY_SIGNAL = "boundary_signal", "Boundary signal"
+        HUMAN_DEFERENCE = "human_deference", "Human deference"
+
+    response_id = models.CharField(max_length=120, unique=True)
+    trigger_type = models.CharField(max_length=32, choices=TriggerType.choices)
+    trigger_reference = models.CharField(max_length=255)
+    context_source = models.CharField(max_length=32, choices=ContextSource.choices)
+    context_reference = models.CharField(max_length=255)
+    output_type = models.CharField(
+        max_length=32,
+        choices=OutputType.choices,
+        db_index=True,
+    )
+    content = models.TextField()
+    selection_basis = models.CharField(max_length=255, blank=True)
+    governing_rule_reference = models.CharField(max_length=255, blank=True)
+    selected_library_version = models.ForeignKey(
+        LibraryResourceVersion,
+        on_delete=models.PROTECT,
+        related_name="care_responses",
+        null=True,
+        blank=True,
+    )
+    human_response_reference = models.CharField(max_length=255, blank=True)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="care_responses",
+    )
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=255, db_index=True)
+    predecessor = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="successor",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("lineage_reference", "occurred_at"),
+                name="care_lineage_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.predecessor_id is not None:
+            if self.predecessor_id == self.pk:
+                raise ValidationError("a CARE response cannot precede itself")
+            if self.predecessor.lineage_reference != self.lineage_reference:
+                raise ValidationError(
+                    "predecessor must belong to the same CARE lineage"
+                )
+        has_selection_basis = bool(self.selection_basis)
+        has_governing_rule = bool(self.governing_rule_reference)
+        if has_selection_basis != has_governing_rule:
+            raise ValidationError(
+                "selection basis and governing rule must be recorded together"
+            )
+        if self.selected_library_version_id is None:
+            return
+        resource = LibraryResource.objects.get(
+            pk=self.selected_library_version.resource_id
+        )
+        if (
+            resource.state != LibraryResource.State.PUBLISHED
+            or resource.current_version_id != self.selected_library_version_id
+        ):
+            raise ValidationError(
+                "CARE may surface only the current published Library version"
+            )
+        if not has_selection_basis:
+            raise ValidationError(
+                "a surfaced Library version requires its basis and governing rule"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("CareResponse is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("CareResponse cannot be deleted")
