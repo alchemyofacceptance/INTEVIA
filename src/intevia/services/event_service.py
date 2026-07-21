@@ -28,6 +28,10 @@ class InvalidEventTransition(EventServiceError):
     """Raised when an Event command is invalid for its current state."""
 
 
+class EventParticipationWritesRetired(EventServiceError):
+    """Raised when application code attempts a legacy participation write."""
+
+
 class EventService:
     """Persist authority-gated Event changes and lineage atomically."""
 
@@ -189,23 +193,14 @@ class EventService:
         participant: Profile,
         occurred_at: datetime | None = None,
     ) -> EventParticipation:
-        occurred_at = self._at(occurred_at)
-        event = self._locked(event_id)
-        if not isinstance(participant, Profile):
-            raise ValidationError("participant must be a Profile")
-        actor, authority_reference = self.authority.evaluate(
-            identity=identity,
-            action="attach_event_participant",
-            target=event,
-            timestamp=occurred_at,
-        )
-        return EventParticipation.objects.create(
-            event=event,
-            participant=participant,
-            attached_by=actor,
-            authority_reference=authority_reference,
-            attached_at=occurred_at,
+        raise EventParticipationWritesRetired(
+            "EventParticipation writes are retired; use governed Event registration"
         )
 
 
-__all__ = ["EventService", "EventServiceError", "InvalidEventTransition"]
+__all__ = [
+    "EventParticipationWritesRetired",
+    "EventService",
+    "EventServiceError",
+    "InvalidEventTransition",
+]

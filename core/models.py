@@ -469,6 +469,13 @@ class EventTransition(models.Model):
         raise ValidationError("EventTransition cannot be deleted")
 
 
+class EventParticipationManager(models.Manager):
+    def create(self, **kwargs):
+        raise ValidationError(
+            "EventParticipation writes are retired; use governed Event registration"
+        )
+
+
 class EventParticipation(models.Model):
     event = models.ForeignKey(
         Event,
@@ -497,13 +504,16 @@ class EventParticipation(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        if self.pk is not None:
-            raise ValidationError("EventParticipation is immutable")
-        self.full_clean()
-        return super().save(*args, **kwargs)
+        if self.pk is None:
+            raise ValidationError(
+                "EventParticipation writes are retired; use governed Event registration"
+            )
+        raise ValidationError("EventParticipation is immutable")
 
     def delete(self, *args, **kwargs):
         raise ValidationError("EventParticipation cannot be deleted")
+
+    objects = EventParticipationManager()
 
 
 class EventEvidenceReference(models.Model):
@@ -553,6 +563,261 @@ class EventEvidenceReference(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("EventEvidenceReference cannot be deleted")
+
+
+class EventRegistration(models.Model):
+    """A person-specific Event registration and bounded eligibility receipt.
+
+    The eligibility receipt records what was evaluated at registration time.
+    It does not prove that the complete governing policy can be reconstructed.
+    """
+
+    class State(models.TextChoices):
+        REGISTERED = "registered", "Registered"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class Origin(models.TextChoices):
+        SELF = "self", "Self"
+        THIRD_PARTY = "third_party", "Third party"
+
+    class EligibilityBasisType(models.TextChoices):
+        EVENT_POLICY = "event_policy", "Event policy"
+        AUTHORITY_RULE = "authority_rule", "Authority rule"
+        EVENT_CONFIGURATION = "event_configuration", "Event configuration"
+        OTHER = "other", "Other"
+
+    registration_id = models.CharField(max_length=120, unique=True)
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="registrations",
+    )
+    participant = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="event_registrations",
+    )
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.REGISTERED,
+        db_index=True,
+    )
+    origin = models.CharField(max_length=24, choices=Origin.choices)
+    predecessor = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="successors",
+        null=True,
+        blank=True,
+    )
+    event_state_at_registration = models.CharField(max_length=24)
+    eligibility_policy_reference = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+    eligibility_basis_type = models.CharField(
+        max_length=32,
+        choices=EligibilityBasisType.choices,
+    )
+    eligibility_basis_reference = models.CharField(max_length=255)
+    eligibility_evaluated_at = models.DateTimeField()
+    registered_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("event", "participant"),
+                condition=Q(state="registered"),
+                name="one_active_event_registration",
+            ),
+            models.CheckConstraint(
+                condition=Q(predecessor__isnull=True)
+                | ~Q(pk=models.F("predecessor_id")),
+                name="event_registration_not_self_predecessor",
+            ),
+            models.UniqueConstraint(
+                fields=("predecessor",),
+                condition=Q(predecessor__isnull=False),
+                name="one_event_registration_successor",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("event", "participant", "state"),
+                name="event_reg_lookup_idx",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventRegistration is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventRegistration cannot be deleted")
+
+
+class EventRegistrationTransition(models.Model):
+    class ActionType(models.TextChoices):
+        REGISTER_SELF = "register_self", "Register self"
+        REGISTER_THIRD_PARTY = "register_third_party", "Register third party"
+        CANCEL = "cancel", "Cancel"
+        RE_REGISTER = "re_register", "Re-register"
+
+    class CancellationBasis(models.TextChoices):
+        PARTICIPANT_REQUEST = "participant_request", "Participant request"
+        ACTOR_DECISION = "actor_decision", "Actor decision"
+        EVENT_CHANGE = "event_change", "Event change"
+        ADMINISTRATIVE = "administrative", "Administrative"
+        OTHER = "other", "Other"
+
+    class BasisSource(models.TextChoices):
+        PARTICIPANT_SUPPLIED = "participant_supplied", "Participant supplied"
+        ACTOR_RECORDED = "actor_recorded", "Actor recorded"
+
+    registration = models.ForeignKey(
+        EventRegistration,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    from_state = models.CharField(max_length=24)
+    to_state = models.CharField(max_length=24)
+    action_type = models.CharField(
+        max_length=32,
+        choices=ActionType.choices,
+        db_index=True,
+    )
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="event_registration_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    authority_event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="registration_authority_transitions",
+    )
+    authority_participant = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="registration_authority_subject_transitions",
+    )
+    authority_predecessor = models.ForeignKey(
+        EventRegistration,
+        on_delete=models.PROTECT,
+        related_name="successor_authority_transitions",
+        null=True,
+        blank=True,
+    )
+    authority_evaluated_at = models.DateTimeField()
+    idempotency_key = models.CharField(max_length=120, null=True, blank=True)
+    cancellation_basis = models.CharField(
+        max_length=32,
+        choices=CancellationBasis.choices,
+        blank=True,
+    )
+    basis_source = models.CharField(
+        max_length=32,
+        choices=BasisSource.choices,
+        blank=True,
+    )
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=255, unique=True)
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("actor", "action_type", "idempotency_key"),
+                condition=Q(idempotency_key__isnull=False),
+                name="unique_event_reg_idempotency",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("registration", "occurred_at"),
+                name="event_reg_transition_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.registration_id is not None:
+            if self.authority_event_id != self.registration.event_id:
+                raise ValidationError("authority Event must match registration")
+            if self.authority_participant_id != self.registration.participant_id:
+                raise ValidationError(
+                    "authority participant must match registration participant"
+                )
+            if (
+                self.authority_predecessor_id
+                != self.registration.predecessor_id
+            ):
+                raise ValidationError(
+                    "authority predecessor must match registration predecessor"
+                )
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.registration_id != self.registration_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same registration"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventRegistrationTransition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventRegistrationTransition cannot be deleted")
+
+
+class EventRegistrationEvidenceReference(models.Model):
+    transition = models.ForeignKey(
+        EventRegistrationTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    reference = models.CharField(max_length=255)
+    reference_type = models.CharField(max_length=40, db_index=True)
+    supplied_by = models.ForeignKey(
+        Profile,
+        on_delete=models.PROTECT,
+        related_name="supplied_event_registration_evidence",
+    )
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transition", "reference"),
+                name="unique_event_registration_evidence",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(
+                "EventRegistrationEvidenceReference is immutable"
+            )
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "EventRegistrationEvidenceReference cannot be deleted"
+        )
 
 
 class LibraryResource(models.Model):

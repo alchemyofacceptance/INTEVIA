@@ -10,7 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -73,12 +76,43 @@ WSGI_APPLICATION = 'intevia.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+if os.environ.get("INTEVIA_DATABASE_ENGINE") == "postgresql":
+    required_database_settings = {
+        "NAME": "INTEVIA_POSTGRES_DB",
+        "USER": "INTEVIA_POSTGRES_USER",
+        "PASSWORD": "INTEVIA_POSTGRES_PASSWORD",
     }
-}
+    missing_database_settings = [
+        environment_name
+        for environment_name in required_database_settings.values()
+        if not os.environ.get(environment_name)
+    ]
+    if missing_database_settings:
+        raise ImproperlyConfigured(
+            "PostgreSQL selection requires: "
+            + ", ".join(missing_database_settings)
+        )
+    database_config = {
+        "ENGINE": "django.db.backends.postgresql",
+        **{
+            setting_name: os.environ[environment_name]
+            for setting_name, environment_name in required_database_settings.items()
+        },
+        "HOST": os.environ.get("INTEVIA_POSTGRES_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("INTEVIA_POSTGRES_PORT", "5432"),
+    }
+    if os.environ.get("INTEVIA_POSTGRES_TEST_DB"):
+        database_config["TEST"] = {
+            "NAME": os.environ["INTEVIA_POSTGRES_TEST_DB"]
+        }
+    DATABASES = {"default": database_config}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Password validation
