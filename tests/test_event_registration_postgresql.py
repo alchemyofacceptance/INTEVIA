@@ -11,7 +11,7 @@ from core.models import (
     Event,
     EventRegistration,
     EventRegistrationTransition,
-    Profile,
+    Identity,
     ProfileRole,
     Role,
 )
@@ -41,12 +41,12 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(username="postgres-registration")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(
             pk=1_000_000,
             name="PostgreSQL registration actor",
         )
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.event = Event.objects.create(
             event_id="event:postgres-registration",
             title="PostgreSQL registration",
@@ -64,7 +64,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
             close_old_connections()
             try:
                 user = User.objects.get(pk=self.user.pk)
-                participant = Profile.objects.get(pk=self.profile.pk)
+                participant = Identity.objects.get(pk=self.profile.pk)
                 service = EventRegistrationService(
                     authority=ContributionAuthority(Capability())
                 )
@@ -119,7 +119,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
             close_old_connections()
             try:
                 user = User.objects.get(pk=self.user.pk)
-                participant = Profile.objects.get(pk=self.profile.pk)
+                participant = Identity.objects.get(pk=self.profile.pk)
                 service = EventRegistrationService(
                     authority=ContributionAuthority(Capability())
                 )
@@ -279,7 +279,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
                     identity=User.objects.get(pk=self.user.pk),
                     registration_id="registration:cancel-race:successor",
                     event_id=self.event.event_id,
-                    participant=Profile.objects.get(pk=self.profile.pk),
+                    participant=Identity.objects.get(pk=self.profile.pk),
                     evidence_reference="evidence:cancel-race:successor",
                     eligibility_basis_type=(
                         EventRegistration.EligibilityBasisType.EVENT_CONFIGURATION
@@ -375,7 +375,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
             )
         finally:
             executor = MigrationExecutor(connection)
-            executor.migrate([("core", "0010_event_registration_foundation")])
+            executor.migrate([("core", "0013_s007_identity_constraints")])
         self.assertIn(
             "core_eventregistration",
             connection.introspection.table_names(),

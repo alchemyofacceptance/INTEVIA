@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from core.models import Event, Profile, ProfileRole, Role
+from core.models import Event, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
     NotAuthorised,
@@ -27,10 +27,10 @@ class Capability:
 class EventAuthorityTests(TestCase):
     def identity(self, name, *, with_role=True):
         user = User.objects.create_user(username=name)
-        profile = Profile.objects.create(user=user)
+        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
         if with_role:
             role, _ = Role.objects.get_or_create(name="Event participant")
-            ProfileRole.objects.create(profile=profile, role=role)
+            ProfileRole.objects.create(identity=profile, role=role)
         return user, profile
 
     def test_existing_capability_contract_authorises_event_creation(self):

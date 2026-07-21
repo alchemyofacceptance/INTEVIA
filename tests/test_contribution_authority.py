@@ -6,7 +6,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from core.models import Profile, ProfileRole, Role
+from core.models import Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
     NotAuthorised,
@@ -32,12 +32,12 @@ class Capability:
 class ContributionAuthorityTests(TestCase):
     def make_identity(self, name: str, *, active: bool = True):
         user = User.objects.create_user(username=name, is_active=active)
-        profile = Profile.objects.create(user=user, display_name=name)
+        profile = Identity.objects.create(credential=user, display_name=name, access_state=Identity.AccessState.ACTIVE)
         return user, profile
 
-    def assign_role(self, profile: Profile) -> None:
+    def assign_role(self, profile: Identity) -> None:
         role, _ = Role.objects.get_or_create(name="Slice 001 participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
 
     def test_unknown_or_inactive_identity_is_rejected(self):
         authority = ContributionAuthority(Capability())

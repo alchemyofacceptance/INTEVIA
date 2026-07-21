@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from core.models import (
-    Profile,
+    Identity,
     ProfileRole,
     Role,
     Service,
@@ -35,9 +35,9 @@ class Capability:
 class ServiceDeliveryEvidenceTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="service-delivery-owner")
-        profile = Profile.objects.create(user=self.user)
+        profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Service delivery participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         authority = ContributionAuthority(Capability())
         self.foundation = GovernedService(authority=authority)
         self.events = EventService(authority=authority)

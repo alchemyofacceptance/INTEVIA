@@ -15,7 +15,7 @@ from core.models import (
     EventEvidenceReference,
     EventParticipation,
     EventTransition,
-    Profile,
+    Identity,
 )
 from src.intevia.services.contribution_authority import ContributionAuthority
 
@@ -71,7 +71,7 @@ class EventService:
         prior: str,
         new: str,
         command: str,
-        actor: Profile,
+        actor: Identity,
         authority_reference: str,
         occurred_at: datetime,
         rationale_reference: str | None = None,
@@ -190,7 +190,7 @@ class EventService:
         *,
         identity: User,
         event_id: str,
-        participant: Profile,
+        participant: Identity,
         occurred_at: datetime | None = None,
     ) -> EventParticipation:
         raise EventParticipationWritesRetired(

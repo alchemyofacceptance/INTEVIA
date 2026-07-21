@@ -16,7 +16,7 @@ from core.models import (
     EventRegistration,
     EventRegistrationEvidenceReference,
     EventRegistrationTransition,
-    Profile,
+    Identity,
     ProfileRole,
 )
 from src.intevia.services.contribution_authority import (
@@ -60,7 +60,7 @@ class IdempotencyConflict(EventRegistrationError):
 @dataclass(frozen=True, slots=True)
 class EventRegistrationAuthorityTarget:
     event: Event
-    participant: Profile
+    participant: Identity
     predecessor: EventRegistration | None
     origin: str
     acknowledgement_required: bool
@@ -96,16 +96,18 @@ class EventRegistrationService:
         return value
 
     @staticmethod
-    def _replay_actor(identity: User) -> Profile:
+    def _replay_actor(identity: User) -> Identity:
         if not isinstance(identity, User) or not identity.is_active:
             raise NotAuthorised("an active Django identity is required")
         try:
-            actor = Profile.objects.get(user=identity)
-        except (Profile.DoesNotExist, Profile.MultipleObjectsReturned) as exc:
+            actor = Identity.objects.get(credential=identity)
+        except (Identity.DoesNotExist, Identity.MultipleObjectsReturned) as exc:
             raise NotAuthorised(
-                "identity must resolve to exactly one Profile"
+                "credential must resolve to exactly one Identity"
             ) from exc
-        if not ProfileRole.objects.filter(profile=actor).exists():
+        if actor.access_state != Identity.AccessState.ACTIVE:
+            raise NotAuthorised("an active Identity is required")
+        if not ProfileRole.objects.filter(identity=actor).exists():
             raise NotAuthorised("an active role assignment is required")
         return actor
 
@@ -130,7 +132,7 @@ class EventRegistrationService:
     @staticmethod
     def _replay(
         *,
-        actor: Profile,
+        actor: Identity,
         action_type: str,
         idempotency_key: str | None,
         event_id: int,
@@ -167,7 +169,7 @@ class EventRegistrationService:
         transition: EventRegistrationTransition,
         reference: str,
         reference_type: str,
-        actor: Profile,
+        actor: Identity,
         occurred_at: datetime,
     ) -> EventRegistrationEvidenceReference:
         return EventRegistrationEvidenceReference.objects.create(
@@ -185,7 +187,7 @@ class EventRegistrationService:
         identity: User,
         registration_id: str,
         event_id: str,
-        participant: Profile,
+        participant: Identity,
         evidence_reference: str,
         eligibility_basis_type: str,
         eligibility_basis_reference: str,
@@ -214,8 +216,8 @@ class EventRegistrationService:
             if idempotency_key is not None
             else None
         )
-        if not isinstance(participant, Profile) or participant.pk is None:
-            raise ValidationError("participant must be a persisted Profile")
+        if not isinstance(participant, Identity) or participant.pk is None:
+            raise ValidationError("participant must be a persisted Identity")
         actor = self._replay_actor(identity)
         origin = (
             EventRegistration.Origin.SELF

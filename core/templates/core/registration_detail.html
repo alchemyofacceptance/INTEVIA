@@ -1,0 +1,26 @@
+{% extends "core/base.html" %}
+{% block title %}Registration lineage | INTEVIA{% endblock %}
+{% block content %}
+  <p class="meta">{{ registration.state }} · Read-only</p>
+  <h1>Registration lineage</h1>
+  <div class="panel">
+    <p><strong>Origin:</strong> {{ registration.origin }}</p>
+    <p><strong>Event state at registration:</strong> {{ registration.event_state_at_registration }}</p>
+    <p><strong>Eligibility basis:</strong> {{ registration.eligibility_basis_type }}</p>
+    <p><strong>Registered:</strong> {{ registration.registered_at }}</p>
+  </div>
+  <section>
+    <h2>Transitions</h2>
+    <div class="event-list">
+      {% for transition in registration.transitions %}
+        <article class="event-item">
+          <p><strong>{{ transition.action_type }}</strong></p>
+          <p class="meta">{{ transition.from_state }} → {{ transition.to_state }} · {{ transition.occurred_at }}</p>
+          {% for evidence in transition.evidence %}<p class="meta">Evidence type: {{ evidence.reference_type }} · {{ evidence.occurred_at }}</p>{% endfor %}
+        </article>
+      {% empty %}
+        <p>No transition lineage is visible.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

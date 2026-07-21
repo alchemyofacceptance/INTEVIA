@@ -10,7 +10,7 @@ from core.models import (
     ContributionTransition,
     ContributionVersion,
     EvidenceReference,
-    Profile,
+    Identity,
     ProfileRole,
     Role,
 )
@@ -29,9 +29,9 @@ class Capability:
 class ContributionModelTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="model-contributor")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Model participant")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = ContributionService(
             authority=ContributionAuthority(Capability())
         )

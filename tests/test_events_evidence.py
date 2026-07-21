@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from core.models import Event, EventEvidenceReference, Profile, ProfileRole, Role
+from core.models import Event, EventEvidenceReference, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.event_service import EventService
 
@@ -20,9 +20,9 @@ class Capability:
 class EventEvidenceTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="event-evidence")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Event evidence participant")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = EventService(
             authority=ContributionAuthority(Capability())
         )

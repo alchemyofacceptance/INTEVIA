@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from core.models import Profile, ProfileRole, Role
+from core.models import Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.contribution_service import ContributionService, LegalHoldPreventsErasure
 
@@ -19,9 +19,9 @@ class Capability:
 class ContributionPrivacyTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="privacy-actor")
-        profile = Profile.objects.create(user=self.user)
+        profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Privacy participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         self.service = ContributionService(authority=ContributionAuthority(Capability()))
 
     def contribution(self, identifier):

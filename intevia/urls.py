@@ -17,6 +17,19 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from core import views
+
 urlpatterns = [
+    path('', views.shell, name='shell'),
+    path('login/', views.product_login, name='login'),
+    path('restricted/', views.restricted, name='restricted'),
+    path('events/', views.event_list, name='event-list'),
+    path('events/<str:event_id>/', views.event_detail, name='event-detail'),
+    path(
+        'events/<str:event_id>/registrations/<str:registration_id>/',
+        views.registration_detail,
+        name='registration-detail',
+    ),
+    path('logout/', views.product_logout, name='logout'),
     path('admin/', admin.site.urls),
 ]

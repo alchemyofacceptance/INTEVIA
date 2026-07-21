@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from core.models import Contribution, Profile, ProfileRole, Role
+from core.models import Contribution, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.contribution_service import (
     ContributionService,
@@ -23,9 +23,9 @@ class Capability:
 class ContributionServiceTests(TestCase):
     def identity(self, name):
         user = User.objects.create_user(username=name)
-        profile = Profile.objects.create(user=user)
+        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
         role, _ = Role.objects.get_or_create(name="Service participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         return user
 
     def setUp(self):

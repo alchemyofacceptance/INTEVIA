@@ -16,7 +16,7 @@ from core.models import (
     LibraryResourceEvidenceReference,
     LibraryResourceTransition,
     LibraryResourceVersion,
-    Profile,
+    Identity,
 )
 from src.intevia.services.contribution_authority import ContributionAuthority
 
@@ -79,7 +79,7 @@ class LibraryService:
         prior: str,
         new: str,
         command: str,
-        actor: Profile,
+        actor: Identity,
         authority_reference: str,
         occurred_at: datetime,
         rationale_reference: str | None = None,
@@ -109,7 +109,7 @@ class LibraryService:
         transition: LibraryResourceTransition,
         reference: str,
         reference_type: str,
-        actor: Profile,
+        actor: Identity,
         authority_reference: str,
         occurred_at: datetime,
     ) -> LibraryResourceEvidenceReference:

@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from core.models import LibraryServiceAssociation, Profile, ProfileRole, Role
+from core.models import LibraryServiceAssociation, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
     NotAuthorised,
@@ -29,9 +29,9 @@ class Capability:
 class ServiceLibraryAssociationTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="service-library-owner")
-        profile = Profile.objects.create(user=self.user)
+        profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Service Library participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         authority = ContributionAuthority(Capability())
         self.foundation = GovernedService(authority=authority)
         library = LibraryService(authority=authority)

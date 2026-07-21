@@ -9,7 +9,7 @@ from core.models import (
     EventEvidenceReference,
     EventParticipation,
     EventTransition,
-    Profile,
+    Identity,
     ProfileRole,
     Role,
 )
@@ -28,9 +28,9 @@ class Capability:
 class EventModelTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="event-model-owner")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Event model participant")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = EventService(
             authority=ContributionAuthority(Capability())
         )

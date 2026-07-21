@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from core.models import CareResponse, Profile, ProfileRole, Role
+from core.models import CareResponse, Identity, ProfileRole, Role
 from src.intevia.services.care_service import CareService
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
@@ -30,9 +30,9 @@ class Capability:
 class CareFoundationTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="care-participant")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="CARE participant")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.authority = ContributionAuthority(Capability())
         self.care = CareService(authority=self.authority)
 

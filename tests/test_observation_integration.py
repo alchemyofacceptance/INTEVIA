@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from core.models import Profile, ProfileRole, Role
+from core.models import Identity, ProfileRole, Role
 from src.intevia.observation.journal import (
     ObservationEntry,
     ObservationEventKind,
@@ -24,9 +24,9 @@ class Capability:
 class ObservationIntegrationTests(TestCase):
     def test_optional_observation_is_derived_from_durable_transition(self):
         user = User.objects.create_user(username="observation-contributor")
-        profile = Profile.objects.create(user=user)
+        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Observation participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         service = ContributionService(authority=ContributionAuthority(Capability()))
         contribution = service.create_contribution(
             identity=user,

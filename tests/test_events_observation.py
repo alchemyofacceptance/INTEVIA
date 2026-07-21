@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from core.models import Event, Profile, ProfileRole, Role
+from core.models import Event, Identity, ProfileRole, Role
 from src.intevia.observation.journal import (
     ObservationEntry,
     ObservationEventKind,
@@ -24,9 +24,9 @@ class Capability:
 class EventObservationTests(TestCase):
     def test_observation_is_derived_from_durable_transition(self):
         user = User.objects.create_user(username="event-observation")
-        profile = Profile.objects.create(user=user)
+        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Event observation participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         service = EventService(authority=ContributionAuthority(Capability()))
         event = service.create_event(
             identity=user,

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from core.models import Profile, ProfileRole, Role, ServiceEventAssociation
+from core.models import Identity, ProfileRole, Role, ServiceEventAssociation
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
     NotAuthorised,
@@ -31,9 +31,9 @@ class Capability:
 class ServiceEventAssociationTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="service-event-owner")
-        profile = Profile.objects.create(user=self.user)
+        profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Service Event participant")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         authority = ContributionAuthority(Capability())
         self.foundation = GovernedService(authority=authority)
         self.event = EventService(authority=authority).create_event(

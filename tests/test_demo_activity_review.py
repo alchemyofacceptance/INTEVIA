@@ -22,7 +22,7 @@ class DemoActivityReviewTests(unittest.TestCase):
         self.assertEqual(rendered_1, rendered_2)
 
         self.assertIn(
-            "Identity: authenticated Django User and Profile",
+            "Identity: authenticated Django User and canonical Identity",
             rendered_1,
         )
         self.assertIn(

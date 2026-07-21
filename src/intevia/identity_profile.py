@@ -1,5 +1,8 @@
 """Identity Profile Skeleton v1.0.
 
+This is a non-persistent legacy structural surface and is not canonical CORE
+Identity.
+
 This module defines the minimal governed identity structure required for
 v1.0 test-case protection.
 

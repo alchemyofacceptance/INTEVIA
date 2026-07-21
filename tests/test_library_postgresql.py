@@ -6,7 +6,7 @@ from django.contrib.auth.models import User
 from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 
-from core.models import LibraryResource, Profile, ProfileRole, Role
+from core.models import LibraryResource, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import (
     ContributionAuthority,
     NotAuthorised,
@@ -37,9 +37,9 @@ class LibraryPostgreSQLTests(TransactionTestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(username="postgres-library")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(pk=1_000_003, name="PostgreSQL library actor")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = LibraryService(
             authority=ContributionAuthority(Capability())
         )

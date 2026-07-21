@@ -16,7 +16,7 @@ from core.models import (
     EventTransition,
     LibraryResourceVersion,
     LibraryServiceAssociation,
-    Profile,
+    Identity,
     Service,
     ServiceDeliveryEvidenceReference,
     ServiceEventAssociation,
@@ -88,7 +88,7 @@ class GovernedService:
         prior: str,
         new: str,
         command: str,
-        actor: Profile,
+        actor: Identity,
         authority_reference: str,
         occurred_at: datetime,
     ) -> ServiceTransition:
@@ -116,7 +116,7 @@ class GovernedService:
         transition: ServiceTransition,
         reference: str,
         reference_type: str,
-        actor: Profile,
+        actor: Identity,
         authority_reference: str,
         occurred_at: datetime,
     ) -> ServiceEvidenceReference:

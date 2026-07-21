@@ -1,0 +1,11 @@
+{% extends "core/base.html" %}
+{% block title %}Access restricted | INTEVIA{% endblock %}
+{% block content %}
+  <div class="panel warning">
+    <p class="meta">Access status</p>
+    <h1>Access restricted</h1>
+    <p>Your governed access is currently restricted.</p>
+    {% if identity.restricted_at %}<p class="meta">Effective {{ identity.restricted_at }}</p>{% endif %}
+    <p>Contact the accountable INTEVIA reviewer for review or appeal information.</p>
+  </div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "core/base.html" %}
+{% block title %}{{ event.title }} | INTEVIA{% endblock %}
+{% block content %}
+  <p class="meta">{{ event.state }} · Read-only</p>
+  <h1>{{ event.title }}</h1>
+  {% if event.description %}<p class="lede">{{ event.description }}</p>{% endif %}
+  <section>
+    <h2>Your registration lineage</h2>
+    <div class="event-list">
+      {% for registration in event.registrations %}
+        <article class="event-item">
+          <p class="meta">{{ registration.state }} · {{ registration.registered_at }}</p>
+          <a href="{% url 'registration-detail' event.event_id registration.registration_id %}">Inspect registration</a>
+        </article>
+      {% empty %}
+        <p>No registration lineage is visible for this Identity.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

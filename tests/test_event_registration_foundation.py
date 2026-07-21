@@ -12,7 +12,7 @@ from core.models import (
     EventRegistration,
     EventRegistrationEvidenceReference,
     EventRegistrationTransition,
-    Profile,
+    Identity,
     ProfileRole,
     Role,
 )
@@ -65,9 +65,9 @@ class EventRegistrationFoundationTests(TestCase):
     @staticmethod
     def identity(name):
         user = User.objects.create_user(username=name)
-        profile = Profile.objects.create(user=user)
+        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
         role, _ = Role.objects.get_or_create(name="Event registration actor")
-        ProfileRole.objects.create(profile=profile, role=role)
+        ProfileRole.objects.create(identity=profile, role=role)
         return user, profile
 
     def create_event(self, event_id, state=Event.State.PUBLISHED):

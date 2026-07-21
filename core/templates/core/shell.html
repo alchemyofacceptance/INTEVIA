@@ -1,0 +1,12 @@
+{% extends "core/base.html" %}
+{% block title %}INTEVIA{% endblock %}
+{% block content %}
+  <p class="meta">Authenticated Human</p>
+  <h1>{{ identity }}</h1>
+  <p class="lede">Your current product surface is read-only.</p>
+  <div class="panel">
+    <h2>Events</h2>
+    <p>Open Events visible through an EVENT-owned relationship.</p>
+    <a class="command" href="{% url 'event-list' %}">View Events</a>
+  </div>
+{% endblock %}

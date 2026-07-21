@@ -11,7 +11,7 @@ def run_demo(*, output: TextIO | None = None) -> int:
 
     print("INTEVIA v1.0 — Governed Contribution Lifecycle", file=output)
     print("", file=output)
-    print("Identity: authenticated Django User and Profile", file=output)
+    print("Identity: authenticated Django User and canonical Identity", file=output)
     print("Authority: role assignment plus entitlement capability", file=output)
     print("Attribution: actor strings do not establish authority", file=output)
     print("", file=output)

@@ -1,30 +1,93 @@
+import uuid
+
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from django.contrib.auth.models import User
+
+from core.identity import canonical_username_v1
 
 # ---------------------------------------------------------
-# Profile
+# Identity
 # ---------------------------------------------------------
-# Extends Django's built-in User model with INTEVIA-specific
-# identity fields. This is the "human identity" anchor for
-# everything else in the platform.
+# Canonical durable Human identity. Django User remains the credential and
+# session substrate; organisational belonging and authority remain external.
 # ---------------------------------------------------------
-class Profile(models.Model):
-    # One-to-one link to Django's User object.
-    # This keeps authentication separate from domain identity.
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+class Identity(models.Model):
+    class AccessState(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACTIVE = "active", "Active"
+        RESTRICTED = "restricted", "Restricted"
+        DEACTIVATED = "deactivated", "Deactivated"
 
-    # Display name shown in the UI.
-    # Rule of 9s → 90 chars for identity fields.
+    identity_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+    )
+    credential = models.OneToOneField(
+        User,
+        on_delete=models.PROTECT,
+        related_name="intevia_identity",
+    )
     display_name = models.CharField(max_length=90, blank=True)
-
-    # Timestamp for continuity layer.
+    canonical_username = models.CharField(max_length=255, unique=True)
+    access_state = models.CharField(
+        max_length=16,
+        choices=AccessState.choices,
+        default=AccessState.PENDING,
+        db_index=True,
+    )
+    access_epoch = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    restricted_at = models.DateTimeField(null=True, blank=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(access_epoch__gte=0),
+                name="identity_access_epoch_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    access_state__in=(
+                        "pending",
+                        "active",
+                        "restricted",
+                        "deactivated",
+                    )
+                ),
+                name="identity_access_state_valid",
+            ),
+        ]
+
+    def clean(self):
+        if self.credential_id is not None:
+            expected = canonical_username_v1(self.credential.username)
+            if self.canonical_username != expected:
+                raise ValidationError(
+                    {"canonical_username": "must match credential username"}
+                )
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not self.canonical_username:
+            self.canonical_username = canonical_username_v1(
+                self.credential.username
+            )
+        if self.pk is not None:
+            original = type(self).objects.filter(pk=self.pk).values_list(
+                "identity_id", flat=True
+            ).first()
+            if original is not None and original != self.identity_id:
+                raise ValidationError("identity_id is immutable")
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
-        # Fallback to username if no display name set.
-        return self.display_name or self.user.username
+        return self.display_name or "Historical Identity"
 
 
 # ---------------------------------------------------------
@@ -56,21 +119,13 @@ class Role(models.Model):
 
 
 # ---------------------------------------------------------
-# ProfileRole (Bridging Table)
+# ProfileRole (Compatibility Bridge)
 # ---------------------------------------------------------
-# Many-to-many relationship between Profile and Role.
-# This is the "organ system" that allows a Profile to hold
-# multiple roles and roles to be assigned to many profiles.
-#
-# We use an explicit bridging model instead of Django's
-# auto-generated M2M so we can:
-#   - store metadata (assigned_at)
-#   - enforce uniqueness
-#   - extend later if needed
+# Retained for S001-S006 prerequisite compatibility only. It is not
+# membership, organisational authority, or Human Governor designation.
 # ---------------------------------------------------------
 class ProfileRole(models.Model):
-    # Link to Profile (the human identity).
-    profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
+    identity = models.ForeignKey(Identity, on_delete=models.CASCADE)
 
     # Link to Role (the conceptual function).
     role = models.ForeignKey(Role, on_delete=models.CASCADE)
@@ -80,10 +135,257 @@ class ProfileRole(models.Model):
 
     class Meta:
         # Prevent duplicate assignments.
-        unique_together = ('profile', 'role')
+        unique_together = ('identity', 'role')
 
     def __str__(self):
-        return f"{self.profile} → {self.role}"
+        return f"{self.identity} → {self.role}"
+
+
+class IdentityTransition(models.Model):
+    class Action(models.TextChoices):
+        PROVISION = "provision", "Provision"
+        ACTIVATE = "activate", "Activate"
+        RESTRICT = "restrict", "Restrict"
+        DEACTIVATE = "deactivate", "Deactivate"
+        REACTIVATE = "reactivate", "Reactivate"
+        REPLACE_CREDENTIAL = "replace_credential", "Replace credential"
+        RETIRE_CREDENTIAL = "retire_credential", "Retire credential"
+        UPDATE_USERNAME = "update_username", "Update username"
+        CORRECT = "correct", "Correct"
+
+    class ReasonCategory(models.TextChoices):
+        PROVISIONING = "provisioning", "Provisioning"
+        GOVERNED_ACTIVATION = "governed_activation", "Governed activation"
+        ACCESS_REVIEW = "access_review", "Access review"
+        SECURITY = "security", "Security"
+        HUMAN_REQUEST = "human_request", "Human request"
+        CREDENTIAL_CHANGE = "credential_change", "Credential change"
+        CORRECTION = "correction", "Correction"
+        OTHER = "other", "Other"
+
+    identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="access_transitions",
+    )
+    action = models.CharField(max_length=32, choices=Action.choices)
+    prior_state = models.CharField(
+        max_length=16,
+        choices=Identity.AccessState.choices,
+        null=True,
+        blank=True,
+    )
+    resulting_state = models.CharField(
+        max_length=16,
+        choices=Identity.AccessState.choices,
+    )
+    requesting_actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="requested_identity_transitions",
+        null=True,
+        blank=True,
+    )
+    authority_reference = models.CharField(max_length=255)
+    technical_executor = models.CharField(max_length=120)
+    evidence_reference = models.CharField(max_length=255)
+    reason_category = models.CharField(
+        max_length=32,
+        choices=ReasonCategory.choices,
+    )
+    correlation_id = models.UUIDField(unique=True)
+    occurred_at = models.DateTimeField()
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    corrects_transition = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="corrections",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(action="provision")
+                | Q(prior_state__isnull=False),
+                name="identity_transition_prior_required",
+            ),
+            models.CheckConstraint(
+                condition=Q(corrects_transition__isnull=True)
+                | Q(action="correct"),
+                name="identity_correction_action_required",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("identity", "occurred_at"),
+                name="identity_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.previous_transition_id is not None
+            and self.previous_transition.identity_id != self.identity_id
+        ):
+            raise ValidationError(
+                "previous_transition must belong to the same Identity"
+            )
+        if (
+            self.corrects_transition_id is not None
+            and self.corrects_transition.identity_id != self.identity_id
+        ):
+            raise ValidationError(
+                "corrects_transition must belong to the same Identity"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("IdentityTransition is append-only")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("IdentityTransition cannot be deleted")
+
+
+class OriginatingMembershipProvisioningRequest(models.Model):
+    identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="originating_membership_requests",
+    )
+    organism_reference = models.CharField(max_length=120)
+    contract_version = models.PositiveIntegerField()
+    correlation_id = models.UUIDField(unique=True)
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    requested_at = models.DateTimeField()
+    supersedes = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="superseded_by",
+        null=True,
+        blank=True,
+    )
+    superseded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("identity", "organism_reference"),
+                condition=Q(superseded_at__isnull=True),
+                name="one_active_originating_membership_intent",
+            ),
+            models.CheckConstraint(
+                condition=Q(contract_version__gte=1),
+                name="originating_contract_version_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(supersedes__isnull=True)
+                | ~Q(pk=models.F("supersedes_id")),
+                name="originating_request_not_self_superseding",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("identity", "requested_at"),
+                name="originating_request_time_idx",
+            ),
+        ]
+
+
+class ProvisioningReconciliationAttempt(models.Model):
+    class State(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        DISPATCHED = "dispatched", "Dispatched"
+        ACKNOWLEDGED = "acknowledged", "Acknowledged"
+        FULFILLED = "fulfilled", "Fulfilled"
+        HELD = "held", "Held"
+        REJECTED = "rejected", "Rejected"
+        SUPERSEDED = "superseded", "Superseded"
+        CORRECTED = "corrected", "Corrected"
+
+    request = models.ForeignKey(
+        OriginatingMembershipProvisioningRequest,
+        on_delete=models.PROTECT,
+        related_name="reconciliation_attempts",
+    )
+    state = models.CharField(max_length=16, choices=State.choices)
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    correlation_id = models.UUIDField(unique=True)
+    occurred_at = models.DateTimeField()
+    previous_attempt = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_attempt",
+        null=True,
+        blank=True,
+    )
+    corrects_attempt = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="corrections",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(corrects_attempt__isnull=True)
+                | Q(state="corrected"),
+                name="provision_correction_state_required",
+            ),
+            models.CheckConstraint(
+                condition=Q(previous_attempt__isnull=True)
+                | ~Q(pk=models.F("previous_attempt_id")),
+                name="provision_attempt_not_self_previous",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("request", "occurred_at"),
+                name="provision_attempt_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.previous_attempt_id is not None
+            and self.previous_attempt.request_id != self.request_id
+        ):
+            raise ValidationError(
+                "previous_attempt must belong to the same request"
+            )
+        if (
+            self.corrects_attempt_id is not None
+            and self.corrects_attempt.request_id != self.request_id
+        ):
+            raise ValidationError(
+                "corrects_attempt must belong to the same request"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(
+                "ProvisioningReconciliationAttempt is append-only"
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "ProvisioningReconciliationAttempt cannot be deleted"
+        )
 
 
 class Contribution(models.Model):
@@ -103,7 +405,7 @@ class Contribution(models.Model):
 
     contribution_id = models.CharField(max_length=120, unique=True)
     contributor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="contributions",
     )
@@ -166,7 +468,7 @@ class ContributionVersion(models.Model):
         blank=True,
     )
     created_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="created_contribution_versions",
     )
@@ -220,7 +522,7 @@ class ContributionTransition(models.Model):
     to_state = models.CharField(max_length=32)
     command = models.CharField(max_length=40, db_index=True)
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="contribution_transitions",
     )
@@ -286,7 +588,7 @@ class ContributionDecision(models.Model):
         related_name="decisions",
     )
     decision_actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="contribution_decisions",
     )
@@ -349,7 +651,7 @@ class EvidenceReference(models.Model):
     reference_type = models.CharField(max_length=40, db_index=True)
     metadata = models.JSONField(default=dict, blank=True)
     added_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="added_evidence_references",
     )
@@ -398,7 +700,7 @@ class Event(models.Model):
     title = models.CharField(max_length=270)
     description = models.TextField(blank=True)
     owner = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="owned_events",
     )
@@ -426,7 +728,7 @@ class EventTransition(models.Model):
     to_state = models.CharField(max_length=24)
     command = models.CharField(max_length=40, db_index=True)
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="event_transitions",
     )
@@ -483,12 +785,12 @@ class EventParticipation(models.Model):
         related_name="participations",
     )
     participant = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="event_participations",
     )
     attached_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="attached_event_participations",
     )
@@ -530,7 +832,7 @@ class EventEvidenceReference(models.Model):
     reference = models.CharField(max_length=255)
     reference_type = models.CharField(max_length=40, db_index=True)
     supplied_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="supplied_event_evidence_references",
     )
@@ -593,7 +895,7 @@ class EventRegistration(models.Model):
         related_name="registrations",
     )
     participant = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="event_registrations",
     )
@@ -691,7 +993,7 @@ class EventRegistrationTransition(models.Model):
         db_index=True,
     )
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="event_registration_transitions",
     )
@@ -702,7 +1004,7 @@ class EventRegistrationTransition(models.Model):
         related_name="registration_authority_transitions",
     )
     authority_participant = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="registration_authority_subject_transitions",
     )
@@ -792,7 +1094,7 @@ class EventRegistrationEvidenceReference(models.Model):
     reference = models.CharField(max_length=255)
     reference_type = models.CharField(max_length=40, db_index=True)
     supplied_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="supplied_event_registration_evidence",
     )
@@ -829,7 +1131,7 @@ class LibraryResource(models.Model):
 
     resource_id = models.CharField(max_length=120, unique=True)
     created_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="created_library_resources",
     )
@@ -879,7 +1181,7 @@ class LibraryResourceVersion(models.Model):
         blank=True,
     )
     created_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="created_library_resource_versions",
     )
@@ -933,7 +1235,7 @@ class LibraryResourceTransition(models.Model):
     to_state = models.CharField(max_length=24)
     command = models.CharField(max_length=48, db_index=True)
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="library_resource_transitions",
     )
@@ -999,7 +1301,7 @@ class LibraryResourceEvidenceReference(models.Model):
     reference = models.CharField(max_length=255)
     reference_type = models.CharField(max_length=40, db_index=True)
     supplied_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="supplied_library_evidence_references",
     )
@@ -1069,7 +1371,7 @@ class Service(models.Model):
         blank=True,
     )
     created_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="created_services",
     )
@@ -1115,7 +1417,7 @@ class ServiceVersion(models.Model):
         blank=True,
     )
     created_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="created_service_versions",
     )
@@ -1167,7 +1469,7 @@ class ServiceTransition(models.Model):
     to_state = models.CharField(max_length=24)
     command = models.CharField(max_length=48, db_index=True)
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="service_transitions",
     )
@@ -1230,7 +1532,7 @@ class ServiceEvidenceReference(models.Model):
     reference = models.CharField(max_length=255)
     reference_type = models.CharField(max_length=40, db_index=True)
     supplied_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="supplied_service_evidence_references",
     )
@@ -1283,7 +1585,7 @@ class LibraryServiceAssociation(models.Model):
         related_name="service_associations",
     )
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="library_service_associations",
     )
@@ -1322,7 +1624,7 @@ class ServiceEventAssociation(models.Model):
         related_name="service_associations",
     )
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="service_event_associations",
     )
@@ -1362,7 +1664,7 @@ class ServiceDeliveryEvidenceReference(models.Model):
     )
     reference = models.CharField(max_length=255)
     supplied_by = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="supplied_service_delivery_evidence_references",
     )
@@ -1443,7 +1745,7 @@ class CareResponse(models.Model):
     )
     human_response_reference = models.CharField(max_length=255, blank=True)
     actor = models.ForeignKey(
-        Profile,
+        Identity,
         on_delete=models.PROTECT,
         related_name="care_responses",
     )

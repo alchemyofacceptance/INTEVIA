@@ -9,7 +9,7 @@ from core.models import (
     LibraryResourceEvidenceReference,
     LibraryResourceTransition,
     LibraryResourceVersion,
-    Profile,
+    Identity,
     ProfileRole,
     Role,
 )
@@ -39,9 +39,9 @@ class Capability:
 class LibraryFoundationTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="library-owner")
-        self.profile = Profile.objects.create(user=self.user)
+        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Library participant")
-        ProfileRole.objects.create(profile=self.profile, role=role)
+        ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = LibraryService(
             authority=ContributionAuthority(Capability())
         )

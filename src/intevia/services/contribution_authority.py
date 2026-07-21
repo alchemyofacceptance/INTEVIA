@@ -6,8 +6,9 @@ from datetime import datetime
 from typing import Protocol
 
 from django.contrib.auth.models import User
+from django.db import transaction
 
-from core.models import Profile, ProfileRole
+from core.models import Identity, ProfileRole
 
 
 class NotAuthorised(PermissionError):
@@ -20,7 +21,7 @@ class EntitlementCapability(Protocol):
     def authorise(
         self,
         *,
-        identity: Profile,
+        identity: Identity,
         action: str,
         target: object,
         timestamp: datetime,
@@ -45,20 +46,23 @@ class ContributionAuthority:
         action: str,
         target: object,
         timestamp: datetime,
-    ) -> tuple[Profile, str]:
+    ) -> tuple[Identity, str]:
         if not isinstance(identity, User) or not identity.is_active:
             raise NotAuthorised("an active Django identity is required")
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
             raise NotAuthorised("authority timestamp must be timezone-aware")
 
         try:
-            profile = Profile.objects.get(user=identity)
-        except (Profile.DoesNotExist, Profile.MultipleObjectsReturned) as exc:
+            profile = Identity.objects.get(credential=identity)
+        except (Identity.DoesNotExist, Identity.MultipleObjectsReturned) as exc:
             raise NotAuthorised(
-                "identity must resolve to exactly one Profile"
+                "credential must resolve to exactly one Identity"
             ) from exc
 
-        if not ProfileRole.objects.filter(profile=profile).exists():
+        if profile.access_state != Identity.AccessState.ACTIVE:
+            raise NotAuthorised("an active Identity is required")
+
+        if not ProfileRole.objects.filter(identity=profile).exists():
             raise NotAuthorised("an active role assignment is required")
 
         authority_reference = self._capability.authorise(
@@ -74,6 +78,23 @@ class ContributionAuthority:
             raise NotAuthorised("the requested action is not authorised")
         if len(authority_reference) > 255:
             raise NotAuthorised("authorisation reference is too long")
+
+        with transaction.atomic():
+            try:
+                profile = Identity.objects.select_for_update().select_related(
+                    "credential"
+                ).get(pk=profile.pk, credential=identity)
+            except (Identity.DoesNotExist, Identity.MultipleObjectsReturned) as exc:
+                raise NotAuthorised(
+                    "credential must resolve to exactly one Identity"
+                ) from exc
+            if (
+                profile.access_state != Identity.AccessState.ACTIVE
+                or not profile.credential.is_active
+            ):
+                raise NotAuthorised("an active Identity is required")
+            if not ProfileRole.objects.filter(identity=profile).exists():
+                raise NotAuthorised("an active role assignment is required")
         return profile, authority_reference
 
 

@@ -14,7 +14,7 @@ from core.models import (
     CareResponse,
     LibraryResource,
     LibraryResourceVersion,
-    Profile,
+    Identity,
 )
 from src.intevia.services.contribution_authority import ContributionAuthority
 
@@ -27,7 +27,7 @@ class TransientCareResponse:
     context_reference: str
     output_type: str
     content: str
-    actor: Profile
+    actor: Identity
     authority_reference: str
 
 
