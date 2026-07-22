@@ -43,6 +43,14 @@ INTEVIA addresses this missing layer:
 
 This repository contains the early public and technical foundation for INTEVIA v1.0.
 
+## Local Django Configuration
+
+Local Django commands require `DJANGO_SECRET_KEY` in the process environment.
+Generate an independent local value with Python's `secrets.token_urlsafe()` and
+set the variable before starting Django. Do not commit the generated value or a
+local `.env` file. The Django test command uses isolated test settings and does
+not reuse an operational key.
+
 ---
 
 ## Project Status

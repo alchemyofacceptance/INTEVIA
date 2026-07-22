@@ -6,7 +6,12 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'intevia.settings')
+    settings_module = (
+        'intevia.test_settings'
+        if len(sys.argv) > 1 and sys.argv[1] == 'test'
+        else 'intevia.settings'
+    )
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', settings_module)
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
