@@ -30,6 +30,21 @@ urlpatterns = [
         views.registration_detail,
         name='registration-detail',
     ),
+    path(
+        'events/<str:event_id>/registration-history/',
+        views.registration_history,
+        name='registration-history',
+    ),
+    path(
+        'events/<str:event_id>/attendance/',
+        views.attendance_detail,
+        name='attendance-detail',
+    ),
+    path(
+        'events/<str:event_id>/attendance-history/',
+        views.attendance_history,
+        name='attendance-history',
+    ),
     path('logout/', views.product_logout, name='logout'),
     path('admin/', admin.site.urls),
 ]

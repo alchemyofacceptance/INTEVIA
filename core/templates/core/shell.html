@@ -1,12 +1,25 @@
 {% extends "core/base.html" %}
-{% block title %}INTEVIA{% endblock %}
+{% block title %}Your INTEVIA home{% endblock %}
 {% block content %}
-  <p class="meta">Authenticated Human</p>
-  <h1>{{ identity }}</h1>
-  <p class="lede">Your current product surface is read-only.</p>
+  <h1>Your INTEVIA home</h1>
+  <p class="lede">Signed in as {{ home.display_name }}</p>
+  <section aria-labelledby="events-heading">
+    <h2 id="events-heading">Events in your view</h2>
+    <div class="event-list">
+      {% for event in home.events %}
+        <article class="event-item">
+          <h3>{{ event.title }}</h3>
+          {% if event.description %}<p>{{ event.description }}</p>{% endif %}
+          <p>{{ event.registration.message }}</p>
+          {% if event.attendance %}<p>{{ event.attendance.message }}</p>{% endif %}
+          <a href="{% url 'event-detail' event.event_id %}">View {{ event.title }}</a>
+        </article>
+      {% empty %}
+        <p>No Events are currently shown in your view.</p>
+      {% endfor %}
+    </div>
+  </section>
   <div class="panel">
-    <h2>Events</h2>
-    <p>Open Events visible through an EVENT-owned relationship.</p>
-    <a class="command" href="{% url 'event-list' %}">View Events</a>
+    <a href="{% url 'event-list' %}">View all Events in your view</a>
   </div>
 {% endblock %}

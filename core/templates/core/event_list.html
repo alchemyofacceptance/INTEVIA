@@ -1,17 +1,16 @@
 {% extends "core/base.html" %}
 {% block title %}Events | INTEVIA{% endblock %}
 {% block content %}
-  <p class="meta">Read-only</p>
-  <h1>Events</h1>
-  <p class="lede">Only Events visible through an accepted EVENT relationship appear here.</p>
+  <h1>Events in your view</h1>
   <div class="event-list">
     {% for event in events %}
       <article class="event-item">
-        <p class="meta">{{ event.state }}</p>
         <h2><a href="{% url 'event-detail' event.event_id %}">{{ event.title }}</a></h2>
+        {% if event.description %}<p>{{ event.description }}</p>{% endif %}
       </article>
     {% empty %}
-      <p>No Events are currently visible.</p>
+      <p>No Events are currently shown in your view.</p>
     {% endfor %}
   </div>
+  <p><a href="{% url 'shell' %}">Return to your INTEVIA home</a></p>
 {% endblock %}

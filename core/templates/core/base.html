@@ -30,7 +30,7 @@
       border-bottom: 4px solid var(--accent);
     }
     nav, main { width: min(1040px, calc(100% - 32px)); margin: 0 auto; }
-    nav { min-height: 64px; display: flex; align-items: center; gap: 24px; }
+    nav { min-height: 64px; display: flex; flex-wrap: wrap; align-items: center; gap: 24px; }
     nav strong { font-family: Georgia, serif; font-size: 1.25rem; margin-right: auto; }
     nav a, nav button { color: white; }
     nav form { margin: 0; }
@@ -54,6 +54,12 @@
       justify-content: center;
     }
     button:hover, .command:hover { background: var(--accent-dark); }
+    a:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid #e4b83f; outline-offset: 3px; }
+    nav a[aria-current="page"] { text-decoration-thickness: 3px; text-underline-offset: 6px; }
+    .skip-link { position: absolute; left: 16px; top: -80px; background: white; color: var(--ink); padding: 12px; z-index: 10; }
+    .skip-link:focus { top: 12px; }
+    .capability-notice { background: #fff8dc; border-bottom: 1px solid #b9a45d; padding: 14px 16px; }
+    .capability-notice p { width: min(1040px, 100%); margin: 4px auto; }
     .lede { color: var(--muted); max-width: 66ch; font-size: 1.1rem; }
     .panel { background: var(--surface); border-left: 4px solid var(--accent); padding: 24px; margin: 28px 0; }
     .event-list { display: grid; gap: 12px; margin-top: 28px; }
@@ -73,12 +79,13 @@
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header>
     <nav aria-label="Primary navigation">
       <strong>INTEVIA</strong>
-      {% if request.user.is_authenticated and request.intevia_identity.access_state == "active" %}
-        <a href="{% url 'shell' %}">Home</a>
-        <a href="{% url 'event-list' %}">Events</a>
+      {% if request.user.is_authenticated and request.resolver_match.url_name != "restricted" %}
+        <a href="{% url 'shell' %}"{% if request.resolver_match.url_name == 'shell' %} aria-current="page"{% endif %}>Home</a>
+        <a href="{% url 'event-list' %}"{% if request.path|slice:":8" == "/events/" %} aria-current="page"{% endif %}>Events</a>
       {% endif %}
       {% if request.user.is_authenticated %}
         <form method="post" action="{% url 'logout' %}">
@@ -88,6 +95,13 @@
       {% endif %}
     </nav>
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  {% if request.user.is_authenticated and request.resolver_match.url_name != "restricted" %}
+    <aside class="capability-notice" aria-label="Product capability notice">
+      <p><strong>INTERNAL PRE-ALPHA — VIEW ONLY</strong></p>
+      <p>You can view Events and your existing registration and attendance records. Booking and record changes are not available in this surface.</p>
+      <p>Seeing an Event here does not mean that you are booked or eligible to take an action.</p>
+    </aside>
+  {% endif %}
+  <main id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
 </body>
 </html>

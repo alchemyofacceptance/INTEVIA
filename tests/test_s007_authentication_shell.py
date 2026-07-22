@@ -231,7 +231,7 @@ class EventReadShellTests(TestCase):
         )
         self.assertEqual(guessed.status_code, 404)
 
-    def test_own_registration_projects_allowlisted_lineage_only(self):
+    def test_own_registration_projects_subject_safe_record_only(self):
         event = self.event(self.other, "event:registered")
         registration = self.registration(
             event,
@@ -244,8 +244,10 @@ class EventReadShellTests(TestCase):
                 args=[event.event_id, registration.registration_id],
             )
         )
-        self.assertContains(response, "Registration lineage")
-        self.assertContains(response, "Evidence type: receipt")
+        self.assertContains(response, "Registration record")
+        self.assertContains(response, "A registration record was created.")
+        self.assertNotContains(response, "Evidence type")
+        self.assertNotContains(response, "receipt")
         self.assertNotContains(response, "internal:authority:secret")
         self.assertNotContains(response, "internal:evidence:secret")
         self.assertNotContains(response, "internal:basis")

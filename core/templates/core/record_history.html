@@ -1,0 +1,16 @@
+{% extends "core/base.html" %}
+{% block title %}Record history | INTEVIA{% endblock %}
+{% block content %}
+  <h1>{{ history.heading }}</h1>
+  <ol class="event-list">
+    {% for entry in history.entries %}
+      <li class="event-item">
+        <p>{{ entry.message }}</p>
+        <p class="meta">{{ entry.occurred_at }}</p>
+      </li>
+    {% empty %}
+      <li>No record history is shown.</li>
+    {% endfor %}
+  </ol>
+  <p><a href="{% url 'event-detail' history.event_id %}">Return to {{ history.event_title }}</a></p>
+{% endblock %}

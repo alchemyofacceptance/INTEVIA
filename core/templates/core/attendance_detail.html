@@ -1,0 +1,8 @@
+{% extends "core/base.html" %}
+{% block title %}Attendance record | INTEVIA{% endblock %}
+{% block content %}
+  <h1>Attendance record</h1>
+  <p>{{ event.attendance.message }}</p>
+  {% if event.attendance.history_available %}<p><a href="{% url 'attendance-history' event.event_id %}">View attendance record history</a></p>{% endif %}
+  <p><a href="{% url 'event-detail' event.event_id %}">Return to {{ event.title }}</a></p>
+{% endblock %}

@@ -5,6 +5,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from core.cache import personal_response
 from core.forms import ProductAuthenticationForm
 from core.models import Identity
 from core.session import bind_identity_session
@@ -49,12 +50,15 @@ def product_login(request: HttpRequest) -> HttpResponse:
 	return render(request, "core/login.html", {"form": form})
 
 
+@personal_response
 @login_required(login_url="login")
 @require_GET
 def shell(request: HttpRequest) -> HttpResponse:
-	return render(request, "core/shell.html", {"identity": request.intevia_identity})
+	home = EventReadService.home(request.intevia_identity)
+	return render(request, "core/shell.html", {"home": home})
 
 
+@personal_response
 @login_required(login_url="login")
 @require_GET
 def restricted(request: HttpRequest) -> HttpResponse:
@@ -64,23 +68,26 @@ def restricted(request: HttpRequest) -> HttpResponse:
 	return render(request, "core/restricted.html", {"identity": identity})
 
 
+@personal_response
 @login_required(login_url="login")
 @require_GET
 def event_list(request: HttpRequest) -> HttpResponse:
-	events = EventReadService.list_visible(request.intevia_identity)
-	return render(request, "core/event_list.html", {"events": events})
+	home = EventReadService.home(request.intevia_identity)
+	return render(request, "core/event_list.html", {"events": home.events})
 
 
+@personal_response
 @login_required(login_url="login")
 @require_GET
 def event_detail(request: HttpRequest, event_id: str) -> HttpResponse:
 	try:
-		event = EventReadService.inspect_event(request.intevia_identity, event_id)
+		event = EventReadService.present_event(request.intevia_identity, event_id)
 	except EventNotVisible as exc:
 		raise Http404("Event not found") from exc
 	return render(request, "core/event_detail.html", {"event": event})
 
 
+@personal_response
 @login_required(login_url="login")
 @require_GET
 def registration_detail(
@@ -89,18 +96,57 @@ def registration_detail(
 	registration_id: str,
 ) -> HttpResponse:
 	try:
-		registration = EventReadService.inspect_registration(
+		history = EventReadService.registration_history(
 			request.intevia_identity,
 			event_id,
-			registration_id,
+			registration_id=registration_id,
 		)
 	except EventNotVisible as exc:
 		raise Http404("Registration not found") from exc
 	return render(
 		request,
-		"core/registration_detail.html",
-		{"registration": registration, "event_id": event_id},
+		"core/record_history.html",
+		{"history": history},
 	)
+
+
+@personal_response
+@login_required(login_url="login")
+@require_GET
+def registration_history(request: HttpRequest, event_id: str) -> HttpResponse:
+	try:
+		history = EventReadService.registration_history(
+			request.intevia_identity,
+			event_id,
+		)
+	except EventNotVisible as exc:
+		raise Http404("Event not found") from exc
+	return render(request, "core/record_history.html", {"history": history})
+
+
+@personal_response
+@login_required(login_url="login")
+@require_GET
+def attendance_detail(request: HttpRequest, event_id: str) -> HttpResponse:
+	try:
+		event = EventReadService.present_event(request.intevia_identity, event_id)
+	except EventNotVisible as exc:
+		raise Http404("Event not found") from exc
+	return render(request, "core/attendance_detail.html", {"event": event})
+
+
+@personal_response
+@login_required(login_url="login")
+@require_GET
+def attendance_history(request: HttpRequest, event_id: str) -> HttpResponse:
+	try:
+		history = EventReadService.attendance_history(
+			request.intevia_identity,
+			event_id,
+		)
+	except EventNotVisible as exc:
+		raise Http404("Event not found") from exc
+	return render(request, "core/record_history.html", {"history": history})
 
 
 @require_POST

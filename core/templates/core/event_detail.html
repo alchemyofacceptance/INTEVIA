@@ -1,20 +1,18 @@
 {% extends "core/base.html" %}
 {% block title %}{{ event.title }} | INTEVIA{% endblock %}
 {% block content %}
-  <p class="meta">{{ event.state }} · Read-only</p>
   <h1>{{ event.title }}</h1>
   {% if event.description %}<p class="lede">{{ event.description }}</p>{% endif %}
   <section>
-    <h2>Your registration lineage</h2>
-    <div class="event-list">
-      {% for registration in event.registrations %}
-        <article class="event-item">
-          <p class="meta">{{ registration.state }} · {{ registration.registered_at }}</p>
-          <a href="{% url 'registration-detail' event.event_id registration.registration_id %}">Inspect registration</a>
-        </article>
-      {% empty %}
-        <p>No registration lineage is visible for this Identity.</p>
-      {% endfor %}
-    </div>
+    <h2>Your registration record</h2>
+    <p>{{ event.registration.message }}</p>
+    {% if event.registration.history_available %}<a href="{% url 'registration-history' event.event_id %}">View registration record history</a>{% endif %}
   </section>
+  <section>
+    <h2>Your attendance record</h2>
+    <p>{{ event.attendance.message }}</p>
+    <a href="{% url 'attendance-detail' event.event_id %}">View attendance record</a>
+    {% if event.attendance.history_available %}<a href="{% url 'attendance-history' event.event_id %}">View attendance record history</a>{% endif %}
+  </section>
+  <p><a href="{% url 'event-list' %}">Return to Events in your view</a></p>
 {% endblock %}
