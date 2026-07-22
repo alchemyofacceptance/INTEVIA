@@ -1122,6 +1122,312 @@ class EventRegistrationEvidenceReference(models.Model):
         )
 
 
+class EventAttendance(models.Model):
+    class Status(models.TextChoices):
+        PRESENT = "present", "Present"
+        VOIDED = "voided", "Voided"
+
+    class Origin(models.TextChoices):
+        REGISTERED = "registered", "Registered"
+        GOVERNED_WALK_IN = "governed_walk_in", "Governed walk-in"
+
+    attendance_id = models.CharField(max_length=120, unique=True)
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="attendance_records",
+    )
+    subject = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="event_attendance_records",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PRESENT,
+        db_index=True,
+    )
+    observed_at = models.DateTimeField()
+    supporting_registration = models.ForeignKey(
+        EventRegistration,
+        on_delete=models.PROTECT,
+        related_name="supported_attendance_records",
+        null=True,
+        blank=True,
+    )
+    origin = models.CharField(max_length=24, choices=Origin.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("event", "subject"),
+                name="unique_event_subject_attendance",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("event", "subject", "status"),
+                name="event_attendance_lookup_idx",
+            ),
+        ]
+
+    def clean(self):
+        registration = self.supporting_registration
+        if self.origin == self.Origin.REGISTERED:
+            if registration is None:
+                raise ValidationError(
+                    "registered attendance requires a supporting registration"
+                )
+            if registration.event_id != self.event_id:
+                raise ValidationError(
+                    "supporting registration must belong to the same Event"
+                )
+            if registration.participant_id != self.subject_id:
+                raise ValidationError(
+                    "supporting registration must belong to the subject"
+                )
+        elif registration is not None:
+            raise ValidationError(
+                "governed walk-in attendance cannot have a registration"
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventAttendance is immutable outside its service")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventAttendance cannot be deleted")
+
+
+class EventAttendanceTransition(models.Model):
+    class Action(models.TextChoices):
+        RECORD = "record", "Record"
+        CORRECT = "correct", "Correct"
+        VOID = "void", "Void"
+        REINSTATE = "reinstate", "Reinstate"
+
+    attendance = models.ForeignKey(
+        EventAttendance,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    sequence = models.PositiveIntegerField()
+    action = models.CharField(max_length=16, choices=Action.choices, db_index=True)
+    from_status = models.CharField(max_length=16)
+    to_status = models.CharField(max_length=16)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="event_attendance_transitions",
+    )
+    authority_reference = models.CharField(max_length=255)
+    authority_evaluated_at = models.DateTimeField()
+    origin = models.CharField(max_length=24, choices=EventAttendance.Origin.choices)
+    previous_observed_at = models.DateTimeField(null=True, blank=True)
+    resulting_observed_at = models.DateTimeField()
+    previous_supporting_registration = models.ForeignKey(
+        EventRegistration,
+        on_delete=models.PROTECT,
+        related_name="attendance_transitions_from_registration",
+        null=True,
+        blank=True,
+    )
+    resulting_supporting_registration = models.ForeignKey(
+        EventRegistration,
+        on_delete=models.PROTECT,
+        related_name="attendance_transitions_to_registration",
+        null=True,
+        blank=True,
+    )
+    basis = models.CharField(max_length=255, blank=True)
+    rationale = models.CharField(max_length=255, blank=True)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    recorded_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(sequence__gte=1),
+                name="attendance_sequence_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(previous_transition__isnull=True)
+                | ~Q(pk=models.F("previous_transition_id")),
+                name="attendance_transition_not_self_previous",
+            ),
+            models.UniqueConstraint(
+                fields=("attendance",),
+                condition=Q(previous_transition__isnull=True),
+                name="one_initial_attendance_transition",
+            ),
+            models.UniqueConstraint(
+                fields=("attendance", "sequence"),
+                name="unique_attendance_sequence",
+            ),
+            models.UniqueConstraint(
+                fields=("previous_transition",),
+                condition=Q(previous_transition__isnull=False),
+                name="one_attendance_transition_successor",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="unique_attendance_idempotency",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("attendance", "recorded_at"),
+                name="attendance_transition_time_idx",
+            ),
+        ]
+
+    def clean(self):
+        previous = self.previous_transition
+        if previous is None:
+            if self.sequence != 1 or self.action != self.Action.RECORD:
+                raise ValidationError(
+                    "initial attendance transition must be record sequence 1"
+                )
+        else:
+            if previous.attendance_id != self.attendance_id:
+                raise ValidationError(
+                    "previous transition must belong to the same attendance"
+                )
+            if self.sequence != previous.sequence + 1:
+                raise ValidationError("attendance transition must be sequential")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventAttendanceTransition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventAttendanceTransition cannot be deleted")
+
+
+class EventAttendanceEvidenceReference(models.Model):
+    class Classification(models.TextChoices):
+        ACTOR_ATTESTATION = "actor_attestation", "Actor attestation"
+
+    transition = models.ForeignKey(
+        EventAttendanceTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+    )
+    evidence_type = models.CharField(max_length=40)
+    classification = models.CharField(
+        max_length=32,
+        choices=Classification.choices,
+        db_index=True,
+    )
+    reference = models.CharField(max_length=255)
+    provenance = models.CharField(max_length=255)
+    supplied_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="supplied_event_attendance_evidence",
+    )
+    supplied_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transition", "reference"),
+                name="unique_attendance_evidence_reference",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(
+                "EventAttendanceEvidenceReference is immutable"
+            )
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "EventAttendanceEvidenceReference cannot be deleted"
+        )
+
+
+class EventAttendanceEligibilityReceipt(models.Model):
+    class BasisType(models.TextChoices):
+        GOVERNED_WALK_IN = "governed_walk_in", "Governed walk-in"
+
+    attendance = models.OneToOneField(
+        EventAttendance,
+        on_delete=models.PROTECT,
+        related_name="walk_in_eligibility_receipt",
+    )
+    record_transition = models.OneToOneField(
+        EventAttendanceTransition,
+        on_delete=models.PROTECT,
+        related_name="walk_in_eligibility_receipt",
+    )
+    basis_type = models.CharField(max_length=32, choices=BasisType.choices)
+    basis_reference = models.CharField(max_length=255)
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="attendance_eligibility_receipts",
+    )
+    subject = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="event_attendance_eligibility_receipts",
+    )
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="issued_event_attendance_eligibility_receipts",
+    )
+    authority_reference = models.CharField(max_length=255)
+    event_state_snapshot = models.CharField(max_length=24)
+    evaluated_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.record_transition.attendance_id != self.attendance_id:
+            raise ValidationError(
+                "eligibility transition must belong to the attendance"
+            )
+        if self.record_transition.action != EventAttendanceTransition.Action.RECORD:
+            raise ValidationError("eligibility receipt must belong to record")
+        if self.attendance.event_id != self.event_id:
+            raise ValidationError("eligibility Event must match attendance")
+        if self.attendance.subject_id != self.subject_id:
+            raise ValidationError("eligibility subject must match attendance")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(
+                "EventAttendanceEligibilityReceipt is immutable"
+            )
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "EventAttendanceEligibilityReceipt cannot be deleted"
+        )
+
+
 class LibraryResource(models.Model):
     class State(models.TextChoices):
         DRAFT = "draft", "Draft"
