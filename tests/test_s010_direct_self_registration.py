@@ -240,6 +240,37 @@ class S010HttpGuardianTests(S010Fixtures, TestCase):
 		)
 		self.assertEqual(EventRegistration.objects.count(), 0)
 
+	def assert_absolute_account_refusal(self):
+		with patch.dict(os.environ, self.environment):
+			outcome = EventSelfRegistrationService().attempt(
+				credential=self.user,
+				identity=self.identity_record,
+				event_id=self.event_record.event_id,
+			)
+		self.assertEqual(outcome, SelfRegistrationOutcome.ACCOUNT_REFUSAL)
+		response = self.post()
+		self.assertContains(
+			response,
+			"This registration cannot be completed through this account.",
+		)
+		self.assertEqual(EventRegistration.objects.count(), 0)
+		self.assertEqual(EventRegistrationTransition.objects.count(), 0)
+		self.assertEqual(EventRegistrationEvidenceReference.objects.count(), 0)
+
+	def test_staff_flag_is_absolute_account_refusal_when_allowlisted(self):
+		self.user.is_staff = True
+		self.user.is_superuser = False
+		self.user.save(update_fields=("is_staff", "is_superuser"))
+
+		self.assert_absolute_account_refusal()
+
+	def test_superuser_flag_is_absolute_account_refusal_when_allowlisted(self):
+		self.user.is_staff = False
+		self.user.is_superuser = True
+		self.user.save(update_fields=("is_staff", "is_superuser"))
+
+		self.assert_absolute_account_refusal()
+
 	def test_g10_g11_hidden_and_missing_are_indistinguishable_and_shared(self):
 		hidden = self.event(self.other, "hidden")
 		hidden_path = reverse("event-register-self", args=[hidden.event_id])

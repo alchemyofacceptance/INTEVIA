@@ -104,7 +104,9 @@ class PreAlphaSelfRegistrationPolicy:
 		):
 			raise RegistrationUnavailable("registration policy unavailable")
 		if (
-			identity.access_state != Identity.AccessState.ACTIVE
+			identity.credential.is_staff
+			or identity.credential.is_superuser
+			or identity.access_state != Identity.AccessState.ACTIVE
 			or str(identity.identity_id) not in binding.identity_ids
 			or target.participant.pk != identity.pk
 			or target.origin != EventRegistration.Origin.SELF
