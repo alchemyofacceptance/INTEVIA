@@ -7,6 +7,12 @@
     <h2>Your registration record</h2>
     <p>{{ event.registration.message }}</p>
     {% if event.registration.history_available %}<a href="{% url 'registration-history' event.event_id %}">View registration record history</a>{% endif %}
+    {% if not event.registration.history_available %}
+      <form method="post" action="{% url 'event-register-self' event.event_id %}">
+        {% csrf_token %}
+        <button type="submit">Create my registration record</button>
+      </form>
+    {% endif %}
   </section>
   <section>
     <h2>Your attendance record</h2>

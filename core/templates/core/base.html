@@ -97,11 +97,18 @@
   </header>
   {% if request.user.is_authenticated and request.resolver_match.url_name != "restricted" %}
     <aside class="capability-notice" aria-label="Product capability notice">
-      <p><strong>INTERNAL PRE-ALPHA — VIEW ONLY</strong></p>
-      <p>You can view Events and your existing registration and attendance records. Booking and record changes are not available in this surface.</p>
-      <p>Seeing an Event here does not mean that you are booked or eligible to take an action.</p>
+      <p><strong>INTERNAL PRE-ALPHA</strong></p>
+      <p>You can view Events and your existing registration and attendance records.</p>
+      <p>Seeing an Event here does not guarantee that an action is available.</p>
     </aside>
   {% endif %}
-  <main id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
+  <main id="main-content" tabindex="-1">
+    {% if messages %}
+      <div class="panel" aria-live="polite">
+        {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

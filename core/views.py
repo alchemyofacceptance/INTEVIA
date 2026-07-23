@@ -1,3 +1,4 @@
+from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse
@@ -12,6 +13,24 @@ from core.session import bind_identity_session
 from src.intevia.services.event_read_service import (
 	EventNotVisible,
 	EventReadService,
+)
+from src.intevia.services.event_self_registration_service import (
+	EventSelfRegistrationService,
+	SelfRegistrationOutcome,
+)
+
+
+REGISTRATION_OUTCOME_MESSAGES = {
+	SelfRegistrationOutcome.EXISTING: "A current registration record already exists for you.",
+	SelfRegistrationOutcome.UNAVAILABLE: "Registration is not available through this surface for this Event.",
+	SelfRegistrationOutcome.ACCOUNT_REFUSAL: "This registration cannot be completed through this account.",
+	SelfRegistrationOutcome.CREATED: "Your registration record has been created.",
+}
+REGISTRATION_NOT_COMPLETED = (
+	"We could not complete the registration right now. No registration was created."
+)
+REGISTRATION_INDETERMINATE = (
+	"We could not confirm the result. Return to the Event page to check the current registration record."
 )
 
 
@@ -85,6 +104,33 @@ def event_detail(request: HttpRequest, event_id: str) -> HttpResponse:
 	except EventNotVisible as exc:
 		raise Http404("Event not found") from exc
 	return render(request, "core/event_detail.html", {"event": event})
+
+
+def _registration_success_response(request, event_id, outcome):
+	messages.info(request, REGISTRATION_OUTCOME_MESSAGES[outcome])
+	return redirect(reverse("event-detail", args=[event_id]))
+
+
+@personal_response
+@login_required(login_url="login")
+@require_POST
+def register_self(request: HttpRequest, event_id: str) -> HttpResponse:
+	try:
+		outcome = EventSelfRegistrationService().attempt(
+			credential=request.user,
+			identity=request.intevia_identity,
+			event_id=event_id,
+		)
+	except EventNotVisible as exc:
+		raise Http404("Event not found") from exc
+	except Exception:
+		messages.info(request, REGISTRATION_NOT_COMPLETED)
+		return redirect(reverse("event-detail", args=[event_id]))
+
+	try:
+		return _registration_success_response(request, event_id, outcome)
+	except Exception:
+		return HttpResponse(REGISTRATION_INDETERMINATE, status=500)
 
 
 @personal_response

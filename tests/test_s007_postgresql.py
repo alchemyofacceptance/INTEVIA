@@ -143,6 +143,11 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             ("core_eventregistrationtransition", "actor_id"),
             ("core_eventregistrationtransition", "authority_participant_id"),
             ("core_eventregistrationevidencereference", "supplied_by_id"),
+            ("core_eventattendance", "subject_id"),
+            ("core_eventattendancetransition", "actor_id"),
+            ("core_eventattendanceevidencereference", "supplied_by_id"),
+            ("core_eventattendanceeligibilityreceipt", "subject_id"),
+            ("core_eventattendanceeligibilityreceipt", "actor_id"),
             ("core_libraryresource", "created_by_id"),
             ("core_libraryresourceversion", "created_by_id"),
             ("core_libraryresourcetransition", "actor_id"),
@@ -180,7 +185,7 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             )
             observed = set(cursor.fetchall())
         self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 27)
+        self.assertEqual(len(observed), 32)
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")

@@ -64,6 +64,7 @@ class EventRegistrationAuthorityTarget:
     predecessor: EventRegistration | None
     origin: str
     acknowledgement_required: bool
+    correlation_identity: str | None = None
 
 
 class EventRegistrationService:
@@ -74,10 +75,15 @@ class EventRegistrationService:
     )
     _CANCELLABLE_EVENT_STATES = _REGISTERABLE_EVENT_STATES
 
-    def __init__(self, *, authority: ContributionAuthority) -> None:
+    def __init__(self, *, authority: ContributionAuthority, eligibility=None) -> None:
         if not isinstance(authority, ContributionAuthority):
             raise TypeError("authority must preserve the existing capability contract")
+        if eligibility is not None and not callable(
+            getattr(eligibility, "determine_eligibility", None)
+        ):
+            raise TypeError("eligibility must implement determine_eligibility")
         self.authority = authority
+        self.eligibility = eligibility
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
@@ -189,8 +195,8 @@ class EventRegistrationService:
         event_id: str,
         participant: Identity,
         evidence_reference: str,
-        eligibility_basis_type: str,
-        eligibility_basis_reference: str,
+        eligibility_basis_type: str | None,
+        eligibility_basis_reference: str | None,
         eligibility_policy_reference: str | None = None,
         predecessor: EventRegistration | None = None,
         acknowledgement_required: bool = False,
@@ -200,17 +206,27 @@ class EventRegistrationService:
         occurred_at = self._at(occurred_at)
         registration_id = self._text(registration_id, "registration_id")
         evidence_reference = self._text(evidence_reference, "evidence_reference")
-        eligibility_basis_reference = self._text(
-            eligibility_basis_reference,
-            "eligibility_basis_reference",
-        )
-        if eligibility_basis_type not in EventRegistration.EligibilityBasisType.values:
-            raise ValidationError("eligibility_basis_type is not governed")
-        if eligibility_policy_reference is not None:
-            eligibility_policy_reference = self._text(
-                eligibility_policy_reference,
-                "eligibility_policy_reference",
+        if self.eligibility is None:
+            eligibility_basis_reference = self._text(
+                eligibility_basis_reference,
+                "eligibility_basis_reference",
             )
+            if eligibility_basis_type not in EventRegistration.EligibilityBasisType.values:
+                raise ValidationError("eligibility_basis_type is not governed")
+            if eligibility_policy_reference is not None:
+                eligibility_policy_reference = self._text(
+                    eligibility_policy_reference,
+                    "eligibility_policy_reference",
+                )
+        elif any(
+            value is not None
+            for value in (
+                eligibility_basis_type,
+                eligibility_basis_reference,
+                eligibility_policy_reference,
+            )
+        ):
+            raise ValidationError("trusted eligibility fields must not be supplied")
         idempotency_key = (
             self._text(idempotency_key, "idempotency_key")
             if idempotency_key is not None
@@ -299,6 +315,7 @@ class EventRegistrationService:
             predecessor=predecessor,
             origin=origin,
             acknowledgement_required=acknowledgement_required,
+            correlation_identity=idempotency_key,
         )
         actor, authority_reference = self.authority.evaluate(
             identity=identity,
@@ -306,6 +323,31 @@ class EventRegistrationService:
             target=target,
             timestamp=occurred_at,
         )
+        eligibility_evaluated_at = occurred_at
+        if self.eligibility is not None:
+            receipt = self.eligibility.determine_eligibility(
+                identity=actor,
+                action=action_type,
+                target=target,
+                timestamp=occurred_at,
+            )
+            eligibility_basis_type = receipt.basis_type
+            eligibility_basis_reference = self._text(
+                receipt.basis_reference,
+                "eligibility_basis_reference",
+            )
+            eligibility_policy_reference = self._text(
+                receipt.policy_reference,
+                "eligibility_policy_reference",
+            )
+            eligibility_evaluated_at = self._at(receipt.evaluated_at)
+            if eligibility_evaluated_at != occurred_at:
+                raise ValidationError("eligibility receipt timestamp is not current")
+            if eligibility_basis_type not in {
+                EventRegistration.EligibilityBasisType.EVENT_POLICY,
+                EventRegistration.EligibilityBasisType.EVENT_CONFIGURATION,
+            }:
+                raise ValidationError("eligibility receipt requires review")
         if origin == EventRegistration.Origin.THIRD_PARTY and acknowledgement_required:
             raise AcknowledgementCapabilityUnavailable(
                 "prior participant acknowledgement is required but unavailable"
@@ -323,7 +365,7 @@ class EventRegistrationService:
                     eligibility_policy_reference=eligibility_policy_reference,
                     eligibility_basis_type=eligibility_basis_type,
                     eligibility_basis_reference=eligibility_basis_reference,
-                    eligibility_evaluated_at=occurred_at,
+                    eligibility_evaluated_at=eligibility_evaluated_at,
                     registered_at=occurred_at,
                 )
                 transition = EventRegistrationTransition.objects.create(
