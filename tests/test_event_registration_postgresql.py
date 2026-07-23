@@ -367,6 +367,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
 
     def test_registration_migration_reverses_and_reapplies(self):
         executor = MigrationExecutor(connection)
+        received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
         try:
             executor.migrate([("core", "0009_care_response_foundation")])
             self.assertNotIn(
@@ -375,8 +376,12 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
             )
         finally:
             executor = MigrationExecutor(connection)
-            executor.migrate([("core", "0013_s007_identity_constraints")])
+            executor.migrate(received_leaf_targets)
         self.assertIn(
             "core_eventregistration",
+            connection.introspection.table_names(),
+        )
+        self.assertIn(
+            "core_eventattendance",
             connection.introspection.table_names(),
         )

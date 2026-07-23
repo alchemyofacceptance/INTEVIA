@@ -14,6 +14,8 @@ class IdentityMigrationRehearsalTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
+        executor = MigrationExecutor(connection)
+        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
         old_apps = self.migrate(self.migrate_from)
         User = old_apps.get_model("auth", "User")
         Profile = old_apps.get_model("core", "Profile")
@@ -137,7 +139,12 @@ class IdentityMigrationRehearsalTests(TransactionTestCase):
                 self.assertEqual(getattr(row, field_name), self.profile_pk)
 
     def tearDown(self):
-        self.migrate(self.migrate_to)
+        executor = MigrationExecutor(connection)
+        executor.migrate(self.received_leaf_targets)
+        self.assertIn(
+            "core_eventattendance",
+            connection.introspection.table_names(),
+        )
         super().tearDown()
 
     def test_populated_rename_rollback_and_reapply_preserve_lineage(self):
