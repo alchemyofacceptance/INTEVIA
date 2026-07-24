@@ -59,6 +59,7 @@ def _valid_snapshot(snapshot: BindingSnapshot) -> bool:
         or snapshot.effective_at >= snapshot.expires_at
         or type(snapshot.provider_snapshot_reference) is not str
         or _SNAPSHOT_REFERENCE.fullmatch(snapshot.provider_snapshot_reference) is None
+        or type(snapshot.decision) is not BindingDecision
     ):
         return False
     try:

@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 import json
 from unittest import TestCase
@@ -40,13 +40,14 @@ class BindingArtifactTests(TestCase):
             "bindings": [],
         }
 
-    def snapshot(self):
+    def snapshot(self, *, kind=BindingKind.ACTION):
+        viewer = kind is BindingKind.VIEWER
         return BindingSnapshot(
-            binding_reference="lib-authority-binding:artifact.action:v1",
+            binding_reference=f"lib-authority-binding:artifact.{kind.value.lower()}:v1",
             binding_version="1",
             policy_reference=POLICY_REFERENCE,
             environment=POLICY_ENVIRONMENT,
-            binding_kind=BindingKind.ACTION,
+            binding_kind=kind,
             subject_identity_id="11111111-2222-4333-8444-555555555555",
             enabled=True,
             effective_at=NOW - timedelta(hours=1),
@@ -55,10 +56,10 @@ class BindingArtifactTests(TestCase):
             superseding_binding_reference=None,
             provider_snapshot_reference="lib-binding-snapshot:sha256:" + "c" * 64,
             decision=BindingDecision.ALLOW,
-            action=LibraryAction.CREATE,
-            resource_id="lib.resource~artifact",
-            version_number="1",
-            viewer_scope=None,
+            action=None if viewer else LibraryAction.CREATE,
+            resource_id=None if viewer else "lib.resource~artifact",
+            version_number=None if viewer else "1",
+            viewer_scope="LIBRARY_EXACT_VERSION_CONTENT" if viewer else None,
         )
 
     def test_canonical_artifact_has_distinct_content_addressed_references(self):
@@ -103,3 +104,31 @@ class BindingArtifactTests(TestCase):
             evaluated_at=NOW,
         )
         self.assertEqual(no_match.status, BindingLookupStatus.NO_MATCH)
+
+    def test_malformed_authority_decision_is_unavailable(self):
+        malformed = replace(self.snapshot(), decision="MALFORMED")
+        provider = ImmutableLibraryBindingProvider((malformed,), enabled=True, complete_for_policy=True)
+        lookup = provider.lookup(
+            claimed_binding_reference=malformed.binding_reference,
+            subject_identity_id=malformed.subject_identity_id,
+            binding_kind=BindingKind.ACTION,
+            action=LibraryAction.CREATE,
+            resource_id="lib.resource~artifact",
+            version_number="1",
+            evaluated_at=NOW,
+        )
+        self.assertEqual(lookup.status, BindingLookupStatus.UNAVAILABLE)
+
+    def test_malformed_disclosure_decision_is_unavailable(self):
+        malformed = replace(self.snapshot(kind=BindingKind.VIEWER), decision=None)
+        provider = ImmutableLibraryBindingProvider((malformed,), enabled=True, complete_for_policy=True)
+        lookup = provider.lookup(
+            claimed_binding_reference=None,
+            subject_identity_id=malformed.subject_identity_id,
+            binding_kind=BindingKind.VIEWER,
+            action=None,
+            resource_id="lib.resource~artifact",
+            version_number="1",
+            evaluated_at=NOW,
+        )
+        self.assertEqual(lookup.status, BindingLookupStatus.UNAVAILABLE)

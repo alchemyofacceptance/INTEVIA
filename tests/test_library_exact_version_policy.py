@@ -117,6 +117,42 @@ class LibraryExactVersionPolicyTests(TestCase):
         wrong_target = replace(self.snapshot(), resource_id="lib.resource~other")
         self.assertEqual(self.authority(self.policy((wrong_target,)))[0], AuthorityResult.REFUSED)
 
+    def test_exact_deny_remains_refused(self):
+        denied = self.snapshot(decision=BindingDecision.DENY)
+        result, _, _, limitation = self.authority(self.policy((denied,)))
+        self.assertEqual(result, AuthorityResult.REFUSED)
+        self.assertIsNone(limitation)
+
+    def test_malformed_authority_decision_holds(self):
+        malformed = replace(self.snapshot(), decision="MALFORMED")
+        result, _, binding, limitation = self.authority(self.policy((malformed,)))
+        self.assertEqual(result, AuthorityResult.HOLD)
+        self.assertIsNone(binding)
+        self.assertIsNotNone(limitation)
+
+    def test_malformed_disclosure_decision_holds(self):
+        malformed = replace(self.snapshot(kind=BindingKind.VIEWER), decision=None)
+        result, _, binding, limitation = self.policy((malformed,)).determine_disclosure(
+            identity=self.identity,
+            resource=self.resource,
+            version=self.version,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(result, DisclosureResult.HOLD)
+        self.assertIsNone(binding)
+        self.assertIsNotNone(limitation)
+
+    def test_wrong_binding_policy_identity_holds(self):
+        malformed = replace(self.snapshot(), policy_reference="policy:OTHER:v1")
+        self.assertEqual(self.authority(self.policy((malformed,)))[0], AuthorityResult.HOLD)
+
+    def test_wrong_binding_policy_version_holds(self):
+        malformed = replace(
+            self.snapshot(),
+            policy_reference="policy:LIB-EXACT-VERSION-PREALPHA-001:v2",
+        )
+        self.assertEqual(self.authority(self.policy((malformed,)))[0], AuthorityResult.HOLD)
+
     def test_non_active_identity_and_staff_flags_are_refused(self):
         snapshot = self.snapshot()
         for state in (
@@ -132,6 +168,23 @@ class LibraryExactVersionPolicyTests(TestCase):
         self.user.save(update_fields=("is_staff",))
         self.identity.refresh_from_db()
         self.assertEqual(self.authority(self.policy((snapshot,)))[0], AuthorityResult.REFUSED)
+
+    def test_superuser_only_credential_grants_nothing(self):
+        snapshot = self.snapshot()
+        viewer = self.snapshot(kind=BindingKind.VIEWER)
+        self.user.is_superuser = True
+        self.user.save(update_fields=("is_superuser",))
+        self.identity.refresh_from_db()
+        self.assertEqual(self.authority(self.policy((snapshot,)))[0], AuthorityResult.REFUSED)
+        self.assertEqual(
+            self.policy((viewer,)).determine_disclosure(
+                identity=self.identity,
+                resource=self.resource,
+                version=self.version,
+                evaluated_at=NOW,
+            )[0],
+            DisclosureResult.HIDDEN,
+        )
 
     def test_disabled_future_expired_revoked_and_superseded_binding_hold(self):
         base = self.snapshot()

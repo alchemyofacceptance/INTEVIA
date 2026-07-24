@@ -133,3 +133,22 @@ class TransactionBoundaryTests(TransactionTestCase):
                 context=self.context,
                 evaluated_at=NOW,
             )
+
+    def test_scope_cannot_be_replayed_by_service_for_another_connection_alias(self):
+        with transaction.atomic():
+            scope = self.service.acquire_consequential_library_scope(
+                resource_id=self.resource.resource_id,
+                version_number=1,
+            )
+            other_service = LibraryExactVersionContract(
+                policy=self.service.policy,
+                database_alias="s011a_other",
+            )
+            with self.assertRaises(RuntimeError):
+                other_service.evaluate_consequential_library_truth(
+                    scope=scope,
+                    actor_identity_id=self.identity.identity_id,
+                    action=LibraryAction.CREATE,
+                    context=self.context,
+                    evaluated_at=NOW,
+                )

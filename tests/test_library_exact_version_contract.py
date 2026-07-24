@@ -171,3 +171,147 @@ class LibraryExactVersionContractTests(TestCase):
                 policy_reference=POLICY_REFERENCE,
                 requested_at=NOW,
             )
+
+    def test_purpose_field_is_rejected_directly(self):
+        with self.assertRaises(TypeError):
+            LibraryRequestContext(
+                request_reference="request.contract",
+                consumer_reference="consumer.s011b",
+                authority_binding_reference="lib-authority-binding:contract.action:v1",
+                policy_reference=POLICY_REFERENCE,
+                requested_at=NOW,
+                purpose="forbidden",
+            )
+
+    def test_wrong_policy_identity_is_rejected(self):
+        with self.assertRaises(ValueError):
+            LibraryRequestContext(
+                request_reference="request.contract",
+                consumer_reference="consumer.s011b",
+                authority_binding_reference="lib-authority-binding:contract.action:v1",
+                policy_reference="policy:OTHER:v1",
+                requested_at=NOW,
+            )
+
+    def test_wrong_policy_version_is_rejected(self):
+        with self.assertRaises(ValueError):
+            LibraryRequestContext(
+                request_reference="request.contract",
+                consumer_reference="consumer.s011b",
+                authority_binding_reference="lib-authority-binding:contract.action:v1",
+                policy_reference="policy:LIB-EXACT-VERSION-PREALPHA-001:v2",
+                requested_at=NOW,
+            )
+
+    def test_missing_actor_identity_holds(self):
+        envelope = self.service((self.action_binding(),)).determine_action_authority(
+            actor_identity_id="11111111-2222-4333-8444-555555555555",
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            action=LibraryAction.CREATE,
+            context=self.context(),
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, AuthorityResult.HOLD)
+        self.assertIsNone(envelope.payload.actor_identity_id)
+
+    def test_missing_viewer_identity_holds(self):
+        envelope = self.service((self.viewer_binding(),)).determine_disclosure(
+            viewer_identity_id="11111111-2222-4333-8444-555555555555",
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, DisclosureResult.HOLD)
+        self.assertIsNone(envelope.payload.viewer_identity_id)
+
+    def test_mismatched_actor_identity_is_refused(self):
+        other_user = User.objects.create_user(username="s011a-contract-other-actor")
+        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        envelope = self.service((self.action_binding(),)).determine_action_authority(
+            actor_identity_id=other.identity_id,
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            action=LibraryAction.CREATE,
+            context=self.context(),
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, AuthorityResult.REFUSED)
+        self.assertEqual(envelope.payload.actor_identity_id, str(other.identity_id))
+
+    def test_mismatched_viewer_identity_is_hidden(self):
+        other_user = User.objects.create_user(username="s011a-contract-other-viewer")
+        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        envelope = self.service((self.viewer_binding(),)).determine_disclosure(
+            viewer_identity_id=other.identity_id,
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, DisclosureResult.HIDDEN)
+        self.assertEqual(envelope.payload.viewer_identity_id, str(other.identity_id))
+
+    def test_viewer_substitution_changes_bound_identity_and_digest(self):
+        other_user = User.objects.create_user(username="s011a-contract-substituted-viewer")
+        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        service = self.service((self.viewer_binding(),))
+        bound = service.determine_disclosure(
+            viewer_identity_id=self.identity.identity_id,
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        substituted = service.determine_disclosure(
+            viewer_identity_id=other.identity_id,
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(bound.payload.result, DisclosureResult.CONTENT_VISIBLE)
+        self.assertEqual(substituted.payload.result, DisclosureResult.HIDDEN)
+        self.assertNotEqual(bound.determination_reference, substituted.determination_reference)
+
+    def test_wrong_owner_exact_version_is_not_substituted(self):
+        other_resource = LibraryResource.objects.create(
+            resource_id="lib.resource~without-version",
+            created_by=self.identity,
+            state=LibraryResource.State.PUBLISHED,
+            created_at=NOW,
+        )
+        envelope = self.service().determine_linkability(
+            resource_id=other_resource.resource_id,
+            version_number=self.version.version_number,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, LinkabilityResult.HOLD)
+        self.assertIsNone(envelope.payload.resource_version_pk)
+
+    def test_draft_linkability_is_not_linkable(self):
+        self.resource.state = LibraryResource.State.DRAFT
+        self.resource.save(update_fields=("state",))
+        envelope = self.service().determine_linkability(
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, LinkabilityResult.NOT_LINKABLE)
+
+    def test_deprecated_linkability_is_not_linkable(self):
+        self.resource.state = LibraryResource.State.DEPRECATED
+        self.resource.save(update_fields=("state",))
+        envelope = self.service().determine_linkability(
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, LinkabilityResult.NOT_LINKABLE)
+
+    def test_archived_linkability_is_not_linkable(self):
+        self.resource.state = LibraryResource.State.ARCHIVED
+        self.resource.save(update_fields=("state",))
+        envelope = self.service().determine_linkability(
+            resource_id=self.resource.resource_id,
+            version_number=1,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(envelope.payload.result, LinkabilityResult.NOT_LINKABLE)

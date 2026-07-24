@@ -8,7 +8,7 @@ NOW = "2026-07-23T18:30:00.000000Z"
 
 
 class NonDisclosureTests(TestCase):
-    def payload(self, result, limitation):
+    def payload(self, result, limitation, *, kind="DISCLOSURE"):
         return DeterminationPayload(
             action=None,
             actor_access_epoch=None,
@@ -20,7 +20,7 @@ class NonDisclosureTests(TestCase):
             binding_version=None,
             canonicalization="RFC8785+INTEVIA-S011A-v1",
             consumer_reference=None,
-            determination_kind="DISCLOSURE",
+            determination_kind=kind,
             environment="internal-pre-alpha",
             evaluated_at=NOW,
             policy_reference="policy:LIB-EXACT-VERSION-PREALPHA-001:v1",
@@ -60,3 +60,17 @@ class NonDisclosureTests(TestCase):
         envelope = envelope_for(self.payload("HIDDEN", None))
         self.assertFalse(hasattr(envelope, "authorise"))
         self.assertFalse(hasattr(envelope, "permission"))
+
+    def test_hidden_refused_hold_and_not_found_share_non_disclosing_schema(self):
+        receipts = (
+            envelope_for(self.payload("HIDDEN", None)),
+            envelope_for(self.payload("REFUSED", None, kind="AUTHORITY")),
+            envelope_for(self.payload("HOLD", "BINDING_UNAVAILABLE")),
+            envelope_for(self.payload("HOLD", "RESOURCE_OR_VERSION_UNAVAILABLE")),
+        )
+        prohibited = (b"content", b"title", b"public_error", b"current_version", b"successor")
+        expected_fields = set(DeterminationPayload.__dataclass_fields__)
+        for receipt in receipts:
+            self.assertEqual(set(receipt.payload.__dataclass_fields__), expected_fields)
+            for field in prohibited:
+                self.assertNotIn(field, receipt.canonical_payload)
