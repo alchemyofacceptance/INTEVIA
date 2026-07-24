@@ -1,9 +1,16 @@
 # Whitepaper WHY v2.0 — Publication Provenance
 
 Publication date: 2026-07-10
-Author: Carmien Owen
+Correction date: 2026-07-24
+Author: Carmian Owen
 Organisation: INTEVIA
 Status: Published for open review
+
+## Correction record
+
+Correction note — 2026-07-24: The author name was corrected from “Carmien Owen” to “Carmian Owen.” This is a non-substantive identity correction. The paper’s argument, wording, version designation, and original publication date remain unchanged.
+
+The PDF was surgically corrected rather than regenerated because the historical publication styling source was not preserved. No substantive text or visual composition changed.
 
 ## Published artefacts
 
@@ -26,10 +33,10 @@ Status: Published for open review
 
 ## Publication artefact hashes
 
-- Markdown SHA-256: `4dad34af3da777327652aacebb7318bbbc3c96fedef8d49704671c1bb945730a`
-- PDF SHA-256: `6677883c4f7bf27f2eb854477a9912231456cbe460d9098b3d73789fca0347cd`
+- Markdown SHA-256: `cd4b659efce8a06cf6bd21ea0fb00cc728e82dbe4d4f7e53105c9e82beaecbc2`
+- PDF SHA-256: `dad1afc3f7135f561bd8d79d3ea46a326f57c7efaa2e6f741b8c3b4f4bce05ca`
 
 ## Governance record
 
-Human final publication authorisation was issued by Carmien Owen on 2026-07-10.
+Human final publication authorisation was issued by Carmian Owen on 2026-07-10.
 Whitepaper WHAT/HOW was not authorised for publication by this action.

@@ -3,13 +3,16 @@
 ## The Human Meaning Layer Before Systems Outrun Judgement
 
 **Document:** Whitepaper WHY v2.0 — Public review draft  
-**Author:** Carmien Owen  
+**Author:** Carmian Owen  
 **Organisation:** INTEVIA  
 **Date:** 2026-07-10  
+**Correction date:** 2026-07-24  
 **Version:** v2.0 public review draft  
 **Status:** Published for open review
 
 **Status note:** This document is published for open review. It does not constitute a standard, certification, doctrine, or claim of solved governance. The companion paper, *Governing AI Acceleration: The INTEVIA Architecture*, addresses the architectural question and may be published separately.
+
+Correction note — 2026-07-24: The author name was corrected from “Carmien Owen” to “Carmian Owen.” This is a non-substantive identity correction. The paper’s argument, wording, version designation, and original publication date remain unchanged.
 
 ---
 
@@ -305,7 +308,7 @@ It matters because human sovereignty cannot be assumed to survive acceleration b
 
 ## Citation
 
-Carmien Owen / INTEVIA.  
+Carmian Owen / INTEVIA.  
 *Human Judgement in the Age of AI Acceleration: The Human Meaning Layer Before Systems Outrun Judgement.*  
 Whitepaper WHY v2.0, 2026-07-10.  
 Repository: https://github.com/alchemyofacceptance/INTEVIA/tree/main/whitepapers.  
