@@ -1,3 +1,5 @@
+import hashlib
+import re
 import uuid
 
 from django.contrib.auth.models import User
@@ -1654,6 +1656,337 @@ class LibraryResourceEvidenceReference(models.Model):
         raise ValidationError(
             "LibraryResourceEvidenceReference cannot be deleted"
         )
+
+
+class EventResourceRelationship(models.Model):
+    """Stable EVENT lineage whose head is guarded, not schema-guaranteed."""
+
+    relationship_id = models.CharField(max_length=120, unique=True)
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="resource_relationships",
+    )
+    library_resource = models.ForeignKey(
+        LibraryResource,
+        on_delete=models.PROTECT,
+        related_name="event_relationships",
+    )
+    head_assertion = models.OneToOneField(
+        "EventResourceAssertion",
+        on_delete=models.PROTECT,
+        related_name="headed_relationship",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("event", "library_resource"),
+                name="unique_event_resource_lineage",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("event", "created_at"),
+                name="event_resource_lineage_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.head_assertion_id is not None
+            and self.head_assertion.relationship_id != self.pk
+        ):
+            raise ValidationError("head_assertion must belong to this relationship")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None and not self._state.adding:
+            original = type(self).objects.get(pk=self.pk)
+            immutable = ("relationship_id", "event_id", "library_resource_id", "created_at")
+            if any(getattr(original, field) != getattr(self, field) for field in immutable):
+                raise ValidationError("EventResourceRelationship lineage is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventResourceRelationship cannot be deleted")
+
+
+class EventResourceAssertion(models.Model):
+    class Purpose(models.TextChoices):
+        PREPARATION = "PREPARATION", "Preparation"
+        DURING_EVENT = "DURING_EVENT", "During the Event"
+        FOLLOW_UP = "FOLLOW_UP", "Follow-up"
+        REFERENCE = "REFERENCE", "Reference"
+
+    class State(models.TextChoices):
+        CURRENT = "CURRENT", "Current"
+        RETIRED = "RETIRED", "Retired"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+        VOIDED = "VOIDED", "Voided"
+
+    relationship = models.ForeignKey(
+        EventResourceRelationship,
+        on_delete=models.PROTECT,
+        related_name="assertions",
+    )
+    revision = models.PositiveIntegerField()
+    predecessor = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="successor",
+        null=True,
+        blank=True,
+    )
+    library_resource_version = models.ForeignKey(
+        LibraryResourceVersion,
+        on_delete=models.PROTECT,
+        related_name="event_resource_assertions",
+    )
+    purpose = models.CharField(max_length=24, choices=Purpose.choices)
+    state = models.CharField(max_length=16, choices=State.choices)
+    created_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="created_event_resource_assertions",
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    created_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("relationship", "revision"),
+                name="unique_event_resource_revision",
+            ),
+            models.UniqueConstraint(
+                fields=("relationship",),
+                condition=models.Q(predecessor__isnull=True),
+                name="one_initial_event_resource_assertion",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1),
+                name="event_resource_revision_positive",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("relationship", "revision"),
+                name="event_resource_assertion_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.predecessor_id is None:
+            if self.revision != 1 or self.state != self.State.CURRENT:
+                raise ValidationError("initial assertion must be revision 1 and CURRENT")
+        else:
+            if self.predecessor_id == self.pk:
+                raise ValidationError("assertion cannot be its own predecessor")
+            if self.predecessor.relationship_id != self.relationship_id:
+                raise ValidationError("predecessor must belong to the same relationship")
+            if self.revision != self.predecessor.revision + 1:
+                raise ValidationError("assertion revisions must be sequential")
+        if self.relationship_id and (
+            self.library_resource_version.resource_id
+            != self.relationship.library_resource_id
+        ):
+            raise ValidationError("exact version must belong to the relationship resource")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventResourceAssertion is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventResourceAssertion cannot be deleted")
+
+
+class EventResourceRelationshipTransition(models.Model):
+    class Action(models.TextChoices):
+        CREATE = "CREATE", "Create"
+        SUPERSEDE_VERSION = "SUPERSEDE_VERSION", "Supersede version"
+        AMEND_PURPOSE = "AMEND_PURPOSE", "Amend purpose"
+        RETIRE = "RETIRE", "Retire"
+        VOID = "VOID", "Void"
+
+    relationship = models.ForeignKey(
+        EventResourceRelationship,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+    )
+    previous_transition = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition",
+        null=True,
+        blank=True,
+    )
+    sequence = models.PositiveIntegerField()
+    action = models.CharField(max_length=24, choices=Action.choices, db_index=True)
+    from_assertion = models.OneToOneField(
+        EventResourceAssertion,
+        on_delete=models.PROTECT,
+        related_name="outgoing_transition",
+        null=True,
+        blank=True,
+    )
+    resulting_assertion = models.OneToOneField(
+        EventResourceAssertion,
+        on_delete=models.PROTECT,
+        related_name="resulting_transition",
+    )
+    prior_disposition = models.CharField(
+        max_length=16,
+        choices=EventResourceAssertion.State.choices,
+        null=True,
+        blank=True,
+    )
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="event_resource_relationship_transitions",
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_scope = models.CharField(max_length=64)
+    event_authority_reference = models.CharField(max_length=255, db_index=True)
+    event_authority_evaluated_at = models.DateTimeField()
+    request_reference = models.CharField(max_length=128, db_index=True)
+    consumer_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    transaction_reference = models.UUIDField(unique=True)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("relationship", "sequence"),
+                name="unique_event_resource_sequence",
+            ),
+            models.UniqueConstraint(
+                fields=("relationship",),
+                condition=models.Q(previous_transition__isnull=True),
+                name="one_initial_event_resource_transition",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="unique_event_resource_idempotency",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sequence__gte=1),
+                name="event_resource_sequence_positive",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("relationship", "occurred_at"),
+                name="event_resource_transition_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.previous_transition_id is None:
+            if self.sequence != 1 or self.action != self.Action.CREATE:
+                raise ValidationError("initial transition must be sequence 1 CREATE")
+            if self.from_assertion_id is not None or self.prior_disposition is not None:
+                raise ValidationError("CREATE cannot have a prior assertion or disposition")
+        else:
+            if self.previous_transition_id == self.pk:
+                raise ValidationError("transition cannot be its own predecessor")
+            if self.previous_transition.relationship_id != self.relationship_id:
+                raise ValidationError("previous transition must share the relationship")
+            if self.sequence != self.previous_transition.sequence + 1:
+                raise ValidationError("transition sequences must be sequential")
+            if self.from_assertion_id is None:
+                raise ValidationError("non-CREATE transition requires from_assertion")
+        for assertion in (self.from_assertion, self.resulting_assertion):
+            if assertion is not None and assertion.relationship_id != self.relationship_id:
+                raise ValidationError("transition assertions must share the relationship")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.payload_fingerprint or ""):
+            raise ValidationError("payload_fingerprint must be lowercase SHA-256")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventResourceRelationshipTransition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventResourceRelationshipTransition cannot be deleted")
+
+
+class EventResourceRelationshipEvidence(models.Model):
+    class Kind(models.TextChoices):
+        EVENT_AUTHORITY = "EVENT_AUTHORITY", "Event authority"
+        LIBRARY_AUTHORITY = "LIBRARY_AUTHORITY", "Library authority"
+        LIBRARY_LINKABILITY = "LIBRARY_LINKABILITY", "Library linkability"
+        LIBRARY_DISCLOSURE_ELIGIBILITY = (
+            "LIBRARY_DISCLOSURE_ELIGIBILITY",
+            "Library disclosure eligibility",
+        )
+        RELATIONSHIP_DISCLOSURE_ELIGIBILITY = (
+            "RELATIONSHIP_DISCLOSURE_ELIGIBILITY",
+            "Relationship disclosure eligibility",
+        )
+        CORRECTION = "CORRECTION", "Correction"
+
+    transition = models.ForeignKey(
+        EventResourceRelationshipTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence",
+    )
+    kind = models.CharField(max_length=48, choices=Kind.choices)
+    schema_id = models.CharField(max_length=120)
+    schema_version = models.PositiveIntegerField()
+    canonicalization = models.CharField(max_length=120)
+    result = models.CharField(max_length=48)
+    determination_reference = models.CharField(max_length=255, db_index=True)
+    policy_reference = models.CharField(max_length=255, db_index=True)
+    authority_binding_reference = models.CharField(max_length=255, null=True, blank=True)
+    provider_snapshot_reference = models.CharField(max_length=255, null=True, blank=True)
+    canonical_payload = models.BinaryField()
+    payload_sha256 = models.CharField(max_length=64, db_index=True)
+    actor_identity_id = models.UUIDField(null=True, blank=True)
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    viewer_identity_id = models.UUIDField(null=True, blank=True)
+    viewer_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    request_reference = models.CharField(max_length=128, null=True, blank=True)
+    consumer_reference = models.CharField(max_length=128, null=True, blank=True)
+    evaluated_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transition", "kind"),
+                name="unique_event_resource_evidence_kind",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("transition", "kind", "evaluated_at"),
+                name="event_resource_evidence_idx",
+            ),
+        ]
+
+    def clean(self):
+        payload = bytes(self.canonical_payload)
+        if hashlib.sha256(payload).hexdigest() != self.payload_sha256:
+            raise ValidationError("payload_sha256 must identify canonical_payload bytes")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("EventResourceRelationshipEvidence is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("EventResourceRelationshipEvidence cannot be deleted")
 
 
 class Service(models.Model):

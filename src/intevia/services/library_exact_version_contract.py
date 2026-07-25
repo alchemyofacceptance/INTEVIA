@@ -387,7 +387,8 @@ class ConsequentialLibraryScope:
 @dataclass(frozen=True, slots=True)
 class ConsequentialLibraryEvidence:
     authority_envelope: DeterminationEnvelope
-    linkability_envelope: DeterminationEnvelope
+    linkability_envelope: DeterminationEnvelope | None
+    disclosure_envelope: DeterminationEnvelope | None
     resource_id: str
     resource_version_pk: str | None
     version_number: str | None
@@ -667,14 +668,56 @@ class LibraryExactVersionContractService:
             context=context,
             binding=binding,
         ))
-        linkability = self.determine_linkability(
-            resource_id=resource_id,
-            version_number=version.version_number if version else 0,
-            evaluated_at=evaluated_at,
-        )
+        linkability = None
+        disclosure = None
+        if action is LibraryAction.AMEND_PURPOSE:
+            if resource is None or version is None:
+                disclosure_result, disclosure_basis, disclosure_binding, disclosure_limitation = (
+                    DisclosureResult.HOLD,
+                    BasisCode.UNRESOLVED,
+                    None,
+                    LimitationCode.RESOURCE_OR_VERSION_UNAVAILABLE,
+                )
+            elif identity is None:
+                disclosure_result, disclosure_basis, disclosure_binding, disclosure_limitation = (
+                    DisclosureResult.HOLD,
+                    BasisCode.UNRESOLVED,
+                    None,
+                    LimitationCode.IDENTITY_UNAVAILABLE,
+                )
+            else:
+                disclosure_result, disclosure_basis, disclosure_binding, disclosure_limitation = (
+                    self.policy.determine_disclosure(
+                        identity=identity,
+                        resource=resource,
+                        version=version,
+                        evaluated_at=evaluated_at,
+                    )
+                )
+            disclosure = envelope_for(self._base_payload(
+                kind=DeterminationKind.DISCLOSURE,
+                result=disclosure_result,
+                basis=disclosure_basis,
+                resource_id=resource_id,
+                version=version,
+                resource=resource,
+                evaluated_at=evaluated_at,
+                revalidation=RevalidationBoundary.READ_TIME_ONLY,
+                limitation=disclosure_limitation,
+                identity=identity,
+                viewer=True,
+                binding=disclosure_binding,
+            ))
+        else:
+            linkability = self.determine_linkability(
+                resource_id=resource_id,
+                version_number=version.version_number if version else 0,
+                evaluated_at=evaluated_at,
+            )
         return ConsequentialLibraryEvidence(
             authority_envelope=authority,
             linkability_envelope=linkability,
+            disclosure_envelope=disclosure,
             resource_id=resource_id,
             resource_version_pk=canonical_decimal(version.pk) if version else None,
             version_number=canonical_decimal(version.version_number) if version else None,

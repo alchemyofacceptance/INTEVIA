@@ -1,5 +1,7 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import pickle
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -11,6 +13,7 @@ from src.intevia.services.library_exact_version_contract import (
     BindingDecision,
     BindingKind,
     BindingSnapshot,
+    DisclosureResult,
     LibraryAction,
     LibraryExactVersionContract,
     LibraryRequestContext,
@@ -18,7 +21,11 @@ from src.intevia.services.library_exact_version_contract import (
     POLICY_ENVIRONMENT,
     POLICY_REFERENCE,
 )
-from src.intevia.services.library_exact_version_policy import ImmutableLibraryBindingProvider, LibraryExactVersionPolicy
+from src.intevia.services.library_exact_version_policy import (
+    ImmutableLibraryBindingProvider,
+    LibraryExactVersionPolicy,
+    VIEWER_SCOPE,
+)
 
 
 NOW = datetime(2026, 7, 23, 18, 30, tzinfo=timezone.utc)
@@ -61,6 +68,7 @@ class TransactionBoundaryTests(TransactionTestCase):
             version_number="1",
             viewer_scope=None,
         )
+        self.action_binding = snapshot
         provider = ImmutableLibraryBindingProvider((snapshot,), enabled=True, complete_for_policy=True)
         self.service = LibraryExactVersionContract(policy=LibraryExactVersionPolicy(provider=provider))
         self.context = LibraryRequestContext(
@@ -102,6 +110,143 @@ class TransactionBoundaryTests(TransactionTestCase):
                     action=LibraryAction.CREATE,
                     context=self.context,
                     evaluated_at=NOW,
+                )
+
+    def test_amend_uses_locked_identity_and_disclosure_without_linkability(self):
+        self.resource.state = LibraryResource.State.DEPRECATED
+        self.resource.save(update_fields=("state",))
+        action_binding = replace(
+            self.action_binding,
+            binding_reference="lib-authority-binding:transaction.amend:v1",
+            action=LibraryAction.AMEND_PURPOSE,
+        )
+        viewer_binding = replace(
+            action_binding,
+            binding_reference="lib-authority-binding:transaction.viewer:v1",
+            binding_kind=BindingKind.VIEWER,
+            action=None,
+            resource_id=None,
+            version_number=None,
+            viewer_scope=VIEWER_SCOPE,
+        )
+        provider = ImmutableLibraryBindingProvider(
+            (action_binding, viewer_binding),
+            enabled=True,
+            complete_for_policy=True,
+        )
+        service = LibraryExactVersionContract(policy=LibraryExactVersionPolicy(provider=provider))
+        context = replace(
+            self.context,
+            authority_binding_reference=action_binding.binding_reference,
+        )
+
+        with transaction.atomic(), patch.object(
+            service,
+            "determine_linkability",
+            wraps=service.determine_linkability,
+        ) as determine_linkability, patch.object(
+            service.policy,
+            "determine_authority",
+            wraps=service.policy.determine_authority,
+        ) as determine_authority, patch.object(
+            service.policy,
+            "determine_disclosure",
+            wraps=service.policy.determine_disclosure,
+        ) as determine_disclosure:
+            scope = service.acquire_consequential_library_scope(
+                resource_id=self.resource.resource_id,
+                version_number=1,
+            )
+            evidence = service.evaluate_consequential_library_truth(
+                scope=scope,
+                actor_identity_id=self.identity.identity_id,
+                action=LibraryAction.AMEND_PURPOSE,
+                context=context,
+                evaluated_at=NOW,
+            )
+
+        determine_linkability.assert_not_called()
+        determine_authority.assert_called_once()
+        determine_disclosure.assert_called_once()
+        self.assertIsNone(evidence.linkability_envelope)
+        self.assertEqual(evidence.authority_envelope.payload.result, AuthorityResult.QUALIFIED)
+        self.assertEqual(evidence.disclosure_envelope.payload.result, DisclosureResult.CONTENT_VISIBLE)
+        self.assertEqual(
+            evidence.authority_envelope.payload.actor_identity_id,
+            evidence.disclosure_envelope.payload.viewer_identity_id,
+        )
+        self.assertEqual(
+            evidence.authority_envelope.payload.actor_access_epoch,
+            evidence.disclosure_envelope.payload.viewer_access_epoch,
+        )
+
+    def test_create_and_supersede_retain_linkability_behavior(self):
+        for action in (LibraryAction.CREATE, LibraryAction.SUPERSEDE_VERSION):
+            with self.subTest(action=action):
+                action_binding = replace(self.action_binding, action=action)
+                provider = ImmutableLibraryBindingProvider(
+                    (action_binding,),
+                    enabled=True,
+                    complete_for_policy=True,
+                )
+                service = LibraryExactVersionContract(
+                    policy=LibraryExactVersionPolicy(provider=provider)
+                )
+                with transaction.atomic(), patch.object(
+                    service,
+                    "determine_linkability",
+                    wraps=service.determine_linkability,
+                ) as determine_linkability:
+                    scope = service.acquire_consequential_library_scope(
+                        resource_id=self.resource.resource_id,
+                        version_number=1,
+                    )
+                    evidence = service.evaluate_consequential_library_truth(
+                        scope=scope,
+                        actor_identity_id=self.identity.identity_id,
+                        action=action,
+                        context=self.context,
+                        evaluated_at=NOW,
+                    )
+
+                determine_linkability.assert_called_once()
+                self.assertEqual(
+                    evidence.linkability_envelope.payload.result,
+                    LinkabilityResult.LINKABLE,
+                )
+                self.assertIsNone(evidence.disclosure_envelope)
+
+    def test_amend_missing_target_or_identity_holds_without_linkability(self):
+        for resource_id, actor_identity_id in (
+            ("lib.resource~missing", self.identity.identity_id),
+            (self.resource.resource_id, "11111111-2222-4333-8444-555555555555"),
+        ):
+            with self.subTest(resource_id=resource_id, actor_identity_id=actor_identity_id):
+                with transaction.atomic(), patch.object(
+                    self.service,
+                    "determine_linkability",
+                    wraps=self.service.determine_linkability,
+                ) as determine_linkability:
+                    scope = self.service.acquire_consequential_library_scope(
+                        resource_id=resource_id,
+                        version_number=1,
+                    )
+                    evidence = self.service.evaluate_consequential_library_truth(
+                        scope=scope,
+                        actor_identity_id=actor_identity_id,
+                        action=LibraryAction.AMEND_PURPOSE,
+                        context=self.context,
+                        evaluated_at=NOW,
+                    )
+
+                determine_linkability.assert_not_called()
+                self.assertEqual(
+                    evidence.authority_envelope.payload.result,
+                    AuthorityResult.HOLD,
+                )
+                self.assertEqual(
+                    evidence.disclosure_envelope.payload.result,
+                    DisclosureResult.HOLD,
                 )
 
     def test_scope_cannot_be_used_after_transaction_exit(self):

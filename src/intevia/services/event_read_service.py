@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.db.models import Prefetch, Q, QuerySet
@@ -16,6 +17,12 @@ from core.models import (
     EventRegistrationTransition,
     Identity,
 )
+
+if TYPE_CHECKING:
+    from src.intevia.services.event_resource_relationship_read_service import (
+        EventResourcePresentation,
+        EventResourceRelationshipReadService,
+    )
 
 
 class EventNotVisible(LookupError):
@@ -90,6 +97,7 @@ class EventDetailPresentation:
     description: str
     registration: RegistrationCurrentSummary
     attendance: AttendanceCompactSummary
+    resources: tuple["EventResourcePresentation", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,14 +336,34 @@ class EventReadService:
 
     @classmethod
     def present_event(
-        cls, identity: Identity, event_id: str
+        cls,
+        identity: Identity,
+        event_id: str,
+        *,
+        resource_reader: "EventResourceRelationshipReadService | None" = None,
+        evaluated_at: datetime | None = None,
     ) -> EventDetailPresentation:
         identity = cls._active(identity)
         try:
             event = cls._personal_events(identity).get(event_id=event_id)
         except (Event.DoesNotExist, Event.MultipleObjectsReturned) as exc:
             raise EventNotVisible("resource is not visible") from exc
-        return cls._present_event(event)
+        presented = cls._present_event(event)
+        if resource_reader is None:
+            return presented
+        resources = resource_reader.present(
+            viewer=identity,
+            event=event,
+            evaluated_at=evaluated_at or datetime.now(timezone.utc),
+        )
+        return EventDetailPresentation(
+            event_id=presented.event_id,
+            title=presented.title,
+            description=presented.description,
+            registration=presented.registration,
+            attendance=presented.attendance,
+            resources=resources,
+        )
 
     @classmethod
     def registration_history(

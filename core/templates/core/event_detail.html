@@ -3,6 +3,17 @@
 {% block content %}
   <h1>{{ event.title }}</h1>
   {% if event.description %}<p class="lede">{{ event.description }}</p>{% endif %}
+  {% if event.resources %}
+    <section>
+      <h2>Event resources</h2>
+      {% for resource in event.resources %}
+        <article>
+          <h3>{{ resource.purpose }}</h3>
+          <p>{{ resource.content }}</p>
+        </article>
+      {% endfor %}
+    </section>
+  {% endif %}
   <section>
     <h2>Your registration record</h2>
     <p>{{ event.registration.message }}</p>
