@@ -309,6 +309,7 @@ class EventResourceRelationshipService:
         *,
         reason: VoidReason,
         survivor_relationship_id: str | None,
+        survivor_assertion_id: int | None,
         rationale_reference: str | None,
         correction_evidence_reference: str | None,
         occurred_at: datetime,
@@ -319,6 +320,11 @@ class EventResourceRelationshipService:
                 "occurred_at": occurred_at.isoformat(),
                 "rationale_reference": rationale_reference,
                 "reason": reason.value,
+                "survivor_assertion_id": (
+                    str(survivor_assertion_id)
+                    if survivor_assertion_id is not None
+                    else None
+                ),
                 "survivor_relationship_id": survivor_relationship_id,
                 "transition_id": str(transition.pk),
             }
@@ -783,6 +789,20 @@ class EventResourceRelationshipService:
             if resource is None or version is None:
                 raise EventResourceRelationshipHold("exact Library target is unresolved")
             proposed_purpose = purpose or RelationshipPurpose(current.purpose)
+            if (
+                action is EventRelationshipAction.SUPERSEDE_VERSION
+                and current.library_resource_version_id == version.pk
+            ):
+                raise EventResourceRelationshipRefused(
+                    "SUPERSEDE_VERSION requires a different exact version"
+                )
+            if (
+                action is EventRelationshipAction.AMEND_PURPOSE
+                and proposed_purpose is RelationshipPurpose(current.purpose)
+            ):
+                raise EventResourceRelationshipRefused(
+                    "AMEND_PURPOSE requires a changed purpose"
+                )
             event_evidence = self.event_authority.determine_authority(
                 identity=actor,
                 target=self._event_target(
@@ -886,6 +906,7 @@ class EventResourceRelationshipService:
         idempotency_key: str,
         occurred_at: datetime,
         survivor_relationship_id: str | None = None,
+        survivor_assertion_id: int | None = None,
         rationale_reference: str | None = None,
         correction_evidence_reference: str | None = None,
     ) -> EventResourceRelationshipTransition:
@@ -901,21 +922,34 @@ class EventResourceRelationshipService:
             correction_evidence_reference = self._reference(
                 correction_evidence_reference, "correction_evidence_reference"
             )
+        if survivor_assertion_id is not None and (
+            type(survivor_assertion_id) is not int or survivor_assertion_id < 1
+        ):
+            raise ValidationError("survivor_assertion_id is invalid")
         if (
             reason is VoidReason.DUPLICATE_ASSERTION
             and (
                 survivor_relationship_id is None
                 or (
                     survivor_relationship_id == "NO_SURVIVOR"
-                    and rationale_reference is None
+                    and (
+                        rationale_reference is None
+                        or survivor_assertion_id is not None
+                    )
+                )
+                or (
+                    survivor_relationship_id != "NO_SURVIVOR"
+                    and survivor_assertion_id is None
                 )
             )
         ):
-            raise ValidationError("duplicate correction requires a survivor or NO_SURVIVOR")
-        if reason is VoidReason.OTHER_GOVERNED_CORRECTION and (
-            rationale_reference is None or correction_evidence_reference is None
-        ):
-            raise ValidationError("OTHER correction requires rationale and evidence")
+            raise ValidationError(
+                "duplicate correction requires an exact survivor or structured NO_SURVIVOR"
+            )
+        if reason is VoidReason.OTHER_GOVERNED_CORRECTION:
+            raise EventResourceRelationshipHold(
+                "OTHER correction classification is unresolved"
+            )
         return self._terminal(
             relationship_id=relationship_id,
             event_id=event_id,
@@ -927,6 +961,7 @@ class EventResourceRelationshipService:
             occurred_at=occurred_at,
             reason=reason,
             survivor_relationship_id=survivor_relationship_id,
+            survivor_assertion_id=survivor_assertion_id,
             rationale_reference=rationale_reference,
             correction_evidence_reference=correction_evidence_reference,
         )
@@ -944,6 +979,7 @@ class EventResourceRelationshipService:
         occurred_at: datetime,
         reason: VoidReason | None = None,
         survivor_relationship_id: str | None = None,
+        survivor_assertion_id: int | None = None,
         rationale_reference: str | None = None,
         correction_evidence_reference: str | None = None,
     ) -> EventResourceRelationshipTransition:
@@ -967,6 +1003,7 @@ class EventResourceRelationshipService:
                 "reason": reason.value if reason else None,
                 "relationship_id": relationship_id,
                 "request_reference": request_reference,
+                "survivor_assertion_id": survivor_assertion_id,
                 "survivor_relationship_id": survivor_relationship_id,
             }
         )
@@ -1012,6 +1049,44 @@ class EventResourceRelationshipService:
             )
             if replay is not None:
                 return replay
+            if (
+                action is EventRelationshipAction.VOID
+                and reason is VoidReason.DUPLICATE_ASSERTION
+                and survivor_relationship_id != "NO_SURVIVOR"
+            ):
+                try:
+                    survivor_relationship = (
+                        EventResourceRelationship.objects.using(self.database_alias)
+                        .select_for_update(of=("self",))
+                        .get(
+                            relationship_id=survivor_relationship_id,
+                            event=event,
+                        )
+                    )
+                    survivor = EventResourceAssertion.objects.using(
+                        self.database_alias
+                    ).select_for_update(of=("self",)).get(
+                        pk=survivor_assertion_id,
+                        relationship=survivor_relationship,
+                    )
+                except (
+                    EventResourceRelationship.DoesNotExist,
+                    EventResourceAssertion.DoesNotExist,
+                ) as exc:
+                    raise EventResourceRelationshipHold(
+                        "duplicate survivor is unresolved"
+                    ) from exc
+                if (
+                    survivor_relationship.pk != relationship.pk
+                    or survivor.pk == current.pk
+                    or survivor.pk not in {item.pk for item in assertions[:-1]}
+                    or survivor.library_resource_version_id
+                    != current.library_resource_version_id
+                    or survivor.purpose != current.purpose
+                ):
+                    raise EventResourceRelationshipRefused(
+                        "duplicate survivor is outside the correction boundary"
+                    )
             if current.state != EventResourceAssertion.State.CURRENT:
                 raise EventResourceRelationshipRefused("relationship is terminal")
             if action is EventRelationshipAction.RETIRE and event.state not in _TERMINAL_EVENT_STATES:
@@ -1081,6 +1156,7 @@ class EventResourceRelationshipService:
                     transition,
                     reason=reason,
                     survivor_relationship_id=survivor_relationship_id,
+                    survivor_assertion_id=survivor_assertion_id,
                     rationale_reference=rationale_reference,
                     correction_evidence_reference=correction_evidence_reference,
                     occurred_at=occurred_at,

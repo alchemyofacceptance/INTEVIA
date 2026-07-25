@@ -30,6 +30,10 @@ from src.intevia.services.event_resource_relationship_policy import (
     ImmutableEventAuthorityBindingProvider,
     ImmutableRelationshipDisclosureBindingProvider,
 )
+from src.intevia.services.event_resource_relationship_read_service import (
+    EventResourcePresentation,
+    EventResourceRelationshipReadService,
+)
 from src.intevia.services.event_resource_relationship_service import (
     EventResourceRelationshipHold,
     EventResourceRelationshipService,
@@ -432,6 +436,111 @@ class EventResourceRelationshipPostgreSQLTests(TransactionTestCase):
         self.assertIsInstance(action_results[0], EventResourceRelationshipHold)
         self.assertEqual(EventResourceAssertion.objects.count(), 1)
         self.assertEqual(EventResourceRelationshipTransition.objects.count(), 1)
+
+    def test_readback_holds_one_viewer_epoch_across_both_disclosure_gates(self):
+        relationship = EventResourceRelationship.objects.get(
+            relationship_id="relationship.s011b.postgresql"
+        )
+        library_provider = ImmutableLibraryBindingProvider(
+            (self.library_binding(LibraryAction.CREATE, viewer=True),),
+            enabled=True,
+            complete_for_policy=True,
+        )
+        event_policy = EventResourceRelationshipPolicyV1(
+            authority_provider=ImmutableEventAuthorityBindingProvider(),
+            disclosure_provider=ImmutableRelationshipDisclosureBindingProvider(
+                (self.disclosure_binding(),),
+                enabled=True,
+                complete_for_policy=True,
+            ),
+        )
+        reader = EventResourceRelationshipReadService(
+            library_contract=LibraryExactVersionContract(
+                policy=LibraryExactVersionPolicy(provider=library_provider)
+            ),
+            relationship_disclosure=event_policy,
+        )
+        library_gate_entered = ThreadEvent()
+        release_read = ThreadEvent()
+        restriction_finished = ThreadEvent()
+        read_results = []
+        restriction_results = []
+        original_disclosure = reader.library_contract.determine_disclosure
+
+        def disclosure_with_signal(**kwargs):
+            result = original_disclosure(**kwargs)
+            library_gate_entered.set()
+            if not release_read.wait(timeout=5):
+                raise AssertionError("readback release timed out")
+            return result
+
+        def readback():
+            close_old_connections()
+            try:
+                read_results.append(
+                    reader.present(
+                        viewer=self.identity,
+                        event=self.event,
+                        evaluated_at=NOW,
+                    )
+                )
+            except Exception as error:
+                read_results.append(error)
+            finally:
+                close_old_connections()
+
+        def restrict_identity():
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    identity = Identity.objects.select_for_update().get(
+                        pk=self.identity.pk
+                    )
+                    identity.access_state = Identity.AccessState.RESTRICTED
+                    identity.access_epoch += 1
+                    identity.restricted_at = NOW + timedelta(minutes=1)
+                    identity.save(
+                        update_fields=(
+                            "access_state",
+                            "access_epoch",
+                            "restricted_at",
+                        )
+                    )
+                restriction_results.append("restricted")
+            except Exception as error:
+                restriction_results.append(error)
+            finally:
+                restriction_finished.set()
+                close_old_connections()
+
+        with patch.object(
+            reader.library_contract,
+            "determine_disclosure",
+            side_effect=disclosure_with_signal,
+        ):
+            read_thread = Thread(target=readback)
+            read_thread.start()
+            self.assertTrue(library_gate_entered.wait(timeout=5))
+            restriction_thread = Thread(target=restrict_identity)
+            restriction_thread.start()
+            self.assertFalse(restriction_finished.wait(timeout=0.2))
+            release_read.set()
+            read_thread.join(timeout=10)
+            restriction_thread.join(timeout=10)
+
+        self.assertFalse(read_thread.is_alive() or restriction_thread.is_alive())
+        self.assertEqual(
+            read_results,
+            [
+                (
+                    EventResourcePresentation(
+                        "S011-B PostgreSQL governed content",
+                        "Preparation",
+                    ),
+                ),
+            ],
+        )
+        self.assertEqual(restriction_results, ["restricted"])
 
     def test_rollback_after_determinations_restores_aggregate_and_evidence(self):
         service, context = self.amend_service()

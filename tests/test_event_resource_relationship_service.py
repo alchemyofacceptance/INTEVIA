@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -287,6 +288,43 @@ class EventResourceRelationshipServiceTests(TestCase):
             },
         )
 
+    def test_supersede_same_version_refuses_without_partial_mutation(self):
+        create_transition = self.create()
+        relationship = create_transition.relationship
+        original_head_id = relationship.head_assertion_id
+        original_counts = (
+            EventResourceAssertion.objects.count(),
+            EventResourceRelationshipTransition.objects.count(),
+            EventResourceRelationshipEvidence.objects.count(),
+        )
+        service = self.service(
+            library_bindings=(
+                self.library_binding(LibraryAction.SUPERSEDE_VERSION),
+            ),
+            event_bindings=(
+                self.event_binding(EventRelationshipAction.SUPERSEDE_VERSION),
+            ),
+        )
+
+        with self.assertRaises(EventResourceRelationshipRefused):
+            service.supersede_version(
+                **self.command_values(EventRelationshipAction.SUPERSEDE_VERSION),
+                resource_id=self.resource.resource_id,
+                version_number=1,
+                library_context=self.context,
+            )
+
+        relationship.refresh_from_db()
+        self.assertEqual(relationship.head_assertion_id, original_head_id)
+        self.assertEqual(
+            (
+                EventResourceAssertion.objects.count(),
+                EventResourceRelationshipTransition.objects.count(),
+                EventResourceRelationshipEvidence.objects.count(),
+            ),
+            original_counts,
+        )
+
     def test_amend_deprecated_non_linkable_but_visible_succeeds_without_linkability_evidence(self):
         self.create()
         self.resource.state = LibraryResource.State.DEPRECATED
@@ -320,6 +358,60 @@ class EventResourceRelationshipServiceTests(TestCase):
             },
         )
 
+    def test_amend_unchanged_purpose_refuses_and_changed_purpose_replays(self):
+        create_transition = self.create()
+        relationship = create_transition.relationship
+        service = self.service(
+            library_bindings=(
+                self.library_binding(LibraryAction.AMEND_PURPOSE),
+                self.library_binding(viewer=True),
+            ),
+            event_bindings=(
+                self.event_binding(EventRelationshipAction.AMEND_PURPOSE),
+            ),
+            disclosure_bindings=(self.disclosure_binding(),),
+        )
+        values = {
+            **self.command_values(EventRelationshipAction.AMEND_PURPOSE),
+            "resource_id": self.resource.resource_id,
+            "version_number": 1,
+            "library_context": self.context,
+        }
+        original_counts = (
+            EventResourceAssertion.objects.count(),
+            EventResourceRelationshipTransition.objects.count(),
+            EventResourceRelationshipEvidence.objects.count(),
+        )
+
+        with self.assertRaises(EventResourceRelationshipRefused):
+            service.amend_purpose(
+                **values,
+                purpose=RelationshipPurpose.PREPARATION,
+            )
+
+        relationship.refresh_from_db()
+        self.assertEqual(relationship.head_assertion_id, create_transition.resulting_assertion_id)
+        self.assertEqual(
+            (
+                EventResourceAssertion.objects.count(),
+                EventResourceRelationshipTransition.objects.count(),
+                EventResourceRelationshipEvidence.objects.count(),
+            ),
+            original_counts,
+        )
+
+        values["idempotency_key"] = "service-amend-changed"
+        first = service.amend_purpose(
+            **values,
+            purpose=RelationshipPurpose.REFERENCE,
+        )
+        replay = service.amend_purpose(
+            **values,
+            purpose=RelationshipPurpose.REFERENCE,
+        )
+        self.assertEqual(replay.pk, first.pk)
+        self.assertEqual(EventResourceRelationshipTransition.objects.count(), 2)
+
     def test_retire_is_terminal_preserves_target_and_uses_no_library_determination(self):
         self.create()
         service = self.service(
@@ -339,7 +431,42 @@ class EventResourceRelationshipServiceTests(TestCase):
         )
 
     def test_void_records_event_and_correction_evidence_and_replays(self):
-        self.create()
+        create_transition = self.create()
+        first = create_transition.resulting_assertion
+        duplicate = EventResourceAssertion.objects.create(
+            relationship=create_transition.relationship,
+            revision=2,
+            predecessor=first,
+            library_resource_version=first.library_resource_version,
+            purpose=first.purpose,
+            state=EventResourceAssertion.State.CURRENT,
+            created_by=self.identity,
+            actor_access_epoch=self.identity.access_epoch,
+            created_at=NOW,
+        )
+        duplicate_transition = EventResourceRelationshipTransition.objects.create(
+            relationship=create_transition.relationship,
+            previous_transition=create_transition,
+            sequence=2,
+            action=EventResourceRelationshipTransition.Action.AMEND_PURPOSE,
+            from_assertion=first,
+            resulting_assertion=duplicate,
+            prior_disposition=EventResourceAssertion.State.CURRENT,
+            actor=self.identity,
+            actor_access_epoch=self.identity.access_epoch,
+            authority_scope="amend_purpose",
+            event_authority_reference="event-authority:duplicate",
+            event_authority_evaluated_at=NOW,
+            request_reference="request.duplicate",
+            consumer_reference="consumer.s011b",
+            idempotency_key="service-duplicate",
+            payload_fingerprint="d" * 64,
+            transaction_reference=uuid4(),
+            occurred_at=NOW,
+        )
+        EventResourceRelationship.objects.filter(
+            pk=create_transition.relationship_id
+        ).update(head_assertion=duplicate)
         service = self.service(
             library_bindings=(),
             event_bindings=(self.event_binding(EventRelationshipAction.VOID),),
@@ -348,13 +475,15 @@ class EventResourceRelationshipServiceTests(TestCase):
         first = service.void(
             **values,
             reason=VoidReason.DUPLICATE_ASSERTION,
-            survivor_relationship_id="relationship.survivor",
+            survivor_relationship_id="relationship.service",
+            survivor_assertion_id=create_transition.resulting_assertion_id,
             request_reference="request.void",
         )
         replay = service.void(
             **values,
             reason=VoidReason.DUPLICATE_ASSERTION,
-            survivor_relationship_id="relationship.survivor",
+            survivor_relationship_id="relationship.service",
+            survivor_assertion_id=create_transition.resulting_assertion_id,
             request_reference="request.void",
         )
         self.assertEqual(replay.pk, first.pk)
@@ -370,9 +499,19 @@ class EventResourceRelationshipServiceTests(TestCase):
             service.void(
                 **values,
                 reason=VoidReason.DUPLICATE_ASSERTION,
-                survivor_relationship_id="relationship.other-survivor",
+                survivor_relationship_id="relationship.service",
+                survivor_assertion_id=duplicate.pk,
                 request_reference="request.void",
             )
+
+        correction = first.evidence.get(
+            kind=EventResourceRelationshipEvidence.Kind.CORRECTION
+        )
+        self.assertIn(
+            f'"survivor_assertion_id":"{create_transition.resulting_assertion_id}"',
+            bytes(correction.canonical_payload).decode(),
+        )
+        self.assertEqual(duplicate_transition.pk, first.previous_transition_id)
 
     def test_void_rejects_ordinary_wrong_purpose_and_unbounded_other(self):
         self.create()
@@ -386,11 +525,16 @@ class EventResourceRelationshipServiceTests(TestCase):
                 reason=VoidReason.WRONG_PURPOSE,
                 request_reference="request.void",
             )
-        with self.assertRaisesMessage(ValidationError, "OTHER correction requires"):
+        with self.assertRaisesMessage(
+            EventResourceRelationshipHold,
+            "OTHER correction classification is unresolved",
+        ):
             service.void(
                 **self.command_values(EventRelationshipAction.VOID),
                 reason=VoidReason.OTHER_GOVERNED_CORRECTION,
                 request_reference="request.void",
+                rationale_reference="rationale.other",
+                correction_evidence_reference="evidence.other",
             )
         with self.assertRaisesMessage(ValidationError, "NO_SURVIVOR"):
             service.void(
@@ -399,6 +543,52 @@ class EventResourceRelationshipServiceTests(TestCase):
                 survivor_relationship_id="NO_SURVIVOR",
                 request_reference="request.void",
             )
+
+    def test_void_duplicate_survivor_failures_leave_aggregate_unchanged(self):
+        create_transition = self.create()
+        relationship = create_transition.relationship
+        service = self.service(
+            library_bindings=(),
+            event_bindings=(self.event_binding(EventRelationshipAction.VOID),),
+        )
+        original_counts = (
+            EventResourceAssertion.objects.count(),
+            EventResourceRelationshipTransition.objects.count(),
+            EventResourceRelationshipEvidence.objects.count(),
+        )
+        cases = (
+            ("relationship.missing", create_transition.resulting_assertion_id),
+            ("relationship.service", create_transition.resulting_assertion_id),
+        )
+        for index, (survivor_relationship_id, survivor_assertion_id) in enumerate(cases):
+            with self.subTest(survivor_relationship_id=survivor_relationship_id):
+                with self.assertRaises(
+                    (EventResourceRelationshipHold, EventResourceRelationshipRefused)
+                ):
+                    service.void(
+                        **self.command_values(
+                            EventRelationshipAction.VOID,
+                            idempotency_key=f"service-void-invalid-{index}",
+                        ),
+                        reason=VoidReason.DUPLICATE_ASSERTION,
+                        survivor_relationship_id=survivor_relationship_id,
+                        survivor_assertion_id=survivor_assertion_id,
+                        request_reference="request.void",
+                    )
+
+        relationship.refresh_from_db()
+        self.assertEqual(
+            relationship.head_assertion_id,
+            create_transition.resulting_assertion_id,
+        )
+        self.assertEqual(
+            (
+                EventResourceAssertion.objects.count(),
+                EventResourceRelationshipTransition.objects.count(),
+                EventResourceRelationshipEvidence.objects.count(),
+            ),
+            original_counts,
+        )
 
     def test_archived_void_requires_historical_correction_and_rolls_back_on_hold(self):
         self.create()
