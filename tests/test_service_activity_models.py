@@ -444,7 +444,7 @@ class ConstraintCatalogueTests(TestCase):
 
 
 class IdentityFKPredictionTests(TestCase):
-    """§5.9: exactly seven new Identity FKs, taking 34 -> 41."""
+    """Live catalogue remains exact: 34 base + 7 S012 + 4 S013 = 45."""
 
     EXPECTED_S012_FK_ADDITIONS = {
         ("serviceactivity", "created_by"),
@@ -456,13 +456,20 @@ class IdentityFKPredictionTests(TestCase):
         ("serviceactivityevidencereference", "supplied_by"),
     }
 
+    EXPECTED_S013_FK_ADDITIONS = {
+        ("profileeffectproposallineage", "subject"),
+        ("profileeffectproposallineage", "proposer"),
+        ("profileeffectproposaltransition", "actor"),
+        ("profileeffectprojectiondisposition", "actor"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
         ("originatingmembershipprovisioningrequest", "identity"),
     }
 
-    def test_identity_fk_count_34_to_41(self):
+    def test_identity_fk_count_34_to_45(self):
         from django.apps import apps
         identity_model = apps.get_model("core", "Identity")
         fk_fields = []
@@ -478,7 +485,7 @@ class IdentityFKPredictionTests(TestCase):
                     fk_fields.append((model._meta.model_name, field.name))
 
         scoped_fks = set(fk_fields) - self.EXCLUDED_INTERNAL_FKS
-        self.assertEqual(len(scoped_fks), 41)
+        self.assertEqual(len(scoped_fks), 45)
 
         s012_fks = {
             (name, fname) for name, fname in scoped_fks
@@ -486,6 +493,13 @@ class IdentityFKPredictionTests(TestCase):
         }
         self.assertEqual(s012_fks, self.EXPECTED_S012_FK_ADDITIONS)
         self.assertEqual(len(s012_fks), 7)
+
+        s013_fks = {
+            (name, fname) for name, fname in scoped_fks
+            if (name, fname) in self.EXPECTED_S013_FK_ADDITIONS
+        }
+        self.assertEqual(s013_fks, self.EXPECTED_S013_FK_ADDITIONS)
+        self.assertEqual(len(s013_fks), 4)
 
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
@@ -502,7 +516,11 @@ class IdentityFKPredictionTests(TestCase):
                 ):
                     all_fks.append((model._meta.model_name, field.name))
         scoped_fks = set(all_fks) - self.EXCLUDED_INTERNAL_FKS
-        pre_s012 = scoped_fks - self.EXPECTED_S012_FK_ADDITIONS
+        pre_s012 = (
+            scoped_fks
+            - self.EXPECTED_S012_FK_ADDITIONS
+            - self.EXPECTED_S013_FK_ADDITIONS
+        )
         self.assertEqual(len(pre_s012), 34)
 
 

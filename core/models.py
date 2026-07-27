@@ -3102,3 +3102,633 @@ class ServiceActivityEvidenceReference(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("ServiceActivityEvidenceReference cannot be deleted")
+
+
+# Physical placement within the Django `core` application is an implementation
+# locality only. `PROFILE_EFFECT` is a distinct cross-domain governance seam.
+# CORE/Identity does not own or interpret profile meaning. SERVICE owns exact
+# source qualification and authorised proposal creation. `PROFILE_EFFECT` owns
+# only neutral proposal and disposition lineage. Any downstream profile
+# meaning, presentation, or use remains with the separately authorised
+# receiving domain.
+class ProfileEffectProposalLineage(models.Model):
+    class SubjectRelation(models.TextChoices):
+        IMMUTABLE_ACTIVITY_ASSIGNEE = (
+            "IMMUTABLE_ACTIVITY_ASSIGNEE",
+            "Immutable activity assignee",
+        )
+
+    class EffectType(models.TextChoices):
+        SERVICE_ACTIVITY_SUBMISSION_TRANSITION_RECORDED = (
+            "SERVICE_ACTIVITY_SUBMISSION_TRANSITION_RECORDED",
+            "Service activity submission transition recorded",
+        )
+
+    lineage_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    subject = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="profile_effect_subject_lineages",
+        db_index=False,
+    )
+    proposer = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="profile_effect_proposed_lineages",
+        db_index=False,
+    )
+    source_database_alias = models.CharField(max_length=64)
+    source_activity_id = models.UUIDField()
+    source_transition_pk = models.PositiveBigIntegerField()
+    source_transition_sequence = models.PositiveIntegerField()
+    source_transition_lineage_reference = models.CharField(max_length=71)
+    source_occurred_at = models.DateTimeField()
+    source_actor_access_epoch = models.PositiveBigIntegerField()
+    source_authority_reference = models.CharField(max_length=255)
+    source_qualification_reference = models.CharField(max_length=72)
+    subject_relation = models.CharField(
+        max_length=32,
+        choices=SubjectRelation.choices,
+        default=SubjectRelation.IMMUTABLE_ACTIVITY_ASSIGNEE,
+    )
+    effect_type = models.CharField(
+        max_length=64,
+        choices=EffectType.choices,
+        default=EffectType.SERVICE_ACTIVITY_SUBMISSION_TRANSITION_RECORDED,
+    )
+    contract_version = models.PositiveIntegerField(default=1)
+    head_proposal_transition = models.OneToOneField(
+        "ProfileEffectProposalTransition",
+        on_delete=models.PROTECT,
+        related_name="headed_lineage",
+        null=True,
+        blank=True,
+        db_index=False,
+    )
+    has_current_survivor = models.BooleanField(default=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("lineage_id",),
+                name="s013_pe_lineage_id_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "subject",
+                    "source_transition_lineage_reference",
+                    "contract_version",
+                ),
+                name="s013_pe_lineage_semantic_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "subject",
+                    "source_transition_lineage_reference",
+                    "contract_version",
+                ),
+                condition=Q(has_current_survivor=True),
+                name="s013_pe_current_survivor_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("head_proposal_transition",),
+                condition=Q(head_proposal_transition__isnull=False),
+                name="s013_pe_head_proposal_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(subject=models.F("proposer")),
+                name="s013_pe_subject_proposer_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    subject_relation="IMMUTABLE_ACTIVITY_ASSIGNEE"
+                ),
+                name="s013_pe_subject_relation_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    effect_type=(
+                        "SERVICE_ACTIVITY_SUBMISSION_TRANSITION_RECORDED"
+                    )
+                ),
+                name="s013_pe_effect_type_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(contract_version=1),
+                name="s013_pe_contract_version_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(source_transition_sequence__gte=1),
+                name="s013_pe_source_sequence_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    source_transition_lineage_reference__regex=(
+                        r"^s012l1:[0-9a-f]{64}$"
+                    )
+                ),
+                name="s013_pe_source_lineage_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    source_qualification_reference__regex=(
+                        r"^s012sq1:[0-9a-f]{64}$"
+                    )
+                ),
+                name="s013_pe_source_qualification_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(source_database_alias__regex=r".*\S.*")
+                & Q(source_authority_reference__regex=r".*\S.*"),
+                name="s013_pe_source_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("subject",), name="s013_pe_subject_idx"),
+            models.Index(
+                fields=("source_activity_id",),
+                name="s013_pe_source_activity_idx",
+            ),
+            models.Index(
+                fields=("source_transition_lineage_reference",),
+                name="s013_pe_source_lineage_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.subject_id is not None and self.proposer_id != self.subject_id:
+            raise ValidationError("subject must equal proposer")
+        if self.head_proposal_transition_id is not None:
+            if self.head_proposal_transition.lineage_id != self.pk:
+                raise ValidationError(
+                    "head_proposal_transition must belong to this lineage"
+                )
+            if self.updated_at != self.head_proposal_transition.occurred_at:
+                raise ValidationError(
+                    "updated_at must equal head proposal transition occurred_at"
+                )
+            head_is_active = (
+                self.head_proposal_transition.to_state
+                == ProfileEffectProposalTransition.State.ACTIVE
+            )
+            if self.has_current_survivor != head_is_active:
+                raise ValidationError(
+                    "has_current_survivor must match head proposal state"
+                )
+        if self.updated_at < self.created_at:
+            raise ValidationError("updated_at cannot precede created_at")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None and not self._state.adding:
+            original = type(self).objects.get(pk=self.pk)
+            immutable = (
+                "lineage_id",
+                "subject_id",
+                "proposer_id",
+                "source_database_alias",
+                "source_activity_id",
+                "source_transition_pk",
+                "source_transition_sequence",
+                "source_transition_lineage_reference",
+                "source_occurred_at",
+                "source_actor_access_epoch",
+                "source_authority_reference",
+                "source_qualification_reference",
+                "subject_relation",
+                "effect_type",
+                "contract_version",
+                "created_at",
+            )
+            if any(
+                getattr(original, field) != getattr(self, field)
+                for field in immutable
+            ):
+                raise ValidationError("ProfileEffectProposalLineage is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ProfileEffectProposalLineage cannot be deleted")
+
+
+class ProfileEffectProposalTransition(models.Model):
+    class Action(models.TextChoices):
+        CREATE_PROPOSAL = "CREATE_PROPOSAL", "Create proposal"
+        VOID_PROPOSAL = "VOID_PROPOSAL", "Void proposal"
+        SUPERSEDE_PROPOSAL = "SUPERSEDE_PROPOSAL", "Supersede proposal"
+
+    class State(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        VOIDED = "VOIDED", "Voided"
+
+    lineage = models.ForeignKey(
+        ProfileEffectProposalLineage,
+        on_delete=models.PROTECT,
+        related_name="proposal_transitions",
+        db_index=False,
+    )
+    sequence = models.PositiveIntegerField()
+    previous_transition = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="proposal_successors",
+        null=True,
+        blank=True,
+        db_index=False,
+    )
+    action = models.CharField(max_length=32, choices=Action.choices)
+    from_state = models.CharField(
+        max_length=16,
+        choices=State.choices,
+        null=True,
+        blank=True,
+    )
+    to_state = models.CharField(max_length=16, choices=State.choices)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="profile_effect_proposal_transitions",
+        db_index=False,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_reference = models.CharField(max_length=255)
+    authority_decision_reference = models.CharField(max_length=72)
+    authority_evaluated_at = models.DateTimeField()
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=72)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("lineage", "sequence"),
+                name="s013_pe_prop_sequence_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="s013_pe_prop_actor_action_idem_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("lineage",),
+                condition=Q(previous_transition__isnull=True),
+                name="s013_pe_prop_initial_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("previous_transition",),
+                condition=Q(previous_transition__isnull=False),
+                name="s013_pe_prop_successor_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("lineage_reference",),
+                name="s013_pe_prop_lineage_ref_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence__gte=1),
+                name="s013_pe_prop_sequence_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    action__in=(
+                        "CREATE_PROPOSAL",
+                        "VOID_PROPOSAL",
+                        "SUPERSEDE_PROPOSAL",
+                    )
+                ),
+                name="s013_pe_prop_action_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(from_state__isnull=True)
+                | Q(from_state__in=("ACTIVE", "VOIDED")),
+                name="s013_pe_prop_from_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(to_state__in=("ACTIVE", "VOIDED")),
+                name="s013_pe_prop_to_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        action="CREATE_PROPOSAL",
+                        from_state__isnull=True,
+                        to_state="ACTIVE",
+                    )
+                    | Q(
+                        action="SUPERSEDE_PROPOSAL",
+                        from_state="ACTIVE",
+                        to_state="ACTIVE",
+                    )
+                    | Q(
+                        action="VOID_PROPOSAL",
+                        from_state="ACTIVE",
+                        to_state="VOIDED",
+                    )
+                ),
+                name="s013_pe_prop_edge_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(payload_fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="s013_pe_prop_payload_hex_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    authority_decision_reference__regex=r"^s013pa1:[0-9a-f]{64}$"
+                ),
+                name="s013_pe_prop_decision_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(lineage_reference__regex=r"^s013pl1:[0-9a-f]{64}$"),
+                name="s013_pe_prop_lineage_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(authority_reference__regex=r".*\S.*")
+                & Q(request_reference__regex=r".*\S.*")
+                & Q(idempotency_key__regex=r".*\S.*"),
+                name="s013_pe_prop_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("actor",), name="s013_pe_prop_actor_idx"),
+            models.Index(
+                fields=("lineage", "action"),
+                name="s013_pe_prop_root_action_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.previous_transition_id is None:
+            if self.sequence != 1 or self.from_state is not None:
+                raise ValidationError("initial proposal transition must start the lineage")
+        else:
+            if self.previous_transition_id == self.pk:
+                raise ValidationError("proposal transition cannot precede itself")
+            if self.previous_transition.lineage_id != self.lineage_id:
+                raise ValidationError(
+                    "previous proposal transition must share the lineage"
+                )
+            if self.sequence != self.previous_transition.sequence + 1:
+                raise ValidationError(
+                    "proposal transition sequences must be consecutive"
+                )
+            if self.occurred_at < self.previous_transition.occurred_at:
+                raise ValidationError(
+                    "proposal transition cannot precede its predecessor"
+                )
+        if self.actor_id and self.lineage_id:
+            if self.actor_id != self.lineage.subject_id:
+                raise ValidationError("proposal actor must equal subject")
+            if self.actor_id != self.lineage.proposer_id:
+                raise ValidationError("proposal actor must equal proposer")
+        if self.authority_evaluated_at > self.occurred_at:
+            raise ValidationError(
+                "proposal authority evaluation cannot exceed occurrence time"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", self.payload_fingerprint or ""):
+            raise ValidationError(
+                "proposal payload_fingerprint must be lowercase SHA-256"
+            )
+        if not re.fullmatch(
+            r"s013pa1:[0-9a-f]{64}",
+            self.authority_decision_reference or "",
+        ):
+            raise ValidationError(
+                "proposal authority_decision_reference is malformed"
+            )
+        if not re.fullmatch(r"s013pl1:[0-9a-f]{64}", self.lineage_reference or ""):
+            raise ValidationError("proposal lineage_reference is malformed")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ProfileEffectProposalTransition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ProfileEffectProposalTransition cannot be deleted")
+
+
+class ProfileEffectProjectionDisposition(models.Model):
+    class Action(models.TextChoices):
+        AUTHORISE_PROJECTION = "AUTHORISE_PROJECTION", "Authorise projection"
+        DECLINE_PROJECTION = "DECLINE_PROJECTION", "Decline projection"
+        WITHDRAW_PROJECTION = "WITHDRAW_PROJECTION", "Withdraw projection"
+
+    class State(models.TextChoices):
+        UNAUTHORISED = "UNAUTHORISED", "Unauthorised"
+        AUTHORISED = "AUTHORISED", "Authorised"
+        DECLINED = "DECLINED", "Declined"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+    proposal_transition = models.ForeignKey(
+        ProfileEffectProposalTransition,
+        on_delete=models.PROTECT,
+        related_name="projection_dispositions",
+        db_index=False,
+    )
+    sequence = models.PositiveIntegerField()
+    previous_disposition = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="projection_successors",
+        null=True,
+        blank=True,
+        db_index=False,
+    )
+    action = models.CharField(max_length=32, choices=Action.choices)
+    from_state = models.CharField(max_length=16, choices=State.choices)
+    to_state = models.CharField(max_length=16, choices=State.choices)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="profile_effect_projection_dispositions",
+        db_index=False,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_reference = models.CharField(max_length=255)
+    authority_decision_reference = models.CharField(max_length=72)
+    authority_evaluated_at = models.DateTimeField()
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=72)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("proposal_transition", "sequence"),
+                name="s013_pe_proj_sequence_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="s013_pe_proj_actor_action_idem_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("proposal_transition",),
+                condition=Q(previous_disposition__isnull=True),
+                name="s013_pe_proj_initial_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("previous_disposition",),
+                condition=Q(previous_disposition__isnull=False),
+                name="s013_pe_proj_successor_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("lineage_reference",),
+                name="s013_pe_proj_lineage_ref_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence__gte=1),
+                name="s013_pe_proj_sequence_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    action__in=(
+                        "AUTHORISE_PROJECTION",
+                        "DECLINE_PROJECTION",
+                        "WITHDRAW_PROJECTION",
+                    )
+                ),
+                name="s013_pe_proj_action_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    from_state__in=(
+                        "UNAUTHORISED",
+                        "AUTHORISED",
+                        "DECLINED",
+                        "WITHDRAWN",
+                    )
+                ),
+                name="s013_pe_proj_from_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    to_state__in=(
+                        "UNAUTHORISED",
+                        "AUTHORISED",
+                        "DECLINED",
+                        "WITHDRAWN",
+                    )
+                ),
+                name="s013_pe_proj_to_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        action="AUTHORISE_PROJECTION",
+                        from_state="UNAUTHORISED",
+                        to_state="AUTHORISED",
+                    )
+                    | Q(
+                        action="AUTHORISE_PROJECTION",
+                        from_state="DECLINED",
+                        to_state="AUTHORISED",
+                    )
+                    | Q(
+                        action="AUTHORISE_PROJECTION",
+                        from_state="WITHDRAWN",
+                        to_state="AUTHORISED",
+                    )
+                    | Q(
+                        action="DECLINE_PROJECTION",
+                        from_state="UNAUTHORISED",
+                        to_state="DECLINED",
+                    )
+                    | Q(
+                        action="WITHDRAW_PROJECTION",
+                        from_state="AUTHORISED",
+                        to_state="WITHDRAWN",
+                    )
+                ),
+                name="s013_pe_proj_edge_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(payload_fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="s013_pe_proj_payload_hex_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    authority_decision_reference__regex=r"^s013px1:[0-9a-f]{64}$"
+                ),
+                name="s013_pe_proj_decision_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(lineage_reference__regex=r"^s013xl1:[0-9a-f]{64}$"),
+                name="s013_pe_proj_lineage_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(authority_reference__regex=r".*\S.*")
+                & Q(request_reference__regex=r".*\S.*")
+                & Q(idempotency_key__regex=r".*\S.*"),
+                name="s013_pe_proj_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("actor",), name="s013_pe_proj_actor_idx"),
+            models.Index(
+                fields=("proposal_transition", "action"),
+                name="s013_pe_proj_prop_action_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.previous_disposition_id is None:
+            if self.sequence != 1 or self.from_state != self.State.UNAUTHORISED:
+                raise ValidationError(
+                    "initial projection disposition must begin from UNAUTHORISED"
+                )
+        else:
+            if self.previous_disposition_id == self.pk:
+                raise ValidationError("projection disposition cannot precede itself")
+            if (
+                self.previous_disposition.proposal_transition_id
+                != self.proposal_transition_id
+            ):
+                raise ValidationError(
+                    "previous disposition must share the proposal transition"
+                )
+            if self.sequence != self.previous_disposition.sequence + 1:
+                raise ValidationError(
+                    "projection disposition sequences must be consecutive"
+                )
+            if self.occurred_at < self.previous_disposition.occurred_at:
+                raise ValidationError(
+                    "projection disposition cannot precede its predecessor"
+                )
+        if self.actor_id and self.proposal_transition_id:
+            if self.actor_id != self.proposal_transition.lineage.subject_id:
+                raise ValidationError("projection actor must equal subject")
+        if self.authority_evaluated_at > self.occurred_at:
+            raise ValidationError(
+                "projection authority evaluation cannot exceed occurrence time"
+            )
+        if self.occurred_at < self.proposal_transition.occurred_at:
+            raise ValidationError(
+                "projection disposition cannot precede proposal transition"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", self.payload_fingerprint or ""):
+            raise ValidationError(
+                "projection payload_fingerprint must be lowercase SHA-256"
+            )
+        if not re.fullmatch(
+            r"s013px1:[0-9a-f]{64}",
+            self.authority_decision_reference or "",
+        ):
+            raise ValidationError(
+                "projection authority_decision_reference is malformed"
+            )
+        if not re.fullmatch(r"s013xl1:[0-9a-f]{64}", self.lineage_reference or ""):
+            raise ValidationError("projection lineage_reference is malformed")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ProfileEffectProjectionDisposition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ProfileEffectProjectionDisposition cannot be deleted")

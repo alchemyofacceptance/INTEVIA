@@ -10,7 +10,7 @@ from typing import Callable, Protocol
 from uuid import UUID
 
 from django.contrib.auth.models import User
-from django.db import transaction
+from django.db import connections, transaction
 
 from core.models import (
     Identity,
@@ -40,6 +40,12 @@ _TARGET_DOMAIN = b"INTEVIA:S012:AUTHORITY_TARGET:v1\x00"
 _TARGET_SCHEMA = "intevia.s012.authority-target.v1"
 _LINEAGE_DOMAIN = b"INTEVIA:S012:TRANSITION_LINEAGE:v1\x00"
 _LINEAGE_SCHEMA = "intevia.s012.lineage.v1"
+_SUBMISSION_QUALIFICATION_DOMAIN = (
+    b"INTEVIA:S012:SERVICE_SUBMISSION_QUALIFICATION:v1\x00"
+)
+_SUBMISSION_QUALIFICATION_SCHEMA = (
+    "intevia.s012.service-submission-qualification.v1"
+)
 
 TERMINAL_STATES = frozenset({
     ServiceActivityState.COMPLETED,
@@ -204,6 +210,26 @@ class ServiceActivityReadDTO:
     history: tuple[ServiceActivityHistoryEntryDTO, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ServiceSubmissionQualificationDTO:
+    database_alias: str
+    activity_pk: int
+    activity_id: UUID
+    submit_transition_pk: int
+    submit_transition_sequence: int
+    submit_transition_lineage_reference: str
+    subject_pk: int
+    subject_identity_id: UUID
+    actor_identity_id: UUID
+    actor_equals_assignee: bool
+    occurred_at: datetime
+    actor_access_epoch: int
+    source_authority_reference: str
+    qualification_schema: str
+    qualification_contract_version: int
+    qualification_reference: str
+
+
 def _canonical_bytes(obj: object) -> bytes:
     return json.dumps(
         obj,
@@ -358,6 +384,132 @@ class ServiceActivityReadService:
             raise ServiceActivityReadError("activity_id must be a UUID")
         with transaction.atomic(using=self._alias):
             return self._execute_read(credential, activity_id)
+
+    def qualify_submission_occurrence(
+        self,
+        *,
+        activity_id: UUID,
+    ) -> ServiceSubmissionQualificationDTO:
+        if not isinstance(activity_id, UUID):
+            raise ServiceActivityReadError("activity_id must be a UUID")
+        if not connections[self._alias].in_atomic_block:
+            raise ServiceActivityReadError("an active outer transaction is required")
+
+        try:
+            activity = (
+                ServiceActivity.objects.using(self._alias)
+                .select_for_update()
+                .get(activity_id=activity_id)
+            )
+        except ServiceActivity.DoesNotExist:
+            raise ServiceActivityReadNotFound("ServiceActivity not found")
+
+        head = None
+        if activity.head_transition_id is not None:
+            head = (
+                ServiceActivityTransition.objects.using(self._alias)
+                .select_for_update()
+                .get(pk=activity.head_transition_id)
+            )
+        transitions = list(
+            ServiceActivityTransition.objects.using(self._alias)
+            .select_for_update()
+            .select_related("actor")
+            .filter(activity=activity)
+            .order_by("sequence", "pk")
+        )
+        assignment = (
+            ServiceActivityAssignment.objects.using(self._alias)
+            .select_for_update()
+            .select_related("assignee", "assigned_by")
+            .filter(activity=activity)
+            .first()
+        )
+        submission = (
+            ServiceWorkSubmission.objects.using(self._alias)
+            .select_for_update()
+            .select_related("submitted_by")
+            .filter(activity=activity)
+            .first()
+        )
+        review = None
+        if submission is not None:
+            review = (
+                ServiceActivityReview.objects.using(self._alias)
+                .select_for_update()
+                .select_related("reviewed_by")
+                .filter(submission=submission)
+                .first()
+            )
+        all_evidence = list(
+            ServiceActivityEvidenceReference.objects.using(self._alias)
+            .select_for_update()
+            .select_related("supplied_by")
+            .filter(transition__activity=activity)
+            .order_by("transition_id", "evidence_kind", "reference")
+        )
+
+        self._validate_lineage(
+            activity, transitions, head, assignment, submission, review, all_evidence
+        )
+        submit_transitions = [
+            transition_row
+            for transition_row in transitions
+            if transition_row.action == ServiceCommandAction.SUBMIT_WORK.value
+        ]
+        if len(submit_transitions) != 1 or assignment is None or submission is None:
+            raise ServiceActivityReadLineageError(
+                "exactly one valid SUBMIT_WORK occurrence is required"
+            )
+        submit_transition = submit_transitions[0]
+        if not (
+            submit_transition.actor_id
+            == submission.submitted_by_id
+            == assignment.assignee_id
+        ):
+            raise ServiceActivityReadLineageError(
+                "submit actor, submitter, and immutable assignee must match"
+            )
+
+        qualification_payload = {
+            "actor_access_epoch": submit_transition.actor_access_epoch,
+            "actor_equals_assignee": True,
+            "actor_identity_id": str(submit_transition.actor.identity_id),
+            "activity_id": str(activity.activity_id),
+            "contract_version": 1,
+            "database_alias": self._alias,
+            "occurred_at": canonical_timestamp(submit_transition.occurred_at),
+            "schema": _SUBMISSION_QUALIFICATION_SCHEMA,
+            "source_authority_reference": submit_transition.authority_reference,
+            "subject_identity_id": str(assignment.assignee.identity_id),
+            "submit_transition_lineage_reference": (
+                submit_transition.lineage_reference
+            ),
+            "submit_transition_pk": submit_transition.pk,
+            "submit_transition_sequence": submit_transition.sequence,
+        }
+        qualification_digest = hashlib.sha256(
+            _SUBMISSION_QUALIFICATION_DOMAIN
+            + _canonical_bytes(qualification_payload)
+        ).hexdigest()
+        return ServiceSubmissionQualificationDTO(
+            database_alias=self._alias,
+            activity_pk=activity.pk,
+            activity_id=activity.activity_id,
+            submit_transition_pk=submit_transition.pk,
+            submit_transition_sequence=submit_transition.sequence,
+            submit_transition_lineage_reference=submit_transition.lineage_reference,
+            subject_pk=assignment.assignee_id,
+            subject_identity_id=assignment.assignee.identity_id,
+            actor_identity_id=submit_transition.actor.identity_id,
+            actor_equals_assignee=True,
+            occurred_at=submit_transition.occurred_at,
+            actor_access_epoch=submit_transition.actor_access_epoch,
+            source_authority_reference=submit_transition.authority_reference,
+            qualification_schema=_SUBMISSION_QUALIFICATION_SCHEMA,
+            qualification_contract_version=1,
+            qualification_reference=f"s012sq1:{qualification_digest}",
+        )
 
     def _execute_read(
         self,
