@@ -9,6 +9,21 @@ from django.db.models import Q
 
 from core.identity import canonical_username_v1
 
+
+class _S012Index(models.Index):
+    max_name_length = 63
+
+    def deconstruct(self):
+        _, args, kwargs = super().deconstruct()
+        return "django.db.models.Index", args, kwargs
+
+    def __eq__(self, other):
+        if not isinstance(other, models.Index):
+            return NotImplemented
+        _, self_args, self_kwargs = self.deconstruct()
+        _, other_args, other_kwargs = other.deconstruct()
+        return (self_args, self_kwargs) == (other_args, other_kwargs)
+
 # ---------------------------------------------------------
 # Identity
 # ---------------------------------------------------------
@@ -2447,3 +2462,643 @@ class CareResponse(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("CareResponse cannot be deleted")
+
+
+class ServiceActivity(models.Model):
+    class InitiatingDomain(models.TextChoices):
+        CORE = "core", "Core"
+        ORGANISM = "organism", "Organism"
+        LIBRARY = "library", "Library"
+        EDUCATION = "education", "Education"
+        EVENT = "event", "Event"
+        SERVICE = "service", "Service"
+        DISCUSSION = "discussion", "Discussion"
+        ENGAGEMENT = "engagement", "Engagement"
+        EXCHANGE = "exchange", "Exchange"
+
+    class State(models.TextChoices):
+        UNASSIGNED = "unassigned", "Unassigned"
+        ASSIGNED = "assigned", "Assigned"
+        IN_PROGRESS = "in_progress", "In progress"
+        SUBMITTED = "submitted", "Submitted"
+        REVIEWED = "reviewed", "Reviewed"
+        COMPLETED = "completed", "Completed"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    activity_id = models.UUIDField(editable=False)
+    service_version = models.ForeignKey(
+        ServiceVersion,
+        on_delete=models.PROTECT,
+        related_name="service_activities",
+        db_index=False,
+    )
+    initiating_domain = models.CharField(
+        max_length=16,
+        choices=InitiatingDomain.choices,
+    )
+    initiating_domain_reference = models.CharField(max_length=255)
+    state = models.CharField(max_length=16, choices=State.choices)
+    created_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="created_service_activities",
+        db_index=False,
+    )
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+    head_transition = models.ForeignKey(
+        "ServiceActivityTransition",
+        on_delete=models.PROTECT,
+        related_name="headed_activity",
+        null=True,
+        blank=True,
+        db_index=False,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("activity_id",),
+                name="s012_activity_id_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("head_transition",),
+                condition=Q(head_transition__isnull=False),
+                name="s012_activity_head_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    initiating_domain__in=(
+                        "core",
+                        "organism",
+                        "library",
+                        "education",
+                        "event",
+                        "service",
+                        "discussion",
+                        "engagement",
+                        "exchange",
+                    )
+                ),
+                name="s012_activity_domain_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    state__in=(
+                        "unassigned",
+                        "assigned",
+                        "in_progress",
+                        "submitted",
+                        "reviewed",
+                        "completed",
+                        "declined",
+                        "cancelled",
+                    )
+                ),
+                name="s012_activity_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(initiating_domain_reference__regex=r".*\S.*"),
+                name="s012_activity_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            _S012Index(
+                fields=("service_version",),
+                name="s012_activity_service_version_idx",
+            ),
+            models.Index(fields=("state",), name="s012_activity_state_idx"),
+            models.Index(
+                fields=("created_by",),
+                name="s012_activity_created_by_idx",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.head_transition_id is not None
+            and self.head_transition.activity_id != self.pk
+        ):
+            raise ValidationError("head_transition must belong to this Activity")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None and not self._state.adding:
+            original = type(self).objects.get(pk=self.pk)
+            immutable = (
+                "activity_id",
+                "service_version_id",
+                "initiating_domain",
+                "initiating_domain_reference",
+                "created_by_id",
+                "created_at",
+            )
+            if any(
+                getattr(original, field) != getattr(self, field)
+                for field in immutable
+            ):
+                raise ValidationError("ServiceActivity parentage is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceActivity cannot be deleted")
+
+
+class ServiceActivityTransition(models.Model):
+    class Action(models.TextChoices):
+        CREATE = "CREATE", "Create"
+        ASSIGN = "ASSIGN", "Assign"
+        ACCEPT_ASSIGNMENT = "ACCEPT_ASSIGNMENT", "Accept assignment"
+        DECLINE_ASSIGNMENT = "DECLINE_ASSIGNMENT", "Decline assignment"
+        SUBMIT_WORK = "SUBMIT_WORK", "Submit work"
+        REVIEW_WORK = "REVIEW_WORK", "Review work"
+        COMPLETE_ACTIVITY = "COMPLETE_ACTIVITY", "Complete activity"
+        CANCEL_ACTIVITY = "CANCEL_ACTIVITY", "Cancel activity"
+
+    activity = models.ForeignKey(
+        ServiceActivity,
+        on_delete=models.PROTECT,
+        related_name="transitions",
+        db_index=False,
+    )
+    sequence = models.PositiveIntegerField()
+    previous_transition = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="next_transition_rows",
+        null=True,
+        blank=True,
+        db_index=False,
+    )
+    action = models.CharField(max_length=32, choices=Action.choices)
+    from_state = models.CharField(
+        max_length=16,
+        choices=ServiceActivity.State.choices,
+        null=True,
+        blank=True,
+    )
+    to_state = models.CharField(max_length=16, choices=ServiceActivity.State.choices)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_activity_transitions",
+        db_index=False,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_reference = models.CharField(max_length=255)
+    authority_decision_reference = models.CharField(max_length=71)
+    authority_evaluated_at = models.DateTimeField()
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=71)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("activity", "sequence"),
+                name="s012_transition_activity_sequence_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="s012_activity_actor_action_idem_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("activity",),
+                condition=Q(previous_transition__isnull=True),
+                name="s012_transition_initial_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("previous_transition",),
+                condition=Q(previous_transition__isnull=False),
+                name="s012_transition_successor_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("lineage_reference",),
+                name="s012_transition_lineage_ref_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence__gte=1),
+                name="s012_transition_sequence_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    action__in=(
+                        "CREATE",
+                        "ASSIGN",
+                        "ACCEPT_ASSIGNMENT",
+                        "DECLINE_ASSIGNMENT",
+                        "SUBMIT_WORK",
+                        "REVIEW_WORK",
+                        "COMPLETE_ACTIVITY",
+                        "CANCEL_ACTIVITY",
+                    )
+                ),
+                name="s012_transition_action_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(from_state__isnull=True)
+                | Q(
+                    from_state__in=(
+                        "unassigned",
+                        "assigned",
+                        "in_progress",
+                        "submitted",
+                        "reviewed",
+                        "completed",
+                        "declined",
+                        "cancelled",
+                    )
+                ),
+                name="s012_transition_from_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    to_state__in=(
+                        "unassigned",
+                        "assigned",
+                        "in_progress",
+                        "submitted",
+                        "reviewed",
+                        "completed",
+                        "declined",
+                        "cancelled",
+                    )
+                ),
+                name="s012_transition_to_state_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        action="CREATE",
+                        from_state__isnull=True,
+                        to_state=ServiceActivity.State.UNASSIGNED,
+                    )
+                    | Q(
+                        action="ASSIGN",
+                        from_state=ServiceActivity.State.UNASSIGNED,
+                        to_state=ServiceActivity.State.ASSIGNED,
+                    )
+                    | Q(
+                        action="ACCEPT_ASSIGNMENT",
+                        from_state=ServiceActivity.State.ASSIGNED,
+                        to_state=ServiceActivity.State.IN_PROGRESS,
+                    )
+                    | Q(
+                        action="DECLINE_ASSIGNMENT",
+                        from_state=ServiceActivity.State.ASSIGNED,
+                        to_state=ServiceActivity.State.DECLINED,
+                    )
+                    | Q(
+                        action="SUBMIT_WORK",
+                        from_state=ServiceActivity.State.IN_PROGRESS,
+                        to_state=ServiceActivity.State.SUBMITTED,
+                    )
+                    | Q(
+                        action="REVIEW_WORK",
+                        from_state=ServiceActivity.State.SUBMITTED,
+                        to_state=ServiceActivity.State.REVIEWED,
+                    )
+                    | Q(
+                        action="COMPLETE_ACTIVITY",
+                        from_state=ServiceActivity.State.REVIEWED,
+                        to_state=ServiceActivity.State.COMPLETED,
+                    )
+                    | Q(
+                        action="CANCEL_ACTIVITY",
+                        from_state__in=(
+                            ServiceActivity.State.UNASSIGNED,
+                            ServiceActivity.State.ASSIGNED,
+                            ServiceActivity.State.IN_PROGRESS,
+                            ServiceActivity.State.SUBMITTED,
+                            ServiceActivity.State.REVIEWED,
+                        ),
+                        to_state=ServiceActivity.State.CANCELLED,
+                    )
+                ),
+                name="s012_transition_edge_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(payload_fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="s012_transition_payload_hex_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    authority_decision_reference__regex=r"^s012d1:[0-9a-f]{64}$"
+                ),
+                name="s012_transition_decision_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(lineage_reference__regex=r"^s012l1:[0-9a-f]{64}$"),
+                name="s012_transition_lineage_ref_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(authority_reference__regex=r".*\S.*")
+                & Q(request_reference__regex=r".*\S.*")
+                & Q(idempotency_key__regex=r".*\S.*"),
+                name="s012_transition_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("actor",), name="s012_transition_actor_idx"),
+            _S012Index(
+                fields=("activity", "action"),
+                name="s012_transition_activity_action_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.previous_transition_id is None:
+            if self.sequence != 1 or self.from_state is not None:
+                raise ValidationError("initial transition must start the lineage")
+        else:
+            if self.previous_transition_id == self.pk:
+                raise ValidationError("transition cannot precede itself")
+            if self.previous_transition.activity_id != self.activity_id:
+                raise ValidationError("previous transition must share the Activity")
+            if self.sequence != self.previous_transition.sequence + 1:
+                raise ValidationError("transition sequences must be consecutive")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.payload_fingerprint or ""):
+            raise ValidationError("payload_fingerprint must be lowercase SHA-256")
+        if not re.fullmatch(
+            r"s012d1:[0-9a-f]{64}", self.authority_decision_reference or ""
+        ):
+            raise ValidationError("authority_decision_reference is malformed")
+        if not re.fullmatch(r"s012l1:[0-9a-f]{64}", self.lineage_reference or ""):
+            raise ValidationError("lineage_reference is malformed")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceActivityTransition is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceActivityTransition cannot be deleted")
+
+
+class ServiceActivityAssignment(models.Model):
+    activity = models.ForeignKey(
+        ServiceActivity,
+        on_delete=models.PROTECT,
+        related_name="assignment_rows",
+        db_index=False,
+    )
+    assignee = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_activity_assignments",
+        db_index=False,
+    )
+    assigned_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_activity_assignments_made",
+        db_index=False,
+    )
+    assignment_reference = models.CharField(max_length=255)
+    assigned_at = models.DateTimeField()
+    transition = models.ForeignKey(
+        ServiceActivityTransition,
+        on_delete=models.PROTECT,
+        related_name="assignment_occurrences",
+        db_index=False,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("activity",),
+                name="s012_assignment_activity_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("transition",),
+                name="s012_assignment_transition_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(assignment_reference__regex=r".*\S.*"),
+                name="s012_assignment_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("assignee",), name="s012_assignment_assignee_idx"),
+            _S012Index(
+                fields=("assigned_by",),
+                name="s012_assignment_assigned_by_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.transition_id and self.transition.activity_id != self.activity_id:
+            raise ValidationError("assignment transition must share the Activity")
+        if self.transition_id and self.assigned_at != self.transition.occurred_at:
+            raise ValidationError("assignment occurrence time must match transition")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceActivityAssignment is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceActivityAssignment cannot be deleted")
+
+
+class ServiceWorkSubmission(models.Model):
+    activity = models.ForeignKey(
+        ServiceActivity,
+        on_delete=models.PROTECT,
+        related_name="work_submission_rows",
+        db_index=False,
+    )
+    submitted_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_work_submissions",
+        db_index=False,
+    )
+    submission_reference = models.CharField(max_length=255)
+    submitted_at = models.DateTimeField()
+    transition = models.ForeignKey(
+        ServiceActivityTransition,
+        on_delete=models.PROTECT,
+        related_name="work_submission_occurrences",
+        db_index=False,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("activity",),
+                name="s012_submission_activity_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("transition",),
+                name="s012_submission_transition_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(submission_reference__regex=r".*\S.*"),
+                name="s012_submission_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            _S012Index(
+                fields=("submitted_by",),
+                name="s012_submission_submitted_by_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.transition_id and self.transition.activity_id != self.activity_id:
+            raise ValidationError("submission transition must share the Activity")
+        if self.transition_id and self.submitted_at != self.transition.occurred_at:
+            raise ValidationError("submission occurrence time must match transition")
+        assignment = self.activity.assignment_rows.first()
+        if assignment is not None and assignment.assignee_id != self.submitted_by_id:
+            raise ValidationError("submitter must be the immutable assignee")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceWorkSubmission is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceWorkSubmission cannot be deleted")
+
+
+class ServiceActivityReview(models.Model):
+    submission = models.ForeignKey(
+        ServiceWorkSubmission,
+        on_delete=models.PROTECT,
+        related_name="activity_review_rows",
+        db_index=False,
+    )
+    reviewed_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_activity_reviews",
+        db_index=False,
+    )
+    review_reference = models.CharField(max_length=255)
+    reviewed_at = models.DateTimeField()
+    transition = models.ForeignKey(
+        ServiceActivityTransition,
+        on_delete=models.PROTECT,
+        related_name="review_occurrences",
+        db_index=False,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("submission",),
+                name="s012_review_submission_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("transition",),
+                name="s012_review_transition_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(review_reference__regex=r".*\S.*"),
+                name="s012_review_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("reviewed_by",), name="s012_review_reviewed_by_idx"),
+        ]
+
+    def clean(self):
+        if self.transition_id and (
+            self.transition.activity_id != self.submission.activity_id
+        ):
+            raise ValidationError("review transition must share the Activity")
+        if self.transition_id and self.reviewed_at != self.transition.occurred_at:
+            raise ValidationError("review occurrence time must match transition")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceActivityReview is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceActivityReview cannot be deleted")
+
+
+class ServiceActivityEvidenceReference(models.Model):
+    class Kind(models.TextChoices):
+        ACTIVITY_BASIS = "activity_basis", "Activity basis"
+        ASSIGNMENT_BASIS = "assignment_basis", "Assignment basis"
+        SUBMISSION_SUPPORT = "submission_support", "Submission support"
+        REVIEW_RECORD = "review_record", "Review record"
+        COMPLETION_RECORD = "completion_record", "Completion record"
+        CANCELLATION_BASIS = "cancellation_basis", "Cancellation basis"
+        DECLINE_BASIS = "decline_basis", "Decline basis"
+
+    transition = models.ForeignKey(
+        ServiceActivityTransition,
+        on_delete=models.PROTECT,
+        related_name="evidence_references",
+        db_index=False,
+    )
+    evidence_kind = models.CharField(max_length=32, choices=Kind.choices)
+    reference = models.CharField(max_length=255)
+    supplied_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="service_activity_evidence",
+        db_index=False,
+    )
+    authority_reference = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transition", "evidence_kind", "reference"),
+                name="s012_evidence_tuple_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    evidence_kind__in=(
+                        "activity_basis",
+                        "assignment_basis",
+                        "submission_support",
+                        "review_record",
+                        "completion_record",
+                        "cancellation_basis",
+                        "decline_basis",
+                    )
+                ),
+                name="s012_evidence_kind_valid_ck",
+            ),
+            models.CheckConstraint(
+                condition=Q(reference__regex=r".*\S.*")
+                & Q(authority_reference__regex=r".*\S.*"),
+                name="s012_evidence_refs_nonempty_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("supplied_by",),
+                name="s012_evidence_supplied_by_idx",
+            ),
+        ]
+
+    def clean(self):
+        if self.transition_id and self.supplied_by_id != self.transition.actor_id:
+            raise ValidationError("evidence supplier must equal transition actor")
+        if self.transition_id and self.occurred_at != self.transition.occurred_at:
+            raise ValidationError("evidence occurrence time must match transition")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("ServiceActivityEvidenceReference is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("ServiceActivityEvidenceReference cannot be deleted")

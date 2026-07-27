@@ -116,7 +116,7 @@ class EventResourceRelationshipMigrationTests(TransactionTestCase):
                     ).exists()
                 )
 
-    def test_exact_dependency_leaf_and_schema_only_operations(self):
+    def test_exact_dependency_ancestry_and_schema_only_operations(self):
         migration_module = importlib.import_module(
             "core.migrations.0015_s011b_event_resource_relationship"
         )
@@ -131,10 +131,11 @@ class EventResourceRelationshipMigrationTests(TransactionTestCase):
                 for operation in migration_module.Migration.operations
             )
         )
-        core_leaves = tuple(
-            target for target in self.received_leaf_targets if target[0] == "core"
-        )
-        self.assertEqual(core_leaves, (self.migrate_to,))
+        executor = MigrationExecutor(connection)
+        self.assertIn(self.migrate_to, executor.loader.graph.nodes)
+        ancestry = executor.loader.graph.forwards_plan(self.migrate_to)
+        self.assertIn(self.migrate_from, ancestry)
+        self.assertEqual(ancestry[-1], self.migrate_to)
 
     def test_forward_reverse_and_reapply_preserve_preexisting_data(self):
         new_apps = self.migrate(self.migrate_to)
