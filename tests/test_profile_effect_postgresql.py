@@ -118,8 +118,8 @@ class _BlockingReplayProposalService(ServiceSubmissionProfileEffectProposalServi
         self._release_replay = release_replay
         self._paused_once = False
 
-    def _lock_dispositions_by_transition(self, transitions):
-        grouped = super()._lock_dispositions_by_transition(transitions)
+    def _lock_dispositions_by_transition_for_replay(self, transitions):
+        grouped = super()._lock_dispositions_by_transition_for_replay(transitions)
         if not self._paused_once:
             self._paused_once = True
             self._replay_locked.set()

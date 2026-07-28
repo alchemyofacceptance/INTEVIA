@@ -32,12 +32,17 @@ from src.intevia.services.profile_effect_contract import (
     ProfileEffectProjectionDispositionCommand,
     ProfileEffectProposalCorrectionCommand,
     proposal_authority_target_payload,
+    proposal_authority_target_reference,
+    proposal_correction_target_payload,
+    projection_authority_target_payload,
+    projection_authority_target_reference,
     ProjectionAction,
     ProjectionState,
     ProposalAction,
     ProposalState,
 )
 from src.intevia.services.profile_effect_service import (
+    ProfileEffectCrossEpochConflict,
     ProfileEffectProjectionDispositionService,
     ProfileEffectProposalCorrectionService,
     ProfileEffectMalformedReplay,
@@ -663,3 +668,289 @@ class ProfileEffectServiceTests(TestCase):
 
         with self.assertRaises(ProfileEffectMalformedReplay):
             self.projection_service.decline_profile_effect_projection(command)
+
+    def _fresh_services(self, suffix):
+        actor = _make_identity(f"profile-effect-replay-{suffix}")
+        activity = _make_submitted_activity(actor)
+        read_service = ServiceActivityReadService(
+            visibility_provider=_DummyVisibilityProvider(),
+            clock=lambda: NOW,
+        )
+        return (
+            actor,
+            activity,
+            ServiceSubmissionProfileEffectProposalService(
+                authority=ProposalAuthority(provider=_ProposalProvider()),
+                read_service=read_service,
+                clock=lambda: NOW,
+            ),
+            ProfileEffectProposalCorrectionService(
+                authority=ProposalAuthority(provider=_ProposalProvider()),
+                clock=lambda: NOW,
+            ),
+            ProfileEffectProjectionDispositionService(
+                authority=ProjectionAuthority(provider=_ProjectionProvider()),
+                clock=lambda: NOW,
+            ),
+        )
+
+    def _assert_authority_precedes_conflict(
+        self,
+        *,
+        service,
+        invoke,
+        command,
+        action,
+        expected_target_reference,
+        occurrence_model,
+        occurrence_pk,
+        lineage_id,
+        conflict,
+    ):
+        occurrence_before = occurrence_model.objects.values().get(pk=occurrence_pk)
+        lineage_before = ProfileEffectProposalLineage.objects.values().get(lineage_id=lineage_id)
+        proposal_count = ProfileEffectProposalTransition.objects.count()
+        disposition_count = ProfileEffectProjectionDisposition.objects.count()
+        authority_calls = []
+        qualify = service._authority.qualify
+
+        def observe_authority(**kwargs):
+            authority_calls.append(kwargs)
+            return qualify(**kwargs)
+
+        with patch.object(service._authority, "qualify", side_effect=observe_authority):
+            with self.assertRaises(conflict):
+                invoke(command)
+
+        self.assertEqual(len(authority_calls), 1)
+        self.assertEqual(authority_calls[0]["request"].action, action)
+        self.assertEqual(authority_calls[0]["target_reference"], expected_target_reference)
+        self.assertEqual(
+            authority_calls[0]["request"].target_fingerprint,
+            expected_target_reference.split(":", 1)[1],
+        )
+        self.assertEqual(ProfileEffectProposalTransition.objects.count(), proposal_count)
+        self.assertEqual(ProfileEffectProjectionDisposition.objects.count(), disposition_count)
+        self.assertEqual(
+            occurrence_model.objects.values().get(pk=occurrence_pk),
+            occurrence_before,
+        )
+        self.assertEqual(
+            ProfileEffectProposalLineage.objects.values().get(lineage_id=lineage_id),
+            lineage_before,
+        )
+
+    def _exercise_create_authority_before_conflict(self, conflict):
+        actor, activity, proposal_service, _, _ = self._fresh_services(
+            f"create-{conflict.__name__.lower()}"
+        )
+        command = CreateServiceSubmissionProposalCommand(
+            credential=actor.credential,
+            actor_access_epoch=actor.access_epoch,
+            activity_id=activity.activity_id,
+            request_reference=f"REQ-CREATE-{conflict.__name__}",
+            idempotency_key=f"IDEM-CREATE-{conflict.__name__}",
+            occurred_at=NOW + timedelta(minutes=20),
+        )
+        receipt = proposal_service.create_service_submission_proposal(command)
+        lineage = ProfileEffectProposalLineage.objects.get(lineage_id=receipt.lineage_id)
+        expected_target = proposal_authority_target_reference(
+            proposal_authority_target_payload(
+                database_alias="default",
+                qualification_reference=lineage.source_qualification_reference,
+                subject_identity_id=lineage.subject.identity_id,
+            )
+        )
+        if conflict is ProfileEffectCrossEpochConflict:
+            actor.access_epoch += 1
+            actor.save(update_fields=["access_epoch"])
+            replay_command = replace(command, actor_access_epoch=actor.access_epoch)
+        else:
+            replay_command = replace(command, occurred_at=command.occurred_at + timedelta(seconds=1))
+        self._assert_authority_precedes_conflict(
+            service=proposal_service,
+            invoke=proposal_service.create_service_submission_proposal,
+            command=replay_command,
+            action=ProposalAction.CREATE_PROPOSAL,
+            expected_target_reference=expected_target,
+            occurrence_model=ProfileEffectProposalTransition,
+            occurrence_pk=receipt.proposal_transition_pk,
+            lineage_id=receipt.lineage_id,
+            conflict=conflict,
+        )
+
+    def _exercise_correction_authority_before_conflict(self, action, conflict):
+        suffix = f"{action.value.lower()}-{conflict.__name__.lower()}"
+        actor, activity, proposal_service, correction_service, _ = self._fresh_services(suffix)
+        created = proposal_service.create_service_submission_proposal(
+            CreateServiceSubmissionProposalCommand(
+                credential=actor.credential,
+                actor_access_epoch=actor.access_epoch,
+                activity_id=activity.activity_id,
+                request_reference=f"REQ-CREATE-{suffix}",
+                idempotency_key=f"IDEM-CREATE-{suffix}",
+                occurred_at=NOW + timedelta(minutes=20),
+            )
+        )
+        command = ProfileEffectProposalCorrectionCommand(
+            credential=actor.credential,
+            actor_access_epoch=actor.access_epoch,
+            lineage_id=created.lineage_id,
+            expected_head_transition_pk=created.proposal_transition_pk,
+            expected_head_lineage_reference=created.proposal_lineage_reference,
+            request_reference=f"REQ-{suffix}",
+            idempotency_key=f"IDEM-{suffix}",
+            occurred_at=NOW + timedelta(minutes=21),
+        )
+        invoke = {
+            ProposalAction.SUPERSEDE_PROPOSAL: correction_service.supersede_profile_effect_proposal,
+            ProposalAction.VOID_PROPOSAL: correction_service.void_profile_effect_proposal,
+        }[action]
+        receipt = invoke(command)
+        lineage = ProfileEffectProposalLineage.objects.get(lineage_id=created.lineage_id)
+        predecessor = ProfileEffectProposalTransition.objects.get(pk=created.proposal_transition_pk)
+        expected_target = proposal_authority_target_reference(
+            proposal_correction_target_payload(
+                database_alias="default",
+                lineage_id=lineage.lineage_id,
+                subject_identity_id=lineage.subject.identity_id,
+                current_proposal_transition_pk=predecessor.pk,
+                current_proposal_lineage_reference=predecessor.lineage_reference,
+                current_proposal_state=ProposalState(predecessor.to_state),
+                has_current_survivor=True,
+                action=action,
+            )
+        )
+        if conflict is ProfileEffectCrossEpochConflict:
+            actor.access_epoch += 1
+            actor.save(update_fields=["access_epoch"])
+            replay_command = replace(command, actor_access_epoch=actor.access_epoch)
+        else:
+            replay_command = replace(command, occurred_at=command.occurred_at + timedelta(seconds=1))
+        self._assert_authority_precedes_conflict(
+            service=correction_service,
+            invoke=invoke,
+            command=replay_command,
+            action=action,
+            expected_target_reference=expected_target,
+            occurrence_model=ProfileEffectProposalTransition,
+            occurrence_pk=receipt.proposal_transition_pk,
+            lineage_id=created.lineage_id,
+            conflict=conflict,
+        )
+
+    def _exercise_projection_authority_before_conflict(self, action, conflict):
+        suffix = f"{action.value.lower()}-{conflict.__name__.lower()}"
+        actor, activity, proposal_service, _, projection_service = self._fresh_services(suffix)
+        created = proposal_service.create_service_submission_proposal(
+            CreateServiceSubmissionProposalCommand(
+                credential=actor.credential,
+                actor_access_epoch=actor.access_epoch,
+                activity_id=activity.activity_id,
+                request_reference=f"REQ-CREATE-{suffix}",
+                idempotency_key=f"IDEM-CREATE-{suffix}",
+                occurred_at=NOW + timedelta(minutes=20),
+            )
+        )
+        previous = None
+        if action is ProjectionAction.WITHDRAW_PROJECTION:
+            previous = projection_service.authorise_profile_effect_projection(
+                ProfileEffectProjectionDispositionCommand(
+                    credential=actor.credential,
+                    actor_access_epoch=actor.access_epoch,
+                    lineage_id=created.lineage_id,
+                    expected_proposal_transition_pk=created.proposal_transition_pk,
+                    expected_proposal_lineage_reference=created.proposal_lineage_reference,
+                    expected_disposition_pk_or_null=None,
+                    expected_disposition_lineage_reference_or_null=None,
+                    request_reference=f"REQ-AUTHORISE-{suffix}",
+                    idempotency_key=f"IDEM-AUTHORISE-{suffix}",
+                    occurred_at=NOW + timedelta(minutes=21),
+                )
+            )
+        command = ProfileEffectProjectionDispositionCommand(
+            credential=actor.credential,
+            actor_access_epoch=actor.access_epoch,
+            lineage_id=created.lineage_id,
+            expected_proposal_transition_pk=created.proposal_transition_pk,
+            expected_proposal_lineage_reference=created.proposal_lineage_reference,
+            expected_disposition_pk_or_null=(previous.projection_disposition_pk if previous else None),
+            expected_disposition_lineage_reference_or_null=(previous.projection_lineage_reference if previous else None),
+            request_reference=f"REQ-{suffix}",
+            idempotency_key=f"IDEM-{suffix}",
+            occurred_at=NOW + timedelta(minutes=22),
+        )
+        invoke = {
+            ProjectionAction.AUTHORISE_PROJECTION: projection_service.authorise_profile_effect_projection,
+            ProjectionAction.DECLINE_PROJECTION: projection_service.decline_profile_effect_projection,
+            ProjectionAction.WITHDRAW_PROJECTION: projection_service.withdraw_profile_effect_projection,
+        }[action]
+        receipt = invoke(command)
+        lineage = ProfileEffectProposalLineage.objects.get(lineage_id=created.lineage_id)
+        predecessor = (
+            ProfileEffectProjectionDisposition.objects.get(pk=previous.projection_disposition_pk)
+            if previous
+            else None
+        )
+        expected_target = projection_authority_target_reference(
+            projection_authority_target_payload(
+                database_alias="default",
+                lineage_id=lineage.lineage_id,
+                subject_identity_id=lineage.subject.identity_id,
+                current_proposal_transition_pk=created.proposal_transition_pk,
+                current_proposal_lineage_reference=created.proposal_lineage_reference,
+                current_disposition_pk_or_null=(predecessor.pk if predecessor else None),
+                current_disposition_lineage_reference_or_null=(predecessor.lineage_reference if predecessor else None),
+                current_projection_state=(ProjectionState(predecessor.to_state) if predecessor else ProjectionState.UNAUTHORISED),
+                action=action,
+            )
+        )
+        if conflict is ProfileEffectCrossEpochConflict:
+            actor.access_epoch += 1
+            actor.save(update_fields=["access_epoch"])
+            replay_command = replace(command, actor_access_epoch=actor.access_epoch)
+        else:
+            replay_command = replace(command, occurred_at=command.occurred_at + timedelta(seconds=1))
+        self._assert_authority_precedes_conflict(
+            service=projection_service,
+            invoke=invoke,
+            command=replay_command,
+            action=action,
+            expected_target_reference=expected_target,
+            occurrence_model=ProfileEffectProjectionDisposition,
+            occurrence_pk=receipt.projection_disposition_pk,
+            lineage_id=created.lineage_id,
+            conflict=conflict,
+        )
+
+    def test_create_replay_qualifies_authority_before_stored_epoch_conflict(self):
+        self._exercise_create_authority_before_conflict(ProfileEffectCrossEpochConflict)
+
+    def test_create_replay_qualifies_authority_before_payload_conflict(self):
+        self._exercise_create_authority_before_conflict(ProfileEffectPayloadConflict)
+
+    def test_correction_replay_qualifies_each_authority_before_stored_epoch_conflict(self):
+        for action in (ProposalAction.SUPERSEDE_PROPOSAL, ProposalAction.VOID_PROPOSAL):
+            with self.subTest(action=action):
+                self._exercise_correction_authority_before_conflict(
+                    action,
+                    ProfileEffectCrossEpochConflict,
+                )
+
+    def test_correction_replay_qualifies_each_authority_before_payload_conflict(self):
+        for action in (ProposalAction.SUPERSEDE_PROPOSAL, ProposalAction.VOID_PROPOSAL):
+            with self.subTest(action=action):
+                self._exercise_correction_authority_before_conflict(action, ProfileEffectPayloadConflict)
+
+    def test_projection_replay_qualifies_each_authority_before_stored_epoch_conflict(self):
+        for action in ProjectionAction:
+            with self.subTest(action=action):
+                self._exercise_projection_authority_before_conflict(
+                    action,
+                    ProfileEffectCrossEpochConflict,
+                )
+
+    def test_projection_replay_qualifies_each_authority_before_payload_conflict(self):
+        for action in ProjectionAction:
+            with self.subTest(action=action):
+                self._exercise_projection_authority_before_conflict(action, ProfileEffectPayloadConflict)

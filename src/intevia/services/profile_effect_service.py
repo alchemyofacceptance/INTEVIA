@@ -599,8 +599,7 @@ class _ProfileEffectServiceBase:
             ),
         )
 
-    def _lock_proposal_lineage_rows(self, lineage: ProfileEffectProposalLineage) -> list[ProfileEffectProposalTransition]:
-        self._validate_root_record(lineage)
+    def _lock_proposal_lineage_rows_for_replay(self, lineage: ProfileEffectProposalLineage) -> list[ProfileEffectProposalTransition]:
         rows = list(
             ProfileEffectProposalTransition.objects.using(self._alias)
             .select_for_update()
@@ -610,6 +609,10 @@ class _ProfileEffectServiceBase:
         )
         if not rows:
             raise ProfileEffectMalformedReplay("proposal lineage is missing")
+        return rows
+
+    def _validate_locked_proposal_lineage_rows(self, lineage: ProfileEffectProposalLineage, rows: list[ProfileEffectProposalTransition]) -> None:
+        self._validate_root_record(lineage)
         previous = None
         for row in rows:
             if row.previous_transition_id != (previous.pk if previous else None):
@@ -628,9 +631,13 @@ class _ProfileEffectServiceBase:
             raise ProfileEffectMalformedReplay("current-survivor flag mismatch")
         if lineage.updated_at != derived_head.occurred_at:
             raise ProfileEffectMalformedReplay("root updated_at mismatch")
+
+    def _lock_proposal_lineage_rows(self, lineage: ProfileEffectProposalLineage) -> list[ProfileEffectProposalTransition]:
+        rows = self._lock_proposal_lineage_rows_for_replay(lineage)
+        self._validate_locked_proposal_lineage_rows(lineage, rows)
         return rows
 
-    def _lock_dispositions_by_transition(self, transitions: list[ProfileEffectProposalTransition]) -> dict[int, list[ProfileEffectProjectionDisposition]]:
+    def _lock_dispositions_by_transition_for_replay(self, transitions: list[ProfileEffectProposalTransition]) -> dict[int, list[ProfileEffectProjectionDisposition]]:
         transition_ids = [row.pk for row in transitions]
         rows = list(
             ProfileEffectProjectionDisposition.objects.using(self._alias)
@@ -642,6 +649,9 @@ class _ProfileEffectServiceBase:
         grouped: dict[int, list[ProfileEffectProjectionDisposition]] = {row.pk: [] for row in transitions}
         for row in rows:
             grouped.setdefault(row.proposal_transition_id, []).append(row)
+        return grouped
+
+    def _validate_locked_dispositions_by_transition(self, transitions: list[ProfileEffectProposalTransition], grouped: dict[int, list[ProfileEffectProjectionDisposition]]) -> None:
         for transition in transitions:
             previous = None
             for row in grouped.get(transition.pk, []):
@@ -654,6 +664,10 @@ class _ProfileEffectServiceBase:
                     predecessor=previous,
                 )
                 previous = row
+
+    def _lock_dispositions_by_transition(self, transitions: list[ProfileEffectProposalTransition]) -> dict[int, list[ProfileEffectProjectionDisposition]]:
+        grouped = self._lock_dispositions_by_transition_for_replay(transitions)
+        self._validate_locked_dispositions_by_transition(transitions, grouped)
         return grouped
 
     def _current_disposition_state(self, transition: ProfileEffectProposalTransition, grouped: dict[int, list[ProfileEffectProjectionDisposition]]) -> _CurrentDispositionState:
@@ -948,18 +962,13 @@ class ServiceSubmissionProfileEffectProposalService(_ProfileEffectServiceBase):
         idempotency_key: str,
         payload_fingerprint: str,
     ) -> ProfileEffectProposalCommandReceipt:
-        if existing.actor_access_epoch != actor.access_epoch:
-            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
-        if existing.payload_fingerprint != payload_fingerprint:
-            raise ProfileEffectPayloadConflict("payload conflict")
         lineage = (
             ProfileEffectProposalLineage.objects.using(self._alias)
             .select_for_update()
             .get(pk=existing.lineage_id)
         )
-        self._validate_root_alias(lineage)
-        transitions = self._lock_proposal_lineage_rows(lineage)
-        self._lock_dispositions_by_transition(transitions)
+        transitions = self._lock_proposal_lineage_rows_for_replay(lineage)
+        grouped = self._lock_dispositions_by_transition_for_replay(transitions)
         if lineage.subject_id != qualification.subject_pk:
             raise ProfileEffectMalformedReplay("replayed proposal subject mismatch")
         if lineage.source_qualification_reference != qualification.qualification_reference:
@@ -984,11 +993,13 @@ class ServiceSubmissionProfileEffectProposalService(_ProfileEffectServiceBase):
             evaluated_at=_validate_occurred_at(self._clock()),
         )
         self._authority.qualify(request=request, target_reference=target_reference)
-        self._validate_proposal_authority_evidence(
-            existing,
-            actor.identity_id,
-            target_reference,
-        )
+        if existing.actor_access_epoch != actor.access_epoch:
+            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
+        if existing.payload_fingerprint != payload_fingerprint:
+            raise ProfileEffectPayloadConflict("payload conflict")
+        self._validate_root_alias(lineage)
+        self._validate_locked_proposal_lineage_rows(lineage, transitions)
+        self._validate_locked_dispositions_by_transition(transitions, grouped)
         return ProfileEffectProposalCommandReceipt(
             database_alias=self._alias,
             lineage_id=lineage.lineage_id,
@@ -1041,12 +1052,8 @@ class ProfileEffectProposalCorrectionService(_ProfileEffectServiceBase):
             actor = self._lock_actor(command.credential)
             self._require_epoch(actor, command.actor_access_epoch)
             lineage = self._lock_lineage(lineage_id)
-            self._validate_root_alias(lineage)
-            transitions = self._lock_proposal_lineage_rows(lineage)
-            self._lock_dispositions_by_transition(transitions)
-            if actor.pk != lineage.subject_id or actor.pk != lineage.proposer_id:
-                raise ProfileEffectActorError("actor must equal subject and proposer")
-            current_head = transitions[-1]
+            transitions = self._lock_proposal_lineage_rows_for_replay(lineage)
+            grouped = self._lock_dispositions_by_transition_for_replay(transitions)
             existing = (
                 ProfileEffectProposalTransition.objects.using(self._alias)
                 .select_for_update()
@@ -1068,7 +1075,13 @@ class ProfileEffectProposalCorrectionService(_ProfileEffectServiceBase):
             )
             fingerprint = proposal_command_fingerprint(payload)
             if existing is not None:
-                return self._resolve_correction_replay(existing=existing, action=action, actor=actor, lineage=lineage, expected_head_transition_pk=command.expected_head_transition_pk, expected_head_lineage_reference=command.expected_head_lineage_reference, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint)
+                return self._resolve_correction_replay(existing=existing, action=action, actor=actor, lineage=lineage, transitions=transitions, grouped=grouped, expected_head_transition_pk=command.expected_head_transition_pk, expected_head_lineage_reference=command.expected_head_lineage_reference, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint)
+            self._validate_root_alias(lineage)
+            self._validate_locked_proposal_lineage_rows(lineage, transitions)
+            self._validate_locked_dispositions_by_transition(transitions, grouped)
+            if actor.pk != lineage.subject_id or actor.pk != lineage.proposer_id:
+                raise ProfileEffectActorError("actor must equal subject and proposer")
+            current_head = transitions[-1]
             if not lineage.has_current_survivor or current_head.to_state != ProposalState.ACTIVE.value:
                 raise ProfileEffectLifecycleError("proposal lineage has no current survivor")
             if current_head.pk != command.expected_head_transition_pk or current_head.lineage_reference != command.expected_head_lineage_reference:
@@ -1153,13 +1166,9 @@ class ProfileEffectProposalCorrectionService(_ProfileEffectServiceBase):
 
             return self._try_integrity(write_fn=_write, replay_fn=lambda: self._resolve_correction_replay(existing=(ProfileEffectProposalTransition.objects.using(self._alias).select_for_update().get(actor=actor, action=action.value, idempotency_key=idempotency_key)), action=action, actor=actor, lineage=lineage, expected_head_transition_pk=command.expected_head_transition_pk, expected_head_lineage_reference=command.expected_head_lineage_reference, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint), allowed_constraints=_PROPOSAL_APPEND_RACE_CONSTRAINTS)
 
-    def _resolve_correction_replay(self, *, existing: ProfileEffectProposalTransition, action: ProposalAction, actor: Identity, lineage: ProfileEffectProposalLineage, expected_head_transition_pk: int, expected_head_lineage_reference: str, request_reference: str, idempotency_key: str, payload_fingerprint: str) -> ProfileEffectProposalCommandReceipt:
+    def _resolve_correction_replay(self, *, existing: ProfileEffectProposalTransition, action: ProposalAction, actor: Identity, lineage: ProfileEffectProposalLineage, transitions: list[ProfileEffectProposalTransition], grouped: dict[int, list[ProfileEffectProjectionDisposition]], expected_head_transition_pk: int, expected_head_lineage_reference: str, request_reference: str, idempotency_key: str, payload_fingerprint: str) -> ProfileEffectProposalCommandReceipt:
         if existing.lineage_id != lineage.pk:
             raise ProfileEffectMalformedReplay("replayed proposal does not belong to lineage")
-        if existing.actor_access_epoch != actor.access_epoch:
-            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
-        if existing.payload_fingerprint != payload_fingerprint:
-            raise ProfileEffectPayloadConflict("payload conflict")
         predecessor = existing.previous_transition
         if predecessor is None:
             raise ProfileEffectMalformedReplay("correction replay predecessor is missing")
@@ -1190,11 +1199,15 @@ class ProfileEffectProposalCorrectionService(_ProfileEffectServiceBase):
             ),
             target_reference=target_reference,
         )
-        self._validate_proposal_authority_evidence(
-            existing,
-            actor.identity_id,
-            target_reference,
-        )
+        if existing.actor_access_epoch != actor.access_epoch:
+            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
+        if existing.payload_fingerprint != payload_fingerprint:
+            raise ProfileEffectPayloadConflict("payload conflict")
+        self._validate_root_alias(lineage)
+        self._validate_locked_proposal_lineage_rows(lineage, transitions)
+        self._validate_locked_dispositions_by_transition(transitions, grouped)
+        if actor.pk != lineage.subject_id or actor.pk != lineage.proposer_id:
+            raise ProfileEffectActorError("actor must equal subject and proposer")
         return ProfileEffectProposalCommandReceipt(
             database_alias=self._alias,
             lineage_id=lineage.lineage_id,
@@ -1250,11 +1263,8 @@ class ProfileEffectProjectionDispositionService(_ProfileEffectServiceBase):
             actor = self._lock_actor(command.credential)
             self._require_epoch(actor, command.actor_access_epoch)
             lineage = self._lock_lineage(lineage_id)
-            self._validate_root_alias(lineage)
-            transitions = self._lock_proposal_lineage_rows(lineage)
-            if actor.pk != lineage.subject_id:
-                raise ProfileEffectActorError("actor must equal subject")
-            grouped = self._lock_dispositions_by_transition(transitions)
+            transitions = self._lock_proposal_lineage_rows_for_replay(lineage)
+            grouped = self._lock_dispositions_by_transition_for_replay(transitions)
             existing = (
                 ProfileEffectProjectionDisposition.objects.using(self._alias)
                 .select_for_update()
@@ -1278,7 +1288,12 @@ class ProfileEffectProjectionDispositionService(_ProfileEffectServiceBase):
             )
             fingerprint = projection_command_fingerprint(payload)
             if existing is not None:
-                return self._resolve_projection_replay(existing=existing, action=action, actor=actor, lineage=lineage, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint, expected_proposal_transition_pk=command.expected_proposal_transition_pk, expected_proposal_lineage_reference=command.expected_proposal_lineage_reference, expected_disposition_pk_or_null=command.expected_disposition_pk_or_null, expected_disposition_lineage_reference_or_null=command.expected_disposition_lineage_reference_or_null)
+                return self._resolve_projection_replay(existing=existing, action=action, actor=actor, lineage=lineage, transitions=transitions, grouped=grouped, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint, expected_proposal_transition_pk=command.expected_proposal_transition_pk, expected_proposal_lineage_reference=command.expected_proposal_lineage_reference, expected_disposition_pk_or_null=command.expected_disposition_pk_or_null, expected_disposition_lineage_reference_or_null=command.expected_disposition_lineage_reference_or_null)
+            self._validate_root_alias(lineage)
+            self._validate_locked_proposal_lineage_rows(lineage, transitions)
+            self._validate_locked_dispositions_by_transition(transitions, grouped)
+            if actor.pk != lineage.subject_id:
+                raise ProfileEffectActorError("actor must equal subject")
             if not lineage.has_current_survivor or transitions[-1].to_state != ProposalState.ACTIVE.value:
                 raise ProfileEffectLifecycleError("projection requires a current active proposal survivor")
             current_transition = transitions[-1]
@@ -1366,11 +1381,7 @@ class ProfileEffectProjectionDispositionService(_ProfileEffectServiceBase):
 
             return self._try_integrity(write_fn=_write, replay_fn=lambda: self._resolve_projection_replay(existing=(ProfileEffectProjectionDisposition.objects.using(self._alias).select_for_update().get(actor=actor, action=action.value, idempotency_key=idempotency_key)), action=action, actor=actor, lineage=lineage, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint, expected_proposal_transition_pk=command.expected_proposal_transition_pk, expected_proposal_lineage_reference=command.expected_proposal_lineage_reference, expected_disposition_pk_or_null=command.expected_disposition_pk_or_null, expected_disposition_lineage_reference_or_null=command.expected_disposition_lineage_reference_or_null), allowed_constraints=_PROJECTION_APPEND_RACE_CONSTRAINTS)
 
-    def _resolve_projection_replay(self, *, existing: ProfileEffectProjectionDisposition, action: ProjectionAction, actor: Identity, lineage: ProfileEffectProposalLineage, request_reference: str, idempotency_key: str, payload_fingerprint: str, expected_proposal_transition_pk: int, expected_proposal_lineage_reference: str, expected_disposition_pk_or_null: int | None, expected_disposition_lineage_reference_or_null: str | None) -> ProfileEffectProjectionCommandReceipt:
-        if existing.actor_access_epoch != actor.access_epoch:
-            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
-        if existing.payload_fingerprint != payload_fingerprint:
-            raise ProfileEffectPayloadConflict("payload conflict")
+    def _resolve_projection_replay(self, *, existing: ProfileEffectProjectionDisposition, action: ProjectionAction, actor: Identity, lineage: ProfileEffectProposalLineage, transitions: list[ProfileEffectProposalTransition], grouped: dict[int, list[ProfileEffectProjectionDisposition]], request_reference: str, idempotency_key: str, payload_fingerprint: str, expected_proposal_transition_pk: int, expected_proposal_lineage_reference: str, expected_disposition_pk_or_null: int | None, expected_disposition_lineage_reference_or_null: str | None) -> ProfileEffectProjectionCommandReceipt:
         if existing.proposal_transition.lineage_id != lineage.pk:
             raise ProfileEffectMalformedReplay("replayed projection does not belong to lineage")
         predecessor = existing.previous_disposition
@@ -1407,11 +1418,15 @@ class ProfileEffectProjectionDispositionService(_ProfileEffectServiceBase):
             ),
             target_reference=target_reference,
         )
-        self._validate_projection_authority_evidence(
-            existing,
-            actor.identity_id,
-            target_reference,
-        )
+        if existing.actor_access_epoch != actor.access_epoch:
+            raise ProfileEffectCrossEpochConflict("cross-epoch conflict")
+        if existing.payload_fingerprint != payload_fingerprint:
+            raise ProfileEffectPayloadConflict("payload conflict")
+        self._validate_root_alias(lineage)
+        self._validate_locked_proposal_lineage_rows(lineage, transitions)
+        self._validate_locked_dispositions_by_transition(transitions, grouped)
+        if actor.pk != lineage.subject_id:
+            raise ProfileEffectActorError("actor must equal subject")
         return ProfileEffectProjectionCommandReceipt(
             database_alias=self._alias,
             lineage_id=lineage.lineage_id,

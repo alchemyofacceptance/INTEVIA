@@ -66,6 +66,11 @@ exists.
 Future `ENGAGEMENT` and `CARE` units remain separately governed. Any future
 `REVIEW_WORK` relevance is a distinct separately authorised slice and has no
 S013 meaning here.
+Any future CARE comparison or observation is non-binding reflection only.
+CARE may surface a potential contradiction or risk of misinterpretation to
+the applicable LO, Circle Coordinator, or Human authority. CARE cannot
+rewrite, suppress, block, or overrule an LO or Human decision. No CARE runtime
+is implemented or activated by S013.
 Deferred successor work remains separate: Governed Identity Exit, Account
 Deletion, Authorship Continuity and Erasure.
 
@@ -102,41 +107,16 @@ references.
 
 ## Validation Evidence
 
-The following commands were executed in this session against
-`intevia.test_settings`:
+Earlier `88/88` focused evidence belongs to an earlier snapshot and is
+historical only. The preserved recovery report relays later `22/22` S013
+PostgreSQL and `60/60` compatibility results; this correction packet did not
+independently rerun those results. The only prior `592/592` full-regression
+PASS also belongs to a superseded snapshot. The recovery-snapshot 598-test
+regression was interrupted and is not PASS evidence.
 
-```text
-python manage.py test tests.test_service_activity_qualification tests.test_profile_effect_authority tests.test_profile_effect_models tests.test_profile_effect_service tests.test_profile_effect_readback tests.test_profile_effect_migrations tests.test_service_activity_models tests.test_service_activity_migrations tests.test_service_activity_readback --settings=intevia.test_settings --verbosity=1
-```
-
-Observed result:
-
-```text
-Found 88 test(s).
-Creating test database for alias 'default'...
-System check identified no issues (0 silenced).
-Ran 88 tests in 77.678s
-OK
-Destroying test database for alias 'default'...
-```
-
-The following additional qualification steps were also observed earlier in the
-same bounded execution:
-
-```text
-python manage.py check --settings=intevia.test_settings
-```
-
-Observed result:
-
-```text
-System check identified no issues (0 silenced).
-```
-
-The PostgreSQL-only S013 guardian was added as
-`tests/test_profile_effect_postgresql.py`. In the current environment,
-PostgreSQL was not provisioned by design, so this Datacron does not claim a
-PostgreSQL pass result that was not executed.
+The recovery commit is therefore not qualified, accepted, merge-ready, or
+current PASS evidence. Fresh focused, PostgreSQL, independent-audit, and full
+regression evidence must replace this ledger before Human acceptance.
 
 ## Architectural Notes Preserved
 
@@ -152,6 +132,12 @@ PostgreSQL pass result that was not executed.
 - Subject visibility is exact-epoch, subject-private, and default-deny.
 - Neutral lineage remains append-only and physically local to `core` without
   transferring semantic ownership to CORE/Identity.
+- S013 provides append-only and immutable-occurrence behavior through the
+  governed service surface and declared database constraints. It does not
+  claim absolute physical database immutability. Privileged database bypass,
+  operator-level mutation, backup restoration, and future separately
+  authorised erasure mechanisms remain outside this governed-service
+  guarantee.
 - Later presentation language remains under LO sovereignty.
 - Future `ENGAGEMENT` and `CARE` units remain separately authorised.
 - Future `REVIEW_WORK` relevance remains separately authorised.
