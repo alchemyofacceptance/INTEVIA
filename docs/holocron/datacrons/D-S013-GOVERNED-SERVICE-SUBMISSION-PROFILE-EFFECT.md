@@ -28,7 +28,7 @@ Slice: S013 - Governed Service Submission Profile Effect
 Domain owner: SERVICE
 Human Governor: Carmian Owen
 Repository: https://github.com/alchemyofacceptance/INTEVIA.git
-Branch: main
+Branch: candidate/s013-recovery-correction-20260728
 Implementation baseline: 590b0e527c2abc71053a5dbd26f8693953f1c845
 Environment: internal-pre-alpha
 Controlling practice: IDOP machine-readable family
@@ -114,9 +114,96 @@ independently rerun those results. The only prior `592/592` full-regression
 PASS also belongs to a superseded snapshot. The recovery-snapshot 598-test
 regression was interrupted and is not PASS evidence.
 
-The recovery commit is therefore not qualified, accepted, merge-ready, or
-current PASS evidence. Fresh focused, PostgreSQL, independent-audit, and full
-regression evidence must replace this ledger before Human acceptance.
+Those superseded and interrupted results are not current qualification
+evidence. They are preserved here solely as execution history.
+
+### Final-Convergence Qualification Ledger
+
+The final-convergence unit requalified the preserved candidate at entry commit
+`d88862e963454c96a5ec64792d823702209e8beb`, inherited Q1-Q5 only after the
+complete cryptographic snapshot matched, and made one Human-authorised
+test-only correction. No production, migration, model, configuration, service,
+dependency, architecture, or second test file changed in that correction.
+
+```text
+Q1_ONE_FIVE_PATH_CORRECTION: PASS — inherited, not repeated
+Q2_STATIC_AND_FOCUSED_SQLITE: PASS — inherited 24/24, zero failures/errors/skips
+Q3_POSTGRESQL_MIGRATION_REHEARSAL: PASS — inherited 6/6, zero failures/errors/skips
+Q4_FOCUSED_POSTGRESQL: PASS — inherited 25/25, zero failures/errors/skips
+Q5_COMPATIBILITY: PASS — inherited 110/110, zero failures/errors/skips
+Q6_INDEPENDENT_READ_ONLY_AUDIT: FAIL — two mandatory findings preserved
+Q6_FINDING_1: projection unknown-constraint guardian absent
+Q6_FINDING_1_DISPOSITION: corrected by exact Human authority in final convergence
+Q6_FINDING_2: auditor did not independently recompute all snapshot qualifiers
+Q6_FINDING_2_DISPOSITION: discharged by the Human Governor because the parent independently recomputed the complete cryptographic snapshot immediately before audit
+FINAL_FOCUSED_POSTGRESQL: PASS — 26/26, zero failures/errors/skips
+FINAL_FULL_POSTGRESQL_REGRESSION: PASS — 613/613, zero failures/errors/skips
+FINAL_EVIDENCE_REBINDING: PASS_ONE_REGRESSION_SUFFICIENT
+IMPLEMENTATION_COMMIT: PENDING
+FETCH: PENDING
+PUSH: PENDING
+```
+
+The added guardian is
+`test_unknown_projection_constraint_propagates_without_winner_recovery`. It
+enters the projection integrity route with an unknown constraint outside the
+projection allow-set and proves that the same `IntegrityError` object
+propagates without winner recovery. Compile/import passed before PostgreSQL
+testing. The complete focused module discovered and executed 26 tests in
+29.696 seconds (38.080 seconds command duration).
+
+The complete `tests` label was predeclared at 613 tests with an empty expected
+skip set. The exact Node witness was bound in the shell and canonical Python
+process before discovery and execution:
+
+```text
+C:\Users\Carewen\AppData\Local\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.18.0-win-x64\node.exe
+Node version: v24.18.0
+Regular/non-reparse: true/true
+```
+
+The one full PostgreSQL regression discovered, executed, and passed all 613
+tests in 351.962 seconds (360.008 seconds command duration), with zero
+failures, errors, or skips. Its test database was destroyed. No regression was
+repeated.
+
+### Candidate Snapshot And Containment
+
+The qualification snapshot retained exactly five unstaged candidate paths on
+entry commit `d88862e963454c96a5ec64792d823702209e8beb`. After the one
+authorised guardian, the deterministic binary diff was 26,531 bytes with
+SHA-256
+`f187ecc7b3f55c6f516122bcc100417811da33c6561910f367cb0d3de2a7c91e`.
+The tested guardian file was 55,209 bytes with SHA-256
+`ebd73164e846a89c6327269e63239a0156936cdb3fb16f02ae23de5465874c1c`.
+The other four candidate blobs remained byte-identical to the inherited
+snapshot.
+
+The full-regression snapshot bound 164 tracked production, migration, test,
+and configuration blobs. No collected test reads, parses, or asserts on this
+Datacron. The post-regression ledger change is therefore evidence-only; all
+164 qualified blobs must remain byte-identical to the tested snapshot.
+
+The fresh PostgreSQL 16 substrate used image ID `33f923b05f64`, loopback-only
+publication, tmpfs data, and zero mounts or volumes. Focused and full test
+databases were destroyed after their runs. Final run-container and process
+containment remains a required pre-Commit gate.
+
+Final-convergence activity used zero subagents, zero auditors, zero nested
+children, one test-only correction pass, one focused PostgreSQL execution, one
+full regression, and zero product-test retries. The prior Q6 auditor remains
+preserved historical evidence and was not repeated. One discovery helper
+omitted `DJANGO_SETTINGS_MODULE` and was corrected before collection; one
+snapshot-manifest display pipeline had a PowerShell parse defect and was
+corrected before execution. Neither mechanic affected repository, tests,
+database, Docker, or Git state.
+
+Commit, fetch, Push, receiver-direct remote verification, and final resource
+containment remain pending at the time this ledger is written. This evidence
+does not qualify a merge, constitute implementation acceptance, accept or
+close S013, deploy or publish INTEVIA, activate Real-Human use, or authorise
+S014 substantive work. Final authority remains with Carmian Owen, Human
+Governor.
 
 ## Architectural Notes Preserved
 

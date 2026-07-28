@@ -5,7 +5,7 @@ from threading import Barrier, Event, Lock, Thread
 from unittest import skipUnless
 from unittest.mock import patch
 
-from django.db import close_old_connections, connection, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.models import F
 from django.test import TransactionTestCase
@@ -126,6 +126,20 @@ class _BlockingReplayProposalService(ServiceSubmissionProfileEffectProposalServi
             if not self._release_replay.wait(timeout=5):
                 raise AssertionError("replay hold was not released")
         return grouped
+
+
+class _ForcedCorrectionWinnerService(ProfileEffectProposalCorrectionService):
+    def _try_integrity(self, *, write_fn, replay_fn, allowed_constraints):
+        self.observed_constraints = allowed_constraints
+        write_fn()
+        return replay_fn()
+
+
+class _ForcedProjectionWinnerService(ProfileEffectProjectionDispositionService):
+    def _try_integrity(self, *, write_fn, replay_fn, allowed_constraints):
+        self.observed_constraints = allowed_constraints
+        write_fn()
+        return replay_fn()
 
 
 @POSTGRESQL_ONLY
@@ -485,6 +499,90 @@ class ProfileEffectPostgreSQLNovelShapeTests(TransactionTestCase):
         self.assertFalse(original.replayed)
         self.assertTrue(replayed.replayed)
         self.assertFalse(replayed.has_current_survivor)
+
+    def test_correction_named_constraint_winner_callback_reloads_complete_aggregate(self):
+        created = self._create_receipt(suffix="FORCED-CORRECTION-WINNER-001")
+        command = self._correction_command(
+            lineage_id=created.lineage_id,
+            head_pk=created.proposal_transition_pk,
+            head_ref=created.proposal_lineage_reference,
+            suffix="FORCED-CORRECTION-WINNER-001",
+            minute=11,
+        )
+        service = _ForcedCorrectionWinnerService(
+            authority=ProposalAuthority(provider=_ProposalProvider()),
+            clock=lambda: NOW,
+        )
+        with patch.object(
+            service,
+            "_resolve_correction_replay",
+            wraps=service._resolve_correction_replay,
+        ) as resolver:
+            receipt = service.supersede_profile_effect_proposal(command)
+        self.assertTrue(receipt.replayed)
+        self.assertEqual(receipt.proposal_transition_pk, resolver.call_args.kwargs["existing"].pk)
+        self.assertTrue(resolver.call_args.kwargs["transitions"])
+        self.assertTrue(resolver.call_args.kwargs["grouped"])
+        self.assertEqual(len(resolver.call_args.kwargs["transitions"]), 2)
+        self.assertIn("s013_pe_prop_actor_action_idem_uniq", service.observed_constraints)
+
+    def test_projection_named_constraint_winner_callback_reloads_complete_aggregate(self):
+        created = self._create_receipt(suffix="FORCED-PROJECTION-WINNER-001")
+        command = self._projection_command(
+            lineage_id=created.lineage_id,
+            proposal_pk=created.proposal_transition_pk,
+            proposal_ref=created.proposal_lineage_reference,
+            disposition_pk=None,
+            disposition_ref=None,
+            suffix="FORCED-PROJECTION-WINNER-001",
+            minute=11,
+        )
+        service = _ForcedProjectionWinnerService(
+            authority=ProjectionAuthority(provider=_ProjectionProvider()),
+            clock=lambda: NOW,
+        )
+        with patch.object(
+            service,
+            "_resolve_projection_replay",
+            wraps=service._resolve_projection_replay,
+        ) as resolver:
+            receipt = service.authorise_profile_effect_projection(command)
+        self.assertTrue(receipt.replayed)
+        self.assertEqual(receipt.projection_disposition_pk, resolver.call_args.kwargs["existing"].pk)
+        self.assertTrue(resolver.call_args.kwargs["transitions"])
+        self.assertTrue(resolver.call_args.kwargs["grouped"])
+        self.assertTrue(resolver.call_args.kwargs["grouped"][created.proposal_transition_pk])
+        self.assertIn("s013_pe_proj_actor_action_idem_uniq", service.observed_constraints)
+
+    def test_unknown_integrity_constraint_propagates_without_winner_recovery(self):
+        error = IntegrityError("unknown constraint")
+        with patch.object(
+            self.correction_service,
+            "_check_constraint_name",
+            return_value="s013_unknown_constraint",
+        ):
+            with self.assertRaises(IntegrityError) as raised:
+                self.correction_service._try_integrity(
+                    write_fn=lambda: (_ for _ in ()).throw(error),
+                    replay_fn=lambda: self.fail("unknown constraint entered replay"),
+                    allowed_constraints=frozenset({"s013_pe_prop_sequence_uniq"}),
+                )
+        self.assertIs(raised.exception, error)
+
+    def test_unknown_projection_constraint_propagates_without_winner_recovery(self):
+        error = IntegrityError("unknown projection constraint")
+        with patch.object(
+            self.projection_service,
+            "_check_constraint_name",
+            return_value="s013_unknown_projection_constraint",
+        ):
+            with self.assertRaises(IntegrityError) as raised:
+                self.projection_service._try_integrity(
+                    write_fn=lambda: (_ for _ in ()).throw(error),
+                    replay_fn=lambda: self.fail("unknown constraint entered replay"),
+                    allowed_constraints=frozenset({"s013_pe_proj_sequence_uniq"}),
+                )
+        self.assertIs(raised.exception, error)
 
     def test_projection_replays_cover_authorise_decline_and_withdraw_after_state_advances(self):
         first = self._create_receipt(suffix="AUTH-REPLAY-001")

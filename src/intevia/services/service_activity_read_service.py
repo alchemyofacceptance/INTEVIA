@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -233,6 +234,83 @@ class ServiceSubmissionQualificationDTO:
 def _canonical_bytes(obj: object) -> bytes:
     return json.dumps(
         obj,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+_SUBMISSION_QUALIFICATION_FIELDS = frozenset({
+    "actor_access_epoch",
+    "actor_equals_assignee",
+    "actor_identity_id",
+    "activity_id",
+    "contract_version",
+    "database_alias",
+    "occurred_at",
+    "schema",
+    "source_authority_reference",
+    "subject_identity_id",
+    "submit_transition_lineage_reference",
+    "submit_transition_pk",
+    "submit_transition_sequence",
+})
+_SUBMISSION_QUALIFICATION_INTEGER_FIELDS = frozenset({
+    "actor_access_epoch",
+    "contract_version",
+    "submit_transition_pk",
+    "submit_transition_sequence",
+})
+
+
+def _qualification_canonical_bytes(payload: object) -> bytes:
+    if type(payload) is not dict or set(payload) != _SUBMISSION_QUALIFICATION_FIELDS:
+        raise ServiceActivityReadError("qualification payload fields are invalid")
+    for field in _SUBMISSION_QUALIFICATION_INTEGER_FIELDS:
+        if type(payload[field]) is not int:
+            raise ServiceActivityReadError(f"qualification {field} must be an exact integer")
+    if type(payload["actor_equals_assignee"]) is not bool:
+        raise ServiceActivityReadError(
+            "qualification actor_equals_assignee must be an exact Boolean"
+        )
+
+    def canonicalise(value: object) -> object:
+        if value is None or type(value) in {bool, int}:
+            return value
+        if type(value) is str:
+            if unicodedata.normalize("NFC", value) != value:
+                raise ServiceActivityReadError("qualification text must be NFC")
+            return value
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, datetime):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ServiceActivityReadError("qualification datetime must be aware")
+            return canonical_timestamp(value)
+        if type(value) in {list, tuple}:
+            return [canonicalise(item) for item in value]
+        if type(value) is dict:
+            result = {}
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ServiceActivityReadError(
+                        "qualification object keys must be strings"
+                    )
+                if unicodedata.normalize("NFC", key) != key:
+                    raise ServiceActivityReadError(
+                        "qualification object keys must be NFC"
+                    )
+                if key in result:
+                    raise ServiceActivityReadError(
+                        "qualification object fields must be unique"
+                    )
+                result[key] = canonicalise(item)
+            return result
+        raise ServiceActivityReadError("qualification value type is unsupported")
+
+    return json.dumps(
+        canonicalise(payload),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -474,14 +552,14 @@ class ServiceActivityReadService:
         qualification_payload = {
             "actor_access_epoch": submit_transition.actor_access_epoch,
             "actor_equals_assignee": True,
-            "actor_identity_id": str(submit_transition.actor.identity_id),
-            "activity_id": str(activity.activity_id),
+            "actor_identity_id": submit_transition.actor.identity_id,
+            "activity_id": activity.activity_id,
             "contract_version": 1,
             "database_alias": self._alias,
-            "occurred_at": canonical_timestamp(submit_transition.occurred_at),
+            "occurred_at": submit_transition.occurred_at,
             "schema": _SUBMISSION_QUALIFICATION_SCHEMA,
             "source_authority_reference": submit_transition.authority_reference,
-            "subject_identity_id": str(assignment.assignee.identity_id),
+            "subject_identity_id": assignment.assignee.identity_id,
             "submit_transition_lineage_reference": (
                 submit_transition.lineage_reference
             ),
@@ -490,7 +568,7 @@ class ServiceActivityReadService:
         }
         qualification_digest = hashlib.sha256(
             _SUBMISSION_QUALIFICATION_DOMAIN
-            + _canonical_bytes(qualification_payload)
+            + _qualification_canonical_bytes(qualification_payload)
         ).hexdigest()
         return ServiceSubmissionQualificationDTO(
             database_alias=self._alias,

@@ -1164,7 +1164,42 @@ class ProfileEffectProposalCorrectionService(_ProfileEffectServiceBase):
                     replayed=False,
                 )
 
-            return self._try_integrity(write_fn=_write, replay_fn=lambda: self._resolve_correction_replay(existing=(ProfileEffectProposalTransition.objects.using(self._alias).select_for_update().get(actor=actor, action=action.value, idempotency_key=idempotency_key)), action=action, actor=actor, lineage=lineage, expected_head_transition_pk=command.expected_head_transition_pk, expected_head_lineage_reference=command.expected_head_lineage_reference, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint), allowed_constraints=_PROPOSAL_APPEND_RACE_CONSTRAINTS)
+            def _winner() -> ProfileEffectProposalCommandReceipt:
+                winner_lineage = self._lock_lineage(lineage.lineage_id)
+                winner_transitions = self._lock_proposal_lineage_rows_for_replay(
+                    winner_lineage
+                )
+                winner_grouped = self._lock_dispositions_by_transition_for_replay(
+                    winner_transitions
+                )
+                existing_winner = (
+                    ProfileEffectProposalTransition.objects.using(self._alias)
+                    .select_for_update()
+                    .get(
+                        actor=actor,
+                        action=action.value,
+                        idempotency_key=idempotency_key,
+                    )
+                )
+                return self._resolve_correction_replay(
+                    existing=existing_winner,
+                    action=action,
+                    actor=actor,
+                    lineage=winner_lineage,
+                    transitions=winner_transitions,
+                    grouped=winner_grouped,
+                    expected_head_transition_pk=command.expected_head_transition_pk,
+                    expected_head_lineage_reference=command.expected_head_lineage_reference,
+                    request_reference=request_reference,
+                    idempotency_key=idempotency_key,
+                    payload_fingerprint=fingerprint,
+                )
+
+            return self._try_integrity(
+                write_fn=_write,
+                replay_fn=_winner,
+                allowed_constraints=_PROPOSAL_APPEND_RACE_CONSTRAINTS,
+            )
 
     def _resolve_correction_replay(self, *, existing: ProfileEffectProposalTransition, action: ProposalAction, actor: Identity, lineage: ProfileEffectProposalLineage, transitions: list[ProfileEffectProposalTransition], grouped: dict[int, list[ProfileEffectProjectionDisposition]], expected_head_transition_pk: int, expected_head_lineage_reference: str, request_reference: str, idempotency_key: str, payload_fingerprint: str) -> ProfileEffectProposalCommandReceipt:
         if existing.lineage_id != lineage.pk:
@@ -1379,7 +1414,44 @@ class ProfileEffectProjectionDispositionService(_ProfileEffectServiceBase):
                     replayed=False,
                 )
 
-            return self._try_integrity(write_fn=_write, replay_fn=lambda: self._resolve_projection_replay(existing=(ProfileEffectProjectionDisposition.objects.using(self._alias).select_for_update().get(actor=actor, action=action.value, idempotency_key=idempotency_key)), action=action, actor=actor, lineage=lineage, request_reference=request_reference, idempotency_key=idempotency_key, payload_fingerprint=fingerprint, expected_proposal_transition_pk=command.expected_proposal_transition_pk, expected_proposal_lineage_reference=command.expected_proposal_lineage_reference, expected_disposition_pk_or_null=command.expected_disposition_pk_or_null, expected_disposition_lineage_reference_or_null=command.expected_disposition_lineage_reference_or_null), allowed_constraints=_PROJECTION_APPEND_RACE_CONSTRAINTS)
+            def _winner() -> ProfileEffectProjectionCommandReceipt:
+                winner_lineage = self._lock_lineage(lineage.lineage_id)
+                winner_transitions = self._lock_proposal_lineage_rows_for_replay(
+                    winner_lineage
+                )
+                winner_grouped = self._lock_dispositions_by_transition_for_replay(
+                    winner_transitions
+                )
+                existing_winner = (
+                    ProfileEffectProjectionDisposition.objects.using(self._alias)
+                    .select_for_update()
+                    .get(
+                        actor=actor,
+                        action=action.value,
+                        idempotency_key=idempotency_key,
+                    )
+                )
+                return self._resolve_projection_replay(
+                    existing=existing_winner,
+                    action=action,
+                    actor=actor,
+                    lineage=winner_lineage,
+                    transitions=winner_transitions,
+                    grouped=winner_grouped,
+                    request_reference=request_reference,
+                    idempotency_key=idempotency_key,
+                    payload_fingerprint=fingerprint,
+                    expected_proposal_transition_pk=command.expected_proposal_transition_pk,
+                    expected_proposal_lineage_reference=command.expected_proposal_lineage_reference,
+                    expected_disposition_pk_or_null=command.expected_disposition_pk_or_null,
+                    expected_disposition_lineage_reference_or_null=command.expected_disposition_lineage_reference_or_null,
+                )
+
+            return self._try_integrity(
+                write_fn=_write,
+                replay_fn=_winner,
+                allowed_constraints=_PROJECTION_APPEND_RACE_CONSTRAINTS,
+            )
 
     def _resolve_projection_replay(self, *, existing: ProfileEffectProjectionDisposition, action: ProjectionAction, actor: Identity, lineage: ProfileEffectProposalLineage, transitions: list[ProfileEffectProposalTransition], grouped: dict[int, list[ProfileEffectProjectionDisposition]], request_reference: str, idempotency_key: str, payload_fingerprint: str, expected_proposal_transition_pk: int, expected_proposal_lineage_reference: str, expected_disposition_pk_or_null: int | None, expected_disposition_lineage_reference_or_null: str | None) -> ProfileEffectProjectionCommandReceipt:
         if existing.proposal_transition.lineage_id != lineage.pk:

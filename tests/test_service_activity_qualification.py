@@ -1,7 +1,7 @@
 """Guardians for the S012 submission qualification seam used by S013."""
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -19,6 +19,7 @@ from core.models import (
 )
 from src.intevia.services.service_activity_read_service import (
     ServiceCommandAction,
+    _qualification_canonical_bytes,
     _recompute_decision_reference,
     _recompute_lineage_reference,
     _recompute_payload_fingerprint,
@@ -316,6 +317,144 @@ class ServiceSubmissionQualificationTests(TransactionTestCase):
         self.assertEqual(result.qualification_contract_version, 1)
         self.assertTrue(result.qualification_reference.startswith("s012sq1:"))
         self.assertEqual(len(result.qualification_reference), 72)
+
+    def test_fixed_vector_uses_exact_canonical_profile_and_reference(self):
+        payload = {
+            "actor_access_epoch": 7,
+            "actor_equals_assignee": True,
+            "actor_identity_id": UUID("11111111-1111-4111-8111-111111111111"),
+            "activity_id": UUID("22222222-2222-4222-8222-222222222222"),
+            "contract_version": 1,
+            "database_alias": "default",
+            "occurred_at": datetime(2026, 7, 27, 12, 3, tzinfo=timezone.utc),
+            "schema": "intevia.s012.service-submission-qualification.v1",
+            "source_authority_reference": "AUTH-4",
+            "subject_identity_id": UUID("11111111-1111-4111-8111-111111111111"),
+            "submit_transition_lineage_reference": "s012l1:" + "a" * 64,
+            "submit_transition_pk": 4,
+            "submit_transition_sequence": 4,
+        }
+        import hashlib
+
+        digest = hashlib.sha256(
+            b"INTEVIA:S012:SERVICE_SUBMISSION_QUALIFICATION:v1\x00"
+            + _qualification_canonical_bytes(payload)
+        ).hexdigest()
+        self.assertEqual(
+            f"s012sq1:{digest}",
+            "s012sq1:6cb6ee24f9bcda96bef588bbb9d81b26bd30c323c9ffa47b22d3c34a039db6ec",
+        )
+
+    def test_qualification_reference_binds_exact_database_alias(self):
+        with transaction.atomic():
+            result = self.service.qualify_submission_occurrence(
+                activity_id=self.activity.activity_id
+            )
+        payload = {
+            "actor_access_epoch": result.actor_access_epoch,
+            "actor_equals_assignee": result.actor_equals_assignee,
+            "actor_identity_id": result.actor_identity_id,
+            "activity_id": result.activity_id,
+            "contract_version": result.qualification_contract_version,
+            "database_alias": "other",
+            "occurred_at": result.occurred_at,
+            "schema": result.qualification_schema,
+            "source_authority_reference": result.source_authority_reference,
+            "subject_identity_id": result.subject_identity_id,
+            "submit_transition_lineage_reference": result.submit_transition_lineage_reference,
+            "submit_transition_pk": result.submit_transition_pk,
+            "submit_transition_sequence": result.submit_transition_sequence,
+        }
+        import hashlib
+
+        other = "s012sq1:" + hashlib.sha256(
+            b"INTEVIA:S012:SERVICE_SUBMISSION_QUALIFICATION:v1\x00"
+            + _qualification_canonical_bytes(payload)
+        ).hexdigest()
+        self.assertNotEqual(result.qualification_reference, other)
+
+    def test_canonical_profile_rejects_nfd_and_unsupported_types(self):
+        base = {
+            "actor_access_epoch": 0,
+            "actor_equals_assignee": True,
+            "actor_identity_id": self.identity.identity_id,
+            "activity_id": self.activity.activity_id,
+            "contract_version": 1,
+            "database_alias": "default",
+            "occurred_at": NOW,
+            "schema": "intevia.s012.service-submission-qualification.v1",
+            "source_authority_reference": "AUTH-4",
+            "subject_identity_id": self.identity.identity_id,
+            "submit_transition_lineage_reference": "s012l1:" + "a" * 64,
+            "submit_transition_pk": 4,
+            "submit_transition_sequence": 4,
+        }
+        invalid_values = [
+            ("database_alias", "de\u0301fault"),
+            ("occurred_at", datetime(2026, 7, 27, 12, 3)),
+            ("submit_transition_pk", True),
+            ("actor_equals_assignee", 1),
+            ("source_authority_reference", 1.0),
+            ("source_authority_reference", object()),
+        ]
+        for field, value in invalid_values:
+            with self.subTest(field=field, value_type=type(value).__name__):
+                payload = dict(base)
+                payload[field] = value
+                with self.assertRaises(ServiceActivityReadError):
+                    _qualification_canonical_bytes(payload)
+
+    def test_qualification_returns_no_submission_or_evidence_content_and_mutates_nothing(self):
+        model_counts = {
+            model: model.objects.count()
+            for model in (
+                ServiceActivity,
+                ServiceActivityTransition,
+                ServiceActivityAssignment,
+                ServiceWorkSubmission,
+                ServiceActivityEvidenceReference,
+            )
+        }
+        with transaction.atomic():
+            result = self.service.qualify_submission_occurrence(
+                activity_id=self.activity.activity_id
+            )
+        self.assertFalse(hasattr(result, "submission_reference"))
+        self.assertFalse(hasattr(result, "evidence"))
+        self.assertEqual(
+            model_counts,
+            {model: model.objects.count() for model in model_counts},
+        )
+
+    def test_rejects_stale_head_and_corrupt_fingerprints(self):
+        submit = self.submission.transition
+        for field, value in (
+            ("payload_fingerprint", "0" * 64),
+            ("lineage_reference", "s012l1:" + "0" * 64),
+            ("authority_decision_reference", "s012d1:" + "0" * 64),
+        ):
+            with self.subTest(field=field):
+                original = getattr(submit, field)
+                ServiceActivityTransition.objects.filter(pk=submit.pk).update(
+                    **{field: value}
+                )
+                with transaction.atomic():
+                    with self.assertRaises(ServiceActivityReadLineageError):
+                        self.service.qualify_submission_occurrence(
+                            activity_id=self.activity.activity_id
+                        )
+                ServiceActivityTransition.objects.filter(pk=submit.pk).update(
+                    **{field: original}
+                )
+
+        ServiceActivity.objects.filter(pk=self.activity.pk).update(
+            head_transition_id=submit.previous_transition_id
+        )
+        with transaction.atomic():
+            with self.assertRaises(ServiceActivityReadLineageError):
+                self.service.qualify_submission_occurrence(
+                    activity_id=self.activity.activity_id
+                )
 
     def test_rejects_submitter_assignee_mismatch(self):
         other = _make_identity("qualification-other")
