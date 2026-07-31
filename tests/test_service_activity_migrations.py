@@ -273,7 +273,7 @@ class S012MigrationRehearsalTests(TransactionTestCase):
 
 
 class IdentityFKCatalogueTests(TransactionTestCase):
-    """Live catalogue: 34 base + 7 S012 additions + 4 S013 additions = 45."""
+    """Live catalogue: 34 base + 7 S012 + 4 S013 + 2 S014 = 47."""
 
     # Base 34 from the existing S007 PostgreSQL catalogue. Identity-internal
     # and originating-provisioning relations are deliberately out of scope.
@@ -362,12 +362,23 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("profileeffectprojectiondisposition", "actor"),
     }
 
-    def test_catalogue_34_base_plus_7_plus_4_additions_equals_45(self):
+    S014_ADDITIONS = {
+        ("course", "created_by"),
+        ("courseversion", "actor"),
+    }
+
+    def test_catalogue_34_base_plus_7_plus_4_plus_2_additions_equals_47(self):
         self.assertEqual(len(self.BASE_IDENTITY_FKS), 34)
         self.assertEqual(len(self.S012_ADDITIONS), 7)
         self.assertEqual(len(self.S013_ADDITIONS), 4)
-        combined = self.BASE_IDENTITY_FKS | self.S012_ADDITIONS | self.S013_ADDITIONS
-        self.assertEqual(len(combined), 45)
+        self.assertEqual(len(self.S014_ADDITIONS), 2)
+        combined = (
+            self.BASE_IDENTITY_FKS
+            | self.S012_ADDITIONS
+            | self.S013_ADDITIONS
+            | self.S014_ADDITIONS
+        )
+        self.assertEqual(len(combined), 47)
 
     def test_live_schema_matches_catalogue(self):
         from django.apps import apps
@@ -393,6 +404,7 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             self.BASE_IDENTITY_FKS
             | self.S012_ADDITIONS
             | self.S013_ADDITIONS
+            | self.S014_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 45)
+        self.assertEqual(len(live_fks), 47)

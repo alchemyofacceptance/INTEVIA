@@ -444,7 +444,7 @@ class ConstraintCatalogueTests(TestCase):
 
 
 class IdentityFKPredictionTests(TestCase):
-    """Live catalogue remains exact: 34 base + 7 S012 + 4 S013 = 45."""
+    """Live catalogue is exact: 34 base + 7 S012 + 4 S013 + 2 S014 = 47."""
 
     EXPECTED_S012_FK_ADDITIONS = {
         ("serviceactivity", "created_by"),
@@ -463,13 +463,18 @@ class IdentityFKPredictionTests(TestCase):
         ("profileeffectprojectiondisposition", "actor"),
     }
 
+    EXPECTED_S014_FK_ADDITIONS = {
+        ("course", "created_by"),
+        ("courseversion", "actor"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
         ("originatingmembershipprovisioningrequest", "identity"),
     }
 
-    def test_identity_fk_count_34_to_45(self):
+    def test_identity_fk_count_34_to_47(self):
         from django.apps import apps
         identity_model = apps.get_model("core", "Identity")
         fk_fields = []
@@ -485,7 +490,7 @@ class IdentityFKPredictionTests(TestCase):
                     fk_fields.append((model._meta.model_name, field.name))
 
         scoped_fks = set(fk_fields) - self.EXCLUDED_INTERNAL_FKS
-        self.assertEqual(len(scoped_fks), 45)
+        self.assertEqual(len(scoped_fks), 47)
 
         s012_fks = {
             (name, fname) for name, fname in scoped_fks
@@ -500,6 +505,13 @@ class IdentityFKPredictionTests(TestCase):
         }
         self.assertEqual(s013_fks, self.EXPECTED_S013_FK_ADDITIONS)
         self.assertEqual(len(s013_fks), 4)
+
+        s014_fks = {
+            (name, fname) for name, fname in scoped_fks
+            if (name, fname) in self.EXPECTED_S014_FK_ADDITIONS
+        }
+        self.assertEqual(s014_fks, self.EXPECTED_S014_FK_ADDITIONS)
+        self.assertEqual(len(s014_fks), 2)
 
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
@@ -520,6 +532,7 @@ class IdentityFKPredictionTests(TestCase):
             scoped_fks
             - self.EXPECTED_S012_FK_ADDITIONS
             - self.EXPECTED_S013_FK_ADDITIONS
+            - self.EXPECTED_S014_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 

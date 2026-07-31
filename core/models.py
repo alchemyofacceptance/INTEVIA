@@ -4,7 +4,7 @@ import uuid
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import connections, models
 from django.db.models import Q
 
 from core.identity import canonical_username_v1
@@ -3102,6 +3102,243 @@ class ServiceActivityEvidenceReference(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("ServiceActivityEvidenceReference cannot be deleted")
+
+
+class Course(models.Model):
+    course_id = models.UUIDField(editable=False)
+    created_by = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="created_courses",
+        db_index=False,
+    )
+    created_at = models.DateTimeField()
+    current_version = models.ForeignKey(
+        "CourseVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="current_for_courses",
+        db_index=False,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("course_id",),
+                name="s014_course_id_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("current_version",),
+                condition=Q(current_version__isnull=False),
+                name="s014_course_current_version_uniq",
+            ),
+        ]
+
+    def clean(self):
+        if (
+            self.current_version_id is not None
+            and self.current_version.course_id != self.pk
+        ):
+            raise ValidationError("current_version must belong to this Course")
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None and not self._state.adding:
+            alias = self._state.db
+            if type(alias) is not str or not alias or alias not in connections:
+                raise ValidationError("Course database alias is invalid")
+            original = type(self).objects.using(alias).get(pk=self.pk)
+            immutable = ("course_id", "created_by_id", "created_at")
+            if any(
+                getattr(original, field) != getattr(self, field)
+                for field in immutable
+            ):
+                raise ValidationError("Course identity is immutable")
+            if original.current_version_id != self.current_version_id:
+                raise ValidationError("Course current_version is service-controlled")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def _advance_current_version(self, next_version):
+        if self.pk is None or next_version.pk is None:
+            raise ValidationError("Course and next version must be durable")
+        alias = self._state.db
+        if type(alias) is not str or not alias or alias not in connections:
+            raise ValidationError("Course database alias is invalid")
+        if next_version._state.db != alias:
+            raise ValidationError("Course and next version must share a database")
+        original = type(self).objects.using(alias).get(pk=self.pk)
+        if original.current_version_id != self.current_version_id:
+            raise ValidationError("Course current_version is stale")
+        if next_version.course_id != self.pk:
+            raise ValidationError("next version must belong to this Course")
+        if next_version.predecessor_id != self.current_version_id:
+            raise ValidationError("next version must succeed the current version")
+        self.current_version = next_version
+        models.Model.save(self, update_fields=("current_version",))
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Course cannot be deleted")
+
+
+class CourseVersion(models.Model):
+    class CourseVersionAction(models.TextChoices):
+        CREATE = "CREATE", "Create"
+        APPEND_VERSION = "APPEND_VERSION", "Append version"
+
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.PROTECT,
+        related_name="versions",
+        db_index=False,
+    )
+    version_number = models.PositiveIntegerField()
+    predecessor = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="successors",
+        db_index=False,
+    )
+    action = models.CharField(max_length=14, choices=CourseVersionAction.choices)
+    course_name = models.CharField(max_length=45)
+    course_description = models.TextField()
+    course_learning_objectives = models.TextField()
+    definition_basis_reference = models.CharField(max_length=255)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="authored_course_versions",
+        db_index=False,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_reference = models.CharField(max_length=255)
+    authority_decision_reference = models.CharField(max_length=71)
+    authority_evaluated_at = models.DateTimeField()
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    payload_fingerprint = models.CharField(max_length=64)
+    occurred_at = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=71)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("course", "version_number"),
+                name="s014_course_version_number_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="s014_course_actor_action_idem_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("course",),
+                condition=Q(predecessor__isnull=True),
+                name="s014_course_initial_version_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("predecessor",),
+                condition=Q(predecessor__isnull=False),
+                name="s014_course_predecessor_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("lineage_reference",),
+                name="s014_course_version_lineage_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(version_number__gte=1),
+                name="s014_course_version_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(action__in=("CREATE", "APPEND_VERSION")),
+                name="s014_course_action_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(action="CREATE", predecessor__isnull=True, version_number=1)
+                    | ~Q(action="CREATE")
+                ),
+                name="s014_course_create_shape",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        action="APPEND_VERSION",
+                        predecessor__isnull=False,
+                        version_number__gte=2,
+                    )
+                    | ~Q(action="APPEND_VERSION")
+                ),
+                name="s014_course_append_shape",
+            ),
+            models.CheckConstraint(
+                condition=Q(actor_access_epoch__gte=0),
+                name="s014_course_actor_epoch_nonnegative",
+            ),
+        ]
+        indexes = []
+
+    @staticmethod
+    def _require_canonical_text(value, field, maximum):
+        import unicodedata
+
+        if type(value) is not str:
+            raise ValidationError({field: "must be a string"})
+        canonical = unicodedata.normalize("NFC", value).strip()
+        if canonical != value or not canonical or len(canonical) > maximum:
+            raise ValidationError({field: "must be canonical and within bounds"})
+
+    def clean(self):
+        import re
+
+        self._require_canonical_text(self.course_name, "course_name", 45)
+        self._require_canonical_text(
+            self.course_description, "course_description", 4096
+        )
+        self._require_canonical_text(
+            self.course_learning_objectives,
+            "course_learning_objectives",
+            4096,
+        )
+        for field, maximum in (
+            ("definition_basis_reference", 255),
+            ("authority_reference", 255),
+            ("request_reference", 128),
+            ("idempotency_key", 120),
+        ):
+            self._require_canonical_text(getattr(self, field), field, maximum)
+        if self.predecessor_id is None:
+            if self.action != self.CourseVersionAction.CREATE or self.version_number != 1:
+                raise ValidationError("initial CourseVersion shape is invalid")
+        else:
+            if self.predecessor_id == self.pk:
+                raise ValidationError("CourseVersion cannot precede itself")
+            if self.predecessor.course_id != self.course_id:
+                raise ValidationError("predecessor must belong to the same Course")
+            if self.version_number != self.predecessor.version_number + 1:
+                raise ValidationError("CourseVersion numbers must be consecutive")
+            if self.action != self.CourseVersionAction.APPEND_VERSION:
+                raise ValidationError("successor action must be APPEND_VERSION")
+            if self.occurred_at <= self.predecessor.occurred_at:
+                raise ValidationError("CourseVersion occurrence times must increase")
+        patterns = (
+            ("payload_fingerprint", r"[0-9a-f]{64}"),
+            ("authority_decision_reference", r"s014d1:[0-9a-f]{64}"),
+            ("lineage_reference", r"s014l1:[0-9a-f]{64}"),
+        )
+        for field, pattern in patterns:
+            if re.fullmatch(pattern, getattr(self, field) or "") is None:
+                raise ValidationError({field: "has invalid grammar"})
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError("CourseVersion is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("CourseVersion cannot be deleted")
 
 
 # Physical placement within the Django `core` application is an implementation
