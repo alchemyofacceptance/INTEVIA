@@ -1,94 +1,45 @@
-# INTEVIA — Static Command Index (Sprint 1)
+# INTEVIA — Command and Orientation Index
 
-**Status:** Internal, static, v1.0  
-**Source candidate:** `docs/evidence/sprints/sprint-1/WORK_BLOCK_9_CANDIDATE_COMMAND_INDEX.md`  
-**Runtime impact:** None  
-**Behaviour:** None  
-**Routing:** None  
-**Dynamic scanning:** None  
-**Auto-discovery:** None  
-**CLI expansion:** None  
-
-## Current Governed Command Invocations
-
-### `heartbeat`
-
-Invocation:
-
-`python -m src.intevia.commands.heartbeat`
-
-Purpose:
-
-Returns the organism first-breath signal and governed Sprint 1 condition.
-
-### `inspect`
-
-Invocation:
-
-`python -m src.intevia.commands.inspect`
-
-Purpose:
-
-Reports visible Sprint 1 command surfaces, governance surfaces, evidence artefacts, and boundary note.
+**Status:** Internal, static navigation  
+**Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`  
+**Last verified:** 2026-07-31  
+**Runtime authority:** None
 
 ## Boundary
 
-This index is static and internal only.
+This index reports repository surfaces. It does not introduce behaviour, routing, parsing, dynamic discovery, telemetry, hidden state, dependency changes, or capability expansion. A listed module may contain an executable entry point; listing it does not execute or authorise it.
 
-It does not introduce runtime behaviour, routing, dynamic scanning, auto-discovery, runtime help behaviour, hidden state, dependency changes, capability expansion, architectural claims, maturity claims, or general OPC claims.
+## Python module entry points present
 
-It implements the Work Block 9 candidate as documentation only.
+| Module | Example invocation | Bounded purpose |
+|---|---|---|
+| `src.intevia.commands.demo_activity_review` | `python -m src.intevia.commands.demo_activity_review` | Render the bounded contribution-lifecycle demonstration |
+| `src.intevia.commands.heartbeat` | `python -m src.intevia.commands.heartbeat` | Render first-breath and governed status text |
+| `src.intevia.commands.inspect` | `python -m src.intevia.commands.inspect` | Render a static inspection-surface description |
+| `src.intevia.commands.observation` | `python -m src.intevia.commands.observation` | Render an injected or empty observation snapshot |
+| `src.intevia.commands.run_observation` | `python -m src.intevia.commands.run_observation` | Render first-breath and governance-status output |
+| `src.intevia.commands.status_command` | `python -m src.intevia.commands.status_command` | Render the current static governance-status surface |
 
-## Sprint 2 Static Surface Extensions
+`src/intevia/commands/review_snapshot.py` provides formatting functions but has no direct `__main__` entry point at the qualified ref.
 
-Status: Static documentation extension
-Sprint: Sprint 2
-Work Block: 5
-Runtime authority: None
-v1.0 boundary: Preserved
+## Django management entry point present
 
-### Purpose
+| Command | Example invocation | Boundary |
+|---|---|---|
+| `provision_first_human` | `python manage.py provision_first_human` | Repository command path is present; consult its exact code and required Human authority before use |
 
-Record the Sprint 2 documentation-only internal surfaces in the static internal command index.
+Local Django commands require an independently generated `DJANGO_SECRET_KEY` in the process environment. Do not commit that value.
 
-This extension keeps the command index human-readable, static, non-executable, and aligned with the Sprint 2 Boundary Charter, Sprint 2 Manifest, Sprint 2 Candidate Expansion Surfaces, and Sprint 2 Evidence Log.
+## Documentation-only surfaces
 
-### Sprint 2 Surfaces
+| Surface | Path | Runtime effect |
+|---|---|---|
+| `status` candidate | [`commands/status.md`](commands/status.md) | None |
+| structural map | [`introspection/structural-map.md`](introspection/structural-map.md) | None |
+| governance valve | [`instrumentation/governance-valve.md`](instrumentation/governance-valve.md) | None |
+| organismal mode | [`primitives/organismal-mode.md`](primitives/organismal-mode.md) | None |
+| Sprint 1 candidate command index | [`../evidence/sprints/sprint-1/WORK_BLOCK_9_CANDIDATE_COMMAND_INDEX.md`](../evidence/sprints/sprint-1/WORK_BLOCK_9_CANDIDATE_COMMAND_INDEX.md) | Historical candidate evidence; byte-preserve |
 
-| Surface | Type | Path | Status | Runtime authority |
-|---|---|---|---|---|
-| `status` | Internal command surface | `docs/internal/commands/status.md` | Candidate documentation surface | None |
-| `structural-map` | Organismal introspection surface | `docs/internal/introspection/structural-map.md` | Candidate documentation surface | None |
-| `governance-valve` | Constitutional instrumentation surface | `docs/internal/instrumentation/governance-valve.md` | Candidate documentation surface | None |
+## Interpretation
 
-### Boundary Conditions
-
-This index extension does not authorise:
-
-- `src/` mutation;
-- runtime command behaviour;
-- command execution;
-- command routing;
-- command parsing;
-- command discovery;
-- dynamic registration;
-- behavioural logic;
-- telemetry;
-- automated inspection;
-- reinterpretation of sealed Sprint 1 artefacts.
-
-### Interpretation
-
-The command index remembers surfaces. It does not activate them.
-
-Documentation is not runtime.
-
-Candidate surfaces are not implementation authority.
-
-Narrative is not lineage.
-
-The repo speaks.
-
-### Keeper
-
-> Expansion creates surfaces. Governance shapes them. The index remembers them.
+Documentation remembers surfaces. It does not activate them. Repository presence is not execution, and a command example is not authority to run it.

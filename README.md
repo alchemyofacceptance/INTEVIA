@@ -1,323 +1,147 @@
 # INTEVIA
 
-*INTEVIA — a governed Human–AI collaboration system for making AI-mediated work inspectable, accountable, and recoverable.*
-
-## Public Surface Statement
-
-INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.
-
-It provides a clear, governed method for working with AI systems so organisations can adopt modern tools with greater confidence, clearer oversight, and stronger accountability.
-
-INTEVIA gives teams a practical way to integrate AI into daily work while maintaining the standards that matter:
-
-* structured workflows;
-* evidence-based decision making;
-* clear oversight;
-* human judgment at key decision points.
-
-As AI becomes embedded in professional work, INTEVIA helps people stay in control. It teaches a repeatable discipline for responsible AI use — one that strengthens professional practice rather than replacing it.
-
-INTEVIA is being built for organisations that want the benefits of AI without losing sight of safety, trust, or quality.
+*INTEVIA is a governed Human–AI collaboration system for making AI-mediated work inspectable, accountable, correctable, and recoverable.*
 
 > **This is how professionals learn to govern AI, not just use it.**
 
-> INTEVIA is my contribution to helping this technological race go well. Not because it solves everything, but because it is my attempt to build governance, evidence, human authority, and moral foresight into the structure before acceleration outruns judgement.
+## Why INTEVIA exists
 
----
+Model-level safety matters. INTEVIA works at a different, complementary layer: the system of work around AI.
 
-INTEVIA is being built at the layer where Human intention, AI-supported execution, evidence, authority, correction, lineage, and public claims must remain governable.
+It asks whether AI-assisted work can show:
 
-The public AI conversation often focuses on the model, the prompt, the output, or the platform. Those layers matter. But real-world AI work also depends on the system of work around the model:
-
-* who authorised the work;
-* what boundary constrained it;
-* what changed;
-* what evidence supported it;
-* where Human review re-entered;
-* whether the work can be inspected, corrected, and recovered.
-
-INTEVIA addresses this missing layer:
-
-> **Model-level safety matters.**
-> **The missing layer is governed Human–AI work.**
-
-This repository contains the early public and technical foundation for INTEVIA v1.0.
-
-## Local Django Configuration
-
-Local Django commands require `DJANGO_SECRET_KEY` in the process environment.
-Generate an independent local value with Python's `secrets.token_urlsafe()` and
-set the variable before starting Django. Do not commit the generated value or a
-local `.env` file. The Django test command uses isolated test settings and does
-not reuse an operational key.
-
----
-
-## Project Status
-
-INTEVIA is currently in an active architecture-to-build sprint.
-
-The repository has moved beyond minimal scaffold and is now forming a coherent public/evidence surface around:
-
-* constitutional foundations;
-* governed Human–AI work;
-* public category articulation;
-* HPCC practitioner surfaces;
-* cohort preparation;
-* sprint evidence;
-* runtime seed;
-* inspection and evidence surfaces.
-
-The current posture is:
-
-> **v1.0 build formation active.**
-> **Public surfaces emerging.**
-> **Runtime seed present.**
-> **Cohorts not yet launched.**
-> **Certification not yet active.**
-
-This repository does not claim completed product maturity, scientific validation, certification readiness, or universal productivity improvement.
-
----
-
-## What INTEVIA Is
-
-INTEVIA is a human-centred organisational evolution platform and governance system for AI-mediated work.
-
-It is designed to help Humans and organisations preserve:
-
-* intention;
-* meaning;
-* evidence;
-* authority;
-* accountability;
-* correction;
-* lineage;
-* ratification.
-
-INTEVIA does not remove the Human from responsibility.
-
-It makes Human responsibility visible.
-
----
-
-## The Missing Layer
-
-Most AI governance conversations ask:
-
-> Did the model behave?
-
-INTEVIA also asks:
-
-> Can the work explain itself?
-
-That question shifts attention from output alone to the governed field of work around the output.
-
-Work-layer governance asks whether AI-assisted work can show:
-
-* who authorised it;
-* what changed;
-* why it changed;
-* what evidence supported it;
-* what constraints applied;
-* what was superseded;
-* what can be corrected;
-* what can be recovered;
-* what claim can safely be made.
+- who authorised it;
+- what boundary constrained it;
+- what changed and why;
+- what evidence supported the change;
+- where Human judgement re-entered;
+- what remains unresolved;
+- what can be corrected or recovered; and
+- what claim can safely be made.
 
 Governance that cannot be inspected becomes trust theatre.
 
----
+## Repository posture
 
-## Human–AI Triad Operating Model
+This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0. It now contains implementation and test-definition paths associated with governed foundations across Identity, Events, Services, Library, CARE, contribution lineage, profile effect, and a bounded Education Course-definition slice.
 
-INTEVIA is developed through a Human–AI Triad, or HAT.
+## What this repository currently lets you inspect
 
-HAT is an operating model for governed Human–AI work.
+You can examine source, migrations, and test-definition paths for the bounded foundations listed below. You cannot enrol learners, deliver classes, run production services, or treat any capability as accepted, released, or operational. Human acceptance of the latest Slice remains pending.
 
-It separates role surfaces so that Human authority, meaning continuity, and implementation support do not collapse into one uninspected output stream.
+That is materially beyond the repository's earlier runtime-seed stage. It is not evidence that every defined test currently passes, that every historical result has been independently reproduced, or that INTEVIA is deployed, release-ready, externally validated, or complete.
 
-The core roles are:
+The repository currently records:
 
-* **Human Governor** — authority, judgement, execution, accountability, and final ratification;
-* **Vision Chamber** — meaning, synthesis, doctrine, boundary interpretation, and public/private coherence;
-* **Making Engine** — implementation, mutation, repo-facing execution, and technical verification.
+- source and migration paths associated with governed implementation;
+- test-definition paths whose presence is distinct from test execution;
+- Slice Datacrons that preserve bounded evidence and lineage;
+- constitutional, governance, architecture, HPCC, and public-language surfaces; and
+- exact Human decisions where a Human-issued source is present.
 
-The Human does not disappear from the loop.
+For the evidence states behind any capability statement, use the [Current Implementation Crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md). The crosswalk is navigation, not authority.
 
-The Human becomes the governed execution surface.
+## Read by purpose
 
----
+- **Developers:** begin with this README, then the [architecture entry point](architecture/README.md) and [implementation crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md).
+- **Funders and assessors:** begin with the repository posture above, then inspect the crosswalk's separate fields for repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and non-claims.
+- **Governance readers:** use the [root governance index](GOVERNANCE_INDEX.md), [governance navigation index](docs/governance/governance-index.md), and exact constitutional or Human-issued sources they identify.
+- **AI assessors:** do not compress path presence, test definitions, recorded execution, independent reproduction, Human acceptance, unresolved deferral, and release readiness into one maturity label.
 
-## Delegation Governance
+## What INTEVIA is
 
-As AI work becomes more capable, the governance problem shifts from prompting to delegation.
+INTEVIA is a human-centred organisational evolution platform and governance system for AI-mediated work. It is designed to help Humans and organisations preserve intention, meaning, evidence, authority, accountability, correction, lineage, and ratification.
 
-INTEVIA names this sub-layer **Delegation Governance**.
+INTEVIA does not remove the Human from responsibility. It makes Human responsibility visible.
 
-Delegation Governance asks:
+## Human–AI Triad operating model
 
-> When AI-mediated work continues beyond the immediate prompt-response moment, where does Human authority remain visible, inspectable, and able to re-enter?
+INTEVIA is developed through a Human–AI Triad, or HAT. HAT separates role surfaces so Human authority, meaning continuity, implementation support, and review do not collapse into one uninspected output stream.
 
-Authority drift occurs when AI-mediated work keeps moving while no one can clearly say:
+- **Human Governor** — authority, judgement, execution accountability, and final ratification.
+- **Vision Chamber** — meaning, synthesis, doctrine, boundary interpretation, and public/private coherence.
+- **Making Engine** — implementation, mutation, repository-facing execution, and technical verification.
 
-* who authorised the action;
-* what boundary constrained it;
-* where Human review re-entered the field.
-
-Review valves are required return-points where delegated work comes back to Human judgement before high-impact action, public claim, commit, irreversible change, or final ratification.
+Delegation Governance makes authority visible when AI-mediated work continues beyond a single prompt-response moment. Review valves return consequential work to Human judgement before public claims, commits, irreversible changes, or ratification.
 
 > **Delegation without governance is authority drift.**
-> **Delegation with evidence, review valves, and retained Human authority becomes inspectable, governable work.**
 
-Delegation Governance is one HAT sub-layer. It is not the whole model, and it does not claim that agentic AI is safe by default.
+## Evidence boundary
 
----
+Repository evidence must be read by class:
 
-## Evidence Boundary
+- a path at an exact ref establishes repository presence only;
+- test code establishes test-definition presence only;
+- a cited run establishes only the recorded result, scope, actor, date, and repository state it names;
+- a Slice record establishes only its declared technical boundary;
+- Human acceptance or closure requires an exact Human-issued source; and
+- documentation creates no implementation, validation, acceptance, promotion, release, or publication authority.
 
-This repository is evidence-oriented, but it does not claim external validation.
+The static inventory at the qualified documentation-review baseline found **84 tracked paths named `test_*.py`** and **663 textual Python test-definition matches** using the pattern `^\s*(async\s+)?def\s+test_`. These are different measures. The value `663` also appears in S014 as a recorded full-regression execution result; numerical equality does not mean the static definitions and the executed selection are the same evidence object.
 
-Current public and evidence surfaces should be read as:
+## Current governed implementation families
 
-* bounded observations;
-* governed sprint artefacts;
-* public category surfaces;
-* architectural evidence;
-* early implementation scaffolding.
+At commit `1aed0f4da88209d5298e40867b08505661cfd451`, repository paths are present for:
 
-They are not:
+- governed contribution and knowledge-lineage foundations;
+- Events, registration, attendance, and personal-event surfaces;
+- Identity and direct self-registration foundations;
+- Library resources and exact-version binding;
+- Service foundations and governed service-activity orchestration;
+- Event-resource linking and readback;
+- governed service-submission profile effect; and
+- the bounded S014 Education Course-definition foundation.
 
-* scientific proof;
-* deployed product maturity claims;
-* external reproducibility claims;
-* certification readiness claims;
-* universal productivity claims;
-* claims that INTEVIA has solved agentic AI governance.
+These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts. Its Datacron keeps `MAT-S014-01` visibly deferred to IDOP v0.9.6.
 
-References to external models, platforms, reviewers, or frameworks are context or calibration only. They do not validate INTEVIA.
+## HPCC and cohorts
 
----
+HPCC is the Human capability pathway being developed around governed Human–AI work. Repository materials support formation and curriculum design; they do not establish an active certification programme or a launched cohort.
 
-## HPCC
+Organism Cohorts are a future bounded setting for practising, observing, and improving governed Human–AI work. No launch claim is made here.
 
-HPCC is the Human capability pathway being developed around governed Human–AI work.
-
-It is intended to support formation of future INTEVIA Practitioners and Educators.
-
-In the current repository state, HPCC materials are public-surface and formation artefacts. They do not yet represent an active certification programme, launched cohort, or completed training system.
-
----
-
-## Organism Cohorts
-
-INTEVIA is preparing for future Organism Cohorts: bounded organisational or collective fields where governed Human–AI work can be practiced, observed, and improved.
-
-Organism Cohorts are not yet launched.
-
-The current repository prepares the public, constitutional, evidence, and runtime surfaces required before those cohorts can be responsibly activated.
-
----
-
-## Repository Structure
+## Repository map
 
 ```text
 INTEVIA/
-├── README.md
-├── LICENSE
-├── NOTICE
-├── run.py
-├── docs/
-│   ├── constitution/
-│   │   └── constitutional and governance foundations
-│   ├── evidence/
-│   │   └── sprints/
-│   │       └── sprint evidence, work-block records, and inspection artefacts
-│   ├── internal/
-│   │   └── internal indexes, command surfaces, and bounded working notes
-│   ├── narrative/
-│   │   └── Founder and narrative spine materials
-│   ├── public/
-│   │   └── Article 3, category, WIIFM, HPCC, cohort, and public-facing surfaces
-│   └── surfaces/
-│       └── structured public and semi-public articulation surfaces
-├── src/
-│   └── intevia/
-│       └── runtime seed and implementation body
-└── tests/
-    └── runtime and scaffold verification
+├── README.md                         public front door
+├── ROADMAP.md                        current direction and Human decision gates
+├── CHANGELOG.md                      selected factual repository events
+├── GOVERNANCE_INDEX.md               root governance navigation
+├── manage.py                         Django management entry point
+├── run.py                            bounded local run entry point
+├── core/                             Django models, migrations, views, and commands
+├── src/intevia/                      implementation services and command surfaces
+├── tests/                            tracked test-definition paths
+├── architecture/                     conceptual architecture and boundaries
+├── docs/architecture/                current implementation crosswalk
+├── docs/governance/                  live governance navigation and standards
+├── docs/holocron/datacrons/          Slice lineage records
+├── docs/evidence/                    governed evidence surfaces
+├── docs/public/                      public-safe articulation surfaces
+└── whitepapers/                      longer-form public reasoning
 ```
 
----
+Longer-form public reasoning: [Whitepaper WHY — Human Judgement in the Age of AI Acceleration](whitepapers/WHITEPAPER_WHY_V2_0_HUMAN_JUDGEMENT_AI_ACCELERATION.md).
 
-## Current Runtime Seed
+## Local Django configuration
 
-The runtime surface is intentionally small.
+Local Django commands require `DJANGO_SECRET_KEY` in the process environment. Generate an independent local value with Python's `secrets.token_urlsafe()` and set it before starting Django. Do not commit the generated value or a local `.env` file. The Django test command uses isolated test settings and does not reuse an operational key.
 
-Current command surfaces are bounded to early runtime inspection and first-breath signalling.
+## Development approach
 
-The runtime seed exists to support governed implementation, evidence capture, and future build progression. It does not yet represent a complete platform runtime.
+INTEVIA is developed through governed mutation: bounded change that preserves Human authority, evidence, lineage, and inspection discipline.
 
-Runtime authority remains v1.0-bounded.
-
----
-
-## Public Surfaces
-
-[Whitepaper WHY: Human Judgement in the Age of AI Acceleration](whitepapers/WHITEPAPER_WHY_V2_0_HUMAN_JUDGEMENT_AI_ACCELERATION.md)
-
-The `docs/public/` area contains public-safe category and formation artefacts.
-
----
-
-## Evidence Surfaces
-
-The `docs/evidence/` area records governed sprint activity.
-
----
-
-## Development Approach
-
-INTEVIA is developed through governed mutation.
-
-A governed mutation is a bounded change that preserves Human authority, evidence, lineage, and inspection discipline.
-
----
-
-## Open Source as Governance Infrastructure
-
-For INTEVIA, open source is governance infrastructure.
-
----
+See [Current Direction and Decision Gates](ROADMAP.md), the [selected change record](CHANGELOG.md), and the [governance index](GOVERNANCE_INDEX.md).
 
 ## Licensing
 
-Apache 2.0.
+Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
----
+## Current non-claims
 
-## Roadmap
-
-v1.0 formation in progress.
-
----
-
-## Contributing
-
-Defined later.
-
----
-
-## Disclaimer
-
-Not a finished system.
-
----
+This repository does not claim finished-product maturity, deployment, production readiness, scientific validation, universal productivity improvement, active certification, launched cohorts, or that INTEVIA has solved AI governance.
 
 ## Keeper
 
-> INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or human judgment.
-> This is how professionals learn to govern AI, not just use it.
-> The missing layer is governed Human–AI work.
-
-See `GOVERNANCE_INDEX.md` for inspection-surface metadata.
+> INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or Human judgement. The missing layer is governed Human–AI work.

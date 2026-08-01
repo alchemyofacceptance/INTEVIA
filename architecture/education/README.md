@@ -1,126 +1,59 @@
 # INTEVIA / architecture/education/README.md v0.1
 
-*A guided entry point into the Education Domain — the organism’s capability-formation substrate.*
+*A conceptual entry point into the Education Domain — INTEVIA's intended capability-formation substrate.*
 
----
+> **Conceptual/current boundary — qualified 2026-07-31:** This v0.1 document describes broader Education architecture intent. At repository ref `1aed0f4da88209d5298e40867b08505661cfd451`, the bounded implemented foundation is Course definition and immutable version lineage only. See the [Current Implementation Crosswalk](../../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md). Architecture intent is not implementation status.
 
-## 1. Purpose of This Directory
+## 1. Purpose of this directory
 
-This directory defines the Education Domain: the layer that governs curriculum, courses, classes, learning activities, capability formation, and evidence-bearing learning outcomes.
+This directory describes the intended Education Domain: a governed capability-formation layer that may eventually connect curriculum, courses, classes, learning activity, evidence, assessment, and certification boundaries.
 
-Education in INTEVIA is not a content library, not a CMS, and not a training portal. It is a governed capability-formation substrate built on Identity, Events, Services, Library, Governance Engine, Corpus, and CARE.
+The documents are public-safe conceptual architecture. They do not expose private pedagogy engines, assessment doctrine, certification doctrine, or governed practice materials, and their presence does not establish that the concepts are implemented.
 
-This directory defines the public-safe architectural model for Education. It does not expose internal pedagogy engines, private modelling patterns, assessment doctrine, certification doctrine, or governed practice materials.
+## 2. Conceptual documents
 
----
+- [`education_overview.md`](education_overview.md) — intended purpose, scope, and conceptual stance.
+- [`education_types.md`](education_types.md) — conceptual categories and classification boundaries.
+- [`curriculum_records.md`](curriculum_records.md) — intended curriculum-record structure and governance.
+- [`course_records.md`](course_records.md) — intended Course-record structure and lineage.
+- [`class_events.md`](class_events.md) — intended class-as-Event model.
+- [`education_state_transitions.md`](education_state_transitions.md) — intended transitions for Education artefacts.
 
-## 2. Components of the Education Domain
+## 3. Qualified bounded implementation
 
-### 2.1 education_overview.md
+S014 adds repository paths for a bounded governed Course-definition foundation in which an explicitly authorised active Human identity can create a stable draft Course with version 1, append an ordered immutable successor version, and—when the creator—read current, exact-version, and complete-lineage projections under the Slice's stated constraints.
 
-Defines the purpose, scope, and conceptual stance of Education as the organism’s capability-formation substrate.
+Exact route: [`D-S014-GOVERNED-EDUCATION-COURSE-DEFINITION.md`](../../docs/holocron/datacrons/D-S014-GOVERNED-EDUCATION-COURSE-DEFINITION.md).
 
-[Open education_overview.md](./education_overview.md)
+The S014 record at this baseline states that it was pending direct Human implementation acceptance, Datacron acceptance, and closure, and keeps `MAT-S014-01` deferred to IDOP v0.9.6.
 
----
+## 4. Explicit exclusions
 
-### 2.2 education_types.md
+The qualified repository state does **not** establish:
 
-Defines the categories of educational artefacts, including curriculum, course, class, assessment, and certification, and their classification boundaries.
+- curriculum delivery;
+- class delivery or attendance as Education capability;
+- learner enrolment;
+- learning activity delivery;
+- completion or learning-outcome evidence;
+- assessment;
+- certification or credentials;
+- educator qualification;
+- cohort orchestration;
+- adaptive learning or analytics;
+- payment, marketplace, or Exchange integration;
+- publication, approval, fitness, quality, or operational Course status; or
+- a complete LMS or training system.
 
-[Open education_types.md](./education_types.md)
+Those concepts may remain in v0.1 architecture documents as intended scope. They must not be read as current implementation claims.
 
----
+## 5. Reading order
 
-### 2.3 curriculum_records.md
+1. Read [`education_overview.md`](education_overview.md) for conceptual purpose.
+2. Read [`course_records.md`](course_records.md) for the closest conceptual neighbour to S014.
+3. Read the [Current Implementation Crosswalk](../../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) for atomic evidence states.
+4. Read the S014 Datacron for its exact technical and negative boundaries.
 
-Defines how curriculum records are structured, versioned, linked, evidenced, and governed.
+## 6. Summary
 
-[Open curriculum_records.md](./curriculum_records.md)
-
----
-
-### 2.4 course_records.md
-
-Defines how course records are structured, versioned, linked to curriculum, evidenced, and governed.
-
-[Open course_records.md](./course_records.md)
-
----
-
-### 2.5 class_events.md
-
-Defines how classes are represented as governed Events, including attendance, delivery, evidence, lineage, and learning outcome boundaries.
-
-[Open class_events.md](./class_events.md)
-
----
-
-### 2.6 education_state_transitions.md
-
-Defines how curriculum, courses, classes, and learning outcomes move through governed states.
-
-[Open education_state_transitions.md](./education_state_transitions.md)
-
----
-
-## 3. v1.0 Boundary
-
-Education is testable in v1.0, but only as a minimal governed capability-formation substrate.
-
-Included in v1.0:
-
-* curriculum record definition;
-* course record definition;
-* class-as-Event definition;
-* learner identity linkage;
-* educator identity linkage;
-* learning activity Service linkage;
-* completion evidence;
-* learning outcome evidence boundaries;
-* governed transitions for curriculum, course, and class;
-* Library resource linkage;
-* evidence and audit attachment points;
-* integration with Identity, Events, Services, Library, Governance Engine, Corpus, and CARE seed layer.
-
-Deferred unless ratified:
-
-* full LMS behaviour;
-* automated assessment engines;
-* semantic curriculum graphs;
-* certification engines;
-* credential marketplaces;
-* marketplace education;
-* payment-linked education;
-* full Exchange integration;
-* Education 2.0 automation;
-* cohort orchestration engines;
-* adaptive learning engines;
-* broad learner analytics.
-
-For v1.0, Education is a minimal governed capability-formation substrate, not a full learning system.
-
----
-
-## 4. How to Read This Slice
-
-New developers should read the files in this order:
-
-1. **education_overview.md** — what Education is.
-2. **education_types.md** — how educational artefacts are classified.
-3. **curriculum_records.md** — how curriculum is structured and governed.
-4. **course_records.md** — how courses are structured and governed.
-5. **class_events.md** — how classes operate as governed Events.
-6. **education_state_transitions.md** — how curriculum, courses, classes, and learning outcomes move.
-
-This sequence provides a complete first mental model of Education in under an hour.
-
----
-
-## 5. Summary
-
-The Education Domain is the organism’s capability-formation substrate.
-
-It defines how curriculum, courses, and classes are structured, linked, delivered, evidenced, and governed — and how learners and educators interact with these artefacts through governed Identity, Events, Services, and Library resources.
-
-The v1.0 Boundary decides what must be implemented first.
+Education remains a broader conceptual capability-formation domain. The current repository contains a bounded Course-definition foundation, not a full Education system.

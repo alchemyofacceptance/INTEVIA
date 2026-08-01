@@ -1,127 +1,50 @@
-# INTEVIA / architecture/README.md v0.1
+# INTEVIA Architecture
 
-*A guided entry point into the INTEVIA architectural spine.*
+*A guided entry point into INTEVIA's conceptual architectural spine.*
 
----
+> **Reading boundary — qualified 2026-07-31:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `1aed0f4da88209d5298e40867b08505661cfd451`.
 
-## 1. Purpose of This Directory
+## Purpose of this directory
 
-This directory contains the core architectural spine of the INTEVIA organism.
+The architecture directory describes:
 
-It provides the three foundational layers that define:
+- what the wider INTEVIA organism is intended to be;
+- what its runtime containers may become; and
+- how its conceptual domains relate.
 
-* what the organism is;
-* what the organism runs as;
-* what the organism is made of.
+Conceptual issuance labels such as `v0.1` remain truthful to the documents' formation stage. They should not be interpreted as the software version, implementation completeness, or release maturity.
 
-These documents describe the broader INTEVIA organism, not the v1.0 implementation slice.
+## Primary views
 
-The v1.0 build remains governed by the v1.0 Boundary, Forge Activation Packet, Execution Plan, and Build Tasks.
+1. [System Context v0.1](system_context.md) — the organism's outer boundary and external relationships.
+2. [Container Diagram v0.1](container_diagram.md) — conceptual runtime containers and governed interactions.
+3. [Domain Map v0.1](domain_map.md) — conceptual domains, responsibilities, and relationships.
 
----
+## Cross-cutting governance layers
 
-## 2. Architectural Layers
+- **Governance Engine** — intended rules, permissions, transitions, evidence, and audit.
+- **Corpus** — intended knowledge, lineage, and documentation structures.
+- **HAT Collaboration Layer** — intended Human–AI interpretation, sequencing, and reflection boundaries.
 
-INTEVIA’s architecture is structured into three primary layers, each building on the one above it.
+Architecture language describes intended meaning. Whether a corresponding path exists or has recorded validation must be checked separately.
 
-### 2.1 System Context v0.1
+## v1.0 implementation boundary at the qualified ref
 
-Defines the outer boundary of the organism: external actors, external systems, AI systems, and the high-level interactions between them.
+The repository contains paths associated with bounded governed foundations across contribution lineage, Identity, Events, Services, Library, CARE, resource relationships, service activity, profile effect, and an Education Course-definition slice.
 
-This is the highest-level view of INTEVIA.
+That statement establishes path presence only. The crosswalk routes to the exact evidence classes and non-claims.
 
-It answers:
+For Education specifically, S014 introduces a bounded governed Course aggregate and version lineage. It does not establish curriculum delivery, class delivery, enrolment, completion, assessment, certification, educator qualification, payment, or a full learning system. `MAT-S014-01` remains visibly deferred in the S014 record at this baseline.
 
-> What is INTEVIA in the world?
+Broader conceptual domains—including Exchange, Applications, Locations, marketplace mechanics, integrations, broader Education, Recognition, and HAT productisation—remain architecture intent unless exact current evidence establishes a narrower implemented boundary.
 
-[Open System Context](./system_context.md)
+## Reading order
 
----
+1. Read the System Context, Container Diagram, and Domain Map for conceptual scope.
+2. Read the domain README relevant to your question.
+3. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) before drawing a maturity or feasibility conclusion.
+4. Follow linked Slice and Human-issued sources for the evidence class you need.
 
-### 2.2 Container Diagram v0.1
+## Non-claims
 
-Defines the runtime structure of the organism: deployable units, communication paths, and governed interactions.
-
-It answers:
-
-> What does INTEVIA run as?
-
-[Open Container Diagram](./container_diagram.md)
-
----
-
-### 2.3 Domain Map v0.1
-
-Defines the semantic structure of the organism: the nine core domains, their responsibilities, and their interactions.
-
-It answers:
-
-> What is INTEVIA made of?
-
-[Open Domain Map](./domain_map.md)
-
----
-
-## 3. Governance Layers
-
-Three cross-cutting governance layers shape the architecture:
-
-* **Governance Engine** — executable rules, permissions, transitions, evidence, and audit;
-* **Corpus** — knowledge, lineage, and documentation;
-* **HAT Collaboration Layer** — interpretation, sequencing, and reflection; governs build and meaning.
-
-These layers help the organism remain coherent, safe, and human-led.
-
----
-
-## 4. v1.0 Boundary
-
-The architecture describes the full organism, but v1.0 is intentionally narrow.
-
-v1.0 includes:
-
-* Events;
-* Service;
-* Library;
-* Governance Spine;
-* CARE seed layer;
-* minimal identity substrate.
-
-Deferred unless ratified:
-
-* Exchange;
-* Education;
-* Applications;
-* broad Locations;
-* payments;
-* marketplace mechanics;
-* SSO;
-* HR, CRM, and finance integrations;
-* HAT productisation.
-
-For details, see the v1.0 Boundary, Forge Activation Packet, Execution Plan, and Build Tasks.
-
----
-
-## 5. How to Read This Architecture
-
-New developers should read the architecture in this order:
-
-1. **System Context** — understand the organism boundary.
-2. **Container Diagram** — understand the runtime shape.
-3. **Domain Map** — understand the semantic organs.
-4. **Governance boundary notes** — understand what is intentionally included, deferred, or protected.
-
-This sequence gives a complete first mental model of INTEVIA in under an hour.
-
----
-
-## 6. Summary
-
-This directory contains the architectural spine of INTEVIA.
-
-It defines the organism’s boundary, runtime structure, semantic domains, and governance layers.
-
-The architecture shows what the organism is.
-
-The v1.0 Boundary decides what must be built first.
+Architecture does not establish implementation completeness, current test results, independent reproduction, Human acceptance, deployment, release readiness, certification, or external validation.
