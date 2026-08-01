@@ -8,7 +8,9 @@
 
 Model-level safety matters. INTEVIA works at a different, complementary layer: the system of work around AI.
 
-It asks whether AI-assisted work can show:
+If you have ever wondered who is actually making the decisions in AI-assisted work—and how anyone could later inspect what happened—INTEVIA is being built around that question.
+
+More specifically, it asks whether AI-assisted work can show:
 
 - who authorised it;
 - what boundary constrained it;
