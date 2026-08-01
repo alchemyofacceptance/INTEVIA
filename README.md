@@ -43,6 +43,8 @@ For the evidence states behind any capability statement, use the [Current Implem
 
 ## Read by purpose
 
+New to INTEVIA terminology? Use the [plain-language glossary](docs/public/GLOSSARY.md) alongside this page. The glossary is a navigation aid, not an authority source.
+
 - **Developers:** begin with this README, then the [architecture entry point](architecture/README.md) and [implementation crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md).
 - **Funders and assessors:** begin with the repository posture above, then inspect the crosswalk's separate fields for repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and non-claims.
 - **Governance readers:** use the [root governance index](GOVERNANCE_INDEX.md), [governance navigation index](docs/governance/governance-index.md), and exact constitutional or Human-issued sources they identify.
@@ -92,13 +94,13 @@ At commit `1aed0f4da88209d5298e40867b08505661cfd451`, repository paths are prese
 - governed service-submission profile effect; and
 - the bounded S014 Education Course-definition foundation.
 
-These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts. Its Datacron keeps `MAT-S014-01` visibly deferred to IDOP v0.9.6.
+These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts or Circles. Its Datacron keeps `MAT-S014-01` visibly deferred to IDOP v0.9.6.
 
-## HPCC and cohorts
+## HPCC, Organisms, and Circles
 
-HPCC is the Human capability pathway being developed around governed Human–AI work. Repository materials support formation and curriculum design; they do not establish an active certification programme or a launched cohort.
+HPCC is the Human capability pathway being developed around governed Human–AI work. Repository materials support formation and curriculum design; they do not establish an active certification programme or a launched Circle.
 
-Organism Cohorts are a future bounded setting for practising, observing, and improving governed Human–AI work. No launch claim is made here.
+Within INTEVIA, an Organism is an organisation and a Circle is a sub-unit, team, or grouping within it. Circles within Organisms are a future bounded setting for practising, observing, and improving governed Human–AI work. No Organism or Circle is claimed here as created, launched, populated, or operational.
 
 ## Repository map
 
@@ -140,7 +142,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Current non-claims
 
-This repository does not claim finished-product maturity, deployment, production readiness, scientific validation, universal productivity improvement, active certification, launched cohorts, or that INTEVIA has solved AI governance.
+This repository does not claim finished-product maturity, deployment, production readiness, scientific validation, universal productivity improvement, active certification, launched cohorts or Circles, or that INTEVIA has solved AI governance.
 
 ## Keeper
 

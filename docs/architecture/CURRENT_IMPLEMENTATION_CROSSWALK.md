@@ -19,6 +19,10 @@ Repository presence, test-definition presence, recorded execution, independent r
 4. exact Human-issued marker for acceptance or closure;
 5. this crosswalk only as derivative navigation.
 
+## Shared deployment and external-validation boundary
+
+At this qualified ref, every capability block is internal pre-alpha; no capability block states a different field-10 status. A citation, implementation path, test definition, recorded execution, Human acceptance, or silence does not by itself override this boundary. Any different status requires both an express field-10 statement and an exact Human-issued source that authorises that status within its declared boundary. Deployment, release, certification, and broad external validation are otherwise not established.
+
 ## Capability blocks
 
 ### 1. Contribution and governed knowledge lineage
@@ -41,7 +45,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** No current-Human-acceptance inference is made by repository presence.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No completeness, deployment, or universal workflow claim.
 
@@ -69,7 +73,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** Broader account lifecycle, SSO, organisation administration, and production authentication are not established.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No general identity-platform or operational-security claim.
 
@@ -97,7 +101,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** No full event-management, ticketing, scheduling, or deployment claim.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No complete Events-module claim.
 
@@ -125,7 +129,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** No complete library product, discovery system, or external content platform.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No operational completeness or current-pass inference.
 
@@ -153,7 +157,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** No general workflow engine, marketplace, payment, or cross-organism capability.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No complete Service-module or deployment claim.
 
@@ -181,7 +185,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** No general reputation, scoring, radiance, or recognition-system claim.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No universal profile-effect semantics or operational readiness.
 
@@ -209,7 +213,7 @@ Repository presence, test-definition presence, recorded execution, independent r
 
 **9 — Unresolved findings and deferrals:** `MAT-S014-01` remains deferred to IDOP v0.9.6. The record at this baseline says it is pending direct Human implementation acceptance, Datacron acceptance, and closure.
 
-**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha; deployment, release, certification, and broad external validation are not established.
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state.
 
 **11 — Explicit non-claims:** No curriculum delivery, class delivery, enrolment, learning, completion, assessment, certification, educator qualification, payment, publication, or operational Course claim.
 
