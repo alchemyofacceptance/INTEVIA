@@ -273,7 +273,7 @@ class S012MigrationRehearsalTests(TransactionTestCase):
 
 
 class IdentityFKCatalogueTests(TransactionTestCase):
-    """Live catalogue: 34 base + 7 S012 + 4 S013 + 2 S014 = 47."""
+    """Live catalogue: 34 base + 7 S012 + 4 S013 + 2 S014 + 9 S015 = 56."""
 
     # Base 34 from the existing S007 PostgreSQL catalogue. Identity-internal
     # and originating-provisioning relations are deliberately out of scope.
@@ -367,18 +367,32 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("courseversion", "actor"),
     }
 
-    def test_catalogue_34_base_plus_7_plus_4_plus_2_additions_equals_47(self):
+    S015_ADDITIONS = {
+        ("authoritybasis", "issuer"),
+        ("emergencyauthorityenvelope", "beneficiary"),
+        ("governeddetermination", "determiner"),
+        ("governeddetermination", "model_author"),
+        ("governeddetermination", "safeguard_beneficiary"),
+        ("governeddetermination", "tested_actor"),
+        ("livingorganism", "founder_identity"),
+        ("organismcommandreceipt", "actor"),
+        ("organismmembership", "identity"),
+    }
+
+    def test_catalogue_34_base_plus_7_plus_4_plus_2_plus_9_equals_56(self):
         self.assertEqual(len(self.BASE_IDENTITY_FKS), 34)
         self.assertEqual(len(self.S012_ADDITIONS), 7)
         self.assertEqual(len(self.S013_ADDITIONS), 4)
         self.assertEqual(len(self.S014_ADDITIONS), 2)
+        self.assertEqual(len(self.S015_ADDITIONS), 9)
         combined = (
             self.BASE_IDENTITY_FKS
             | self.S012_ADDITIONS
             | self.S013_ADDITIONS
             | self.S014_ADDITIONS
+            | self.S015_ADDITIONS
         )
-        self.assertEqual(len(combined), 47)
+        self.assertEqual(len(combined), 56)
 
     def test_live_schema_matches_catalogue(self):
         from django.apps import apps
@@ -405,6 +419,7 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.S012_ADDITIONS
             | self.S013_ADDITIONS
             | self.S014_ADDITIONS
+            | self.S015_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 47)
+        self.assertEqual(len(live_fks), 56)

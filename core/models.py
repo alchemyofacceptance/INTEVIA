@@ -2305,6 +2305,16 @@ class ServiceEventAssociation(models.Model):
         raise ValidationError("ServiceEventAssociation cannot be deleted")
 
 
+
+class FoundingTransactionIdField(models.BigIntegerField):
+    """PostgreSQL xid8 with a portable integer representation for state tooling."""
+
+    def db_type(self, connection):
+        if connection.vendor == "postgresql":
+            return "xid8"
+        return super().db_type(connection)
+
+
 class ServiceDeliveryEvidenceReference(models.Model):
     service_event_association = models.ForeignKey(
         ServiceEventAssociation,
@@ -3969,3 +3979,537 @@ class ProfileEffectProjectionDisposition(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("ProfileEffectProjectionDisposition cannot be deleted")
+
+
+class _S015ImmutableAnchor(models.Model):
+    S015_IMMUTABLE_FIELDS: tuple[str, ...] = ()
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None and not self._state.adding:
+            original = type(self).objects.get(pk=self.pk)
+            if any(
+                getattr(original, field) != getattr(self, field)
+                for field in self.S015_IMMUTABLE_FIELDS
+            ):
+                raise ValidationError(f"{type(self).__name__} anchor is immutable")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(f"{type(self).__name__} cannot be deleted")
+
+
+class _S015AppendOnly(models.Model):
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValidationError(f"{type(self).__name__} is append-only")
+        self.full_clean(validate_constraints=False)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(f"{type(self).__name__} cannot be deleted")
+
+
+class AuthorityPrincipal(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "principal_uuid",
+        "canonical_governed_source_id",
+        "governed_source_namespace",
+    )
+
+    principal_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    canonical_governed_source_id = models.CharField(max_length=255, unique=True)
+    governed_source_namespace = models.CharField(max_length=90)
+    display_label = models.CharField(max_length=120)
+    bootstrap_invocation_fingerprint = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+    )
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("governed_source_namespace",),
+                condition=Q(
+                    governed_source_namespace="INTEVIA_RESERVED_GENESIS_AUTHORITY_V1"
+                ),
+                name="s015_reserved_genesis_namespace_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(canonical_governed_source_id__regex=r".*\S.*"),
+                name="s015_principal_source_nonempty_ck",
+            ),
+        ]
+
+
+class AuthorityPrincipalAliasReview(_S015AppendOnly):
+    class State(models.TextChoices):
+        AUTHORITY_EQUIVALENCE_UNKNOWN = (
+            "AUTHORITY_EQUIVALENCE_UNKNOWN",
+            "Authority equivalence unknown",
+        )
+        BOUND_TO_EXISTING_PRINCIPAL = (
+            "BOUND_TO_EXISTING_PRINCIPAL",
+            "Bound to existing principal",
+        )
+        DISTINCT_CANONICAL_IDENTITY = (
+            "DISTINCT_CANONICAL_IDENTITY",
+            "Distinct canonical identity",
+        )
+
+    review_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    candidate_governed_source_id = models.CharField(max_length=255)
+    candidate_namespace = models.CharField(max_length=90)
+    possible_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="alias_reviews",
+        null=True,
+        blank=True,
+    )
+    state = models.CharField(max_length=40, choices=State.choices)
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+
+class AuthorityDerivationEdge(_S015AppendOnly):
+    edge_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="derivation_edges",
+    )
+    root_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="root_derivation_edges",
+    )
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("principal", "root_principal"),
+                name="s015_principal_root_edge_uniq",
+            ),
+            models.CheckConstraint(
+                condition=~Q(principal=models.F("root_principal")),
+                name="s015_derivation_not_self_ck",
+            ),
+        ]
+
+
+class AuthorityBasis(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "basis_uuid",
+        "authority_principal_id",
+        "derivation_root_principal_id",
+        "issuer_id",
+        "authority_class",
+        "scope_fingerprint",
+        "instrument_reference",
+        "evidence_reference",
+        "issued_at",
+        "effective_at",
+        "received_at",
+        "recorded_at",
+        "superseded_basis_id",
+    )
+
+    basis_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    authority_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="authority_bases",
+    )
+    derivation_root_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="rooted_authority_bases",
+    )
+    issuer = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="issued_authority_bases",
+    )
+    authority_class = models.CharField(max_length=64)
+    scope_fingerprint = models.CharField(max_length=64)
+    instrument_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    issued_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    superseded_basis = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="superseding_bases",
+        null=True,
+        blank=True,
+    )
+
+
+class GovernedDetermination(_S015AppendOnly):
+    class DeterminationType(models.TextChoices):
+        LEGAL_BASIS_QUALIFICATION = "LEGAL_BASIS_QUALIFICATION"
+        CONSTITUTIONAL_AUTHORITY_QUALIFICATION = (
+            "CONSTITUTIONAL_AUTHORITY_QUALIFICATION"
+        )
+        EXECUTION_ELIGIBILITY_QUALIFICATION = (
+            "EXECUTION_ELIGIBILITY_QUALIFICATION"
+        )
+        PROPAGATION_VERIFICATION_REFERENCE = "PROPAGATION_VERIFICATION_REFERENCE"
+        INDEPENDENCE_DETERMINATION = "INDEPENDENCE_DETERMINATION"
+        UNAVAILABILITY_DETERMINATION = "UNAVAILABILITY_DETERMINATION"
+        DEPENDENCY_CLOSURE_DETERMINATION = "DEPENDENCY_CLOSURE_DETERMINATION"
+        CONSEQUENTIAL_ACTION_CLASSIFICATION = (
+            "CONSEQUENTIAL_ACTION_CLASSIFICATION"
+        )
+        QUALIFICATION_REASSESSMENT = "QUALIFICATION_REASSESSMENT"
+
+    determination_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    determination_type = models.CharField(max_length=52, choices=DeterminationType.choices)
+    model_author = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="authored_governed_determinations",
+        null=True,
+        blank=True,
+    )
+    tested_actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="tested_governed_determinations",
+        null=True,
+        blank=True,
+    )
+    safeguard_beneficiary = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="beneficiary_governed_determinations",
+        null=True,
+        blank=True,
+    )
+    determiner = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="made_governed_determinations",
+    )
+    relied_upon_authority_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="relied_upon_determinations",
+    )
+    result = models.CharField(max_length=40)
+    evidence_reference = models.CharField(max_length=255)
+    method_reference = models.CharField(max_length=255)
+    scope_fingerprint = models.CharField(max_length=64)
+    independence_state = models.CharField(max_length=32)
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+
+class LivingOrganism(_S015ImmutableAnchor):
+    class State(models.TextChoices):
+        FOUNDING_PENDING = "FOUNDING_PENDING"
+        ACTIVE = "ACTIVE"
+        RESTRICTED_CONTINUITY = "RESTRICTED_CONTINUITY"
+        DORMANT = "DORMANT"
+        CLOSED = "CLOSED"
+
+    S015_IMMUTABLE_FIELDS = (
+        "organism_id",
+        "slug",
+        "constitutional_spine_reference",
+        "founding_insert_xid",
+        "founding_authority_basis_id",
+        "founder_identity_id",
+    )
+
+    organism_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    slug = models.SlugField(max_length=90, unique=True)
+    state = models.CharField(
+        max_length=24,
+        choices=State.choices,
+        default=State.FOUNDING_PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    current_state_effective_at = models.DateTimeField()
+    state_known_at = models.DateTimeField()
+    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    constitutional_spine_reference = models.CharField(max_length=255)
+    founding_insert_xid = FoundingTransactionIdField(
+        null=True,
+        editable=False,
+    )
+    founding_authority_basis = models.ForeignKey(
+        AuthorityBasis,
+        on_delete=models.PROTECT,
+        related_name="founded_living_organisms",
+        null=True,
+        blank=True,
+    )
+    founder_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="founded_living_organisms",
+        null=True,
+        blank=True,
+    )
+
+
+class Circle(_S015ImmutableAnchor):
+    class State(models.TextChoices):
+        DORMANT = "DORMANT"
+        ELIGIBLE = "ELIGIBLE"
+        ACTIVE = "ACTIVE"
+        SUSPENDED = "SUSPENDED"
+        CLOSED = "CLOSED"
+
+    S015_IMMUTABLE_FIELDS = ("circle_uuid", "parent_organism_id")
+
+    circle_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    parent_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="circles",
+    )
+    state = models.CharField(max_length=16, choices=State.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    current_state_effective_at = models.DateTimeField()
+    state_known_at = models.DateTimeField()
+    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    founding_reference = models.CharField(max_length=255)
+
+
+class OrganismMembership(_S015ImmutableAnchor):
+    class State(models.TextChoices):
+        PROPOSED = "PROPOSED"
+        ACTIVE = "ACTIVE"
+        PROBATIONARY = "PROBATIONARY"
+        SUSPENDED = "SUSPENDED"
+        ENDED = "ENDED"
+
+    S015_IMMUTABLE_FIELDS = (
+        "membership_uuid",
+        "identity_id",
+        "living_organism_id",
+    )
+
+    membership_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="organism_memberships",
+    )
+    living_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="memberships",
+    )
+    state = models.CharField(max_length=16, choices=State.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    current_state_effective_at = models.DateTimeField()
+    state_known_at = models.DateTimeField()
+    state_source_event_set_fingerprint = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("identity", "living_organism"),
+                name="s015_identity_organism_membership_uniq",
+            ),
+        ]
+
+
+class OrganismRoleDefinition(_S015ImmutableAnchor):
+    class Scope(models.TextChoices):
+        LIVING_ORGANISM = "LIVING_ORGANISM"
+        CIRCLE = "CIRCLE"
+
+    role_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="role_definitions",
+    )
+    code = models.CharField(max_length=48)
+    scope = models.CharField(max_length=20, choices=Scope.choices)
+    definition_version = models.PositiveIntegerField()
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    S015_IMMUTABLE_FIELDS = (
+        "role_uuid",
+        "living_organism_id",
+        "code",
+        "scope",
+        "definition_version",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("living_organism", "code", "definition_version"),
+                name="s015_role_definition_version_uniq",
+            ),
+        ]
+
+
+class ContextualRoleAssignment(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "assignment_uuid",
+        "membership_id",
+        "role_definition_id",
+        "circle_id",
+    )
+
+    assignment_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    membership = models.ForeignKey(
+        OrganismMembership,
+        on_delete=models.PROTECT,
+        related_name="contextual_role_assignments",
+    )
+    role_definition = models.ForeignKey(
+        OrganismRoleDefinition,
+        on_delete=models.PROTECT,
+        related_name="assignments",
+    )
+    circle = models.ForeignKey(
+        Circle,
+        on_delete=models.PROTECT,
+        related_name="role_assignments",
+        null=True,
+        blank=True,
+    )
+    state = models.CharField(max_length=16)
+    created_at = models.DateTimeField(auto_now_add=True)
+    current_state_effective_at = models.DateTimeField()
+    state_known_at = models.DateTimeField()
+    state_source_event_set_fingerprint = models.CharField(max_length=64)
+
+    def clean(self):
+        if (
+            self.membership_id is not None
+            and self.role_definition_id is not None
+            and self.membership.living_organism_id
+            != self.role_definition.living_organism_id
+        ):
+            raise ValidationError("role definition and membership must share an organism")
+        if (
+            self.circle_id is not None
+            and self.circle.parent_organism_id != self.membership.living_organism_id
+        ):
+            raise ValidationError("circle and membership must share an organism")
+
+
+class EmergencyAuthorityEnvelope(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "envelope_uuid",
+        "beneficiary_id",
+        "authority_principal_id",
+        "derivation_root_principal_id",
+        "qualifying_constitutional_grant_id",
+        "permitted_command_set",
+        "target_scope_set",
+        "proportionality_bounds",
+        "hard_expiry",
+    )
+
+    envelope_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    beneficiary = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="emergency_authority_envelopes",
+    )
+    authority_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="emergency_authority_envelopes",
+    )
+    derivation_root_principal = models.ForeignKey(
+        AuthorityPrincipal,
+        on_delete=models.PROTECT,
+        related_name="rooted_emergency_authority_envelopes",
+    )
+    qualifying_constitutional_grant = models.ForeignKey(
+        GovernedDetermination,
+        on_delete=models.PROTECT,
+        related_name="qualified_emergency_authority_envelopes",
+    )
+    permitted_command_set = models.JSONField()
+    target_scope_set = models.JSONField()
+    proportionality_bounds = models.JSONField()
+    hard_expiry = models.DateTimeField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+
+class GovernedVisibilityGrant(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "grant_uuid",
+        "subject_type",
+        "subject_id",
+        "audience_type",
+        "audience_id",
+        "capacity_binding",
+        "fields_permitted",
+        "purpose_reference",
+        "granting_authority_id",
+        "expiry",
+        "lineage_reference",
+    )
+
+    grant_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    subject_type = models.CharField(max_length=48)
+    subject_id = models.UUIDField()
+    audience_type = models.CharField(max_length=48)
+    audience_id = models.UUIDField()
+    capacity_binding = models.CharField(max_length=255)
+    fields_permitted = models.JSONField()
+    purpose_reference = models.CharField(max_length=255)
+    granting_authority = models.ForeignKey(
+        AuthorityBasis,
+        on_delete=models.PROTECT,
+        related_name="visibility_grants",
+    )
+    expiry = models.DateTimeField()
+    lineage_reference = models.CharField(max_length=71, unique=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+
+class OrganismCommandReceipt(_S015AppendOnly):
+    receipt_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="organism_command_receipts",
+    )
+    action = models.CharField(max_length=64)
+    idempotency_key = models.CharField(max_length=120)
+    request_reference = models.CharField(max_length=128)
+    payload_fingerprint = models.CharField(max_length=64)
+    authority_decision_reference = models.CharField(max_length=71)
+    lineage_reference = models.CharField(max_length=71, unique=True)
+    result_payload = models.JSONField()
+    completed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="s015_command_receipt_idem_uniq",
+            ),
+        ]

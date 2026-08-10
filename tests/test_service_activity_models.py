@@ -444,7 +444,7 @@ class ConstraintCatalogueTests(TestCase):
 
 
 class IdentityFKPredictionTests(TestCase):
-    """Live catalogue is exact: 34 base + 7 S012 + 4 S013 + 2 S014 = 47."""
+    """Live catalogue is exact through the nine S015 additions: 56."""
 
     EXPECTED_S012_FK_ADDITIONS = {
         ("serviceactivity", "created_by"),
@@ -468,13 +468,25 @@ class IdentityFKPredictionTests(TestCase):
         ("courseversion", "actor"),
     }
 
+    EXPECTED_S015_FK_ADDITIONS = {
+        ("authoritybasis", "issuer"),
+        ("emergencyauthorityenvelope", "beneficiary"),
+        ("governeddetermination", "determiner"),
+        ("governeddetermination", "model_author"),
+        ("governeddetermination", "safeguard_beneficiary"),
+        ("governeddetermination", "tested_actor"),
+        ("livingorganism", "founder_identity"),
+        ("organismcommandreceipt", "actor"),
+        ("organismmembership", "identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
         ("originatingmembershipprovisioningrequest", "identity"),
     }
 
-    def test_identity_fk_count_34_to_47(self):
+    def test_identity_fk_count_34_to_56(self):
         from django.apps import apps
         identity_model = apps.get_model("core", "Identity")
         fk_fields = []
@@ -490,7 +502,7 @@ class IdentityFKPredictionTests(TestCase):
                     fk_fields.append((model._meta.model_name, field.name))
 
         scoped_fks = set(fk_fields) - self.EXCLUDED_INTERNAL_FKS
-        self.assertEqual(len(scoped_fks), 47)
+        self.assertEqual(len(scoped_fks), 56)
 
         s012_fks = {
             (name, fname) for name, fname in scoped_fks
@@ -513,6 +525,13 @@ class IdentityFKPredictionTests(TestCase):
         self.assertEqual(s014_fks, self.EXPECTED_S014_FK_ADDITIONS)
         self.assertEqual(len(s014_fks), 2)
 
+        s015_fks = {
+            (name, fname) for name, fname in scoped_fks
+            if (name, fname) in self.EXPECTED_S015_FK_ADDITIONS
+        }
+        self.assertEqual(s015_fks, self.EXPECTED_S015_FK_ADDITIONS)
+        self.assertEqual(len(s015_fks), 9)
+
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
         identity_model = apps.get_model("core", "Identity")
@@ -533,6 +552,7 @@ class IdentityFKPredictionTests(TestCase):
             - self.EXPECTED_S012_FK_ADDITIONS
             - self.EXPECTED_S013_FK_ADDITIONS
             - self.EXPECTED_S014_FK_ADDITIONS
+            - self.EXPECTED_S015_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 
