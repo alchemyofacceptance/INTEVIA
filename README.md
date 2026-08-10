@@ -130,7 +130,58 @@ Longer-form public reasoning: [Whitepaper WHY — Human Judgement in the Age of 
 
 ## Local Django configuration
 
-Local Django commands require `DJANGO_SECRET_KEY` in the process environment. Generate an independent local value with Python's `secrets.token_urlsafe()` and set it before starting Django. Do not commit the generated value or a local `.env` file. The Django test command uses isolated test settings and does not reuse an operational key.
+INTEVIA requires **PostgreSQL**. SQLite is not a development substrate.
+
+The governed database constraints — deferrable constraint triggers, partial
+unique indexes, and check constraints calling functions — are PostgreSQL-specific
+and have no SQLite equivalent. A passing test run against SQLite would show that
+the Python path is clean while showing nothing about whether the database itself
+refuses anything.
+
+### Provisioning a local instance
+
+Verified against PostgreSQL 17.10.
+
+```bash
+docker volume create intevia_pgdata
+
+# Set POSTGRES_PASSWORD in your shell first; passing the name without a value
+# keeps it out of the process listing.
+docker run -d --name intevia-postgres \
+	-e POSTGRES_PASSWORD \
+	-e POSTGRES_USER=intevia \
+	-e POSTGRES_DB=intevia \
+	-v intevia_pgdata:/var/lib/postgresql/data \
+	-p 127.0.0.1:5432:5432 \
+	--restart unless-stopped \
+	postgres:17
+```
+
+The port binds to `127.0.0.1` only and is not reachable from other machines.
+
+Install the PostgreSQL driver:
+
+```bash
+pip install -r requirements-postgresql.txt
+```
+
+### Required environment
+
+| Variable | Required | Notes |
+|---|---|---|
+| `INTEVIA_DATABASE_ENGINE` | yes | Exactly `postgresql`, lowercase. Any other value raises |
+| `INTEVIA_POSTGRES_DB` | yes | |
+| `INTEVIA_POSTGRES_USER` | yes | |
+| `INTEVIA_POSTGRES_PASSWORD` | yes | |
+| `DJANGO_SECRET_KEY` | yes | Generate with `secrets.token_urlsafe()` |
+| `INTEVIA_POSTGRES_HOST` | no | Defaults to `127.0.0.1` |
+| `INTEVIA_POSTGRES_PORT` | no | Defaults to `5432` |
+
+Django will not start without these. Missing configuration raises
+`ImproperlyConfigured` rather than falling back to another database.
+
+Do not commit any of these values or a local `.env` file. The Django test command
+uses isolated test settings and does not reuse an operational key.
 
 ## Development approach
 

@@ -110,12 +110,14 @@ if os.environ.get("INTEVIA_DATABASE_ENGINE") == "postgresql":
         }
     DATABASES = {"default": database_config}
 else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+    _selected_engine = os.environ.get("INTEVIA_DATABASE_ENGINE")
+    raise ImproperlyConfigured(
+        "INTEVIA requires PostgreSQL as its sole substrate (VCD-33). "
+        "INTEVIA_DATABASE_ENGINE must be exactly 'postgresql' (lowercase); "
+        "received "
+        + (repr(_selected_engine) if _selected_engine is not None else "no value (unset)")
+        + ". SQLite is not a development substrate."
+    )
 
 
 # Password validation
