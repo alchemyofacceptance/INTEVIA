@@ -4047,6 +4047,49 @@ class AuthorityPrincipal(_S015ImmutableAnchor):
                 condition=Q(canonical_governed_source_id__regex=r".*\S.*"),
                 name="s015_principal_source_nonempty_ck",
             ),
+            models.CheckConstraint(
+                condition=~Q(
+                    governed_source_namespace="INTEVIA_RESERVED_GENESIS_AUTHORITY_V1"
+                )
+                | Q(
+                    canonical_governed_source_id=(
+                        "urn:intevia:governed-source:reserved-genesis:"
+                        "human-governor:carmian-owen:intevia-v1.0"
+                    )
+                ),
+                name="s015_genesis_canonical_source_ck",
+                violation_error_message=(
+                    "S015 reserved genesis namespace requires the expected "
+                    "canonical governed source id"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=~Q(
+                    governed_source_namespace="INTEVIA_RESERVED_GENESIS_AUTHORITY_V1"
+                )
+                | Q(bootstrap_invocation_fingerprint__isnull=False),
+                name="s015_genesis_fingerprint_present_ck",
+                violation_error_message=(
+                    "S015 reserved genesis namespace requires the bootstrap "
+                    "invocation fingerprint to be present"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=~Q(
+                    governed_source_namespace="INTEVIA_RESERVED_GENESIS_AUTHORITY_V1"
+                )
+                | Q(bootstrap_invocation_fingerprint__isnull=True)
+                | Q(
+                    bootstrap_invocation_fingerprint=(
+                        "57a247b376dfff11834ba8521ed66589a02b2cbf3c45e04bfc6f3738ea7367d7"
+                    )
+                ),
+                name="s015_genesis_fingerprint_matches_ck",
+                violation_error_message=(
+                    "S015 reserved genesis namespace requires the bootstrap "
+                    "invocation fingerprint to match the Human invocation"
+                ),
+            ),
         ]
 
 
