@@ -1,6 +1,7 @@
 import hashlib
 import re
 import uuid
+from datetime import datetime, timezone
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -4016,6 +4017,36 @@ class _S015AppendOnly(models.Model):
         raise ValidationError(f"{type(self).__name__} cannot be deleted")
 
 
+# S015 migration 0021 — shared shapes (specification v0.8 §5.3, §5.7, §5.8; construction per design v0.6).
+S015_TS_MIN = datetime(1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+S015_TS_MAX = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc)
+S015_FINGERPRINT_SHAPE = r"^s015f3:[0-9a-f]{64}$"
+S015_PRIOR_STATE_HELP = (
+    "S015: the effective-order predecessor's resulting state as the chain stood when this event "
+    "was recorded; NULL at sequence 1, and at any later sequence where no eligible predecessor stood "
+    "before this event in effective order when it was recorded. Not the recorded-chain predecessor. "
+    "A later retrospective insert does not make this value false."
+)
+
+
+def _s015_ts_domain(column):
+    return Q(**{f"{column}__gte": S015_TS_MIN}) & Q(**{f"{column}__lte": S015_TS_MAX})
+
+
+def _s015_cache_anchor_constraints(prefix, state_tokens):
+    return [
+        models.CheckConstraint(
+            condition=Q(state_source_event_set_fingerprint__regex=S015_FINGERPRINT_SHAPE),
+            name=f"s015_0021_{prefix}_fp_shape_ck",
+        ),
+        models.CheckConstraint(condition=Q(state__in=state_tokens), name=f"s015_0021_{prefix}_state_vocab_ck"),
+        models.CheckConstraint(
+            condition=_s015_ts_domain("current_state_effective_at") & _s015_ts_domain("state_known_at"),
+            name=f"s015_0021_{prefix}_coord_domain_ck",
+        ),
+    ]
+
+
 class AuthorityPrincipal(_S015ImmutableAnchor):
     S015_IMMUTABLE_FIELDS = (
         "principal_uuid",
@@ -4201,6 +4232,14 @@ class AuthorityBasis(_S015ImmutableAnchor):
         null=True,
         blank=True,
     )
+    # S015 0021: recorded head of the invalidation chain (aggregate 6); empty chain permitted (specification §5.1).
+    head_invalidation_event = models.OneToOneField(
+        "AuthorityInvalidationEvent",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
 
 
 class GovernedDetermination(_S015AppendOnly):
@@ -4292,7 +4331,7 @@ class LivingOrganism(_S015ImmutableAnchor):
     created_at = models.DateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
-    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    state_source_event_set_fingerprint = models.CharField(max_length=71)
     constitutional_spine_reference = models.CharField(max_length=255)
     founding_insert_xid = FoundingTransactionIdField(
         null=True,
@@ -4312,6 +4351,29 @@ class LivingOrganism(_S015ImmutableAnchor):
         null=True,
         blank=True,
     )
+    # S015 0021: recorded head (aggregate 1) and the root discriminator (U21g-18), shipping FALSE-only (D-39).
+    head_event = models.OneToOneField(
+        "LivingOrganismEvent",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    platform_root = models.BooleanField(default=False, editable=False)
+
+    class Meta:
+        constraints = [
+            *_s015_cache_anchor_constraints(
+                "livingorganism",
+                ["FOUNDING_PENDING", "ACTIVE", "RESTRICTED_CONTINUITY", "DORMANT", "CLOSED"],
+            ),
+            models.UniqueConstraint(
+                fields=["platform_root"],
+                condition=Q(platform_root=True),
+                name="s015_platform_root_singleton_uniq",
+            ),
+            models.CheckConstraint(condition=Q(platform_root=False), name="s015_platform_root_unset_ck"),
+        ]
 
 
 class Circle(_S015ImmutableAnchor):
@@ -4334,8 +4396,19 @@ class Circle(_S015ImmutableAnchor):
     created_at = models.DateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
-    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    state_source_event_set_fingerprint = models.CharField(max_length=71)
     founding_reference = models.CharField(max_length=255)
+    head_event = models.OneToOneField(
+        "CircleStateEvent",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        # ACTIVE is excluded at the database (specification §6.1 item 4); the TextChoices entry is shipped and retained.
+        constraints = _s015_cache_anchor_constraints("circle", ["DORMANT", "ELIGIBLE", "SUSPENDED", "CLOSED"])
 
 
 class OrganismMembership(_S015ImmutableAnchor):
@@ -4343,8 +4416,10 @@ class OrganismMembership(_S015ImmutableAnchor):
         PROPOSED = "PROPOSED"
         ACTIVE = "ACTIVE"
         PROBATIONARY = "PROBATIONARY"
+        RESTRICTED = "RESTRICTED"
         SUSPENDED = "SUSPENDED"
         ENDED = "ENDED"
+        PRIVACY_TRANSFORMED = "PRIVACY_TRANSFORMED"
 
     S015_IMMUTABLE_FIELDS = (
         "membership_uuid",
@@ -4363,17 +4438,28 @@ class OrganismMembership(_S015ImmutableAnchor):
         on_delete=models.PROTECT,
         related_name="memberships",
     )
-    state = models.CharField(max_length=16, choices=State.choices)
+    state = models.CharField(max_length=19, choices=State.choices)
     created_at = models.DateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
-    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    state_source_event_set_fingerprint = models.CharField(max_length=71)
+    head_transition = models.OneToOneField(
+        "OrganismMembershipTransition",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=("identity", "living_organism"),
                 name="s015_identity_organism_membership_uniq",
+            ),
+            *_s015_cache_anchor_constraints(
+                "organismmembership",
+                ["PROPOSED", "ACTIVE", "PROBATIONARY", "RESTRICTED", "SUSPENDED", "ENDED", "PRIVACY_TRANSFORMED"],
             ),
         ]
 
@@ -4403,16 +4489,44 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
         "definition_version",
     )
 
+    def clean(self):
+        if (
+            self.code.startswith("INTEVIA_")
+            and self.living_organism_id is not None
+            and not self.living_organism.platform_root
+        ):
+            raise ValidationError(
+                "only the platform root may define INTEVIA_ role codes"
+            )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=("living_organism", "code", "definition_version"),
                 name="s015_role_definition_version_uniq",
             ),
+            models.UniqueConstraint(
+                fields=("living_organism", "code"),
+                condition=Q(active=True),
+                name="s015_0021_role_active_uniq",
+            ),
+            # closed domain on scope (specification §6.1 item 8; constraint addition permitted under U21g-4)
+            models.CheckConstraint(
+                condition=Q(scope__in=["LIVING_ORGANISM", "CIRCLE"]),
+                name="s015_0021_role_scope_domain_ck",
+            ),
         ]
 
 
 class ContextualRoleAssignment(_S015ImmutableAnchor):
+    class State(models.TextChoices):
+        PROPOSED = "PROPOSED"
+        ACTIVE = "ACTIVE"
+        PROBATIONARY = "PROBATIONARY"
+        SUSPENDED = "SUSPENDED"
+        ENDED = "ENDED"
+        PRIVACY_TRANSFORMED = "PRIVACY_TRANSFORMED"
+
     S015_IMMUTABLE_FIELDS = (
         "assignment_uuid",
         "membership_id",
@@ -4438,11 +4552,24 @@ class ContextualRoleAssignment(_S015ImmutableAnchor):
         null=True,
         blank=True,
     )
-    state = models.CharField(max_length=16)
+    state = models.CharField(max_length=19, choices=State.choices)
     created_at = models.DateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
-    state_source_event_set_fingerprint = models.CharField(max_length=64)
+    state_source_event_set_fingerprint = models.CharField(max_length=71)
+    head_state_event = models.OneToOneField(
+        "ContextualRoleAssignmentStateEvent",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = _s015_cache_anchor_constraints(
+            "contextualroleassignment",
+            ["PROPOSED", "ACTIVE", "PROBATIONARY", "SUSPENDED", "ENDED", "PRIVACY_TRANSFORMED"],
+        )
 
     def clean(self):
         if (
@@ -4531,6 +4658,13 @@ class GovernedVisibilityGrant(_S015ImmutableAnchor):
     expiry = models.DateTimeField()
     lineage_reference = models.CharField(max_length=71, unique=True)
     recorded_at = models.DateTimeField(auto_now_add=True)
+    head_state_event = models.OneToOneField(
+        "VisibilityGrantStateEvent",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
 
 
 class OrganismCommandReceipt(_S015AppendOnly):
@@ -4556,3 +4690,265 @@ class OrganismCommandReceipt(_S015AppendOnly):
                 name="s015_command_receipt_idem_uniq",
             ),
         ]
+
+
+# =====================================================================================
+# S015 migration 0021 — the recorded-chain closure contract and the bitemporal fold.
+# Specification v0.8 §5.1–§5.4 (requirement); construction per design v0.6 §6–§7.
+# Database guardians are the cited enforcement; the Python guards below are defence in depth.
+# =====================================================================================
+
+
+class _S015ChainEvent(_S015AppendOnly):
+    """The §6.1 common chain member. The anchor FK is declared per concrete event model."""
+
+    event_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    sequence = models.PositiveIntegerField()
+    predecessor_sequence = models.PositiveIntegerField(null=True, blank=True)
+    predecessor = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    action = models.CharField(max_length=48)
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_basis = models.ForeignKey(AuthorityBasis, on_delete=models.PROTECT, related_name="+")
+    authority_decision_reference = models.CharField(max_length=71)
+    evidence_reference = models.CharField(max_length=255)
+    request_reference = models.CharField(max_length=255)
+    idempotency_key = models.CharField(max_length=255)
+    payload_fingerprint = models.CharField(max_length=64)
+    lineage_reference = models.CharField(max_length=71, unique=True)
+    temporal_basis_kind = models.CharField(max_length=13, null=True, blank=True)
+    temporal_basis_reference = models.CharField(max_length=255, null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    # database-assigned by s015_assign_event_record_time(); the ORM sends NULL (shipped founding_insert_xid precedent)
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        abstract = True
+
+
+def _s015_event_constraints(model_name, anchor_field):
+    return [
+        models.UniqueConstraint(fields=(anchor_field, "sequence"), name=f"s015_0021_{model_name}_anchor_seq_uniq"),
+        models.UniqueConstraint(fields=("predecessor",), name=f"s015_0021_{model_name}_pred_uniq"),
+        models.UniqueConstraint(fields=("actor", "action", "idempotency_key"), name=f"s015_0021_{model_name}_idem_uniq"),
+    ]
+
+
+# ---- the seven support tables (aggregates 5, 7, 8, 9, 11, 12 and the coverage input) ----
+
+
+class MembershipCondition(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("condition_uuid", "condition_kind", "subject_membership_id", "mentor_membership_id")
+
+    condition_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    condition_kind = models.CharField(max_length=48)
+    subject_membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
+    mentor_membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    head_state_event = models.OneToOneField("MembershipConditionStateEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class DeterminationContestCase(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("case_uuid", "determination_id")
+
+    case_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    determination = models.OneToOneField(GovernedDetermination, on_delete=models.PROTECT, related_name="+")
+    head_event = models.OneToOneField("DeterminationContestEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class EssentialCoverageRequirement(_S015AppendOnly):
+    requirement_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    roster_version = models.PositiveIntegerField()
+    responsibility_domain_code = models.CharField(max_length=48)
+    qualifying_role_code = models.CharField(max_length=48)
+    minimum_active_occupants = models.PositiveIntegerField()
+    scope = models.CharField(max_length=20)
+    effective_from = models.DateTimeField()
+    effective_until = models.DateTimeField(null=True, blank=True)
+    living_organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("living_organism", "roster_version", "responsibility_domain_code"),
+                name="s015_0021_requirement_roster_domain_uniq",
+            ),
+        ]
+
+
+class EssentialCoverageCase(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("case_uuid", "living_organism_id")
+
+    case_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.OneToOneField(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    head_assessment = models.OneToOneField("CoverageAssessment", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class RestrictedContinuityCase(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("case_uuid", "living_organism_id")
+
+    case_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.OneToOneField(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    head_event = models.OneToOneField("RestrictedContinuityEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class GovernedObligationCase(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = (
+        "case_uuid", "asserted_obligation_reference", "affected_scope_reference",
+        "responsible_capacities_reference", "operational_escalation_at",
+    )
+
+    case_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    asserted_obligation_reference = models.CharField(max_length=255)
+    affected_scope_reference = models.CharField(max_length=255)
+    responsible_capacities_reference = models.CharField(max_length=255)
+    operational_escalation_at = models.DateTimeField()
+    # the five-member cache (design §7.11, §9.3) with its coordinates and fingerprint; database-computed after insert
+    status_state = models.CharField(max_length=40)
+    legal_deadline_status = models.CharField(max_length=24)
+    qualified_legal_deadline = models.DateTimeField(null=True, blank=True)
+    effective_deadline = models.DateTimeField(null=True, blank=True)
+    legal_basis_determination = models.ForeignKey(GovernedDetermination, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    status_state_at = models.DateTimeField()
+    status_known_at = models.DateTimeField()
+    status_source_event_set_fingerprint = models.CharField(max_length=71)
+    head_state_event = models.OneToOneField("ObligationStateEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class PlanningClassificationCase(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("case_uuid", "item_identifier")
+
+    case_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    item_identifier = models.CharField(max_length=255, unique=True)
+    head_event = models.OneToOneField("PlanningClassificationEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+# ---- the twelve event tables ----
+
+
+class LivingOrganismEvent(_S015ChainEvent):
+    living_organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=24, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=24)
+
+    class Meta:
+        constraints = _s015_event_constraints("livingorganismevent", "living_organism")
+
+
+class CircleStateEvent(_S015ChainEvent):
+    circle = models.ForeignKey(Circle, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=16, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=16)
+
+    class Meta:
+        constraints = _s015_event_constraints("circlestateevent", "circle")
+
+
+class OrganismMembershipTransition(_S015ChainEvent):
+    membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=19, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=19)
+    reason_class = models.CharField(max_length=48)
+
+    class Meta:
+        constraints = _s015_event_constraints("organismmembershiptransition", "membership")
+
+
+class ContextualRoleAssignmentStateEvent(_S015ChainEvent):
+    assignment = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=19, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=19)
+
+    class Meta:
+        constraints = _s015_event_constraints("contextualroleassignmentstateevent", "assignment")
+
+
+class MembershipConditionStateEvent(_S015ChainEvent):
+    condition = models.ForeignKey(MembershipCondition, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=48, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=48)
+
+    class Meta:
+        constraints = _s015_event_constraints("membershipconditionstateevent", "condition")
+
+
+class AuthorityInvalidationEvent(_S015ChainEvent):
+    basis = models.ForeignKey(AuthorityBasis, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=64, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=64)
+    kind = models.CharField(max_length=12)
+
+    class Meta:
+        constraints = _s015_event_constraints("authorityinvalidationevent", "basis")
+
+
+class DeterminationContestEvent(_S015ChainEvent):
+    case = models.ForeignKey(DeterminationContestCase, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=64, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = _s015_event_constraints("determinationcontestevent", "case")
+
+
+class CoverageAssessment(_S015ChainEvent):
+    case = models.ForeignKey(EssentialCoverageCase, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=11, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    result = models.CharField(max_length=11)
+    roster_version = models.PositiveIntegerField()
+    evaluated_state_at = models.DateTimeField()
+    evaluated_known_at = models.DateTimeField()
+    determiner_capacity_reference = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = _s015_event_constraints("coverageassessment", "case")
+
+
+class RestrictedContinuityEvent(_S015ChainEvent):
+    case = models.ForeignKey(RestrictedContinuityCase, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=14, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=14)
+    permitted_measures_reference = models.CharField(max_length=255)
+    prohibited_effects_reference = models.CharField(max_length=255)
+    triggering_assessment = models.ForeignKey(CoverageAssessment, on_delete=models.PROTECT, related_name="+")
+    accountable_actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        constraints = _s015_event_constraints("restrictedcontinuityevent", "case")
+
+
+class VisibilityGrantStateEvent(_S015ChainEvent):
+    grant = models.ForeignKey(GovernedVisibilityGrant, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=10, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=10)
+
+    class Meta:
+        constraints = _s015_event_constraints("visibilitygrantstateevent", "grant")
+
+
+class ObligationStateEvent(_S015ChainEvent):
+    case = models.ForeignKey(GovernedObligationCase, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=40, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=40)
+    legal_deadline_status = models.CharField(max_length=24)
+    qualified_legal_deadline = models.DateTimeField(null=True, blank=True)
+    effective_deadline = models.DateTimeField(null=True, blank=True)
+    extension_basis_reference = models.CharField(max_length=255, null=True, blank=True)
+    escalation_path_reference = models.CharField(max_length=255, null=True, blank=True)
+    interim_measures_reference = models.CharField(max_length=255, null=True, blank=True)
+    consequences_reference = models.CharField(max_length=255, null=True, blank=True)
+    legal_basis_determination = models.ForeignKey(GovernedDetermination, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+    class Meta:
+        constraints = _s015_event_constraints("obligationstateevent", "case")
+
+
+class PlanningClassificationEvent(_S015ChainEvent):
+    case = models.ForeignKey(PlanningClassificationCase, on_delete=models.PROTECT, related_name="+")
+    prior_state = models.CharField(max_length=20, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    result = models.CharField(max_length=20)
+    criterion_reference = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = _s015_event_constraints("planningclassificationevent", "case")

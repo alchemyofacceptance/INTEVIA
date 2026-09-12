@@ -31,6 +31,7 @@ from core.models import (
     ProfileEffectProposalLineage,
     ProfileEffectProposalTransition,
 )
+from s015_0021_support import T0, add_remaining_aggregates, append_event, empty_fp, found_nonroot, fresh, refresh
 
 
 class S015PostgreSQLGuardianTests(TransactionTestCase):
@@ -156,7 +157,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
     def _role_definition(self, organism, label):
         return OrganismRoleDefinition.objects.create(
             living_organism=organism,
-            code="FOUNDER_STEWARD",
+            code="INTEVIA_FOUNDER_STEWARD",
             scope=OrganismRoleDefinition.Scope.LIVING_ORGANISM,
             definition_version=1,
         )
@@ -205,35 +206,58 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
 
     def _complete_founding(self, *, label):
         with transaction.atomic():
-            founder = self._identity(f"{label}-founder")
-            root_principal = self._principal(f"{label}-root")
-            principal = self._principal(f"{label}-principal")
-            authority_basis = self._basis(
-                principal=principal,
-                root_principal=root_principal,
-                issuer=founder,
-                label=f"{label}-basis",
-            )
-            organism = self._organism(label)
-            membership = self._membership(identity=founder, organism=organism, label=label)
-            circle = self._circle(organism, label=label)
-            role_definition = self._role_definition(organism, label=label)
-            assignment = self._assignment(
-                membership=membership,
-                role_definition=role_definition,
-                circle=circle,
-                label=label,
-            )
-            updated = LivingOrganism.objects.filter(pk=organism.pk).update(
-                founding_authority_basis_id=authority_basis.pk,
-                founder_identity_id=founder.pk,
-                state=LivingOrganism.State.ACTIVE,
-            )
-            self.assertEqual(updated, 1)
-            organism.refresh_from_db()
+            with connection.cursor() as cur:
+                ids = add_remaining_aggregates(cur, found_nonroot(cur, label), f"{label}-aggregates")
+                role_uuid = str(uuid4())
+                cur.execute(
+                    "INSERT INTO core_organismroledefinition "
+                    "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                    "VALUES (%s, %s, 'CIRCLE', 1, TRUE, now(), %s) RETURNING id",
+                    (role_uuid, f"CIRCLE_ROLE_{label.upper()}", ids["lo"]),
+                )
+                role_definition_id = cur.fetchone()[0]
+                assignment_uuid = str(uuid4())
+                cur.execute(
+                    "INSERT INTO core_contextualroleassignment "
+                    "(assignment_uuid, state, created_at, current_state_effective_at, state_known_at, "
+                    "state_source_event_set_fingerprint, membership_id, role_definition_id, circle_id) "
+                    "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        assignment_uuid,
+                        T0,
+                        T0,
+                        empty_fp(cur, "core_contextualroleassignment", assignment_uuid),
+                        ids["membership"],
+                        role_definition_id,
+                        ids["circle"],
+                    ),
+                )
+                assignment_id = cur.fetchone()[0]
+                append_event(
+                    cur,
+                    "core_contextualroleassignmentstateevent",
+                    assignment_id,
+                    1,
+                    "ASSIGN",
+                    None,
+                    "ACTIVE",
+                    ids["identity"],
+                    ids["basis"],
+                    f"{label}-circle-assignment",
+                )
+                refresh(cur, "core_contextualroleassignment", assignment_id)
+
+            founder = Identity.objects.get(pk=ids["identity"])
+            principal = AuthorityPrincipal.objects.get(pk=ids["principal"])
+            authority_basis = AuthorityBasis.objects.get(pk=ids["basis"])
+            organism = LivingOrganism.objects.get(pk=ids["lo"])
+            membership = OrganismMembership.objects.get(pk=ids["membership"])
+            circle = Circle.objects.get(pk=ids["circle"])
+            role_definition = OrganismRoleDefinition.objects.get(pk=role_definition_id)
+            assignment = ContextualRoleAssignment.objects.get(pk=assignment_id)
             return {
                 "founder": founder,
-                "root_principal": root_principal,
+                "root_principal": principal,
                 "principal": principal,
                 "authority_basis": authority_basis,
                 "organism": organism,
@@ -803,6 +827,19 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
                 expiry=timezone.now() + timedelta(days=1),
                 lineage_reference="s015g1:" + uuid4().hex + uuid4().hex,
             )
+            with connection.cursor() as cur:
+                append_event(
+                    cur,
+                    "core_visibilitygrantstateevent",
+                    visibility.pk,
+                    1,
+                    "ISSUE",
+                    None,
+                    "ISSUED",
+                    issuer.pk,
+                    basis.pk,
+                    f"graph-visibility-{fresh()}",
+                )
             before = self._capture_graph_edges(
                 issuer,
                 root_principal,
