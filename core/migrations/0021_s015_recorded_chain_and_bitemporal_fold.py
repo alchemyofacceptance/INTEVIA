@@ -1,9 +1,27 @@
-"""S015 migration 0021 — recorded-chain closure and bitemporal fold (CANDIDATE, U21g Phase 1).
+"""S015 migration 0021 - recorded-chain closure and bitemporal fold.
 
-Built to S015_PKT_A_2_SPECIFICATION_v0_7.md (controlling) following the construction of
-IDOP097_S015_MIGRATION_0021_DESIGN_v0_6.md (not certified). Phase 1 build: far enough to apply
-to a throwaway database and answer the eight empirical questions of the Making Engine
-commission v0.1 §4. Not committed, not authorised, not certified.
+Committed at 859960d8645b682f118c651d547c1327439a8b92 on 12 September 2026 under the authority of
+Carmian Owen, Human Governor. Verified before commit on a freshly provisioned throwaway database
+at PostgreSQL 17.10: 120 of 120 tests across the negative direct-SQL, positive control and
+guardian suites; 163 triggers installed against a baseline of 83; 302 check constraints named
+s015_0021_%; 35 functions named s015_%.
+
+Controlling specification at commit: S015_PKT_A_2_SPECIFICATION_v0_13.md. The correction pass to
+v0.14 is recorded separately and alters nothing in this file.
+
+Lineage record for this packet:
+docs/holocron/datacrons/D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md
+
+Committed and verified is not accepted. As at the date of this docstring: Human implementation
+acceptance, packet closure and slice closure have not been issued; PKT-A is not accepted; the
+section 14.1 carry-forward gate has not been re-derived since this migration landed; and slice
+S015 remains open.
+
+Docstring corrected at unit U21j, 13 September 2026, under a Human ruling of the same date. The
+superseded text described this file as a candidate built to specification v0.7 and stated that it
+was not committed, not authorised and not certified. All three were false of the committed object.
+No functional change: this is a module docstring. No SQL, constraint, trigger or migration
+operation is altered and no migration is re-run.
 """
 
 import datetime
