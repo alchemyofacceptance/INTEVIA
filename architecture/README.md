@@ -2,7 +2,7 @@
 
 *A guided entry point into INTEVIA's conceptual architectural spine.*
 
-> **Reading boundary — qualified 2026-07-31:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `1aed0f4da88209d5298e40867b08505661cfd451`.
+> **Reading boundary — qualified 2026-09-15:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 ## Purpose of this directory
 
@@ -24,13 +24,13 @@ Conceptual issuance labels such as `v0.1` remain truthful to the documents' form
 
 - **Governance Engine** — intended rules, permissions, transitions, evidence, and audit.
 - **Corpus** — intended knowledge, lineage, and documentation structures.
-- **HAT Collaboration Layer** — intended Human–AI interpretation, sequencing, and reflection boundaries.
+- **HAT Collaboration Layer** — intended Human–AI interpretation, sequencing, and reflection boundaries. The operating practice itself is documented at [HAT — The Human-AI Team v0.3](../docs/governance/HAT_THE_HUMAN_AI_TEAM_v0_3.md); the layer documents here describe intent, not the practice.
 
 Architecture language describes intended meaning. Whether a corresponding path exists or has recorded validation must be checked separately.
 
 ## v1.0 implementation boundary at the qualified ref
 
-The repository contains paths associated with bounded governed foundations across contribution lineage, Identity, Events, Services, Library, CARE, resource relationships, service activity, profile effect, and an Education Course-definition slice.
+The repository contains paths associated with bounded governed foundations across contribution lineage, Identity, Events, Services, Library, CARE, resource relationships, service activity, profile effect, an Education Course-definition slice, and — since September 2026 — the Living Organism substrate (organism, circle and membership anchors on an append-only recorded chain with a bitemporal fold) and the INTEVIA Lineage-Chain contract laid onto that chain. Both S015 packets are designated, implemented and landed; neither is accepted.
 
 That statement establishes path presence only. The crosswalk routes to the exact evidence classes and non-claims.
 

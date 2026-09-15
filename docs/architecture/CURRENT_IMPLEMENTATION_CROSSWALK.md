@@ -1,7 +1,7 @@
 # INTEVIA v1.0 — Current Implementation Crosswalk
 
-Qualified repository ref: `1aed0f4da88209d5298e40867b08505661cfd451`  
-Last verified: 2026-07-31  
+Qualified repository ref: `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`  
+Last verified: 2026-09-15  
 Document role: derivative evidence-state navigation  
 Authority effect: none
 
@@ -29,7 +29,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for contribution lifecycle, authority, correction, privacy, archive, and service behaviour.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `core/models.py`; `src/intevia/core/contribution.py`; `src/intevia/services/contribution_authority.py`; `src/intevia/services/contribution_service.py`.
 
@@ -49,7 +49,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No completeness, deployment, or universal workflow claim.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -57,7 +57,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for a bounded Identity foundation, authentication shell, attendance, personal event home, and direct self-registration.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `core/identity.py`; `core/models.py`; `core/forms.py`; `core/views.py`; `src/intevia/services/identity_service.py`; event attendance and self-registration services.
 
@@ -77,7 +77,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No general identity-platform or operational-security claim.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -85,7 +85,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for Event lifecycle, governed registration, attendance, and read services.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `core/models.py`; `src/intevia/services/event_service.py`; registration, attendance, and read services under `src/intevia/services/`.
 
@@ -105,7 +105,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No complete Events-module claim.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -113,7 +113,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for governed Library resources and exact-version contracts, policy, service, and PostgreSQL-oriented tests.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `src/intevia/services/library_service.py`; `library_exact_version_contract.py`; `library_exact_version_policy.py`; related models and migrations.
 
@@ -133,7 +133,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No operational completeness or current-pass inference.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -141,7 +141,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for governed Service foundations, activity assignment/delivery/readback, and Event-resource relationship contracts and readback.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** Service, activity, authority, and Event-resource relationship modules under `src/intevia/services/`; related `core/models.py` and migrations.
 
@@ -161,7 +161,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No complete Service-module or deployment claim.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -169,7 +169,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for bounded profile-effect authority, contract, service, and readback following governed service submission.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `src/intevia/services/profile_effect_authority.py`; `profile_effect_contract.py`; `profile_effect_service.py`; `profile_effect_read_service.py`; migration `0017`.
 
@@ -189,7 +189,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No universal profile-effect semantics or operational readiness.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
@@ -197,7 +197,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **1 — Capability family and bounded claim:** Paths are present for a bounded governed Course aggregate, immutable versions, authority, create/append service, and creator-only readback.
 
-**2 — Qualified repository ref:** `1aed0f4da88209d5298e40867b08505661cfd451`.
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
 
 **3 — Implementation paths present:** `core/models.py`; migration `core/migrations/0018_s014_education_course_foundation.py`; four `education_course_*` service modules.
 
@@ -217,13 +217,43 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 **11 — Explicit non-claims:** No curriculum delivery, class delivery, enrolment, learning, completion, assessment, certification, educator qualification, payment, publication, or operational Course claim.
 
-**12 — Last verification date:** 2026-07-31.
+**12 — Last verification date:** 2026-09-15.
 
 **13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state.
 
+### 8. Living Organism substrate and the INTEVIA Lineage-Chain (Slice S015, packets PKT-A-2 and PKT-A-3)
+
+**1 — Capability family and bounded claim:** Paths are present for organism, circle and membership anchors; twelve append-only governed event chains with a canonical byte form, per-row fingerprints and a bitemporal fold (PKT-A-2); and the INTEVIA Lineage-Chain (ILC) contract laid onto those chains — actor states, parts and commitments, an identity-resolution table with an append-only severance ledger (PKT-A-3). Both packets are designated, implemented and landed; neither is accepted. Slice S015 is open.
+
+**2 — Qualified repository ref:** `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
+
+**3 — Implementation paths present:** `core/models.py`; `core/migrations/0019_s015_living_organism_foundation.py`; `0020_s015_genesis_identity_completeness.py`; `0021_s015_recorded_chain_and_bitemporal_fold.py`; `0022_s015_governed_chain_contract.py`; `core/organism_contract.py`; `src/intevia/services/organism_authority.py`; `organism_membership_service.py`; `vectors/S015_CANONICAL_FORM_s015f3_RULE_v0_1.md` and `vectors/s015f3_fixed_vectors.json`. Migration `0022` declares no Django model state and adds no ORM classes; the four tables it creates and the columns it alters are not represented in `core/models.py`.
+
+**4 — Test-definition paths present:** `tests/test_s015_*.py`; `tests/s015_0021_support.py`; `tests/test_s015_0021_negative_direct_sql.py`; `tests/test_s015_0021_positive_controls.py`; `tests/test_s015_postgresql_guardians.py`; `core/tests/test_s015_0022_contract.py`. Presence is not execution. The PKT-A-3 Datacron records that `core/tests/test_s015_0022_contract.py` was not executed against the final candidate on the record and, as committed, contradicts migration `0022` on the resolution table's columns and on the second-layer preimage function's behaviour.
+
+**5 — Last recorded execution evidence:** The PKT-A-2 Datacron records 120/120 (78 negative, 34 positive, 8 guardian) on a fresh PostgreSQL 17.10 throwaway at implementation commit `859960d8`, and 163 triggers against a baseline of 83. The PKT-A-3 Datacron records gates 2–7 passed at Python 3.12.10 / PostgreSQL 17.10 against the verified candidate, every behavioural scenario as the non-superuser production role, with verification instruments held outside the repository. Both are recorded results at their named states; neither is a current-pass claim, and neither has been independently reproduced.
+
+**6 — Slice-specific evidence source:** [`D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md`](../holocron/datacrons/D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md) and [`D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md`](../holocron/datacrons/D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md) (v0.8, a corrected record whose corrections are marked and dated).
+
+**7 — Independent reproduction:** Not established by this crosswalk. An external byte-level read of the public repository on 2026-09-15 is recorded in the PKT-A-3 Datacron as the source of its corrections; it executed no tests.
+
+**8 — Exact Human acceptance or closure source:** None. Implementation acceptance, Datacron acceptance and packet closure for both packets are recorded in each Datacron's status block as not issued. PKT-A acceptance is not on the path forward, by Human ruling recorded in the PKT-A-2 Datacron.
+
+**9 — Unresolved findings and deferrals:** Carried into PKT-B by Human ruling: no second-layer commitment verification (`U-14`; the preimage function exists and refuses); the schema cannot record an act taken by an Organism as an Organism (`BD-1`); admission policy on the identity-resolution table unruled (`U-6`); the application connects as a superuser and the production-role split is not discharged (`F-U21l-04`); the identity split and its insert-only guardian ruled on 12 September are not delivered in `0022`; the `0022` contract test file contradicts the migration; how stored fingerprints remain verifiable after an event-table column addition is unestablished and is to be resolved before populated chains undergo further schema changes. Open design questions `U-1` to `U-14` and `R-a` to `R-d` travel with the design object; the §14.1 carry-forward gate has not been re-derived since the chain landed.
+
+**10 — Deployment, release, certification, and external-validation state:** Internal pre-alpha. The [shared boundary](#shared-deployment-and-external-validation-boundary) applies; this block establishes no deployment, release, certification, or broad external-validation state. No Organism or Circle is populated.
+
+**11 — Explicit non-claims:** No populated Organism; no provable erasure as landed; no tamper-evident second layer; no Organism-as-actor; no complete ILC; no general lineage platform.
+
+**12 — Last verification date:** 2026-09-15.
+
+**13 — Staleness trigger:** Any change to the qualified ref, cited evidence, Human decision, or unresolved-finding state — including the disposition of the items at field 9 in PKT-B.
+
 ## Static inventory note
 
-At the qualified ref, `git ls-files 'test_*.py' '**/test_*.py' | sort -u | wc -l` reports 84 tracked test-file paths. Applying `^\s*(async\s+)?def\s+test_` to tracked Python files reports 663 textual test-definition matches. These are reproducible static inventory methods, not collection or execution. The value 663 collides numerically with a recorded S014 regression result and is explicitly disambiguated above.
+At the qualified ref, `git ls-files 'test_*.py' '**/test_*.py' | sort -u | wc -l` reports 97 tracked paths. Because a git pathspec `*` matches across directory separators, that figure includes three files matched through the directory name `intevia/test_postgresql_backend/`; 94 of the 97 are files whose own name begins `test_` (92 under `tests/`, plus `core/tests/test_s015_0022_contract.py` and `intevia/test_settings.py`). Applying `^\s*(async\s+)?def\s+test_` to tracked Python files reports 805 textual test-definition matches. These are reproducible static inventory methods, not collection or execution, and neither figure is an executed-selection count.
+
+A full line census of the repository at implementation commit `5eb7783`, by category, with per-file identities and the script that produced it, is carried in the PKT-A-3 Datacron at §2 and will be carried by each subsequent Datacron at its own landing commit.
 
 ## Staleness and maintenance
 
