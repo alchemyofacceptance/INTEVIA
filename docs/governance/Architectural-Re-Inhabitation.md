@@ -136,7 +136,7 @@ Architectural Re‑Inhabitation is:
 - not structural definition  
 
 It belongs in:
-core/migrations/governance/corpus/
+docs/governance/
 
 alongside GP‑07 and other governance‑layer meaning documents.
 

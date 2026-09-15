@@ -2,7 +2,7 @@
 
 **Path:** `/docs/governance/markdown-standard.md`  
 **Status:** Canonical  
-**Owner:** Carmien Owen  
+**Owner:** Carmian Owen  
 **Review Path:** Human proposal → Gee review → Coe implementation → Human qualification  
 **Applies To:** INTEVIA repository text-based artefacts
 

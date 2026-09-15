@@ -4,7 +4,7 @@
 
 - Policy identity: `REG-AUTH-PREALPHA-001`
 - Version: `v1`
-- Human Governor: Carmien Owen
+- Human Governor: Carmian Owen
 - Status: Human-authored internal pre-alpha policy instrument; not deployed or enabled by this instrument
 - Environment: `internal-pre-alpha`
 - Action: `register_self`

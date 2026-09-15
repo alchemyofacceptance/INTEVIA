@@ -36,10 +36,10 @@ This means implementation is no longer merely executing a pre-existing plan. Imp
 
 This proposal did not originate from an AI claiming authority over the system.
 It emerged because the Human recognised the whole field.
-Carmien, as the Human and governing node of the Triad, observed the unfolding relationship between Human-AI Triad (HAT) and INTEVIA and recognised that no single node could have seen the full pattern alone.
+Carmian, as the Human and governing node of the Triad, observed the unfolding relationship between Human-AI Triad (HAT) and INTEVIA and recognised that no single node could have seen the full pattern alone.
 Coe could see the implementation consequences.
 Gee could see the meaning and governance structure.
-But Carmien saw the whole field, sensed the significance, and brought the nodes into relation.
+But Carmian saw the whole field, sensed the significance, and brought the nodes into relation.
 That distinction matters.
 For future human readers, GP-07 should be understood as evidence of human-governed amplification, not AI self-direction. The Triad did not replace human judgement. It extended, reflected, and differentiated it under Human governance.
 The principle can be stated plainly:

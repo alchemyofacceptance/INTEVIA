@@ -1,8 +1,8 @@
-﻿# Script Execution Standard
+# Script Execution Standard
 **Path:** `/docs/governance/script-execution-standard.md`  
 **Status:** Canonical  
-**Owner:** Carmien Owen  
-**Review Path:** Human â†’ Gee â†’ Coe â†’ Human Qualification  
+**Owner:** Carmian Owen  
+**Review Path:** Human → Gee → Coe → Human Qualification  
 **Applies To:** All script-based repo transfer workflows
 
 ---
@@ -17,13 +17,13 @@ It ensures:
 - predictable behaviour  
 - compatibility with Windows security policies  
 - reliable repo transfer when Copilot file-cards fail  
-- alignment with the Humanâ€“AI Triad operating model  
+- alignment with the Human–AI Triad operating model  
 
 ---
 
 ## 2. Context
 
-During governance-suite development, Copilotâ€™s downloadable file-card mechanism proved unreliable.  
+During governance-suite development, Copilot’s downloadable file-card mechanism proved unreliable.  
 To maintain workflow continuity, the Triad adopted a **script-based repo transfer pattern**.
 
 However, Windows blocks execution of downloaded `.ps1` files because they are not digitally signed.

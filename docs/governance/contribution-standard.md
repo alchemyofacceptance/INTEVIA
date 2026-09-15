@@ -1,9 +1,9 @@
-﻿# Contribution Standard
+# Contribution Standard
 
 **Path:** `/docs/governance/contribution-standard.md`  
 **Status:** Canonical  
-**Owner:** Carmien Owen  
-**Review Path:** Human proposal â†’ Gee review â†’ Coe implementation â†’ Human qualification  
+**Owner:** Carmian Owen  
+**Review Path:** Human proposal → Gee review → Coe implementation → Human qualification  
 **Applies To:** Contributions to the INTEVIA repository
 
 ---

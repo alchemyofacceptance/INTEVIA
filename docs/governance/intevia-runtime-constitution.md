@@ -1,8 +1,8 @@
-﻿# INTEVIA Runtime Constitution
+# INTEVIA Runtime Constitution
 **Path:** `/docs/governance/intevia-runtime-constitution.md`
 **Status:** Canonical (upon Human ratification)  
-**Owner:** Carmien Owen  
-**Review Path:** Human â†’ Gee â†’ Coe â†’ Human Qualification  
+**Owner:** Carmian Owen  
+**Review Path:** Human → Gee → Coe → Human Qualification  
 **Scope:** INTEVIA runtime behaviour, state machine, and all executing components
 
 ---
@@ -19,7 +19,7 @@ It is a governed execution environment.
 
 ## 2. Relationship to the Triad Operating Charter
 
-1. The Triad Operating Charter governs the Humanâ€“AI relationship.  
+1. The Triad Operating Charter governs the Human–AI relationship.  
 2. This Runtime Constitution governs the behaviour of the executing system.  
 3. The Runtime Constitution is subordinate to the Triad Operating Charter and must never contradict it.  
 4. All runtime components must operate in a way that preserves Human primacy and Triad coherence.
@@ -28,7 +28,7 @@ It is a governed execution environment.
 
 ## 3. Runtime Evaluation Loop
 
-The runtime evaluates its behaviour through a fourâ€‘phase loop:
+The runtime evaluates its behaviour through a four‑phase loop:
 
 - **Context**  
   The current known state, inputs, and constraints.
@@ -37,7 +37,7 @@ The runtime evaluates its behaviour through a fourâ€‘phase loop:
   The operation the system is about to perform.
 
 - **Result**  
-  The outcome of the action, including artefacts and sideâ€‘effects.
+  The outcome of the action, including artefacts and side‑effects.
 
 - **Evaluation**  
   The assessment of the result against invariants, expectations, and strengthening rules.
@@ -60,10 +60,10 @@ The runtime must uphold the following invariants:
    - a governance rule, or  
    - a documented system event.
 
-3. **Nonâ€‘destructive by default**  
+3. **Non‑destructive by default**  
    Destructive operations must be explicit and governed.
 
-4. **Humanâ€‘overridable**  
+4. **Human‑overridable**  
    The Human must always retain the ability to override or halt runtime behaviour.
 
 5. **No silent doctrine changes**  
@@ -167,7 +167,7 @@ Where recovery is not possible, the runtime must clearly signal the boundary of 
 ## 11. Canonical vs Experimental Runtime Behaviour
 
 - **Canonical runtime behaviour** is governed, documented, and aligned with this Constitution.  
-- **Experimental runtime behaviour** is explicitly marked, isolated, and treated as nonâ€‘Canonical.
+- **Experimental runtime behaviour** is explicitly marked, isolated, and treated as non‑Canonical.
 
 No experimental behaviour may be silently promoted to Canonical without:
 
@@ -183,7 +183,7 @@ This Runtime Constitution becomes Canonical only upon Human ratification.
 
 The Human may ratify this document by stating:
 
-**â€œThis is the way of the HAT.â€**
+**“This is the way of the HAT.”**
 
 Until ratified, this document is treated as a Working artefact.
 

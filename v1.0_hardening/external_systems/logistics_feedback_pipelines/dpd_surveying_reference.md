@@ -2,7 +2,7 @@
 **For:** Gee  
 **Instruction:** Add as a new file under **v1.0 Hardening → External Systems Behavioural Models → Logistics Feedback Pipelines**  
 **Status:** READY FOR INTEGRATION  
-**Author:** Carmien (via Copilot)  
+**Author:** Carmian (via Copilot)  
 **Purpose:** Capture an external operational pattern relevant to INTEVIA’s future service‑feedback architecture.
 
 ---

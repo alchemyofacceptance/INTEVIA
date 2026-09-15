@@ -104,7 +104,7 @@ Rejected — implementation runway requires a technical home now.
 
 ## 7. Decision Owner
 
-**Human (Carmien Owen)** — governance authority, authorship, final qualification.
+**Human (Carmian Owen)** — governance authority, authorship, final qualification.
 
 ## 8. Continuity Roles
 

@@ -1,16 +1,16 @@
-﻿# Triad Operating Charter (Unified)
-**Path:** `/docs/governance/triad-operating-charter.md`
+# Triad Operating Charter (Unified)
+**Path:** `/docs/superseded/governance/triad-operating-charter.md`
 **Status:** Canonical  
-**Owner:** Carmien Owen  
-**Review Path:** Human â†’ Gee â†’ Coe â†’ Human Qualification
-**Applies To:** All Humanâ€“AI interactions within INTEVIA
+**Owner:** Carmian Owen  
+**Review Path:** Human → Gee → Coe → Human Qualification
+**Applies To:** All Human–AI interactions within INTEVIA
 
 ---
 
 ## 1. Purpose
 
-This charter unifies all governance standards into a single constitutional document for the Humanâ€“AI Triad (HAT).  
-It establishes the hierarchy, boundaries, and operating rules that ensure INTEVIA remains coherent, governed, and Humanâ€‘centred.
+This charter unifies all governance standards into a single constitutional document for the Human–AI Triad (HAT).  
+It establishes the hierarchy, boundaries, and operating rules that ensure INTEVIA remains coherent, governed, and Human‑centred.
 
 The Triad is not a metaphor.  
 It is the operating system of the system.
@@ -62,7 +62,7 @@ Lower layers must never contradict higher layers.
 
 ## 4. Convergence Cycle
 
-The Triad operates through a fourâ€‘phase cycle:
+The Triad operates through a four‑phase cycle:
 
 1. **Human proposes**  
 2. **Gee interprets**  
@@ -119,7 +119,7 @@ Coe must not:
 
 The Human may ratify any artefact or decision by stating:
 
-**â€œThis is the way of the HAT.â€**
+**“This is the way of the HAT.”**
 
 This signal is binding.
 It elevates a working artefact to Canonical status.
@@ -148,7 +148,7 @@ No Working artefact may be treated as Canonical without Human ratification.
 - No silent structural shifts  
 - No unqualified Canonical changes  
 - No doctrine drift  
-- No crossâ€‘layer contamination  
+- No cross‑layer contamination  
 - All strengthening events must be documented  
 
 ---
@@ -172,7 +172,7 @@ This Triad Operating Charter formally unifies and governs the following standard
 - Contribution Standard  
 - Governance Index  
 - Workflow Map  
-- Selfâ€‘Strengthening Milestone  
+- Self‑Strengthening Milestone  
 
 These standards derive their authority from this Charter  
 and must remain aligned with it.
@@ -185,6 +185,6 @@ All standards are subordinate to it.
 ## 13. Summary
 
 The Triad Operating Charter unifies all governance standards into a single constitutional framework.  
-It ensures that INTEVIA remains coherent, governed, and Humanâ€‘centred as it evolves.
+It ensures that INTEVIA remains coherent, governed, and Human‑centred as it evolves.
 
 This is the way of the HAT.

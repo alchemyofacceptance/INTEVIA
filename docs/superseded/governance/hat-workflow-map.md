@@ -1,9 +1,9 @@
-﻿# HAT Workflow Map
+# HAT Workflow Map
 
-**Path:** `/docs/governance/hat-workflow-map.md`  
+**Path:** `/docs/superseded/governance/hat-workflow-map.md`  
 **Status:** Canonical  
-**Owner:** Carmien Owen  
-**Review Path:** Human proposal â†’ Gee review â†’ Coe implementation â†’ Human qualification  
+**Owner:** Carmian Owen  
+**Review Path:** Human proposal → Gee review → Coe implementation → Human qualification  
 **Applies To:** Human-AI Triad workflows within INTEVIA
 
 ---
@@ -75,7 +75,7 @@ The purpose of preservation is to protect continuity across time, contributors, 
 
 Meaning flows primarily through:
 
-- Human â†’ Gee â†’ Human
+- Human → Gee → Human
 
 Gee supports interpretation, synthesis, semantic continuity, and meaning-level drift detection.
 
@@ -87,7 +87,7 @@ Meaning does not become Canonical without Human qualification.
 
 Making flows primarily through:
 
-- Human â†’ Coe â†’ Human
+- Human → Coe → Human
 
 Coe supports structure, implementation, artefact creation, and technical verification.
 
@@ -118,12 +118,12 @@ The Human remains the qualifying node.
 
 Use these escalation paths:
 
-- meaning ambiguity â†’ Gee
-- structural ambiguity â†’ Coe
-- governance ambiguity â†’ Human
-- Canonical status ambiguity â†’ Human
-- public/private boundary ambiguity â†’ Human
-- Working vs Canonical ambiguity â†’ Human
+- meaning ambiguity → Gee
+- structural ambiguity → Coe
+- governance ambiguity → Human
+- Canonical status ambiguity → Human
+- public/private boundary ambiguity → Human
+- Working vs Canonical ambiguity → Human
 
 ---
 

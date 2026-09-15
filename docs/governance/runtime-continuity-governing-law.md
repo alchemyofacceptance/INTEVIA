@@ -1,4 +1,4 @@
-﻿# INTEVIA Governing Law — Continuity of Runtime
+# INTEVIA Governing Law — Continuity of Runtime
 
 ## Status
 

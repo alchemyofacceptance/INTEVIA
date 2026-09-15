@@ -4,7 +4,7 @@ Document status: Control-phase project record / repo mutation candidate
 System: INTEVIA Governance Execution System
 Project: Sprint 2 — WB2 Governance Architecture Stabilisation
 Date recorded: 2026-07-02
-Human Governor: Carmien Owen
+Human Governor: Carmian Owen
 
 ## Project classification
 

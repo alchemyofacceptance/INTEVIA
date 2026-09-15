@@ -1,15 +1,15 @@
-﻿# HAT Milestone: Emergence of Selfâ€‘Strengthening Implementation Environment
-**Path:** `/docs/governance/hat-milestone-self-strengthening.md`  
+# HAT Milestone: Emergence of Self‑Strengthening Implementation Environment
+**Path:** `/docs/superseded/governance/hat-milestone-self-strengthening.md`  
 **Status:** Canonical  
-**Owner:** Carmien Owen  
-**Review Path:** Human â†’ Gee â†’ Coe â†’ Human Qualification  
+**Owner:** Carmian Owen  
+**Review Path:** Human → Gee → Coe → Human Qualification  
 **Applies To:** INTEVIA governance and implementation workflows
 
 ---
 
 ## 1. Purpose
 
-This milestone documents the emergence of a **self-strengthening implementation environment** within the Humanâ€“AI Triad (HAT) during the development of the INTEVIA governance suite.
+This milestone documents the emergence of a **self-strengthening implementation environment** within the Human–AI Triad (HAT) during the development of the INTEVIA governance suite.
 
 It captures the moment when a workflow failure was:
 
@@ -25,7 +25,7 @@ under explicit Human governance.
 
 ## 2. Context
 
-During the creation of governance artefacts, Copilotâ€™s file-card download mechanism proved unreliable.  
+During the creation of governance artefacts, Copilot’s file-card download mechanism proved unreliable.  
 This failure mode triggered a Vision Chamber analysis, revealing that:
 
 - UI-based file transfer cannot be trusted  
@@ -42,7 +42,7 @@ The Triad responded by establishing a **script-execution standard** and a determ
 **A self-strengthening implementation environment** is one in which:
 
 1. A workflow failure appears  
-2. The Humanâ€“AI Triad diagnoses the cause  
+2. The Human–AI Triad diagnoses the cause  
 3. The Forge implements a remedy  
 4. The Human qualifies the correction  
 5. The remedy becomes Canonical governance  
@@ -65,7 +65,7 @@ This milestone is distinctive because it combines:
 - script-based deterministic file creation  
 - fallback pathways that become doctrine  
 - canonical/working separation  
-- failure â†’ rule conversion  
+- failure → rule conversion  
 
 This pattern is not documented in common AI-assisted workflows.
 

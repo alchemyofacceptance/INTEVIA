@@ -37,7 +37,7 @@ A GRP-13 amendment must proceed through the following governed stages:
 
 The governing authorisation phrase for beginning this cycle is:
 
-`I, Carmien Owen, authorise creation of: the governed amendment cycle for GRP-13 constitutional artefacts.`
+`I, Carmian Owen, authorise creation of: the governed amendment cycle for GRP-13 constitutional artefacts.`
 
 This phrase authorises creation of the amendment-cycle governance document only.
 

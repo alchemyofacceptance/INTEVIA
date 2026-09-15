@@ -56,7 +56,7 @@ This scaffold establishes clear boundaries between public documentation, impleme
 
 The repository was created under the Human–AI Triad (HAT) governance model:
 
-- **Human (Carmien Owen):**  
+- **Human (Carmian Owen):**  
   Authorship, judgement, and final authority for public/private boundaries and repository creation.
 
 - **Meaning Continuity:**  
