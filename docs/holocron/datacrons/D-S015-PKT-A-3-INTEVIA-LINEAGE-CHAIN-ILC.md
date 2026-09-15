@@ -15,6 +15,13 @@ whose own identity is given. Authority classes are marked: `[H]` Human-issued,
 object, `[A]` seat reading. A code never travels alone: it carries what it means in
 the same sentence.
 
+**Corrected at v0.8, 15 September 2026, after placement of v0.7 at `b11b246`.** An
+external review of the public repository found that this record described the identity
+split and its guardian as landed when the migration bytes do not deliver them. The
+corrections are marked `Correction (v0.8)` at §1, §3, §4, §6, §8, §9, §10, §13 and §14;
+the corrected text is retained beside each so the error is readable. Nothing is
+rewritten. `[E — migration bytes at 5eb7783, read for this correction]`
+
 **AI seats are described by function, not by vendor or model**, by Human ruling of
 15 September 2026 `[H]`. Lineage is named in one place only, at §11, where a
 corroboration claim cannot be read without it.
@@ -73,6 +80,17 @@ populated chains undergo further schema changes `[H]`.
 **The design-side unit records U21h and U21k are open working records**, marked
 `DRAFT_v1` and `OPEN` respectively. Their content is the source of §5 and §6; their
 status is not closed.
+
+**Correction (v0.8) — a fifth fact, and the one that matters most.** Two Human rulings
+of 12 September are **not delivered in the landed migration** `[E]`: the identity split
+(`core_identity` is untouched; a parallel `core_identityresolution` table was created
+with its own copies of the personal columns) and the insert-only guardian
+(`s015_0022_guard_identity_resolution` is `BEGIN RETURN NEW; END;` on a plain
+`AFTER INSERT`, not a deferred constraint trigger, and checks nothing). The severance
+ledger (`R-d`) is delivered. None of the eighteen gate-6 scenarios tested either ruling.
+**Ruled by the Human Governor, 15 September 2026: both are carried into `PKT-B`** `[H]`.
+Where this record below says the split or the guardian landed, the correction at that
+place governs.
 
 ---
 
@@ -213,6 +231,12 @@ In substance, five things:
    resolves to nothing. A deferred `AFTER INSERT` constraint trigger on the referent
    table checks at commit that a resolution exists — **insert-only**, because a standing
    check would refuse the takedown the split exists to enable `[H — U21h §3]`.
+   **Correction (v0.8): that is the ruling and the designated design (§5.5), not the
+   landed migration.** `0022` issues no `ALTER` against `core_identity`; the personal
+   columns stay where they were, and `core_identityresolution` carries copies of them
+   plus `credential_link`. The guardian function body is `RETURN NEW` and its trigger is
+   not a constraint trigger. **What landed of item 1 is the table and the ledger; the
+   split and the existence check did not** `[E]`.
 2. **The severance ledger** (`core_identityresolutionsevered`), ruled `R-d`: an identity
    reference once assigned to a party remains assigned; severance is recorded atomically
    on takedown and any further resolution for that reference is refused, whether or not it
@@ -232,7 +256,9 @@ In substance, five things:
 
 ### What it does not build
 
-**No party table, no ILC record table, no registry** `[C — design §12 U-2]`. `actor` is
+**Correction (v0.8): no movement of the personal columns off `core_identity`, and no
+resolution-must-exist check** `[E]`. **No party table, no ILC record table, no
+registry** `[C — design §12 U-2]`. `actor` is
 not moved into any relation; whether from-party, successor and recipient go through a
 general party relation (`R-c`) is retained for adversarial review and not built. **No
 `actor_organism_id`** — the Organism-actor limb is deferred (`BD-1`). **No second-layer
@@ -301,6 +327,12 @@ with 209 `PROTECT` foreign keys reaching it; the database would decline to obey 
 removes the resolution and leaves every chain reference intact and resolving to nobody.
 **Erasure is provable rather than procedural**, and the personal/non-personal boundary
 sits in the schema rather than in a developer's judgement `[H]`.
+
+**Correction (v0.8): the paragraph above describes the ruling's intent, not the landed
+state.** As landed, `core_identity` still carries its personal columns behind the same
+`PROTECT` foreign keys; deleting a `core_identityresolution` row removes a copy and
+leaves the original in place. **Provable erasure is not delivered by `0022`.** The
+falsifier discharge below remains true and is now moot until the split lands `[E]`.
 
 **The falsifier for that change was discharged by execution, not argument**:
 `canonical_username` is nowhere on the authentication path — zero occurrences of
@@ -487,6 +519,9 @@ the source records one.
   remembering fails silently — the same ground as the split `[U21h §3]`.
 - **Insert-only scope.** Ground: read as standing it would refuse the takedown the
   split exists to enable `[U21h §3]`.
+- **Correction (v0.8) — delivery status of the two rulings above: NOT DELIVERED in
+  `0022`** `[E]`. **Ruled 15 September 2026: carried into `PKT-B`** `[H]`. The `R-d`
+  ledger ruling below is delivered.
 - **Every guardian states its temporal scope and why** (`U21h-13`), 12 September,
   binding every guardian written from then; the existing 163 are not rewritten, and
   whether any carries the wrong scope is a sweep recorded and not run `[U21h §2]`.
@@ -614,7 +649,9 @@ base-branch guardian as a disclosed no-op; the landed body does more than nothin
 less than Ruling 9.
 **The insert-only scope** on the identity guardian was the price of provable erasure: a
 stranded referent is possible only between a failed registration and its cleanup, and
-the falsifier is a referent row that commits with no resolution. **Landing on `main`
+the falsifier is a referent row that commits with no resolution. **Correction (v0.8):
+as landed that falsifier is met on every insert — the guardian checks nothing — and the
+price described was not paid, because the split it guards did not land** `[E]`. **Landing on `main`
 directly**, ruled over the Vision Chamber's carried constraint, is what exposed
 C-U21l-09 — the constraint was superseded and the seat kept propagating it.
 
@@ -750,6 +787,23 @@ non-superuser production role `intevia_app`, `rolsuper=False` `[E — U21l §3B,
 **A gate that has only ever returned PASS has not been tested.** Gate 5 was trusted
 only after it refused four defective configurations and then returned 0.
 
+**Correction (v0.8) — what the gates did not ask.** The eighteen scenarios exercised
+the severance ledger (`R-d-1`, `R-d-2`, scenario 10) and never asked whether the
+personal columns had left `core_identity` or whether a referent without a resolution is
+refused at commit. The design census reconciled the guardian by **name**; the property
+was never tested. Presence passed; the ruling did not land. The same class as
+`F-U21j-06` and `F-U21l-12`, on the packet's largest structural change `[E]`.
+
+**Correction (v0.8) — the committed test file.** `core/tests/test_s015_0022_contract.py`
+was carried as verified bytes and, on the record, never executed against the final
+candidate — the gates ran the instruments at `scripts/u21l_r_d/`. Against the landed
+migration it fails twice: it asserts `core_identityresolution` has three columns where
+the migration creates four (`credential_link` added), and it expects
+`s015_0022_l2_preimage` to return a value for an object body where the function raises
+on every call, as ruled. Six test methods in the file; none exercises parts, the L1
+commitment, the predecessor-commitment match, actor state or append-only on the new
+tables `[E]`.
+
 ### The empirical attack run, 14 September
 
 Against a representative chain modelling `0021`'s guard shapes, at two privilege levels
@@ -846,6 +900,23 @@ handover §3]`:
   tables and passed on an empty database, so the contract was never exercised against
   existing fingerprints. **Resolved before populated chains undergo further schema
   changes** `[H]`.
+
+**Raised at this record's correction, 15 September 2026, v0.8** `[E]`, and **carried
+into `PKT-B` by Human ruling of the same day** `[H]`:
+
+- **The identity split is not delivered.** `0022` does not alter `core_identity`; the
+  personal columns remain on it; `core_identityresolution` is a parallel table with
+  copies plus `credential_link`. The ruling of 12 September (U21h §3) and design §5.5
+  stand undelivered.
+- **The insert-only guardian is not delivered.** `s015_0022_guard_identity_resolution`
+  is `RETURN NEW` on a plain `AFTER INSERT`; a referent commits with no resolution.
+- **The committed test file contradicts the committed migration** on the resolution
+  table's columns and on the L2 preimage's behaviour, and was not run against the final
+  candidate on the record. It is repaired against the migration, or replaced, before it
+  is cited as evidence of anything.
+- **Whether `makemigrations --check` is clean against `0022`** is not established;
+  `core/models.py` is untouched by `5eb7783` and no ORM class exists for the four new
+  tables or the altered `actor` nullability. One command derives it.
 
 **Open questions and dispositions carried unchanged** — under the designation
 criterion an open question does not block; an undelivered ruling does:
@@ -1012,6 +1083,16 @@ present-tense sentences in §§3, 4 and 6 treating the fingerprint consequence a
 ILC's establishment as settled where §§1 and 9 reserve both; and the `PKT-B` directions
 cited without their origin. All corrected at v0.5. The common class: explanatory prose
 reasserting what the record's own findings section had carefully reserved.
+
+**`C-DC-06` — the most serious correction in this unit.** This record at v0.7 described
+the identity split and its guardian as landed. Both descriptions were carried from the
+designated design and the unit records; neither was derived from the migration bytes,
+which were in the seat's container from the Human Governor's archive before v0.3 and
+whose two relevant function bodies are eleven lines long. On a packet whose entire method
+lesson is that a name is not a property, the record's largest structural claim was a
+name. Found by an external review of the public repository commissioned by the Human
+Governor as a presentation exercise, not as an audit — and verified against the bytes
+here. Corrected at v0.8 by a second placement.
 
 ---
 
@@ -1261,6 +1342,10 @@ the cost ratio informs what a funder is being asked to fund.
 - **Admit an Organism as an actor.** `BD-1` deferred. The twelve capacity-guardian
   triggers fire and enforce label consistency only; substantive standing verification
   remains deferred under `U-3` and `BD-1`.
+- **Correction (v0.8): deliver the identity split as ruled, or install a
+  resolution-must-exist guardian.** Neither is in `0022`; both carried into `PKT-B`.
+- **Correction (v0.8): run the committed test file against the final candidate.** On
+  the record it was not, and as written it fails.
 - **Build a party table, an ILC record table or a registry.** `R-c` not built.
 - **Rule `U-2`.** Whether the packet established the ILC or carried its record-level
   additions is open; this record's title does not decide it.
@@ -1344,6 +1429,11 @@ U21k Drive copy vs relayed copy             DISCREPANCY RECORDED (§8)
 Fingerprint compatibility across column
    addition                                 RAISED; resolved before populated chains change
 U-1 / U-2 / BD-1 reconciliation             DIRECTED to PKT-B design, with owner and need-by
+Identity split (12 Sep ruling)              NOT DELIVERED in 0022; CARRIED INTO PKT-B (v0.8)
+Insert-only identity guardian               NOT DELIVERED in 0022; CARRIED INTO PKT-B (v0.8)
+core/tests/test_s015_0022_contract.py       CONTRADICTS the migration; repair or replace owed
+makemigrations --check against 0022         NOT ESTABLISHED; one command owed
+Datacron v0.7 at b11b246                    SUPERSEDED by this v0.8 correction placement
 ```
 
 ### Open at the time of writing, presented in full
@@ -1353,8 +1443,9 @@ set, each with its meaning, is at §9 and is not abbreviated here. The items res
 the Human Governor and bearing directly on this packet: `U-1`, whether ILC Ruling 3
 binds the twelve S015 chains; `U-2`, the packet's scope reading; `U-3`, the Learner limb
 of the capacity test; `U-6`, admission policy on the resolution table; `R-c`, the general
-party relation; the attack disposition; the fingerprint-compatibility contract; and the
-placement of this record.
+party relation; the attack disposition; the fingerprint-compatibility contract; the
+disposition in `PKT-B` of the undelivered split and guardian; and the placement of this
+record.
 
 ### Authority boundary
 
