@@ -220,3 +220,23 @@ __marimo__/
 intevia-session.ps1
 
 *.dump
+
+# U21l verification instruments and carrier scratch - not part of the repository change set
+scripts/u21l_r_d/
+_carrier/
+
+
+# U21l run artefacts and scratch - not part of the repository change set
+_derive_check.py
+_chk.py
+g4.txt
+g5.txt
+g6.txt
+g6_binding.txt
+g6_role.txt
+g7.txt
+m21.txt
+m22.txt
+migrate_0022.txt
+binding_run_3_12_10.txt
+
