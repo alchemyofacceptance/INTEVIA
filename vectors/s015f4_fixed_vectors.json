@@ -1,0 +1,3763 @@
+{
+  "form_version": "s015f4",
+  "ruling": "PKT-A-3 bumps the canonical form (U21h section 3, 12 Sep 2026); designated design LD_RETURN_PKT_A_3_MIGRATION_0022_DESIGN_v0_6.md section 9: s015f3 moves to s015f4, vectors regenerate; U21g-27: the canonical record encodes every column",
+  "cardinality": "eight vectors: seven re-derived from the Phase 2 s015f2 inputs (V1, V2, V3a, V3b, V3c, V4, V5) plus one additional obligation vector (V6)",
+  "authored_inputs_note": "Columns the s015f2 record did not carry (id, predecessor_id, actor_id, authority_basis_id, the anchor FK, action, references, keys, temporal basis, obligation extras) hold authored values [A]; they are part of the published input. In a live table id and recorded_at are database-assigned. s015f4: the fourteen columns added by PKT-A-3 (design v0.6 section 5.1) hold authored values derived from the act each event represents - a person acting and entering the record themselves: actor_state PARTY, actor_capacity STANDING, enterer_identity_id = actor_id, entry_mode TRANSPORT, composing_rule_state and composer_state NA_TRANSPORT, no end date (effective_until null, effective_until_state NONE), no L2 body. The commitment values are serialization inputs only: see serialization_inputs.",
+  "grammar": [
+    "Envelope   : [\"s015f4\",\"<anchor token>\",\"<anchor identity uuid, lowercase hyphenated>\",[<record>,<record>,...]]",
+    "Record     : JSON object {\"<column>\":<value>,...} containing EVERY column of the event table, keys in bytewise (C-collation) ascending order of the column name",
+    "timestamptz: UTC, \"YYYY-MM-DDTHH:MM:SS.ffffffZ\" (exactly six fractional digits, four-digit zero-padded year), as a JSON string",
+    "uuid       : lowercase hyphenated 8-4-4-4-12 hexadecimal, as a JSON string",
+    "varchar    : JSON string with the mandatory escapes only (\" \\\\ and U+0000-U+001F; \\b \\t \\n \\f \\r short forms; other controls \\u00xx lowercase hex); non-ASCII as raw UTF-8 (Python json.dumps(s, ensure_ascii=False); PostgreSQL to_json(text)::text)",
+    "integer/bigint: JSON number, shortest decimal, optional leading '-', no quotes",
+    "NULL       : the literal null; the key is always present",
+    "boolean/json: no rule in s015f4 — no such column exists; the serialiser refuses",
+    "Order      : records ascending by (effective_at, occurred_at, received_at, recorded_at, sequence, event_uuid)",
+    "Eligible   : effective_at <= state_at AND received_at <= known_at AND recorded_at <= known_at (unchanged)",
+    "Bytes      : UTF-8, separators , and : with no whitespace anywhere",
+    "Digest     : \"s015f4:\" + lowercase hex SHA-256 of the bytes — 71 characters"
+  ],
+  "inventories": {
+    "core_livingorganismevent": {
+      "anchor_token": "core_livingorganism",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "living_organism_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_circlestateevent": {
+      "anchor_token": "core_circle",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "circle_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_organismmembershiptransition": {
+      "anchor_token": "core_organismmembership",
+      "column_count": 39,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "membership_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "reason_class",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_contextualroleassignmentstateevent": {
+      "anchor_token": "core_contextualroleassignment",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "assignment_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_membershipconditionstateevent": {
+      "anchor_token": "core_membershipcondition",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "condition_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_authorityinvalidationevent": {
+      "anchor_token": "core_authoritybasis",
+      "column_count": 39,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_determinationcontestevent": {
+      "anchor_token": "core_determinationcontestcase",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_coverageassessment": {
+      "anchor_token": "core_essentialcoveragecase",
+      "column_count": 42,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "determiner_capacity_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "evaluated_known_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "evaluated_state_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "result",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "roster_version",
+          "pg_type": "integer"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_restrictedcontinuityevent": {
+      "anchor_token": "core_restrictedcontinuitycase",
+      "column_count": 42,
+      "canonical_columns": [
+        {
+          "column": "accountable_actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "permitted_measures_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "prohibited_effects_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "triggering_assessment_id",
+          "pg_type": "bigint"
+        }
+      ]
+    },
+    "core_visibilitygrantstateevent": {
+      "anchor_token": "core_governedvisibilitygrant",
+      "column_count": 38,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "grant_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_obligationstateevent": {
+      "anchor_token": "core_governedobligationcase",
+      "column_count": 46,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "consequences_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "escalation_path_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "extension_basis_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "interim_measures_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "legal_basis_determination_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "legal_deadline_status",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "qualified_legal_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    },
+    "core_planningclassificationevent": {
+      "anchor_token": "core_planningclassificationcase",
+      "column_count": 39,
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "criterion_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "result",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ]
+    }
+  },
+  "inventory_total_columns": 475,
+  "vectors": [
+    {
+      "id": "V1",
+      "kind": "re-derived",
+      "title": "empty set, Living Organism",
+      "anchor_token": "core_livingorganism",
+      "anchor_identity": "11111111-2222-3333-4444-555555555555",
+      "event_table": "core_livingorganismevent",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "living_organism_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [],
+      "preimage": "[\"s015f4\",\"core_livingorganism\",\"11111111-2222-3333-4444-555555555555\",[]]",
+      "preimage_bytes": 74,
+      "digest": "s015f4:c4148153c2522da7455f4f41b20fa10a4cd9be15720181e66bd3ea5ef7e8ab91"
+    },
+    {
+      "id": "V2",
+      "kind": "re-derived",
+      "title": "one event, Living Organism",
+      "anchor_token": "core_livingorganism",
+      "anchor_identity": "11111111-2222-3333-4444-555555555555",
+      "event_table": "core_livingorganismevent",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "living_organism_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "FOUND",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000001",
+          "effective_at": "2026-09-01T09:00:00.000002Z",
+          "event_uuid": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          "evidence_reference": "u21h:evidence:V-1",
+          "id": 9001,
+          "idempotency_key": "u21h:core_livingorganismevent:1",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+          "living_organism_id": 7001,
+          "occurred_at": "2026-08-31T23:59:59.123456Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000001e6",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "received_at": "2026-09-01T09:00:00.000002Z",
+          "recorded_at": "2026-09-01T09:00:00.000003Z",
+          "request_reference": "u21h:request:V-1",
+          "resulting_state": "ACTIVE",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:8b70552365043eb5ef3af20f174aab6f2794a7fc332b12d176e4e41b04886d45",
+          "l1_commitment": "s015r1:98f0a5ea366141f6007ccaa5df645322b544113789591f26ac7eeec14d5cf4c5",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_livingorganism\",\"11111111-2222-3333-4444-555555555555\",[{\"action\":\"FOUND\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000001\",\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T09:00:00.000002Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"evidence_reference\":\"u21h:evidence:V-1\",\"id\":9001,\"idempotency_key\":\"u21h:core_livingorganismevent:1\",\"l1_commitment\":\"s015r1:98f0a5ea366141f6007ccaa5df645322b544113789591f26ac7eeec14d5cf4c5\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1\",\"living_organism_id\":7001,\"occurred_at\":\"2026-08-31T23:59:59.123456Z\",\"parts_commitment\":\"s015p1:8b70552365043eb5ef3af20f174aab6f2794a7fc332b12d176e4e41b04886d45\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000001e6\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"received_at\":\"2026-09-01T09:00:00.000002Z\",\"recorded_at\":\"2026-09-01T09:00:00.000003Z\",\"request_reference\":\"u21h:request:V-1\",\"resulting_state\":\"ACTIVE\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null}]]",
+      "preimage_bytes": 1530,
+      "digest": "s015f4:ff6973e2d2640fb1269135ca4160530e4950919b4fc0dbb1a6775bcdf6b800cf"
+    },
+    {
+      "id": "V3a",
+      "kind": "re-derived",
+      "title": "eligibility, membership — E1 only at (2026-09-15, 2026-09-15)",
+      "anchor_token": "core_organismmembership",
+      "anchor_identity": "22222222-3333-4444-5555-666666666666",
+      "event_table": "core_organismmembershiptransition",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "membership_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "reason_class",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "ADMIT",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000002",
+          "effective_at": "2026-09-01T08:00:00.000000Z",
+          "event_uuid": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          "evidence_reference": "u21h:evidence:V-2",
+          "id": 9002,
+          "idempotency_key": "u21h:core_organismmembershiptransition:2",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+          "membership_id": 7002,
+          "occurred_at": "2026-09-01T08:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000002d9",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "reason_class": null,
+          "received_at": "2026-09-01T08:00:00.000000Z",
+          "recorded_at": "2026-09-01T08:00:00.500000Z",
+          "request_reference": "u21h:request:V-2",
+          "resulting_state": "ACTIVE",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983",
+          "l1_commitment": "s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_organismmembership\",\"22222222-3333-4444-5555-666666666666\",[{\"action\":\"ADMIT\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000002\",\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T08:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\",\"evidence_reference\":\"u21h:evidence:V-2\",\"id\":9002,\"idempotency_key\":\"u21h:core_organismmembershiptransition:2\",\"l1_commitment\":\"s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2\",\"membership_id\":7002,\"occurred_at\":\"2026-09-01T08:00:00.000000Z\",\"parts_commitment\":\"s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000002d9\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"reason_class\":null,\"received_at\":\"2026-09-01T08:00:00.000000Z\",\"recorded_at\":\"2026-09-01T08:00:00.500000Z\",\"request_reference\":\"u21h:request:V-2\",\"resulting_state\":\"ACTIVE\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null}]]",
+      "preimage_bytes": 1558,
+      "digest": "s015f4:6fc9336be2a43ea8ab9f05188c0c2d0eaeea4d80c67acaa42fcd25d24875f705"
+    },
+    {
+      "id": "V3b",
+      "kind": "re-derived",
+      "title": "eligibility, membership — E1 and future-effective E2 at (2026-10-02, 2026-10-02)",
+      "anchor_token": "core_organismmembership",
+      "anchor_identity": "22222222-3333-4444-5555-666666666666",
+      "event_table": "core_organismmembershiptransition",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "membership_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "reason_class",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "ADMIT",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000002",
+          "effective_at": "2026-09-01T08:00:00.000000Z",
+          "event_uuid": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          "evidence_reference": "u21h:evidence:V-2",
+          "id": 9002,
+          "idempotency_key": "u21h:core_organismmembershiptransition:2",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+          "membership_id": 7002,
+          "occurred_at": "2026-09-01T08:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000002d9",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "reason_class": null,
+          "received_at": "2026-09-01T08:00:00.000000Z",
+          "recorded_at": "2026-09-01T08:00:00.500000Z",
+          "request_reference": "u21h:request:V-2",
+          "resulting_state": "ACTIVE",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983",
+          "l1_commitment": "s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        },
+        {
+          "action": "SUSPEND",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000003",
+          "effective_at": "2026-10-01T00:00:00.000000Z",
+          "event_uuid": "cccccccc-dddd-4eee-8fff-000000000000",
+          "evidence_reference": "u21h:evidence:V-3",
+          "id": 9003,
+          "idempotency_key": "u21h:core_organismmembershiptransition:3",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3",
+          "membership_id": 7002,
+          "occurred_at": "2026-09-01T09:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000003cc",
+          "predecessor_id": 9002,
+          "predecessor_sequence": 1,
+          "prior_state": "ACTIVE",
+          "reason_class": null,
+          "received_at": "2026-09-01T09:00:00.000000Z",
+          "recorded_at": "2026-09-01T09:00:00.250000Z",
+          "request_reference": "u21h:request:V-3",
+          "resulting_state": "SUSPENDED",
+          "sequence": 2,
+          "temporal_basis_kind": "PROSPECTIVE",
+          "temporal_basis_reference": "u21h:basis:V-3",
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:378c0ab4617d49f01835a95db2590022ac85818742de1f5d26d0f2918d63e4ce",
+          "l1_commitment": "s015r1:4c6ce0633c37b4c9408daa94e5b83cd0441bf3a101591a6ecd9433d929604150",
+          "predecessor_l1_commitment": "s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485",
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_organismmembership\",\"22222222-3333-4444-5555-666666666666\",[{\"action\":\"ADMIT\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000002\",\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T08:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\",\"evidence_reference\":\"u21h:evidence:V-2\",\"id\":9002,\"idempotency_key\":\"u21h:core_organismmembershiptransition:2\",\"l1_commitment\":\"s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2\",\"membership_id\":7002,\"occurred_at\":\"2026-09-01T08:00:00.000000Z\",\"parts_commitment\":\"s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000002d9\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"reason_class\":null,\"received_at\":\"2026-09-01T08:00:00.000000Z\",\"recorded_at\":\"2026-09-01T08:00:00.500000Z\",\"request_reference\":\"u21h:request:V-2\",\"resulting_state\":\"ACTIVE\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null},{\"action\":\"SUSPEND\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000003\",\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-10-01T00:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"cccccccc-dddd-4eee-8fff-000000000000\",\"evidence_reference\":\"u21h:evidence:V-3\",\"id\":9003,\"idempotency_key\":\"u21h:core_organismmembershiptransition:3\",\"l1_commitment\":\"s015r1:4c6ce0633c37b4c9408daa94e5b83cd0441bf3a101591a6ecd9433d929604150\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3\",\"membership_id\":7002,\"occurred_at\":\"2026-09-01T09:00:00.000000Z\",\"parts_commitment\":\"s015p1:378c0ab4617d49f01835a95db2590022ac85818742de1f5d26d0f2918d63e4ce\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000003cc\",\"predecessor_id\":9002,\"predecessor_l1_commitment\":\"s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485\",\"predecessor_sequence\":1,\"prior_state\":\"ACTIVE\",\"reason_class\":null,\"received_at\":\"2026-09-01T09:00:00.000000Z\",\"recorded_at\":\"2026-09-01T09:00:00.250000Z\",\"request_reference\":\"u21h:request:V-3\",\"resulting_state\":\"SUSPENDED\",\"sequence\":2,\"temporal_basis_kind\":\"PROSPECTIVE\",\"temporal_basis_reference\":\"u21h:basis:V-3\"}]]",
+      "preimage_bytes": 3135,
+      "digest": "s015f4:cd1954d2babcf66486ddb71f0447950af8c80ec7d5a8bc2b8181c3d190d36fbe"
+    },
+    {
+      "id": "V3c",
+      "kind": "re-derived",
+      "title": "eligibility, membership — at (2026-10-02, 2026-09-01T09:00:00Z) E2's recorded_at exceeds known_at: E1 only (identical to V3a)",
+      "anchor_token": "core_organismmembership",
+      "anchor_identity": "22222222-3333-4444-5555-666666666666",
+      "event_table": "core_organismmembershiptransition",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "membership_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "reason_class",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "ADMIT",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000002",
+          "effective_at": "2026-09-01T08:00:00.000000Z",
+          "event_uuid": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          "evidence_reference": "u21h:evidence:V-2",
+          "id": 9002,
+          "idempotency_key": "u21h:core_organismmembershiptransition:2",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+          "membership_id": 7002,
+          "occurred_at": "2026-09-01T08:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000002d9",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "reason_class": null,
+          "received_at": "2026-09-01T08:00:00.000000Z",
+          "recorded_at": "2026-09-01T08:00:00.500000Z",
+          "request_reference": "u21h:request:V-2",
+          "resulting_state": "ACTIVE",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983",
+          "l1_commitment": "s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_organismmembership\",\"22222222-3333-4444-5555-666666666666\",[{\"action\":\"ADMIT\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000002\",\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T08:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\",\"evidence_reference\":\"u21h:evidence:V-2\",\"id\":9002,\"idempotency_key\":\"u21h:core_organismmembershiptransition:2\",\"l1_commitment\":\"s015r1:b52b51bd36d49d6768a6081cf80def479cbd0b640a6501e2b86916954d48e485\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2\",\"membership_id\":7002,\"occurred_at\":\"2026-09-01T08:00:00.000000Z\",\"parts_commitment\":\"s015p1:901d360ba65a80002cb6967bf39e3266daef2ca462035541047e0eb64e4d2983\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000002d9\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"reason_class\":null,\"received_at\":\"2026-09-01T08:00:00.000000Z\",\"recorded_at\":\"2026-09-01T08:00:00.500000Z\",\"request_reference\":\"u21h:request:V-2\",\"resulting_state\":\"ACTIVE\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null}]]",
+      "preimage_bytes": 1558,
+      "digest": "s015f4:6fc9336be2a43ea8ab9f05188c0c2d0eaeea4d80c67acaa42fcd25d24875f705"
+    },
+    {
+      "id": "V4",
+      "kind": "re-derived",
+      "title": "fold order is the sextuple, not the sequence — Circle; F2 (sequence 2) sorts before F1 on occurred_at, so F2's record-time predecessor set is empty and its prior_state is NULL",
+      "anchor_token": "core_circle",
+      "anchor_identity": "44444444-5555-6666-7777-888888888888",
+      "event_table": "core_circlestateevent",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "circle_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "QUALIFY",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000004",
+          "circle_id": 7004,
+          "effective_at": "2026-09-01T10:00:00.000000Z",
+          "event_uuid": "eeeeeeee-ffff-4000-8111-222222222222",
+          "evidence_reference": "u21h:evidence:V-4",
+          "id": 9004,
+          "idempotency_key": "u21h:core_circlestateevent:4",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4",
+          "occurred_at": "2026-09-01T09:30:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000004bf",
+          "predecessor_id": null,
+          "predecessor_sequence": 1,
+          "prior_state": null,
+          "received_at": "2026-09-01T11:00:00.000000Z",
+          "recorded_at": "2026-09-01T11:00:01.000000Z",
+          "request_reference": "u21h:request:V-4",
+          "resulting_state": "ELIGIBLE",
+          "sequence": 2,
+          "temporal_basis_kind": "RETROSPECTIVE",
+          "temporal_basis_reference": "u21h:basis:V-4",
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:1a291b6728d01a54f43c2b962eb6b4caf3fbc0f96beff3bf8c4b5e5f0f90ae55",
+          "l1_commitment": "s015r1:1fd008ca5e98e3e41bd8020cea16d94d199392c17a336a4023de15bfa62b18ff",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        },
+        {
+          "action": "CONSTITUTE",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000005",
+          "circle_id": 7004,
+          "effective_at": "2026-09-01T10:00:00.000000Z",
+          "event_uuid": "dddddddd-eeee-4fff-8000-111111111111",
+          "evidence_reference": "u21h:evidence:V-5",
+          "id": 9005,
+          "idempotency_key": "u21h:core_circlestateevent:5",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5",
+          "occurred_at": "2026-09-01T10:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000005b2",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "received_at": "2026-09-01T10:00:00.000000Z",
+          "recorded_at": "2026-09-01T10:00:01.000000Z",
+          "request_reference": "u21h:request:V-5",
+          "resulting_state": "DORMANT",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:7ac8d4be71425b1ebdc0dfa145f5633d5cf777dda761767df13b1293ec8b849d",
+          "l1_commitment": "s015r1:2814ff1dfd2ad701952725d11ea063a804e9596559618b7846030d9d7e4b50d0",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_circle\",\"44444444-5555-6666-7777-888888888888\",[{\"action\":\"QUALIFY\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000004\",\"circle_id\":7004,\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T10:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"eeeeeeee-ffff-4000-8111-222222222222\",\"evidence_reference\":\"u21h:evidence:V-4\",\"id\":9004,\"idempotency_key\":\"u21h:core_circlestateevent:4\",\"l1_commitment\":\"s015r1:1fd008ca5e98e3e41bd8020cea16d94d199392c17a336a4023de15bfa62b18ff\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4\",\"occurred_at\":\"2026-09-01T09:30:00.000000Z\",\"parts_commitment\":\"s015p1:1a291b6728d01a54f43c2b962eb6b4caf3fbc0f96beff3bf8c4b5e5f0f90ae55\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000004bf\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":1,\"prior_state\":null,\"received_at\":\"2026-09-01T11:00:00.000000Z\",\"recorded_at\":\"2026-09-01T11:00:01.000000Z\",\"request_reference\":\"u21h:request:V-4\",\"resulting_state\":\"ELIGIBLE\",\"sequence\":2,\"temporal_basis_kind\":\"RETROSPECTIVE\",\"temporal_basis_reference\":\"u21h:basis:V-4\"},{\"action\":\"CONSTITUTE\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000005\",\"circle_id\":7004,\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"effective_at\":\"2026-09-01T10:00:00.000000Z\",\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"event_uuid\":\"dddddddd-eeee-4fff-8000-111111111111\",\"evidence_reference\":\"u21h:evidence:V-5\",\"id\":9005,\"idempotency_key\":\"u21h:core_circlestateevent:5\",\"l1_commitment\":\"s015r1:2814ff1dfd2ad701952725d11ea063a804e9596559618b7846030d9d7e4b50d0\",\"l2_commitment\":null,\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5\",\"occurred_at\":\"2026-09-01T10:00:00.000000Z\",\"parts_commitment\":\"s015p1:7ac8d4be71425b1ebdc0dfa145f5633d5cf777dda761767df13b1293ec8b849d\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000005b2\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"received_at\":\"2026-09-01T10:00:00.000000Z\",\"recorded_at\":\"2026-09-01T10:00:01.000000Z\",\"request_reference\":\"u21h:request:V-5\",\"resulting_state\":\"DORMANT\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null}]]",
+      "preimage_bytes": 2985,
+      "digest": "s015f4:e17d0c7a620bea8a0db68c5e5c1aa9f9180335b6ec67cb31129be73f429dea60"
+    },
+    {
+      "id": "V5",
+      "kind": "re-derived",
+      "title": "empty set, obligation",
+      "anchor_token": "core_governedobligationcase",
+      "anchor_identity": "33333333-4444-5555-6666-777777777777",
+      "event_table": "core_obligationstateevent",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "consequences_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "escalation_path_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "extension_basis_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "interim_measures_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "legal_basis_determination_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "legal_deadline_status",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "qualified_legal_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [],
+      "preimage": "[\"s015f4\",\"core_governedobligationcase\",\"33333333-4444-5555-6666-777777777777\",[]]",
+      "preimage_bytes": 82,
+      "digest": "s015f4:5d3f365574d2dfb7a510d40b32f48818630b64ea49c74f63abb19ca37c7e7da9"
+    },
+    {
+      "id": "V6",
+      "kind": "additional",
+      "title": "one obligation event carrying the four-member projection — under s015f3 every obligation column is a keyed member of the record",
+      "anchor_token": "core_governedobligationcase",
+      "anchor_identity": "33333333-4444-5555-6666-777777777777",
+      "event_table": "core_obligationstateevent",
+      "canonical_columns": [
+        {
+          "column": "action",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_access_epoch",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_capacity",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "actor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "actor_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "authority_basis_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "authority_decision_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "case_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "composer_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "composing_rule_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "consequences_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "effective_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "effective_until_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "enterer_identity_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "entry_mode",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "escalation_path_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "event_uuid",
+          "pg_type": "uuid"
+        },
+        {
+          "column": "evidence_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "extension_basis_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "idempotency_key",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "interim_measures_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "l2_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "legal_basis_determination_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "legal_deadline_status",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "lineage_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "occurred_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "parts_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "payload_fingerprint",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_id",
+          "pg_type": "bigint"
+        },
+        {
+          "column": "predecessor_l1_commitment",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "predecessor_sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "prior_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "qualified_legal_deadline",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "received_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "recorded_at",
+          "pg_type": "timestamptz"
+        },
+        {
+          "column": "request_reference",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "resulting_state",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "sequence",
+          "pg_type": "integer"
+        },
+        {
+          "column": "temporal_basis_kind",
+          "pg_type": "varchar"
+        },
+        {
+          "column": "temporal_basis_reference",
+          "pg_type": "varchar"
+        }
+      ],
+      "events": [
+        {
+          "action": "OPEN",
+          "actor_access_epoch": 0,
+          "actor_id": 501,
+          "authority_basis_id": 601,
+          "authority_decision_reference": "s015d1:0000000000000000000000000000000000000000000000000000000000000006",
+          "case_id": 7003,
+          "consequences_reference": "u21h:consequence \"quoted\" back\\slash tab\t ctl\u0001 é€𐍈",
+          "effective_at": "2026-09-01T12:00:00.000000Z",
+          "effective_deadline": null,
+          "escalation_path_reference": null,
+          "event_uuid": "ffffffff-0000-4111-8222-333333333333",
+          "evidence_reference": "u21h:evidence:V-6",
+          "extension_basis_reference": null,
+          "id": 9006,
+          "idempotency_key": "u21h:core_obligationstateevent:6",
+          "interim_measures_reference": null,
+          "legal_basis_determination_id": null,
+          "legal_deadline_status": "UNKNOWN",
+          "lineage_reference": "s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6",
+          "occurred_at": "2026-09-01T12:00:00.000000Z",
+          "payload_fingerprint": "00000000000000000000000000000000000000000000000000000000000006a5",
+          "predecessor_id": null,
+          "predecessor_sequence": null,
+          "prior_state": null,
+          "qualified_legal_deadline": null,
+          "received_at": "2026-09-01T12:00:00.000000Z",
+          "recorded_at": "2026-09-01T12:00:00.100000Z",
+          "request_reference": "u21h:request:V-6",
+          "resulting_state": "OBLIGATION_BLOCKED_PENDING_AUTHORITY",
+          "sequence": 1,
+          "temporal_basis_kind": null,
+          "temporal_basis_reference": null,
+          "actor_state": "PARTY",
+          "actor_capacity": "STANDING",
+          "enterer_identity_id": 501,
+          "entry_mode": "TRANSPORT",
+          "composing_rule_state": "NA_TRANSPORT",
+          "composing_rule_reference": null,
+          "composer_state": "NA_TRANSPORT",
+          "composer_identity_id": null,
+          "effective_until": null,
+          "effective_until_state": "NONE",
+          "parts_commitment": "s015p1:0fcd2dd563a2461a8ea66c94b030c4ba953989d1e3922a6afe18b791b5d71e5b",
+          "l1_commitment": "s015r1:13ba32f64617581eccff965e66f4a43284cf245d4abde077398f7ca80b84f7c8",
+          "predecessor_l1_commitment": null,
+          "l2_commitment": null
+        }
+      ],
+      "preimage": "[\"s015f4\",\"core_governedobligationcase\",\"33333333-4444-5555-6666-777777777777\",[{\"action\":\"OPEN\",\"actor_access_epoch\":0,\"actor_capacity\":\"STANDING\",\"actor_id\":501,\"actor_state\":\"PARTY\",\"authority_basis_id\":601,\"authority_decision_reference\":\"s015d1:0000000000000000000000000000000000000000000000000000000000000006\",\"case_id\":7003,\"composer_identity_id\":null,\"composer_state\":\"NA_TRANSPORT\",\"composing_rule_reference\":null,\"composing_rule_state\":\"NA_TRANSPORT\",\"consequences_reference\":\"u21h:consequence \\\"quoted\\\" back\\\\slash tab\\t ctl\\u0001 é€𐍈\",\"effective_at\":\"2026-09-01T12:00:00.000000Z\",\"effective_deadline\":null,\"effective_until\":null,\"effective_until_state\":\"NONE\",\"enterer_identity_id\":501,\"entry_mode\":\"TRANSPORT\",\"escalation_path_reference\":null,\"event_uuid\":\"ffffffff-0000-4111-8222-333333333333\",\"evidence_reference\":\"u21h:evidence:V-6\",\"extension_basis_reference\":null,\"id\":9006,\"idempotency_key\":\"u21h:core_obligationstateevent:6\",\"interim_measures_reference\":null,\"l1_commitment\":\"s015r1:13ba32f64617581eccff965e66f4a43284cf245d4abde077398f7ca80b84f7c8\",\"l2_commitment\":null,\"legal_basis_determination_id\":null,\"legal_deadline_status\":\"UNKNOWN\",\"lineage_reference\":\"s015l1:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6\",\"occurred_at\":\"2026-09-01T12:00:00.000000Z\",\"parts_commitment\":\"s015p1:0fcd2dd563a2461a8ea66c94b030c4ba953989d1e3922a6afe18b791b5d71e5b\",\"payload_fingerprint\":\"00000000000000000000000000000000000000000000000000000000000006a5\",\"predecessor_id\":null,\"predecessor_l1_commitment\":null,\"predecessor_sequence\":null,\"prior_state\":null,\"qualified_legal_deadline\":null,\"received_at\":\"2026-09-01T12:00:00.000000Z\",\"recorded_at\":\"2026-09-01T12:00:00.100000Z\",\"request_reference\":\"u21h:request:V-6\",\"resulting_state\":\"OBLIGATION_BLOCKED_PENDING_AUTHORITY\",\"sequence\":1,\"temporal_basis_kind\":null,\"temporal_basis_reference\":null}]]",
+      "preimage_bytes": 1878,
+      "digest": "s015f4:c5d814799322e30c8def2ff158a3e784548e1a729e75f6e7b4f4a68a8912327e"
+    }
+  ],
+  "serialization_inputs": {
+    "status": "SERIALIZATION INPUTS ONLY - not valid commitments, not live fixture values",
+    "fields": [
+      "parts_commitment",
+      "l1_commitment",
+      "predecessor_l1_commitment"
+    ],
+    "how_authored": "shape-valid strings: s015p1:/s015r1: followed by sha256 of an authoring tag; predecessor_l1_commitment repeats the authored l1_commitment of the predecessor vector event",
+    "what_they_are_not": "none is computed from a parts, L1 or predecessor preimage; none would be accepted by the live guardians; this corpus establishes the canonical grammar over these strings, nothing about commitments",
+    "live_rows": {
+      "l1_commitment": "database-assigned at BEFORE INSERT; a caller-supplied value is refused; fixtures supply none",
+      "predecessor_l1_commitment": "caller-declared and verified at commit against the predecessor row's assigned l1_commitment; a fixture reads that value back from the database",
+      "parts_commitment": "caller-declared and verified at commit; a fixture takes the database-computed value",
+      "l2_commitment": "null where no L2 content row exists (the value these vectors use)",
+      "other_fourteen_columns": "each fixture value follows the governing rules for the act the fixture records (design v0.6 section 5.1; BD-1)"
+    }
+  },
+  "derivation": {
+    "instrument": "derive_s015f4_vectors.py",
+    "independent_of": "the installed SQL and any candidate migration",
+    "self_test": "reproduced all eight published s015f3 vectors byte for byte before deriving",
+    "inventories": "published s015f3 inventory of each table plus the fourteen design v0.6 section 5.1 columns, bytewise ordered",
+    "installed_sql_agreement": "NOT ESTABLISHED - to be established by the installed-SQL fixed-vector test against the candidate"
+  }
+}

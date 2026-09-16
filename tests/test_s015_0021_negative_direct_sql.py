@@ -346,7 +346,7 @@ class CacheBoundary(_S015NegativeBase):
         ids = self.commits(lambda cur: self.root(cur))
         def attempt(cur):
             cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'DORMANT', now(), %s, %s, %s, 'f', %s)",
-                        (str(uuid.uuid4()), T0, T0, "s015f3:" + "0" * 64, ids["lo"]))
+                        (str(uuid.uuid4()), T0, T0, "s015f4:" + "0" * 64, ids["lo"]))
         self.refuses(attempt, contains="insert-time fingerprint")
 
     def test_neg_placeholder_never_refreshed_refused_at_commit(self):

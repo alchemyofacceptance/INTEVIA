@@ -98,7 +98,7 @@ class ChainClosure(_S015PositiveBase):
             anchor = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"] if key is None else ids[key]
             projection, n, served, fp = self.route(token, anchor)
             with self.subTest(token=token):
-                self.assertEqual(n, 1); self.assertIsNotNone(projection); self.assertTrue(fp.startswith("s015f3:"))
+                self.assertEqual(n, 1); self.assertIsNotNone(projection); self.assertTrue(fp.startswith("s015f4:"))
 
     def test_pos_control_consecutive_appends_advance_head(self):
         ids = self.commits(lambda cur: found_root(cur))
@@ -397,8 +397,9 @@ class LockOrder(_S015PositiveBase):
 
 
 class FixedVectors(_S015PositiveBase):
-    """The eight published s015f3 fixed vectors — seven re-derived from the Phase 2 inputs (V1, V2, V3a, V3b, V3c, V4, V5)
-    plus one additional obligation vector (V6) — in vectors/s015f3_fixed_vectors.json (repository-relative only).
+    """The eight published s015f4 fixed vectors — seven re-derived from the Phase 2 inputs (V1, V2, V3a, V3b, V3c, V4, V5)
+    plus one additional obligation vector (V6) — in vectors/s015f4_fixed_vectors.json (repository-relative only).
+    s015f4 (migration 0023) re-derives them over the fourteen PKT-A-3 columns; the s015f3 corpus is kept as lineage.
 
     The oracle is the installed SQL: every published event row is carried as jsonb through s015_canonical_event_record,
     the records through s015_canonical_envelope and the envelope through s015_digest_envelope; each stage must equal the
@@ -408,13 +409,13 @@ class FixedVectors(_S015PositiveBase):
     s015_fingerprint_event_set) are exercised on live rows: Python applies eligibility and fold order to to_jsonb(row)
     of every row of the anchor and assembles the envelope from per-row installed records; SQL must agree."""
 
-    FORM = "s015f3"
+    FORM = "s015f4"
     FOLD = "effective_at, occurred_at, received_at, recorded_at, sequence, event_uuid"
 
     @staticmethod
     def corpus():
         import pathlib
-        path = pathlib.Path(__file__).resolve().parents[1] / "vectors" / "s015f3_fixed_vectors.json"
+        path = pathlib.Path(__file__).resolve().parents[1] / "vectors" / "s015f4_fixed_vectors.json"
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _sql_record(self, cur, table, row):
@@ -442,7 +443,7 @@ class FixedVectors(_S015PositiveBase):
                     self.assertEqual(preimage, v["preimage"])
                     self.assertEqual(len(preimage.encode("utf-8")), v["preimage_bytes"])
                     self.assertEqual(digest, v["digest"]); self.assertEqual(width, 71)
-                    self.assertEqual("s015f3:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest(), v["digest"])
+                    self.assertEqual(self.FORM + ":" + hashlib.sha256(preimage.encode("utf-8")).hexdigest(), v["digest"])
 
     def test_pos_control_installed_inventories_equal_published_for_all_twelve_event_tables(self):
         corpus = self.corpus()
@@ -484,7 +485,7 @@ class FixedVectors(_S015PositiveBase):
                                 (ids["lo"], state_at, known_at, ids["lo"], state_at, known_at))
                     preimage, fp = cur.fetchone()
                     self.assertEqual(preimage, expected)
-                    self.assertEqual(fp, "s015f3:" + hashlib.sha256(expected.encode("utf-8")).hexdigest())
+                    self.assertEqual(fp, self.FORM + ":" + hashlib.sha256(expected.encode("utf-8")).hexdigest())
                     for r in chosen:
                         self.assertIn(f'"evidence_reference":{json.dumps(r["evidence_reference"], ensure_ascii=False)}', preimage)
 

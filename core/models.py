@@ -4020,7 +4020,8 @@ class _S015AppendOnly(models.Model):
 # S015 migration 0021 — shared shapes (specification v0.8 §5.3, §5.7, §5.8; construction per design v0.6).
 S015_TS_MIN = datetime(1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 S015_TS_MAX = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc)
-S015_FINGERPRINT_SHAPE = r"^s015f3:[0-9a-f]{64}$"
+# s015f4 from migration 0023 (PKT-A-3 design v0.6 section 9; U21h section 3)
+S015_FINGERPRINT_SHAPE = r"^s015f4:[0-9a-f]{64}$"
 S015_PRIOR_STATE_HELP = (
     "S015: the effective-order predecessor's resulting state as the chain stood when this event "
     "was recorded; NULL at sequence 1, and at any later sequence where no eligible predecessor stood "
