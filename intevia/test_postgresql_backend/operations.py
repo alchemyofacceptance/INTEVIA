@@ -1,6 +1,9 @@
+import importlib
 import re
 
+from django.apps import apps as django_apps
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.db.backends.postgresql.operations import (
     DatabaseOperations as PostgreSQLDatabaseOperations,
 )
@@ -8,6 +11,9 @@ from django.db.backends.postgresql.operations import (
 
 S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
 S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
+
+# Guardians the reset has always been required to find (0019/0020). Kept as a required
+# minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
     "core_authorityprincipal": "s015_authorityprincipal_truncate_immutable",
     "core_authoritybasis": "s015_authoritybasis_truncate_immutable",
@@ -37,6 +43,28 @@ S015_TRUNCATE_GUARDIANS = {
     ),
 }
 
+# Tables created by migrations in raw SQL, with no Django model, that a test can write.
+# Django's flush lists only model tables; these must be reset with them.
+# 0021: s015_transaction_register. 0022: part, content, resolution and severance ledger.
+S015_UNMODELLED_RESET_TABLES = (
+    "core_governedeventcontent",
+    "core_governedeventpart",
+    "core_identityresolution",
+    "core_identityresolutionsevered",
+    "s015_transaction_register",
+)
+
+# Never reset: Django's own migration ledger.
+S015_RESET_EXCLUDED_TABLES = frozenset({"django_migrations"})
+
+# Data seeded by migrations, restored after a reset by calling the migration's own
+# function, so the values come from the governing migration and are not copied here.
+S015_MIGRATION_SEEDS = (
+    ("core.migrations.0003_seed_triad_roles", "create_triad_roles"),
+)
+
+_TRUNCATE_TRIGGER_BIT = 32  # pg_trigger.tgtype TRUNCATE event bit
+
 
 class DatabaseOperations(PostgreSQLDatabaseOperations):
     def _qualified_database_name(self):
@@ -58,14 +86,42 @@ class DatabaseOperations(PostgreSQLDatabaseOperations):
             )
         return expected_database
 
+    def _reset_tables(self, tables):
+        """Model tables Django asked to flush, plus the declared unmodelled tables.
+
+        Refuses any other table in the schema that is neither a model table, a declared
+        unmodelled table, nor excluded: an undeclared table could hold rows a reset
+        would silently leave behind.
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT relation.relname
+                FROM pg_class relation
+                JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = current_schema()
+                  AND relation.relkind IN ('r', 'p')
+                """
+            )
+            present = {row[0] for row in cursor.fetchall()}
+        modelled = set(tables)
+        unmodelled = present - modelled - S015_RESET_EXCLUDED_TABLES
+        unexpected = sorted(unmodelled - set(S015_UNMODELLED_RESET_TABLES))
+        if unexpected:
+            raise ImproperlyConfigured(
+                "S015 reset refuses undeclared unmodelled tables: "
+                + ", ".join(unexpected)
+            )
+        return sorted(modelled | (unmodelled & set(S015_UNMODELLED_RESET_TABLES)))
+
     def _qualified_guardians(self, tables):
-        expected = {
-            table: S015_TRUNCATE_GUARDIANS[table]
-            for table in tables
-            if table in S015_TRUNCATE_GUARDIANS
-        }
-        if not expected:
-            return expected
+        """Discover every truncate trigger on the tables to be reset.
+
+        Every discovered trigger must be an S015 guardian and enabled; every required
+        guardian whose table is being reset must be among them.
+        """
+        if not tables:
+            return []
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -74,38 +130,48 @@ class DatabaseOperations(PostgreSQLDatabaseOperations):
                 JOIN pg_class relation ON relation.oid = guardian.tgrelid
                 JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
                 WHERE namespace.nspname = current_schema()
-                  AND guardian.tgname = ANY(%s)
                   AND NOT guardian.tgisinternal
+                  AND (guardian.tgtype & %s) <> 0
+                  AND relation.relname = ANY(%s)
+                ORDER BY relation.relname, guardian.tgname
                 """,
-                [list(expected.values())],
+                [_TRUNCATE_TRIGGER_BIT, list(tables)],
             )
-            actual = {
-                table: (trigger, enabled)
-                for table, trigger, enabled in cursor.fetchall()
-            }
-        if set(actual) != set(expected) or any(
-            actual[table] != (trigger, "O")
-            for table, trigger in expected.items()
-        ):
+            found = cursor.fetchall()
+        if any(not trigger.startswith("s015_") for _, trigger, _ in found):
+            raise ImproperlyConfigured(
+                "S015 reset refuses a truncate trigger that is not an S015 guardian"
+            )
+        if any(enabled != "O" for _, _, enabled in found):
             raise ImproperlyConfigured(
                 "S015 truncate guardian inventory is incomplete or disabled"
             )
-        return expected
+        found_pairs = {(table, trigger) for table, trigger, _ in found}
+        for table, trigger in S015_TRUNCATE_GUARDIANS.items():
+            if table in tables and (table, trigger) not in found_pairs:
+                raise ImproperlyConfigured(
+                    "S015 truncate guardian inventory is incomplete or disabled"
+                )
+        return sorted(found_pairs)
 
     def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
-        sql = super().sql_flush(
+        if not tables:
+            return super().sql_flush(
+                style,
+                tables,
+                reset_sequences=reset_sequences,
+                allow_cascade=allow_cascade,
+            )
+
+        expected_database = self._qualified_database_name()
+        reset_tables = self._reset_tables(tables)
+        guardians = self._qualified_guardians(reset_tables)
+        truncate = super().sql_flush(
             style,
-            tables,
+            reset_tables,
             reset_sequences=reset_sequences,
             allow_cascade=allow_cascade,
         )
-        if not sql:
-            return sql
-
-        expected_database = self._qualified_database_name()
-        guardians = self._qualified_guardians(tables)
-        if not guardians:
-            return sql
 
         qualification = (
             "DO $s015$ BEGIN "
@@ -116,22 +182,62 @@ class DatabaseOperations(PostgreSQLDatabaseOperations):
         disable = [
             f"ALTER TABLE {self.quote_name(table)} "
             f"DISABLE TRIGGER {self.quote_name(trigger)};"
-            for table, trigger in guardians.items()
+            for table, trigger in guardians
         ]
         enable = [
             f"ALTER TABLE {self.quote_name(table)} "
             f"ENABLE TRIGGER {self.quote_name(trigger)};"
-            for table, trigger in guardians.items()
+            for table, trigger in guardians
         ]
-        trigger_names = ", ".join(
-            f"'{trigger}'" for trigger in guardians.values()
-        )
-        restoration_check = (
-            "DO $s015$ BEGIN IF ("
-            "SELECT count(*) FROM pg_trigger "
-            f"WHERE tgname IN ({trigger_names}) AND tgenabled = 'O'"
-            f") <> {len(guardians)} THEN "
-            "RAISE EXCEPTION 'S015 truncate guardian restoration failed'; "
+        restoration_check = []
+        if guardians:
+            pairs = ", ".join(f"('{table}', '{trigger}')" for table, trigger in guardians)
+            restoration_check = [
+                "DO $s015$ BEGIN IF (SELECT count(*) FROM pg_trigger guardian "
+                "JOIN pg_class relation ON relation.oid = guardian.tgrelid "
+                f"WHERE (relation.relname, guardian.tgname) IN ({pairs}) "
+                f"AND guardian.tgenabled = 'O') <> {len(guardians)} THEN "
+                "RAISE EXCEPTION 'S015 truncate guardian restoration failed'; "
+                "END IF; END $s015$;"
+            ]
+        # The negative suites re-add s015_platform_root_unset_ck NOT VALID in tearDown.
+        # No migration creates an S015 constraint NOT VALID, so the reference state is
+        # validated; the reset tables are empty here, so validation cannot fail on data.
+        table_list = ", ".join(f"'{table}'" for table in reset_tables)
+        revalidate = [
+            "DO $s015$ DECLARE c record; BEGIN "
+            "FOR c IN SELECT relation.relname AS tbl, con.conname AS name "
+            "FROM pg_constraint con "
+            "JOIN pg_class relation ON relation.oid = con.conrelid "
+            "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+            "WHERE namespace.nspname = current_schema() "
+            "AND con.conname LIKE 's015\\_%' AND NOT con.convalidated "
+            f"AND relation.relname IN ({table_list}) LOOP "
+            "EXECUTE format('ALTER TABLE %I VALIDATE CONSTRAINT %I', c.tbl, c.name); "
+            "END LOOP; "
+            "IF EXISTS (SELECT 1 FROM pg_constraint con "
+            "JOIN pg_namespace namespace ON namespace.oid = con.connamespace "
+            "WHERE namespace.nspname = current_schema() "
+            "AND con.conname LIKE 's015\\_%' AND NOT con.convalidated) THEN "
+            "RAISE EXCEPTION 'S015 constraint validation restoration failed'; "
             "END IF; END $s015$;"
-        )
-        return [qualification, *disable, *sql, *enable, restoration_check]
+        ]
+        return [qualification, *disable, *truncate, *enable, *restoration_check, *revalidate]
+
+    def execute_sql_flush(self, sql_list):
+        """Run the reset and restore migration-seeded data in one transaction.
+
+        Any failure rolls back the whole reset, including trigger changes, and propagates.
+        """
+        with transaction.atomic(
+            using=self.connection.alias,
+            savepoint=self.connection.features.can_rollback_ddl,
+        ):
+            with self.connection.cursor() as cursor:
+                for sql in sql_list:
+                    cursor.execute(sql)
+            if sql_list:
+                self._qualified_database_name()
+                for module_name, function_name in S015_MIGRATION_SEEDS:
+                    seed = getattr(importlib.import_module(module_name), function_name)
+                    seed(django_apps, None)
