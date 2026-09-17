@@ -1,4 +1,4 @@
-"""S015 verification route - parse a Django 'manage.py test -v 2' log (r6).
+"""S015 verification route - parse a Django 'manage.py test -v 2' log (r7).
 
 Lineage: u1r4_parse_results.py (UFUND-1/UFUND-2 route), unchanged in its outcome model: per-test body, sub-test, setup and
 teardown outcomes, every total reconciled against the runner's own summary, a recognised final verdict required, and
@@ -21,6 +21,21 @@ status contradicted by a FAIL/ERROR block outside teardown is an accounting viol
 The description join never treats a line that is itself a test status line as a description, so it cannot take another
 test's status.
 
+r7 (UFUND-3 Change C v0.6, A1 residual RC-B1 and VC-O1): the terminal-outcome rule reconciles every status EVENT with the
+failure BLOCKS of its own test, not only block totals, so a status line contradicted by another status line is refused
+even where the failure block is absent:
+  - sub-test events: the multiset of (FAIL|ERROR, sub-test parameters) must equal the multiset of the test's sub-test
+    blocks - an unsupported sub-test failure event, or a sub-test block with no event, is refused;
+  - main events: the count of main FAIL and of main ERROR events must equal the test's non-sub-test FAIL and ERROR blocks;
+  - at most one of those blocks may come from outside teardown (body, setup or unclassified); every other main event must
+    be matched by a teardown-phase block - so any number of genuine teardown errors reconciles (Django reports a body
+    error, a tearDown error and a _post_teardown error as three ERROR events);
+  - a non-failure status (ok, skipped, expected failure, unexpected success) may occur once, only as the first main
+    event, and never together with a sub-test FAIL/ERROR event or a failure block outside teardown.
+Skips are counted per skip EVENT, main or sub-test, because unittest counts a skipped sub-test in the summary total; a
+test whose only outcomes are skipped sub-tests is recorded as skipped (the route still never calls a skip PASS). The
+summary's counts are read as named pairs, so "expected failures=1" is no longer read as "failures=1".
+
 Usage: python -m verification.parse_results <log> <json_out> [<collected_ids_json>]   exit 0 reconciled, 3 not
 """
 import json
@@ -31,6 +46,8 @@ from collections import OrderedDict
 HEADER_ALONE = re.compile(r"^(?P<indent>\s*)(?P<header>test\w+ \([\w\.]+\)(?: \(.*\))?)\s*$")
 TEST_TOKEN_START = re.compile(r"^\s*test\w+ \([\w\.]+\)")
 TERMINAL = ("ok", "ERROR", "FAIL", "skipped", "expected failure", "unexpected success")
+NON_FAILURE = ("ok", "skipped", "expected failure", "unexpected success")
+FAILURE = ("FAIL", "ERROR")
 
 
 def join_description_lines(lines):
@@ -51,25 +68,46 @@ def join_description_lines(lines):
 
 
 def terminal_accounting(mains, subs, blocks):
-    """Returns (lawful, reason) for one test's status events and failure blocks (see the module docstring)."""
-    phases = [(b["kind"], b["phase"]) for b in blocks]
-    teardown_errors = sum(1 for k, ph in phases if ph == "teardown" and k == "ERROR")
-    contradicting = [k for k, ph in phases if ph in ("body", "setup", "subtest", "unclassified")]
-    if any(m not in TERMINAL for m in mains):
-        return False, "unrecognised status %s" % mains
+    """Returns (lawful, reason) for one test (see the module docstring, r7).
+
+    mains  - main status events in log order, e.g. ["ok"] or ["ERROR", "ERROR"]
+    subs   - sub-test status events in log order as (status, parameters), e.g. [("FAIL", "(i=1)")]
+    blocks - the test's failure blocks: dicts with kind (FAIL|ERROR), phase and subtest (parameters, or "")
+    """
+    from collections import Counter
+    if any(m not in TERMINAL for m in mains) or any(st not in TERMINAL for st, _ in subs):
+        return False, "unrecognised status %s %s" % (mains, [st for st, _ in subs])
     if not mains and not subs:
         return False, "no terminal outcome reported"
+    if any(st in ("ok", "expected failure", "unexpected success") for st, _ in subs):
+        return False, "sub-test status %s is not a sub-test outcome" % [st for st, _ in subs]
+    sub_events = Counter((st, p.strip()) for st, p in subs if st in FAILURE)
+    sub_blocks = Counter((b["kind"], b.get("subtest", "").strip()) for b in blocks if b["phase"] == "subtest")
+    if sub_events != sub_blocks:
+        return False, "sub-test events %s disagree with sub-test failure blocks %s" % (sorted(sub_events.items()), sorted(sub_blocks.items()))
+    unexpected_blocks = sum(1 for b in blocks if b["phase"] == "unexpected")
+    if unexpected_blocks != mains.count("unexpected success"):
+        return False, "%d unexpected success event(s) but %d UNEXPECTED SUCCESS block(s)" % (mains.count("unexpected success"), unexpected_blocks)
+    main_blocks = [b for b in blocks if b["phase"] not in ("subtest", "unexpected")]
+    for kind in FAILURE:
+        events_n, blocks_n = mains.count(kind), sum(1 for b in main_blocks if b["kind"] == kind)
+        if events_n != blocks_n:
+            return False, "%d main %s event(s) but %d %s block(s)" % (events_n, kind, blocks_n, kind)
+    outside_teardown = [b["phase"] for b in main_blocks if b["phase"] != "teardown"]
+    if len(outside_teardown) > 1:
+        return False, "more than one failure block outside teardown %s" % outside_teardown
+    non_failure = [m for m in mains if m in NON_FAILURE]
+    if non_failure:
+        if len(non_failure) > 1 or mains[0] not in NON_FAILURE:
+            return False, "status %s contradicted by the order or number of status events %s" % (non_failure, mains)
+        if sub_events:
+            return False, "status %s contradicted by sub-test failure event(s) %s" % (mains[0], sorted(sub_events.elements()))
+        if outside_teardown:
+            return False, "status %s contradicted by %s block(s)" % (mains[0], outside_teardown)
+        return True, ("one terminal status" if len(mains) == 1 else "terminal status then %d teardown event(s)" % (len(mains) - 1))
     if not mains:
-        return (True, "sub-test outcomes only") if all(s in ("FAIL", "ERROR", "skipped") for s in subs) else (False, "sub-test status %s" % subs)
-    if len(mains) == 1:
-        if mains[0] in ("ok", "skipped", "expected failure") and contradicting:
-            return False, "status %s contradicted by %s block(s)" % (mains[0], contradicting)
-        return True, "one terminal status"
-    if len(mains) == 2 and mains[1] == "ERROR" and teardown_errors >= 1:
-        if mains[0] in ("ok", "skipped", "expected failure") and contradicting:
-            return False, "status %s contradicted by %s block(s)" % (mains[0], contradicting)
-        return True, "terminal status then a teardown ERROR"
-    return False, "%d terminal statuses %s (teardown ERROR blocks %d)" % (len(mains), mains, teardown_errors)
+        return True, "sub-test outcomes only"
+    return True, ("one failure status" if len(mains) == 1 else "failure status then %d teardown event(s)" % (len(mains) - 1))
 
 
 def parse(text, collected=None, log_path=""):
@@ -103,12 +141,12 @@ def parse(text, collected=None, log_path=""):
             events[tid] = []; order.append(tid)
         kind = "subtest" if (m.group("params") or m.group("indent")) else "main"
         st = m.group("status")
-        events[tid].append((kind, "skipped" if st.startswith("skipped") else st))
+        events[tid].append((kind, "skipped" if st.startswith("skipped") else st, (m.group("params") or "").strip()))
 
     # failure blocks
     body_part = text.split("\n" + "-" * 70 + "\nRan ")[0]
     blocks = body_part.split("\n" + SEP + "\n")[1:]
-    head_re = re.compile(r"^(ERROR|FAIL): (test\w+) \(([\w\.]+)\)( \(.*\))?\s*$")
+    head_re = re.compile(r"^(ERROR|FAIL|UNEXPECTED SUCCESS): (test\w+) \(([\w\.]+)\)( \(.*\))?\s*$")
     per = OrderedDict((t, {"blocks": []}) for t in order)
     unmatched_blocks = 0
     for b in blocks:
@@ -118,7 +156,9 @@ def parse(text, collected=None, log_path=""):
             unmatched_blocks += 1
             continue
         kind, tid, params = m.group(1), m.group(3), m.group(4)
-        if params:
+        if kind == "UNEXPECTED SUCCESS":  # Python 3.12 lists each unexpected success as a block with no traceback
+            phase = "unexpected"
+        elif params:
             phase = "subtest"
         elif "couldn't be flushed" in b or "\\management\\commands\\flush.py" in b or "/management/commands/flush.py" in b:
             phase = "teardown"
@@ -139,9 +179,18 @@ def parse(text, collected=None, log_path=""):
     m = re.search(r"(?m)^Ran (\d+) tests? in ", text); summary["ran"] = int(m.group(1)) if m else None
     m = re.search(r"(?m)^(OK|FAILED)(?: \((.*)\))?\s*$", text)
     summary["final"] = m.group(0).strip() if m else None
-    counts = dict(re.findall(r"(\w+)=(\d+)", m.group(2) or "")) if m and m.group(2) else {}
+    counts = {}
+    if m and m.group(2):
+        for part in m.group(2).split(","):
+            key, sep, value = part.strip().rpartition("=")
+            if not sep or not value.isdigit() or key in counts:
+                counts["__unreadable__"] = part.strip()
+                continue
+            counts[key] = int(value)
     summary["failures"] = int(counts.get("failures", 0)); summary["errors"] = int(counts.get("errors", 0))
     summary["skipped"] = int(counts.get("skipped", 0))
+    summary["expected_failures"] = int(counts.get("expected failures", 0)); summary["unexpected_successes"] = int(counts.get("unexpected successes", 0))
+    summary["unrecognised_counts"] = sorted(k for k in counts if k not in ("failures", "errors", "skipped", "expected failures", "unexpected successes"))
     m = re.search(r"(?m)^EXIT_STATUS: (-?\d+)", text); summary["exit"] = int(m.group(1)) if m else None
 
     first_status_pos = None
@@ -164,8 +213,8 @@ def parse(text, collected=None, log_path=""):
         td = [x for x in bl if x["phase"] == "teardown"]
         su = [x for x in bl if x["phase"] == "setup"]
         un = [x for x in bl if x["phase"] == "unclassified"]
-        mains = [s for k, s in ev if k == "main"]
-        subs = [s for k, s in ev if k == "subtest"]
+        mains = [s for k, s, _ in ev if k == "main"]
+        subs = [(s, p) for k, s, p in ev if k == "subtest"]
         lawful, why = terminal_accounting(mains, subs, bl)
         if su:
             body = "NOT REACHED (setup error)"
@@ -173,7 +222,7 @@ def parse(text, collected=None, log_path=""):
             body = body_blocks[0]["kind"]
         elif un:
             body = "UNCLASSIFIED"
-        elif "skipped" in mains:
+        elif "skipped" in mains or (not mains and subs and all(st == "skipped" for st, _ in subs)):
             body = "skipped"
         elif sub_blocks:
             body = "SUBTEST FAILURES"
@@ -195,7 +244,8 @@ def parse(text, collected=None, log_path=""):
         tests.append({"id": tid, "position": i + 1, "body": body, "terminal_accounting": {"lawful": lawful, "reason": why}, "body_exception": (body_blocks[0]["exception"] + ": " + body_blocks[0]["message"]) if body_blocks else "",
                       "subtest_failures": len([x for x in sub_blocks if x["kind"] == "FAIL"]), "subtest_errors": len([x for x in sub_blocks if x["kind"] == "ERROR"]),
                       "setup_errors": len(su), "teardown_errors": len(td), "unclassified_entries": len(un),
-                      "teardown_exception": (td[0]["exception"] + ": " + td[0]["message"]) if td else "", "isolation": isolation, "status_events": ev})
+                      "teardown_exception": (td[0]["exception"] + ": " + td[0]["message"]) if td else "", "isolation": isolation, "status_events": [[k, s] for k, s, _ in ev],
+                      "subtest_parameters": [p for k, _, p in ev if k == "subtest"], "skip_events": sum(1 for _, s, _ in ev if s == "skipped")})
 
     all_blocks = [x for t in per.values() for x in t["blocks"]]
     verdict_present = summary["final"] is not None and summary["ran"] is not None
@@ -204,7 +254,13 @@ def parse(text, collected=None, log_path=""):
     recon["ran equals distinct tests reported"] = (summary["ran"] == len(order), summary["ran"], len(order))
     recon["error entries equal summary errors"] = (len([x for x in all_blocks if x["kind"] == "ERROR"]) == summary["errors"], len([x for x in all_blocks if x["kind"] == "ERROR"]), summary["errors"])
     recon["failure entries equal summary failures"] = (len([x for x in all_blocks if x["kind"] == "FAIL"]) == summary["failures"], len([x for x in all_blocks if x["kind"] == "FAIL"]), summary["failures"])
-    recon["skipped equals summary skipped"] = (sum(1 for t in tests if t["body"] == "skipped") == summary["skipped"], sum(1 for t in tests if t["body"] == "skipped"), summary["skipped"])
+    skip_events = sum(t["skip_events"] for t in tests)
+    recon["skip events equal summary skipped"] = (skip_events == summary["skipped"], skip_events, summary["skipped"])
+    xf = sum(1 for t in tests for k, s in t["status_events"] if k == "main" and s == "expected failure")
+    us = sum(1 for t in tests for k, s in t["status_events"] if k == "main" and s == "unexpected success")
+    recon["expected failures equal summary"] = (xf == summary["expected_failures"], xf, summary["expected_failures"])
+    recon["unexpected successes equal summary"] = (us == summary["unexpected_successes"], us, summary["unexpected_successes"])
+    recon["every summary count recognised"] = (not summary["unrecognised_counts"], summary["unrecognised_counts"], [])
     recon["every failure block matched to a reported test"] = (unmatched_blocks == 0 and all(t in events for t in per), unmatched_blocks, 0)
     recon["status line exit and log exit agree"] = (summary["exit"] is not None and ((summary["final"] or "").startswith("OK")) == (summary["exit"] == 0), summary["exit"], summary["final"])
     if collected is not None:

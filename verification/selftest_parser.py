@@ -177,3 +177,91 @@ class OutcomeAccounting(unittest.TestCase):
             out = parse(text, ids)
             self.assertTrue(out["reconciled"], (docs, out["reconciliation"]))
             self.assertEqual(out["accounting_violations"], [])
+
+
+# ------------------------------------------------------------------ r7: A1 residual RC-B1 and VC-O1 (UFUND-3, Change C v0.6)
+import json as _json
+import os as _os
+
+with open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "runner_captures.json"), encoding="utf-8") as _f:
+    CAPTURES = _json.load(_f)["captures"]
+
+
+def _body(tid, status_lines, blocks="", summary="OK", ran=1, exit_status=0):
+    return status_lines + blocks + "\n" + "-" * 70 + "\nRan %d test%s in 0.001s\n\n%s\nEXIT_STATUS: %d\n" % (ran, "" if ran == 1 else "s", summary, exit_status)
+
+
+def _block(kind, head, frame):
+    return "\n" + "=" * 70 + "\n%s: %s\n" % (kind, head) + "-" * 70 + "\nTraceback (most recent call last):\n  File \"probe.py\", line 9, in %s\n    raise RuntimeError(\"x\")\nRuntimeError: x\n" % frame
+
+
+class EventReconciliation(unittest.TestCase):
+    """RC-B1: a status event contradicted by another status event is refused even where no failure block exists; genuine
+    runner shapes - several teardown errors, skipped sub-tests, expected failures - reconcile. Counterexamples are A1's
+    exact logs; the lawful shapes are real runner captures (runner_captures.json), not hand-written."""
+
+    def test_r7_1_a1_contradictory_subtest_fail_then_ok_is_refused(self):
+        out = parse("test_a (probe.C.test_a) ...\n  test_a (probe.C.test_a) (i=1) ... FAIL\ntest_a (probe.C.test_a) ... ok\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+        self.assertIn("sub-test events", out["accounting_violations"][0]["reason"])
+
+    def test_r7_2_a1_contradictory_subtest_error_then_ok_is_refused(self):
+        out = parse("test_a (probe.C.test_a) ...\n  test_a (probe.C.test_a) (i=1) ... ERROR\ntest_a (probe.C.test_a) ... ok\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+
+    def test_r7_3_vc_named_parameter_subtest_error_in_a_second_test_is_refused(self):
+        text = _body(None, "test_one (tests.test_x.X.test_one) ... ok\ntest_two (tests.test_x.X.test_two) ...\n"
+                           "  test_two (tests.test_x.X.test_two) (part='decision') ... ERROR\ntest_two (tests.test_x.X.test_two) ... ok\n", ran=2)
+        out = parse(text, ["tests.test_x.X.test_one", "tests.test_x.X.test_two"])
+        self.assertFalse(out["reconciled"])
+        self.assertEqual([v["id"] for v in out["accounting_violations"]], ["tests.test_x.X.test_two"])
+
+    def test_r7_4_subtest_failure_with_its_block_then_ok_is_still_refused(self):
+        text = _body(None, "test_a (probe.C.test_a) ...\n  test_a (probe.C.test_a) (i=1) ... FAIL\ntest_a (probe.C.test_a) ... ok\n",
+                     _block("FAIL", "test_a (probe.C.test_a) (i=1)", "test_a"), summary="FAILED (failures=1)", exit_status=1)
+        self.assertFalse(parse(text, [TID])["reconciled"])
+
+    def test_r7_5_subtest_failure_block_without_its_event_is_refused(self):
+        text = _body(None, "test_a (probe.C.test_a) ...\ntest_a (probe.C.test_a) ... ERROR\n",
+                     _block("FAIL", "test_a (probe.C.test_a) (i=1)", "test_a") + _block("ERROR", "test_a (probe.C.test_a)", "_post_teardown"),
+                     summary="FAILED (failures=1, errors=1)", exit_status=1)
+        self.assertFalse(parse(text, [TID])["reconciled"])
+
+    def test_r7_6_ok_after_an_error_is_refused(self):
+        text = _body(None, "test_a (probe.C.test_a) ... ERROR\ntest_a (probe.C.test_a) ... ok\n",
+                     _block("ERROR", "test_a (probe.C.test_a)", "_post_teardown"), summary="FAILED (errors=1)", exit_status=1)
+        self.assertFalse(parse(text, [TID])["reconciled"])
+
+    def test_r7_7_two_failure_blocks_outside_teardown_are_refused(self):
+        text = _body(None, "test_a (probe.C.test_a) ... FAIL\ntest_a (probe.C.test_a) ... ERROR\n",
+                     _block("ERROR", "test_a (probe.C.test_a)", "test_a") + _block("FAIL", "test_a (probe.C.test_a)", "test_a"),
+                     summary="FAILED (failures=1, errors=1)", exit_status=1)
+        self.assertFalse(parse(text, [TID])["reconciled"])
+
+    def test_r7_8_real_three_error_shape_reconciles_and_is_an_error(self):
+        cap = CAPTURES["ThreeErrors"]
+        out = parse(cap["log"], cap["collected"])
+        self.assertTrue(out["reconciled"], out["reconciliation"])
+        t = out["tests"][0]
+        self.assertEqual((t["body"], t["teardown_errors"]), ("ERROR", 2))
+
+    def test_r7_9_real_skipped_subtests_reconcile_counted_per_event(self):
+        cap = CAPTURES["SkippedSubtests"]
+        out = parse(cap["log"], cap["collected"])
+        self.assertTrue(out["reconciled"], out["reconciliation"])
+        self.assertEqual(out["summary"]["skipped"], 4)
+        self.assertEqual({t["body"] for t in out["tests"]}, {"skipped"})
+
+    def test_r7_10_real_teardown_assertion_and_expected_outcomes_reconcile(self):
+        for name in ("TeardownFail", "Expected"):
+            cap = CAPTURES[name]
+            out = parse(cap["log"], cap["collected"])
+            self.assertTrue(out["reconciled"], (name, out["reconciliation"]))
+        self.assertEqual(parse(CAPTURES["Expected"]["log"], CAPTURES["Expected"]["collected"])["summary"]["failures"], 0)
+
+    def test_r7_11_positive_controls_remain_reconciled(self):
+        self.assertTrue(parse("test_a (probe.C.test_a) ... ok\n" + TAIL, [TID])["reconciled"])
+        self.assertTrue(parse(TEARDOWN_LOG + "\nEXIT_STATUS: 1\n", TEARDOWN_IDS)["reconciled"])
+        for docs in (True, False):
+            text, ids = run_log(with_docstrings=docs)
+            self.assertTrue(parse(text, ids)["reconciled"])

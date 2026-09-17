@@ -89,6 +89,7 @@ class B2CleanupRecords(_Tmp):
                 mock.patch.object(r, "acquire_lock", side_effect=lock), mock.patch.object(r, "server", return_value={"version": "simulated"}), \
                 mock.patch.object(r, "step_offline", return_value={"id": "OFFLINE", "outcome": "PASS"}), mock.patch.object(r, "step_suite", side_effect=suite), \
                 mock.patch.object(r, "step_ownership", return_value={"id": "OWNERSHIP", "outcome": "PASS"}), \
+                mock.patch.object(r, "step_lock", return_value={"id": "LOCK", "outcome": "PASS"}), \
                 mock.patch.object(r, "oid_of", side_effect=RuntimeError("simulated server unavailable during cleanup")), \
                 contextlib.redirect_stdout(io.StringIO()):
             code = r.run(skip_mutations=True)
@@ -257,7 +258,7 @@ class B3RunnerCreationAndDestruction(_Tmp):
             ownership.install(c)
             with self.assertRaises(RuntimeError):
                 c._create_test_db(verbosity=0, autoclobber=True, keepdb=False)
-            self.assertEqual(self.receipts(), [])
+            self.assertEqual([r["event"] for r in self.receipts()], ["create_attempt"])
         self.assertFalse(any(s.startswith("DROP") for s in sql))
 
     def test_b3_replaced_database_is_not_destroyed_by_the_runner(self):
@@ -269,7 +270,7 @@ class B3RunnerCreationAndDestruction(_Tmp):
             existing[self.NAME] = 9999  # replaced by another actor
             c._destroy_test_db(self.NAME, verbosity=0)
             events = [r["event"] for r in self.receipts()]
-        self.assertEqual(events, ["created", "destroy_refused"]); self.assertFalse(any(s.startswith("DROP") for s in sql))
+        self.assertEqual(events, ["create_attempt", "created", "destroy_refused"]); self.assertFalse(any(s.startswith("DROP") for s in sql))
 
     def test_b3_positive_owned_database_is_created_then_destroyed(self):
         sql, existing = [], {}
@@ -279,7 +280,7 @@ class B3RunnerCreationAndDestruction(_Tmp):
             self.assertEqual(c._create_test_db(verbosity=0, autoclobber=True, keepdb=False), self.NAME)
             c._destroy_test_db(self.NAME, verbosity=0)
             recs = self.receipts()
-        self.assertEqual([r["event"] for r in recs], ["created", "destroyed"]); self.assertTrue(recs[1]["confirmed_absent"])
+        self.assertEqual([r["event"] for r in recs], ["create_attempt", "created", "destroyed"]); self.assertTrue(recs[2]["confirmed_absent"])
 
 
 # ------------------------------------------------------------------ B4
@@ -460,3 +461,265 @@ class B5EvidenceInsideRepository(_Tmp):
         ident = self._identity_with_evidence_inside(g)
         self.assertTrue(ident["valid"], ident["problems"])
         self.assertTrue(ident["working_tree_clean"]); self.assertEqual(ident["working_tree_git_tree"], ident["commit_tree"])
+
+
+# ------------------------------------------------------------------ UFUND-3 Change C v0.6: A1 residuals RC-B2, RC-B3, RC-B4, RC-O1, RC-O2
+class _Server:
+    """An in-memory PostgreSQL stand-in for route-level control flow: databases by name and oid, CREATE/DROP by name, and
+    injectable failures. It is the route's orchestration that is under test, not PostgreSQL."""
+
+    def __init__(self, route):
+        self.r, self.dbs, self.next_oid, self.sql, self.drops = route, {}, 100, [], []
+        self.fail_oid_once_for = None       # name: the next oid lookup on a connection raises (after a successful CREATE)
+        self.replace_after_lookup = None    # name: after the next oid lookup on a connection, another client replaces it
+        self.create_raises_after = None     # name: CREATE succeeds on the server but the client sees an error
+        self.connect_dbnames = []
+
+    def connect(self, dbname=None):
+        self.connect_dbnames.append(dbname)
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def close(self):
+        pass
+
+    def execute(self, sql, params=None):
+        self.sql.append(sql)
+        if sql.startswith("CREATE DATABASE"):
+            name = sql.split('"')[1]
+            if name in self.dbs:
+                exc = RuntimeError('database "%s" already exists' % name); exc.sqlstate = "42P04"
+                raise exc
+            self.next_oid += 1; self.dbs[name] = self.next_oid
+            if self.create_raises_after == name:
+                self.create_raises_after = None
+                raise RuntimeError("connection lost after CREATE was sent")
+        elif sql.startswith("DROP DATABASE"):
+            name = sql.split('"')[1]
+            self.drops.append((name, self.dbs.get(name))); self.dbs.pop(name, None)
+        return SimpleNamespace(fetchone=lambda: (None,), fetchall=lambda: [])
+
+    def oid_of(self, name, conn=None):
+        if conn is not None and self.fail_oid_once_for == name and name in self.dbs:
+            self.fail_oid_once_for = None
+            raise RuntimeError("injected oid lookup failure")
+        oid = self.dbs.get(name)
+        if conn is not None and self.replace_after_lookup == name and oid is not None:
+            self.replace_after_lookup = None
+            self.dbs[name] = 9001  # another client dropped and recreated the name
+        return oid
+
+
+class RCB2B3FixtureLifecycle(_Tmp):
+    """RC-B2 (every fixture creation attempt is accounted for, exceptions included) and RC-B3 (every drop, including the
+    deliberate replacement transition, checks ownership first). A1's three failure injections and its replacement
+    counterexample, plus an uncertain CREATE and a duplicate at CREATE, against the positive control."""
+
+    def _run(self, inject=None, collision_log="CollisionRefused: test database exists\n"):
+        r = self.route()
+        srv = _Server(r)
+        if inject:
+            inject(r, srv)
+
+        def collide(cmd, path, env):
+            name = r.db_name("OWN-COLLIDE")
+            with open(path, "x") as f:
+                f.write(collision_log + "EXIT_STATUS: 1\n")
+            ownership_env = {ownership.RECEIPT_ENV: env[ownership.RECEIPT_ENV], ownership.NONCE_ENV: r.nonce}
+            with mock.patch.dict(os.environ, ownership_env):
+                ownership.write_receipt("collision_refused", name=name, existing_oid=srv.dbs.get(name))
+            return 1
+
+        env = {"INTEVIA_POSTGRES_USER": "probe", "INTEVIA_POSTGRES_PASSWORD": "not-a-credential"}
+        fake_lock = mock.MagicMock(); fake_lock.execute.return_value.fetchall.return_value = []
+        with mock.patch.dict(os.environ, env), mock.patch.object(r, "identity", return_value={"valid": True, "problems": [], "tested": "x"}), \
+                mock.patch.object(r, "acquire_lock", side_effect=lambda: setattr(r, "lock_conn", fake_lock)), \
+                mock.patch.object(r, "lock_record", return_value={"held": True}), mock.patch.object(r, "server", return_value={"version": "simulated"}), \
+                mock.patch.object(r, "step_offline", return_value={"id": "OFFLINE", "outcome": "PASS"}), \
+                mock.patch.object(r, "step_suite", side_effect=lambda sid, *a, **k: {"id": sid, "outcome": "PASS"}), \
+                mock.patch.object(r, "step_lock", return_value={"id": "LOCK", "outcome": "PASS"}), \
+                mock.patch.object(r, "connect", side_effect=srv.connect), mock.patch.object(r, "oid_of", side_effect=srv.oid_of), \
+                mock.patch.object(r, "run_logged", side_effect=collide), contextlib.redirect_stdout(io.StringIO()):
+            code = r.run(skip_mutations=True)
+        summary = json.loads(route_mod.read_text(r.path("summary.json")))
+        return r, srv, code, summary
+
+    def names(self, summary):
+        return {n["name"]: n for n in summary["cleanup"]["names"]}
+
+    def test_v06_1_positive_control_exit_0_clean_and_every_drop_by_its_own_oid(self):
+        r, srv, code, summary = self._run()
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (0, "CLEAN"), summary)
+        self.assertEqual(srv.dbs, {})
+        self.assertTrue(all(oid is not None and oid < 9000 for _, oid in srv.drops))
+        own = next(s for s in summary["steps"] if s["id"] == "OWNERSHIP")
+        self.assertEqual(own["outcome"], "PASS", own)
+
+    def test_v06_2_oid_failure_after_collision_fixture_create_is_unresolved_exit_3(self):
+        def inject(r, srv):
+            srv.fail_oid_once_for = r.db_name("OWN-COLLIDE")
+        r, srv, code, summary = self._run(inject)
+        name = r.db_name("OWN-COLLIDE")
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (3, "NOT CLEAN"))
+        self.assertIn(name, srv.dbs)  # left untouched: its identity was never confirmed
+        self.assertTrue(self.names(summary)[name]["state"].startswith("UNRESOLVED"))
+
+    def test_v06_3_oid_failure_after_first_replacement_fixture_create_is_unresolved_exit_3(self):
+        def inject(r, srv):
+            srv.fail_oid_once_for = r.db_name("OWN-REPLACE")
+        r, srv, code, summary = self._run(inject)
+        name = r.db_name("OWN-REPLACE")
+        self.assertEqual(code, 3); self.assertIn(name, srv.dbs)
+        self.assertTrue(self.names(summary)[name]["state"].startswith("UNRESOLVED"))
+
+    def test_v06_4_receipt_write_failure_after_owned_create_is_cleaned_by_its_oid(self):
+        real_open = open
+
+        def failing_open(path, *a, **k):
+            if str(path).endswith("OWN-OWNED_db_receipts.jsonl"):
+                raise OSError("injected receipt write failure")
+            return real_open(path, *a, **k)
+
+        with mock.patch("builtins.open", side_effect=failing_open):
+            r, srv, code, summary = self._run()
+        name = r.db_name("OWN-OWNED")
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (2, "CLEAN"))  # step INCOMPLETE; the fixture is accounted for
+        self.assertNotIn(name, srv.dbs)
+        self.assertTrue(self.names(summary)[name]["state"].startswith("DROPPED BY THE ROUTE"))
+
+    def test_v06_5_a1_replacement_before_the_transition_drop_is_left_untouched(self):
+        def inject(r, srv):
+            srv.replace_after_lookup = r.db_name("OWN-REPLACE")
+        r, srv, code, summary = self._run(inject)
+        name = r.db_name("OWN-REPLACE")
+        self.assertNotIn((name, 9001), srv.drops)            # the replacement was not dropped
+        self.assertEqual(srv.dbs.get(name), 9001)
+        own = next(s for s in summary["steps"] if s["id"] == "OWNERSHIP")
+        self.assertEqual(own["outcome"], "FAIL")
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (3, "NOT CLEAN"))
+        self.assertTrue(self.names(summary)[name]["state"].startswith("REPLACED"))
+
+    def test_v06_6_create_outcome_unknown_is_left_untouched_and_unresolved(self):
+        def inject(r, srv):
+            srv.create_raises_after = r.db_name("OWN-OWNED")
+        r, srv, code, summary = self._run(inject)
+        name = r.db_name("OWN-OWNED")
+        self.assertEqual(code, 3); self.assertIn(name, srv.dbs)
+        self.assertIn("never confirmed", self.names(summary)[name]["state"])
+
+    def test_v06_7_name_taken_by_another_client_is_not_touched_and_is_not_claimed(self):
+        def inject(r, srv):
+            srv.dbs[r.db_name("OWN-OWNED")] = 7777
+        r, srv, code, summary = self._run(inject)
+        name = r.db_name("OWN-OWNED")
+        self.assertEqual(srv.dbs.get(name), 7777); self.assertNotIn((name, 7777), srv.drops)
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (2, "CLEAN"))
+        self.assertTrue(self.names(summary)[name]["state"].startswith("NOT CREATED"))
+
+    def test_v06_8_rc_o2_a_collision_run_that_reports_a_test_outcome_fails_the_check(self):
+        log = "test_x (probe.C.test_x) ... ERROR\n\n" + "-" * 70 + "\nRan 1 test in 0.001s\n\nFAILED (errors=1)\n"
+        r, srv, code, summary = self._run(collision_log=log)
+        own = next(s for s in summary["steps"] if s["id"] == "OWNERSHIP")
+        self.assertFalse(own["checks"]["collision"]["no_test_outcome_reported"]); self.assertEqual(own["outcome"], "FAIL")
+
+    def test_v06_9_runner_database_whose_creation_receipt_failed_is_left_untouched(self):
+        r = self.route(); name = r.db_name("S015")
+        p = r.path("S015_db_receipts.jsonl")
+        with open(p, "w") as f:
+            f.write(json.dumps({"event": "create_attempt", "name": name, "run_nonce": r.nonce}) + "\n")
+        sql = []
+        with mock.patch.object(r, "oid_of", return_value=4321), mock.patch.object(r, "connect", return_value=_Conn(sql)):
+            rec = r.cleanup_one("S015", name, p)
+        self.assertFalse(rec["resolved"]); self.assertIn("CREATE was issued", rec["state"]); self.assertEqual(sql, [])
+
+
+class RCO1LockDatabase(_Tmp):
+    """RC-O1: the lock is always taken in the common lock database, whatever INTEVIA_POSTGRES_DB names; an unreachable
+    lock database refuses the run instead of running it unserialised. Live contention is the route's LOCK step."""
+
+    def test_v06_10_lock_uses_the_common_database_whatever_the_connection_database(self):
+        r = self.route()
+        srv = _Server(r)
+        with mock.patch.dict(os.environ, {"INTEVIA_POSTGRES_DB": "some_other_database"}), mock.patch.object(r, "connect", side_effect=srv.connect), \
+                mock.patch.object(srv, "execute", return_value=SimpleNamespace(fetchone=lambda: (True,))):
+            r.acquire_lock()
+        self.assertEqual(srv.connect_dbnames, [route_mod.LOCK_DATABASE])
+
+    def test_v06_11_unreachable_lock_database_refuses_the_run(self):
+        r = self.route()
+        env = {"INTEVIA_POSTGRES_USER": "probe", "INTEVIA_POSTGRES_PASSWORD": "not-a-credential"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(r, "identity", return_value={"valid": True, "problems": [], "tested": "x"}), \
+                mock.patch.object(r, "connect", side_effect=RuntimeError("permission denied for database postgres")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = r.run(skip_mutations=True)
+        summary = json.loads(route_mod.read_text(r.path("summary.json")))
+        self.assertEqual(code, 2)
+        self.assertIn("lock database", summary["steps"][1]["reason"])
+        self.assertEqual(summary["cleanup"]["outcome"], "NOTHING TO CLEAN")
+
+
+class RCB4IndexFlags(B5Identity):
+    """RC-B4 (Human Governor D-3, 17 Sep 2026): flagged index states are refused with the affected paths; the route never
+    clears flags or touches the checkout; the computed working tree is still compared with the commit."""
+
+    def _flag(self, g, git, flag, change=True):
+        git("update-index", flag, "old.py")
+        if change:
+            with open(os.path.join(g, "old.py"), "ab") as f:
+                f.write(b"# hidden change\n")
+        with open(os.path.join(g, "old.py"), "rb") as f:
+            return f.read()
+
+    def _assert_refused_and_untouched(self, g, ident, before, expect_letter):
+        self.assertFalse(ident["valid"])
+        self.assertNotIn("exactly", ident["tested"]); self.assertFalse(ident["working_tree_clean"])
+        self.assertTrue(any("old.py" in p and "index flags" in p for p in ident["problems"]), ident["problems"])
+        with open(os.path.join(g, "old.py"), "rb") as f:
+            self.assertEqual(f.read(), before)  # the working file is untouched
+        tags = subprocess.run(["git", "-C", g, "ls-files", "-v", "old.py"], check=True, capture_output=True, text=True).stdout
+        self.assertEqual(tags[0], expect_letter)  # the flag is still set: the route did not clear it
+
+    def test_v06_12_skip_worktree_with_a_hidden_change_is_refused(self):
+        g, git = self._repo(); before = self._flag(g, git, "--skip-worktree")
+        ident = self.identity(g)
+        self._assert_refused_and_untouched(g, ident, before, "S")
+        self.assertNotEqual(ident["working_tree_git_tree"], ident["commit_tree"])  # the independent comparison is retained
+
+    def test_v06_13_assume_unchanged_with_a_hidden_change_is_refused(self):
+        g, git = self._repo(); before = self._flag(g, git, "--assume-unchanged")
+        self._assert_refused_and_untouched(g, self.identity(g), before, "h")
+
+    def test_v06_14_a_flag_without_a_change_is_still_refused(self):
+        g, git = self._repo(); before = self._flag(g, git, "--skip-worktree", change=False)
+        self._assert_refused_and_untouched(g, self.identity(g), before, "S")
+
+    def test_v06_15_tree_that_the_inventory_does_not_explain_is_invalid_without_flags(self):
+        g, git = self._repo()
+        with open(os.path.join(g, "old.py"), "ab") as f:
+            f.write(b"# change\n")
+        real = route_mod.run_git
+
+        def status_sees_nothing(args, env=None, cwd=None):
+            if args[:1] == ["status"]:
+                return 0, b"", ""
+            return real(args, env=env, cwd=cwd)
+
+        with mock.patch.object(route_mod, "run_git", side_effect=status_sees_nothing):
+            ident = self.identity(g)
+        self.assertFalse(ident["valid"]); self.assertTrue(any("does not list" in p and "old.py" in p for p in ident["problems"]))
+        self.assertNotIn("exactly", ident["tested"])
+
+    def test_v06_16_positive_listed_change_and_clean_tree_remain_valid(self):
+        g, git = self._repo()
+        self.assertEqual(self.identity(g)["tested"].split()[-1], "exactly")
+        with open(os.path.join(g, "old.py"), "ab") as f:
+            f.write(b"# listed change\n")
+        r = self.route(name="ev-identity-2")
+        with mock.patch.object(route_mod, "ROOT", g):
+            ident = r.identity()
+        self.assertTrue(ident["valid"], ident["problems"]); self.assertEqual(ident["tree_delta_paths"], ["old.py"])

@@ -4,8 +4,10 @@ Django's non-interactive test runner creates the test database with autoclobber:
 exists, it drops it and creates it again. On this route that could destroy a database the run did not create. This
 module replaces the creation and destruction paths of the runner's database connection:
 
-  create   refuses if a database of the name exists (CollisionRefused, before any SQL that changes state), creates it
-           without clobbering (a concurrent duplicate raises and nothing is dropped), and writes a creation receipt with
+  create   refuses if a database of the name exists (CollisionRefused, before any SQL that changes state), writes a
+           create_attempt receipt BEFORE issuing CREATE (so a database created by a CREATE whose later steps failed is still
+           attributable to an attempt, and is left untouched for lack of a confirmed identity - RC-B2, Change C v0.6), creates
+           it without clobbering (a concurrent duplicate raises and nothing is dropped), and writes a creation receipt with
            the new database's oid only after the create succeeded.
   destroy  drops the database only if its current oid equals the receipt's oid. A database that was replaced (same
            name, different oid), or one without a receipt, is left untouched and the refusal is recorded.
@@ -81,6 +83,7 @@ def install(creation):
             if existing is not None:
                 write_receipt("collision_refused", name=name, existing_oid=existing)
                 raise CollisionRefused("test database %s already exists (oid %s); refused without dropping it" % (name, existing))
+            write_receipt("create_attempt", name=name)
             # keepdb=False and no autoclobber path: a database created meanwhile by another actor raises here, and
             # nothing is dropped
             creation._execute_create_test_db(cursor, {"dbname": quote(name), "suffix": creation.sql_table_creation_suffix()}, keepdb=False)

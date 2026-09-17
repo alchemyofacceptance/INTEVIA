@@ -1,4 +1,4 @@
-"""S015 verification route - the single entry point used locally and by CI (Change C v0.2).
+"""S015 verification route - the single entry point used locally and by CI (route v0.3, Change C v0.6).
 
     python -m verification.run [--evidence-dir NEW_DIR] [--run-id ID] [--skip-mutations]
 
@@ -17,13 +17,28 @@ Steps (each PASS, FAIL or INCOMPLETE):
   S015        the S015 test set (tests/, pattern test_s015_*.py) under the isolation runner
   OWNERSHIP   live checks of the database safeguards: a colliding database is refused and left untouched; a replaced
               database is not dropped; an owned database is dropped only by its oid
+  LOCK        live check that two route runs configured with DIFFERENT connection databases still contend for the lock
   MUT-<name>  each discrimination check in verification.mutations: its target tests must fail by assertion
 
-Database safety (A1 C-A1-B3): the route holds a PostgreSQL advisory lock for the whole run, so route runs on one server do
-not interleave. Test databases are named test_intevia_living_organism_v<run id>_<step code>. The runners create a
-database only if no database of that name exists, never clobber, and write a receipt with its oid after creation. The
-runners and the route drop a database only when its current oid equals that receipt. Anything else is left untouched and
-reported as unresolved cleanup.
+Database safety (A1 C-A1-B3; RC-B2, RC-B3 and RC-O1 in v0.3):
+  Lock      the route holds a PostgreSQL advisory lock for the whole run, always taken through a connection to the
+            administrative database LOCK_DATABASE ("postgres"), whatever INTEVIA_POSTGRES_DB says. PostgreSQL advisory locks
+            are scoped to one database, so a common lock database is what makes route runs on one server contend. The
+            lock serialises route runs with each other and nothing else: it does not stop any other client of the server,
+            and it is not an ownership check. Prerequisite: the role can connect to "postgres"; if it cannot, the run is
+            refused (INCOMPLETE) rather than run unserialised.
+  Names     test databases are named test_intevia_living_organism_v<run id>_<step code>.
+  Creation  the runners create a database only if no database of that name exists, never clobber, and write a receipt
+            with its oid after creation. The route's own fixture databases are registered BEFORE CREATE is issued and move
+            through ATTEMPTED -> CREATE ISSUED -> CREATED -> CONFIRMED (oid known); an exception at any point leaves the
+            record at the last state reached.
+  Deletion  every DROP - runner, route cleanup, fixture cleanup and the deliberate replacement transition - runs only after
+            the current oid, read on the same connection immediately before, equals the confirmed creation oid. Anything
+            else, and any database whose creation or identity was never confirmed, is left untouched and reported as
+            unresolved cleanup (exit 3).
+  Limit     PostgreSQL cannot drop a database by oid. Between that final oid check and the DROP statement another client
+            could replace the database; the route narrows this window to two consecutive statements on one connection and
+            does not claim to close it.
 
 Exit status: 0 every step PASS and cleanup clean; 1 a step FAIL; 2 a step INCOMPLETE (over 1), including an existing
 evidence directory or an unavailable lock; 3 cleanup not clean or unresolved (over all).
@@ -56,8 +71,9 @@ S015_PATTERN = "test_s015_*.py"
 ISOLATION_RUNNER = "verification.isolation.runner.IsolationRunner"
 MUTATION_RUNNER = "verification.mutations.MutationRunner"
 LOCK_KEY = int(hashlib.sha256(b"intevia-s015-verification-route").hexdigest()[:15], 16)
+LOCK_DATABASE = "postgres"  # common to every route run on a server (RC-O1); not configurable by design
 OWNERSHIP_PROBE_TEST = "test_s015_0022_contract.S0150022ContractTests.test_l2_preimage_refuses_every_body_while_u14_stands"
-STEP_CODES = {"SELF": "self", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3"}
+STEP_CODES = {"SELF": "self", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3", "LOCK": "lock1"}
 STEP_CODES.update({"MUT-" + name: "mut%d" % (i + 1) for i, name in enumerate(sorted(MUTATIONS))})
 
 COLLECT = r"""
@@ -142,7 +158,7 @@ class Route:
         self.nonce = uuid.uuid4().hex
         self.steps = []
         self.attempted = []   # [(step id, database name, receipts path)] - attempts, not ownership
-        self.fixtures = []    # [(name, oid)] databases the route itself created for the OWNERSHIP step
+        self.lifecycle = []   # the route's own fixture databases, registered before CREATE (see create_fixture)
         self.lock_conn = None
         self.transcript = open(os.path.join(self.dir, "transcript.txt"), "x", encoding="utf-8")
 
@@ -177,6 +193,26 @@ class Route:
         except ValueError as exc:
             out["problems"].append("git status could not be parsed: %s" % exc)
             return out
+        # RC-B4: index flags make git status skip a file's working bytes, so the change inventory above cannot see it.
+        # The route refuses such a state (it never clears flags or touches the index): list the flagged paths and stop.
+        code, flags_raw, err = run_git(["ls-files", "-v", "-z"])
+        if code != 0:
+            out["problems"].append("git ls-files -v failed (%d): %s" % (code, err))
+            return out
+        flagged = []
+        for item in flags_raw.split(b"\0"):
+            if len(item) < 3:
+                continue
+            tag, path = item[:1].decode("ascii", "replace"), item[2:].decode("utf-8", "surrogateescape")
+            kinds = (["assume-unchanged"] if tag.islower() else []) + (["skip-worktree"] if tag.upper() == "S" else [])
+            if kinds:
+                flagged.append({"path": path, "flags": kinds})
+        out["index_flags"] = flagged
+        if flagged:
+            out["problems"].append("%d path(s) carry git index flags that hide working-tree changes from git status, so the change "
+                                   "inventory cannot be trusted: %s. The route does not clear them; clear them (git update-index "
+                                   "--no-assume-unchanged / --no-skip-worktree) or use a checkout without them"
+                                   % (len(flagged), "; ".join("%s (%s)" % (f["path"], ", ".join(f["flags"])) for f in flagged[:20])))
         rel_evidence = os.path.relpath(self.dir, ROOT).replace(os.sep, "/")
         inside = not rel_evidence.startswith("..")
         changes = []
@@ -225,10 +261,30 @@ class Route:
             out["working_tree_git_tree"] = wt.decode().strip()
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        # RC-B4: the independently computed tree must be explained by the change inventory. Every path in which the git tree
+        # of the working files differs from the commit's tree must appear in the inventory; a clean inventory with a
+        # different tree is therefore invalid. (The inventory may list more - e.g. a file whose only difference is line
+        # endings git normalises away.)
+        code, delta, err = run_git(["diff-tree", "-r", "-z", "--no-renames", "--name-only", out["commit_tree"], out["working_tree_git_tree"]])
+        if code != 0:
+            out["problems"].append("git diff-tree of the commit tree and the working-files tree failed (%d): %s" % (code, err))
+            return out
+        delta_paths = sorted(p.decode("utf-8", "surrogateescape") for p in delta.split(b"\0") if p)
+        listed = {c["path"] for c in changes} | {c["orig_path"] for c in changes if c.get("orig_path")}
+        unlisted = [p for p in delta_paths if p not in listed]
+        out["tree_delta_paths"] = delta_paths
+        if unlisted:
+            out["problems"].append("the git tree of the working files differs from the commit in %d path(s) the change inventory does "
+                                   "not list: %s" % (len(unlisted), "; ".join(unlisted[:20])))
         out["core_migration_head"] = self.core_head()
-        out["tested"] = ("commit %s exactly" % out["commit"]) if not changes else \
-            ("commit %s plus the listed working-tree changes; git tree of the working files %s" % (out["commit"], out["working_tree_git_tree"]))
         out["valid"] = not out["problems"]
+        out["working_tree_clean"] = bool(out["valid"] and not changes and out["working_tree_git_tree"] == out["commit_tree"])
+        if not out["valid"]:
+            out["tested"] = "IDENTITY NOT ESTABLISHED: " + "; ".join(out["problems"])
+        elif not changes and out["working_tree_git_tree"] == out["commit_tree"]:
+            out["tested"] = "commit %s exactly" % out["commit"]
+        else:
+            out["tested"] = "commit %s plus the listed working-tree changes; git tree of the working files %s" % (out["commit"], out["working_tree_git_tree"])
         return out
 
     @staticmethod
@@ -250,11 +306,11 @@ class Route:
         return env
 
     # ------------------------------------------------------------------ database administration
-    def connect(self):
+    def connect(self, dbname=None):
         import psycopg
         return psycopg.connect(host=os.environ.get("INTEVIA_POSTGRES_HOST", "127.0.0.1"), port=os.environ.get("INTEVIA_POSTGRES_PORT", "5432"),
                                user=os.environ["INTEVIA_POSTGRES_USER"], password=os.environ["INTEVIA_POSTGRES_PASSWORD"],
-                               dbname=os.environ.get("INTEVIA_POSTGRES_DB", "postgres"), autocommit=True)
+                               dbname=dbname or os.environ.get("INTEVIA_POSTGRES_DB", "postgres"), autocommit=True)
 
     def server(self, conn):
         row = conn.execute("SELECT version(), pg_postmaster_start_time(), current_user").fetchone()
@@ -272,13 +328,26 @@ class Route:
         with self.connect() as c:
             return self.oid_of(name, c)
 
+    def lock_session(self):
+        """A connection to the common lock database, whatever INTEVIA_POSTGRES_DB is set to (RC-O1)."""
+        try:
+            return self.connect(dbname=LOCK_DATABASE)
+        except Exception as exc:
+            raise RouteRefused("the route's lock database %r is not reachable by this role (%s: %s); the run was not started "
+                               "unserialised" % (LOCK_DATABASE, type(exc).__name__, exc))
+
     def acquire_lock(self):
-        self.lock_conn = self.connect()
+        self.lock_conn = self.lock_session()
         got = self.lock_conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0]
         if not got:
             self.lock_conn.close()
             self.lock_conn = None
             raise RouteRefused("another verification route run holds the advisory lock on this server")
+
+    def lock_record(self):
+        row = self.lock_conn.execute("SELECT current_database(), (SELECT oid FROM pg_database WHERE datname = current_database()), pg_backend_pid()").fetchone()
+        return {"key": LOCK_KEY, "held": True, "database": row[0], "database_oid": int(row[1]), "backend_pid": int(row[2]),
+                "scope": "serialises verification route runs on this server with each other; not other clients, not an ownership check"}
 
     def release_lock(self):
         if self.lock_conn is not None:
@@ -444,61 +513,135 @@ class Route:
                    established=len(established), not_applicable=len(lawful_na), not_applicable_ids=lawful_na)
         return res
 
+    # ------------------------------------------------------------------ database lifecycle (C-A1-B2, C-A1-B3; RC-B2, RC-B3)
+    def create_fixture(self, sid):
+        """Create one route-owned database. The record is registered BEFORE any SQL, so an exception at any later point
+        still leaves a truthful record: ATTEMPTED (no CREATE issued), CREATE ISSUED (outcome unknown), CREATED (exists,
+        identity not confirmed) or CONFIRMED (oid read on the creating connection). Returns the record; raises on failure."""
+        name = self.db_name(sid)
+        rec = {"step": sid, "name": name, "state": "ATTEMPTED", "oid": None}
+        self.lifecycle.append(rec)
+        with self.connect() as c:
+            existing = self.oid_of(name, c)
+            if existing is not None:
+                rec.update(state="NOT CREATED - a database of this name already existed", existing_oid=existing)
+                raise RouteRefused("fixture database %s already exists (oid %s); left untouched" % (name, existing))
+            rec["state"] = "CREATE ISSUED"
+            try:
+                c.execute('CREATE DATABASE "%s"' % name)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) == "42P04" or type(exc).__name__ == "DuplicateDatabase":
+                    rec["state"] = "NOT CREATED - another client created the name first"
+                raise
+            rec["state"] = "CREATED"
+            oid = self.oid_of(name, c)
+            if oid is None:
+                raise RuntimeError("fixture database %s not found after CREATE DATABASE" % name)
+            rec.update(state="CONFIRMED", oid=oid)
+        return rec
+
+    def guarded_drop(self, name, owned_oid):
+        """The only way the route drops a database: on one connection, read the current oid and drop only if it equals the
+        confirmed creation oid. Returns (state, resolved). See the module docstring for the residual limit."""
+        with self.connect() as c:
+            current = self.oid_of(name, c)
+            if current is None:
+                return "ABSENT - no longer present (owned oid %s)" % owned_oid, True
+            if current != owned_oid:
+                return "REPLACED - present with oid %s, not the owned oid %s; left untouched" % (current, owned_oid), False
+            c.execute('DROP DATABASE "%s"' % name.replace('"', ""))
+            gone = self.oid_of(name, c) is None
+        return (("DROPPED BY THE ROUTE (owned oid %s)" % owned_oid) if gone else "UNRESOLVED - drop issued but the database is still present"), gone
+
+    def write_created_receipt(self, name, oid, sid):
+        receipts_path = self.path(sid + "_db_receipts.jsonl")
+        with open(receipts_path, "x", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "created", "run_nonce": self.nonce, "name": name, "oid": oid}) + "\n")
+        return receipts_path
+
     def step_ownership(self):
         """Live checks of the database safeguards against this server (C-A1-B3)."""
         step = {"id": "OWNERSHIP", "checks": {}}
         ok = True
         # 1. collision: a database the runner did not create is refused and left untouched
-        foreign = self.db_name("OWN-COLLIDE")
-        with self.connect() as c:
-            c.execute('CREATE DATABASE "%s"' % foreign)
-            foreign_oid = self.oid_of(foreign, c)
-        self.fixtures.append((foreign, foreign_oid))
-        env = self.django_env(foreign, "OWN-COLLIDE")
+        collide = self.create_fixture("OWN-COLLIDE")
+        env = self.django_env(collide["name"], "OWN-COLLIDE")
         log = self.path("OWN-COLLIDE_test_output.log")
         code = self.run_logged([sys.executable, "manage.py", "test", OWNERSHIP_PROBE_TEST, "--testrunner", ISOLATION_RUNNER, "--noinput", "-v", "2"], log, env)
         receipts, problem = read_receipts(env[RECEIPT_ENV], self.nonce)
-        text = read_text(log)
-        check = {"runner_exit_nonzero": code != 0, "collision_refused_receipt": any(r["event"] == "collision_refused" and r.get("existing_oid") == foreign_oid for r in receipts),
-                 "no_created_receipt": not any(r["event"] == "created" for r in receipts), "no_test_ran": " ... ok" not in text,
-                 "database_still_present_same_oid": self.oid_of(foreign) == foreign_oid, "receipts_readable": problem is None}
+        parsed = parse_results.parse(read_text(log))
+        check = {"runner_exit_nonzero": code != 0,
+                 "collision_refused_receipt": any(r["event"] == "collision_refused" and r.get("existing_oid") == collide["oid"] for r in receipts),
+                 "no_created_receipt": not any(r["event"] == "created" for r in receipts),
+                 # RC-O2: no test reported ANY outcome (ok, failure, error or skip) and the runner reported no test run
+                 "no_test_outcome_reported": not any(t["status_events"] for t in parsed["tests"]) and not parsed["summary"]["ran"],
+                 "database_still_present_same_oid": self.oid_of(collide["name"]) == collide["oid"], "receipts_readable": problem is None}
         step["checks"]["collision"] = check
         ok &= all(check.values())
-        # 2. replacement: a receipt for oid A does not authorise dropping the same name at oid B
-        replaced = self.db_name("OWN-REPLACE")
-        with self.connect() as c:
-            c.execute('CREATE DATABASE "%s"' % replaced)
-            first = self.oid_of(replaced, c)
-        receipts_path = self.path("OWN-REPLACE_db_receipts.jsonl")
-        with open(receipts_path, "x", encoding="utf-8") as f:
-            f.write(json.dumps({"event": "created", "run_nonce": self.nonce, "name": replaced, "oid": first}) + "\n")
-        with self.connect() as c:
-            c.execute('DROP DATABASE "%s"' % replaced)
-            c.execute('CREATE DATABASE "%s"' % replaced)
-            second = self.oid_of(replaced, c)
-        self.fixtures.append((replaced, second))
-        disposition = self.cleanup_one("OWN-REPLACE", replaced, receipts_path)
-        check = {"oid_changed": first != second, "disposition_is_replaced_unresolved": disposition["state"].startswith("REPLACED") and not disposition["resolved"],
-                 "database_still_present_second_oid": self.oid_of(replaced) == second}
+        # 2. replacement: a receipt for oid A does not authorise dropping the same name at oid B. The transition from A to B
+        #    is itself a guarded drop (RC-B3): if A has been replaced by anyone else, it is left untouched and the check fails.
+        first = self.create_fixture("OWN-REPLACE")
+        receipts_path = self.write_created_receipt(first["name"], first["oid"], "OWN-REPLACE")
+        state, dropped = self.guarded_drop(first["name"], first["oid"])
+        check = {"transition_dropped_only_the_owned_oid": dropped and state.startswith("DROPPED")}
+        if check["transition_dropped_only_the_owned_oid"]:
+            first["state"] = state
+            second = self.create_fixture("OWN-REPLACE")
+            disposition = self.cleanup_one("OWN-REPLACE", second["name"], receipts_path)
+            check.update(oid_changed=first["oid"] != second["oid"],
+                         disposition_is_replaced_unresolved=disposition["state"].startswith("REPLACED") and not disposition["resolved"],
+                         database_still_present_second_oid=self.oid_of(second["name"]) == second["oid"])
+        else:
+            check["transition_state"] = state
         step["checks"]["replacement"] = check
-        ok &= all(check.values())
+        ok &= all(v for k, v in check.items() if k != "transition_state") and "transition_state" not in check
         # 3. owned: the receipt's oid authorises the drop, and absence is confirmed
-        owned = self.db_name("OWN-OWNED")
-        with self.connect() as c:
-            c.execute('CREATE DATABASE "%s"' % owned)
-            owned_oid = self.oid_of(owned, c)
-        receipts_path = self.path("OWN-OWNED_db_receipts.jsonl")
-        with open(receipts_path, "x", encoding="utf-8") as f:
-            f.write(json.dumps({"event": "created", "run_nonce": self.nonce, "name": owned, "oid": owned_oid}) + "\n")
-        disposition = self.cleanup_one("OWN-OWNED", owned, receipts_path)
-        check = {"disposition_dropped": disposition["state"].startswith("DROPPED") and disposition["resolved"], "database_absent": self.oid_of(owned) is None}
-        if self.oid_of(owned) is not None:
-            self.fixtures.append((owned, owned_oid))
+        owned = self.create_fixture("OWN-OWNED")
+        receipts_path = self.write_created_receipt(owned["name"], owned["oid"], "OWN-OWNED")
+        disposition = self.cleanup_one("OWN-OWNED", owned["name"], receipts_path)
+        if disposition["resolved"] and disposition["state"].startswith("DROPPED"):
+            owned["state"] = disposition["state"]
+        check = {"disposition_dropped": disposition["state"].startswith("DROPPED") and disposition["resolved"], "database_absent": self.oid_of(owned["name"]) is None}
         step["checks"]["owned_drop"] = check
         ok &= all(check.values())
         step["outcome"] = "PASS" if ok else "FAIL"
         if not ok:
             step["reason"] = "a database safeguard did not behave as required (see checks)"
+        return step
+
+    def step_lock(self):
+        """Live check of RC-O1: a second route run configured with a DIFFERENT connection database contends for this run's
+        lock. Discriminating control: on a session connected to that other database the same key is free, which is what
+        let two runs proceed at once when the lock followed INTEVIA_POSTGRES_DB."""
+        step = {"id": "LOCK", "checks": {}}
+        other = self.create_fixture("LOCK")
+        saved = os.environ.get("INTEVIA_POSTGRES_DB")
+        os.environ["INTEVIA_POSTGRES_DB"] = other["name"]
+        try:
+            probe = self.lock_session()
+            try:
+                contended = probe.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0] is False
+                probe_db = probe.execute("SELECT current_database()").fetchone()[0]
+            finally:
+                probe.close()
+            with self.connect() as direct:  # honours INTEVIA_POSTGRES_DB, now the other database
+                direct_db = direct.execute("SELECT current_database()").fetchone()[0]
+                free_there = direct.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0] is True
+                if free_there:
+                    direct.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
+        finally:
+            if saved is None:
+                os.environ.pop("INTEVIA_POSTGRES_DB", None)
+            else:
+                os.environ["INTEVIA_POSTGRES_DB"] = saved
+        held = self.lock_conn.execute("SELECT count(*) FROM pg_locks l JOIN pg_database d ON d.oid = l.database WHERE l.locktype = 'advisory' "
+                                      "AND l.granted AND l.pid = pg_backend_pid() AND d.datname = %s", (LOCK_DATABASE,)).fetchone()[0]
+        step["checks"] = {"second_run_configured_for_another_database_is_refused": contended, "that_run_used_the_lock_database": probe_db == LOCK_DATABASE,
+                          "control_key_is_free_on_the_other_database": free_there and direct_db == other["name"],
+                          "this_run_holds_the_lock_in_the_lock_database": held == 1}
+        step["outcome"] = "PASS" if all(step["checks"].values()) else "FAIL"
+        if step["outcome"] != "PASS":
+            step["reason"] = "the lock did not serialise route runs configured with different connection databases (see checks)"
         return step
 
     # ------------------------------------------------------------------ cleanup (C-A1-B2, C-A1-B3)
@@ -513,9 +656,12 @@ class Route:
             created = [r for r in receipts if r.get("event") == "created" and r.get("name") == name]
             current = self.oid_of(name)
             rec["current_oid"] = current
+            attempted_create = any(r.get("event") == "create_attempt" and r.get("name") == name for r in receipts)
             if not created:
                 if current is None:
-                    rec.update(state="ABSENT - never created by this run", resolved=True)
+                    rec.update(state=("ABSENT - creation attempted, nothing present" if attempted_create else "ABSENT - never created by this run"), resolved=True)
+                elif attempted_create and not any(r.get("event") == "collision_refused" for r in receipts):
+                    rec["state"] = "UNRESOLVED - CREATE was issued but no creation receipt confirms this database's identity; left untouched"
                 elif any(r.get("event") == "collision_refused" for r in receipts):
                     rec.update(state="NOT OWNED - pre-existing database, creation refused, left untouched", resolved=True)
                 else:
@@ -525,51 +671,49 @@ class Route:
             rec["owned_oid"] = owned_oid
             if current is None:
                 rec.update(state="ABSENT - owned database no longer present", resolved=True)
-            elif current != owned_oid:
+                return rec
+            if current != owned_oid:
                 rec["state"] = "REPLACED - present with oid %s, not the owned oid %s; left untouched" % (current, owned_oid)
-            else:
-                with self.connect() as c:
-                    if self.oid_of(name, c) != owned_oid:
-                        rec["state"] = "REPLACED - oid changed before the drop; left untouched"
-                        return rec
-                    c.execute('DROP DATABASE "%s"' % name.replace('"', ""))
-                    gone = self.oid_of(name, c) is None
-                rec.update(state=("DROPPED BY THE ROUTE (owned oid %s)" % owned_oid) if gone else "UNRESOLVED - drop issued but the database is still present", resolved=gone)
+                return rec
+            state, resolved = self.guarded_drop(name, owned_oid)  # re-checks on its own connection immediately before DROP
+            rec.update(state=state, resolved=resolved)
+        except Exception as exc:
+            rec["state"] = "UNRESOLVED - %s: %s" % (type(exc).__name__, exc)
+        return rec
+
+    def cleanup_fixture(self, fx):
+        rec = {"step": "fixture " + fx["step"], "name": fx["name"], "owned_oid": fx["oid"], "lifecycle_state": fx["state"], "resolved": False}
+        try:
+            if fx["state"].startswith(("DROPPED", "NOT CREATED")) or fx["state"] == "ATTEMPTED":
+                rec.update(state=("%s - nothing further to do; any database now under this name was not created by this record" % fx["state"]), resolved=True)
+            elif fx["state"] == "CONFIRMED":
+                state, resolved = self.guarded_drop(fx["name"], fx["oid"])
+                rec.update(state=state, resolved=resolved)
+            else:  # CREATE ISSUED or CREATED: a database may exist whose identity was never confirmed
+                current = self.oid_of(fx["name"])
+                rec["current_oid"] = current
+                if current is None:
+                    rec.update(state="ABSENT - creation %s, nothing present" % fx["state"], resolved=True)
+                else:
+                    rec["state"] = "UNRESOLVED - present with oid %s but its creation identity was never confirmed (%s); left untouched" % (current, fx["state"])
         except Exception as exc:
             rec["state"] = "UNRESOLVED - %s: %s" % (type(exc).__name__, exc)
         return rec
 
     def finalise_cleanup(self):
         """Runs whatever happened before it. Every attempted name keeps its own record; nothing is replaced by a summary."""
-        records = []
-        for sid, name, receipts_path in self.attempted:
-            records.append(self.cleanup_one(sid, name, receipts_path))
-        for name, oid in self.fixtures:
-            rec = {"step": "OWNERSHIP fixture", "name": name, "owned_oid": oid, "resolved": False}
-            try:
-                current = self.oid_of(name)
-                if current is None:
-                    rec.update(state="ABSENT", resolved=True)
-                elif current != oid:
-                    rec["state"] = "REPLACED - left untouched"
-                else:
-                    with self.connect() as c:
-                        c.execute('DROP DATABASE "%s"' % name)
-                        gone = self.oid_of(name, c) is None
-                    rec.update(state="DROPPED BY THE ROUTE (fixture oid %s)" % oid if gone else "UNRESOLVED - still present", resolved=gone)
-            except Exception as exc:
-                rec["state"] = "UNRESOLVED - %s: %s" % (type(exc).__name__, exc)
-            records.append(rec)
-        if not self.attempted and not self.fixtures:
+        records = [self.cleanup_one(sid, name, receipts_path) for sid, name, receipts_path in self.attempted]
+        records += [self.cleanup_fixture(fx) for fx in self.lifecycle]
+        if not records:
             return {"outcome": "NOTHING TO CLEAN", "names": []}
         unresolved = [r for r in records if not r["resolved"]]
         return {"outcome": "CLEAN" if not unresolved else "NOT CLEAN", "names": records, "unresolved": len(unresolved)}
 
     # ------------------------------------------------------------------ orchestration
     def run(self, skip_mutations):
-        summary = {"route": "S015 verification route v0.2", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
-        self.say("S015 VERIFICATION ROUTE v0.2  run %s  %s" % (self.run_id, summary["started"]))
-        planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
+        summary = {"route": "S015 verification route v0.3", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
+        self.say("S015 VERIFICATION ROUTE v0.3  run %s  %s" % (self.run_id, summary["started"]))
+        planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
@@ -586,7 +730,7 @@ class Route:
                 raise RuntimeError("INTEVIA_POSTGRES_USER is not set")
             self.acquire_lock()
             summary["server"] = self.server(self.lock_conn)
-            summary["advisory_lock"] = {"key": LOCK_KEY, "held": True}
+            summary["advisory_lock"] = self.lock_record()
             self.say("server     : %s" % summary["server"]["version"].split(",")[0])
             mine = [n for (n,) in self.lock_conn.execute("SELECT datname FROM pg_database WHERE datname LIKE %s", (DB_PREFIX + "v" + self.run_id + "\\_%",)).fetchall()]
             if mine:
@@ -594,7 +738,8 @@ class Route:
             plan = [("OFFLINE", self.step_offline),
                     ("SELF", lambda: self.step_suite("SELF", "label", ["verification.isolation.selfcheck_tests"])),
                     ("S015", lambda: self.step_suite("S015", "discover", [S015_PATTERN])),
-                    ("OWNERSHIP", self.step_ownership)]
+                    ("OWNERSHIP", self.step_ownership),
+                    ("LOCK", self.step_lock)]
             if not skip_mutations:
                 for name, m in MUTATIONS.items():
                     sid = "MUT-" + name
@@ -617,7 +762,8 @@ class Route:
             try:
                 cleanup = self.finalise_cleanup()
             except Exception as exc:  # should not happen: finalise_cleanup records per-name failures itself
-                cleanup = {"outcome": "NOT CLEAN", "names": [{"step": s, "name": n, "resolved": False, "state": "UNRESOLVED - cleanup stage raised %s: %s" % (type(exc).__name__, exc)} for s, n, _ in self.attempted],
+                cleanup = {"outcome": "NOT CLEAN", "names": [{"step": s, "name": n, "resolved": False, "state": "UNRESOLVED - cleanup stage raised %s: %s" % (type(exc).__name__, exc)} for s, n, _ in self.attempted]
+                           + [{"step": "fixture " + fx["step"], "name": fx["name"], "resolved": False, "state": "UNRESOLVED - cleanup stage raised %s: %s" % (type(exc).__name__, exc)} for fx in self.lifecycle],
                            "stage_error": "%s: %s" % (type(exc).__name__, exc)}
             try:
                 self.release_lock()
@@ -641,7 +787,7 @@ class Route:
         with open(self.path("summary.json"), "x", encoding="utf-8") as f:
             json.dump(summary, f, indent=1, default=str)
         ident, env = summary.get("identity", {}), summary["environment"]
-        lines = ["# S015 verification route v0.2 - %s" % summary["result"], "",
+        lines = ["# S015 verification route v0.3 - %s" % summary["result"], "",
                  "- **Result:** %s (exit status %d); cleanup %s" % (summary["result"], summary["exit_status"], summary["cleanup"]["outcome"]),
                  "- **Tested:** %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED"),
                  "- **Commit tree:** `%s`; working-files git tree `%s`; core migration head `%s`" % (ident.get("commit_tree"), ident.get("working_tree_git_tree"), ident.get("core_migration_head")),
