@@ -1,6 +1,14 @@
-"""S015 migration 0021 test support: raw-SQL fixture builders on the lawful route."""
+"""S015 migration 0021 test support: raw-SQL fixture builders on the lawful route.
+
+Change B (UFUND-2): every event row also carries the fourteen columns migration 0022 added, as one lawful act by
+default - a party acting and entering the record themselves. The parts commitment of an event with no parts is derived
+here by the published s015p1 rule; the predecessor's l1_commitment is read from the predecessor row as an input to the
+chain properties (it establishes nothing about L1 correctness, which test_s015_0024_commitment_preimages checks
+independently); l1_commitment itself is never supplied - the database assigns it.
+"""
 import datetime as dt
 import hashlib
+import json
 import uuid
 
 from django.db import connection
@@ -38,6 +46,35 @@ def empty_fp(cur, token, identity):
     return cur.fetchone()[0]
 
 
+def empty_parts_commitment(ev_table, event_uuid):
+    """s015p1 commitment of an event with no parts, by vectors/S015_COMMITMENT_FORMS_s015r1_s015p1_RULE_v0_1.md section 3
+    (compact array; table and uuid as JSON strings; empty list). Derived, never read from the database."""
+    preimage = '["s015p1",' + json.dumps(ev_table, ensure_ascii=False) + "," + json.dumps(str(uuid.UUID(str(event_uuid)))) + ",[]]"
+    return "s015p1:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+
+
+def contract_columns(actor_id):
+    """The 0022 columns for a party acting and entering the record themselves (0022 EVENT_BASE_CHECKS)."""
+    return {
+        "actor_state": "PARTY", "actor_capacity": "STANDING", "enterer_identity_id": actor_id, "entry_mode": "TRANSPORT",
+        "composing_rule_state": "NA_TRANSPORT", "composing_rule_reference": None, "composer_state": "NA_TRANSPORT",
+        "composer_identity_id": None, "effective_until": None, "effective_until_state": "NONE", "l2_commitment": None,
+    }
+
+
+def predecessor_l1(cur, ev_table, cols):
+    """l1_commitment of the predecessor row, as assigned by the database; None for a first event or when no row matches."""
+    if (cols.get("sequence") or 1) <= 1:
+        return None
+    if cols.get("predecessor_id") is not None:
+        cur.execute(f"SELECT l1_commitment FROM public.{ev_table} WHERE id = %s", (cols["predecessor_id"],))
+    else:
+        cur.execute(f"SELECT l1_commitment FROM public.{ev_table} WHERE {ANCHOR_FK[ev_table]} = %s AND sequence = %s",
+                    (cols.get(ANCHOR_FK[ev_table]), cols["sequence"] - 1))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 def append_event(cur, ev_table, anchor_id, seq, action, prior, result, actor_id, basis_id, tag, pred_id=None,
                  eff=T0, occ=T0, rec=T0, extra=None, recorded_at=None, event_uuid=None, overrides=None):
     cols = {
@@ -62,10 +99,15 @@ def append_event(cur, ev_table, anchor_id, seq, action, prior, result, actor_id,
         "temporal_basis_reference": None if eff == rec else f"u21g:basis:{tag}",
         "occurred_at": occ, "effective_at": eff, "received_at": rec, "recorded_at": recorded_at,
     }
+    cols.update(contract_columns(actor_id))
     if extra:
         cols.update(extra)
     if overrides:
         cols.update(overrides)
+    if "parts_commitment" not in cols:
+        cols["parts_commitment"] = empty_parts_commitment(ev_table, cols["event_uuid"])
+    if "predecessor_l1_commitment" not in cols:
+        cols["predecessor_l1_commitment"] = predecessor_l1(cur, ev_table, cols)
     names = ", ".join(cols)
     ph = ", ".join(["%s"] * len(cols))
     cur.execute(f"INSERT INTO public.{ev_table} ({names}) VALUES ({ph}) RETURNING id, recorded_at", list(cols.values()))

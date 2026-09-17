@@ -5,11 +5,23 @@ import uuid
 
 from django.contrib.auth.models import User
 from django.db import DatabaseError, connection, transaction
-from django.test import TransactionTestCase, skipUnless
+from django.test import TransactionTestCase
+from unittest import skipUnless
 
 from core.identity import canonical_username_v1
 from core.models import Identity
 
+
+# Corrections under Human Governor Option 1 (UFUND-2, 16 Sep 2026), each citing designated design
+# LD_RETURN_PKT_A_3_MIGRATION_0022_DESIGN_v0_6.md (sha256 59a07477...):
+#   C-1 section 5.5 - core_identityresolution carries credential_link; inserts supply it from the identity's own
+#       credential, and the schema check expects the four design columns.
+#   C-2 section 5.4 and U-14 - the L2 body canonical form is undefined and outside this bound, so
+#       s015_0022_l2_preimage refuses every body; the test asserts that specific refusal for object and non-object bodies.
+#   C-3 section 5.5 - no guardian refuses DELETE on the resolution table (the takedown is that delete); the rollback test
+#       rolls back deliberately after the delete and asserts the recorded severance does not survive.
+# This file was not collected before UFUND-2 Change B (finding F-B1) and its expectations predated the design (F-B2).
+U14_REFUSAL = "S015 U-14: L2 body canonical form is undefined and outside this bound"
 
 POSTGRESQL_ONLY = skipUnless(
     connection.vendor == "postgresql",
@@ -35,13 +47,14 @@ class S0150022ContractTests(TransactionTestCase):
             cursor.execute(
                 """
                 INSERT INTO public.core_identityresolution (
-                    identity_id, display_name, canonical_username
-                ) VALUES (%s, %s, %s)
+                    identity_id, display_name, canonical_username, credential_link
+                ) VALUES (%s, %s, %s, %s)
                 """,
                 (
                     identity.pk,
                     display_name or identity.display_name or "",
                     identity.canonical_username,
+                    identity.credential_id,  # C-1: design v0.6 section 5.5
                 ),
             )
 
@@ -100,34 +113,43 @@ class S0150022ContractTests(TransactionTestCase):
         self.assertEqual(self._severed_count(identity.pk), 1)
 
     def test_resolution_rollback_leaves_no_severance_trace(self):
+        # C-3: design v0.6 section 5.5 - "No guardian refuses DELETE on the resolution table - the takedown is that delete."
+        # The delete is not expected to raise. The transaction is rolled back deliberately after it, and the severance the
+        # delete recorded inside the transaction must not survive the rollback.
+        class RollbackProbe(Exception):
+            pass
+
         identity = self._identity("rollback")
         self._insert_resolution(identity)
 
-        with self.assertRaises(DatabaseError):
+        with self.assertRaises(RollbackProbe):
             with transaction.atomic():
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
                         [identity.pk],
                     )
+                self.assertEqual(self._severed_count(identity.pk), 1)
+                raise RollbackProbe()
 
         self.assertEqual(self._resolution_count(identity.pk), 1)
         self.assertEqual(self._severed_count(identity.pk), 0)
 
-    def test_l2_preimage_refuses_non_object_and_allows_object_body(self):
-        with self.assertRaises(DatabaseError):
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT public.s015_0022_l2_preimage(%s::bytea, %s::jsonb)",
-                    [b"y" * 32, json.dumps([1, 2, 3])],
-                )
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT public.s015_0022_l2_preimage(%s::bytea, %s::jsonb)",
-                [b"z" * 32, json.dumps({"alpha": 1, "beta": [2, 3]})],
-            )
-            self.assertGreater(len(cursor.fetchone()[0]), 0)
+    def test_l2_preimage_refuses_every_body_while_u14_stands(self):
+        # C-2: design v0.6 section 5.4 and U-14. The L2 body grammar is undefined, so the function is named, not specified,
+        # and refuses object and non-object bodies alike with the U-14 refusal. Only that refusal satisfies this test.
+        # (A comment, not a docstring: the verbose runner prints a docstring as an extra line, which the shared route's
+        # result parser does not recognise - run CHB_20260916T210412Z.)
+        for label, body in (("non-object body", [1, 2, 3]), ("object body", {"alpha": 1, "beta": [2, 3]})):
+            with self.subTest(body=label):
+                with self.assertRaises(DatabaseError) as raised:
+                    with transaction.atomic():
+                        with connection.cursor() as cursor:
+                            cursor.execute(
+                                "SELECT public.s015_0022_l2_preimage(%s::bytea, %s::jsonb)",
+                                [b"z" * 32, json.dumps(body)],
+                            )
+                self.assertIn(U14_REFUSAL, str(raised.exception))
 
     def test_final_schema_objects_and_trigger_names_exist(self):
         with connection.cursor() as cursor:
@@ -149,7 +171,7 @@ class S0150022ContractTests(TransactionTestCase):
 
         self.assertEqual(
             tables["core_identityresolution"],
-            ["identity_id", "display_name", "canonical_username"],
+            ["identity_id", "display_name", "canonical_username", "credential_link"],  # C-1: design v0.6 section 5.5
         )
         self.assertEqual(
             tables["core_identityresolutionsevered"],
@@ -191,6 +213,8 @@ class S0150022ContractTests(TransactionTestCase):
             )
             row = cursor.fetchone()
 
+        # Existence and timing only. The guardian's body is a no-op (0022 IDENTITY_GUARD_BODY; ILC Datacron: not delivered;
+        # kept under PKT-B by the Q-F1 ruling). Passing this test does not establish the insert-only protection.
         self.assertIsNotNone(row)
         self.assertTrue(row[1] & 4)
         self.assertFalse(row[1] & 16)

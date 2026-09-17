@@ -12,9 +12,9 @@ from django.db import DatabaseError, connection, transaction
 from django.test import TransactionTestCase
 
 from s015_0021_support import (
-    FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, drop_unset_check,
-    empty_fp, first_line, found_nonroot, found_root, fresh, refresh, restore_unset_check, seed_authority,
-    seed_identity, u,
+    FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
+    drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_root, fresh, predecessor_l1,
+    refresh, restore_unset_check, seed_authority, seed_identity, u,
 )
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 0021 guardians are PostgreSQL triggers")
@@ -207,9 +207,14 @@ class FourTimeGrammar(_S015NegativeBase):
     def test_neg_timestamp_outside_domain(self):
         ids = self.commits(lambda cur: self.root(cur))
         def attempt(cur):
-            cur.execute("INSERT INTO core_livingorganismevent (event_uuid, living_organism_id, sequence, predecessor_id, predecessor_sequence, action, prior_state, resulting_state, actor_id, actor_access_epoch, authority_basis_id, authority_decision_reference, evidence_reference, request_reference, idempotency_key, payload_fingerprint, lineage_reference, occurred_at, effective_at, received_at) "
-                        "VALUES (%s, %s, 2, %s, 1, 'X', 'ACTIVE', 'DORMANT', %s, 0, %s, %s, 'e', 'r', %s, %s, %s, '-infinity', %s, %s)",
-                        (str(uuid.uuid4()), ids["lo"], ids["lo_event"], ids["identity"], ids["basis"], "s015d1:" + "a" * 64, fresh(), "b" * 64, "s015l1:" + uuid.uuid4().hex + uuid.uuid4().hex, T0, T0))
+            event_uuid = str(uuid.uuid4())
+            contract = contract_columns(ids["identity"])
+            contract["parts_commitment"] = empty_parts_commitment("core_livingorganismevent", event_uuid)
+            contract["predecessor_l1_commitment"] = predecessor_l1(cur, "core_livingorganismevent", {"sequence": 2, "predecessor_id": ids["lo_event"]})
+            names = ", ".join(contract)
+            cur.execute("INSERT INTO core_livingorganismevent (event_uuid, living_organism_id, sequence, predecessor_id, predecessor_sequence, action, prior_state, resulting_state, actor_id, actor_access_epoch, authority_basis_id, authority_decision_reference, evidence_reference, request_reference, idempotency_key, payload_fingerprint, lineage_reference, occurred_at, effective_at, received_at, " + names + ") "
+                        "VALUES (%s, %s, 2, %s, 1, 'X', 'ACTIVE', 'DORMANT', %s, 0, %s, %s, 'e', 'r', %s, %s, %s, '-infinity', %s, %s, " + ", ".join(["%s"] * len(contract)) + ")",
+                        (str(event_uuid), ids["lo"], ids["lo_event"], ids["identity"], ids["basis"], "s015d1:" + "a" * 64, fresh(), "b" * 64, "s015l1:" + uuid.uuid4().hex + uuid.uuid4().hex, T0, T0, *contract.values()))
         self.refuses(attempt, contains="domain_ck")
 
     def test_neg_temporal_basis_missing_when_retrospective(self):
