@@ -1,4 +1,4 @@
-"""Self-test of verification.parse_results (C-P1). Standard library only: no Django, no database.
+"""Self-test of verification.parse_results (C-P1, and C-A1-B1 in Change C v0.2). Standard library only: no Django, no database.
 
 The logs are produced by unittest's own verbose runner - the runner Django uses for 'manage.py test -v 2' - over a
 synthetic test case whose tests pass, fail, error, use sub-tests and are skipped, with and without docstrings. Each
@@ -9,7 +9,7 @@ Run: python -m unittest verification.selftest_parser -v
 import io
 import unittest
 
-from verification.parse_results import parse
+from verification.parse_results import join_description_lines, parse
 
 MODULE = "verification.selftest_parser"
 
@@ -121,3 +121,59 @@ class DescriptionLineParsing(unittest.TestCase):
         cut = text.replace("Erroring test. ... ERROR\n", "", 1)
         out = parse(cut, ids)
         self.assertFalse(out["reconciled"])
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# C-A1-B1 (Change C v0.2): complete, unambiguous outcome accounting. Counterexamples from A1's review, with positive
+# controls. TEARDOWN_LOG was captured from Django 5.2.15 (a SimpleTestCase whose _post_teardown raises for *_td tests,
+# and whose tearDown raises for test_teardown_method), with only the module path renamed.
+# ---------------------------------------------------------------------------------------------------------------
+TAIL = "\n" + "-" * 70 + "\nRan 1 test in 0.001s\n\nOK\nEXIT_STATUS: 0\n"
+TID = "probe.C.test_a"
+TEARDOWN_LOG = 'test_fail_td (probe.A.test_fail_td) ... FAIL\ntest_fail_td (probe.A.test_fail_td) ... ERROR\ntest_ok_td (probe.A.test_ok_td) ... ok\ntest_ok_td (probe.A.test_ok_td) ... ERROR\ntest_sub_td (probe.A.test_sub_td) ... \n  test_sub_td (probe.A.test_sub_td) (i=1) ... FAIL\ntest_sub_td (probe.A.test_sub_td) ... ERROR\ntest_sub_then_error (probe.A.test_sub_then_error) ... \n  test_sub_then_error (probe.A.test_sub_then_error) (i=1) ... FAIL\ntest_sub_then_error (probe.A.test_sub_then_error) ... ERROR\ntest_teardown_method (probe.A.test_teardown_method) ... ERROR\n\n======================================================================\nERROR: test_fail_td (probe.A.test_fail_td)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 9, in _post_teardown\n    raise RuntimeError("flush failed")\nRuntimeError: flush failed\n\n======================================================================\nERROR: test_ok_td (probe.A.test_ok_td)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 9, in _post_teardown\n    raise RuntimeError("flush failed")\nRuntimeError: flush failed\n\n======================================================================\nERROR: test_sub_td (probe.A.test_sub_td)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 9, in _post_teardown\n    raise RuntimeError("flush failed")\nRuntimeError: flush failed\n\n======================================================================\nERROR: test_sub_then_error (probe.A.test_sub_then_error)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 17, in test_sub_then_error\n    raise ValueError("after subtests")\nValueError: after subtests\n\n======================================================================\nERROR: test_teardown_method (probe.A.test_teardown_method)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 20, in tearDown\n    if self._testMethodName == \'test_teardown_method\': raise RuntimeError(\'tearDown boom\')\n                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: tearDown boom\n\n======================================================================\nFAIL: test_fail_td (probe.A.test_fail_td)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 11, in test_fail_td\n    def test_fail_td(self): self.assertEqual(1, 2)\n                            ^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 2\n\n======================================================================\nFAIL: test_sub_td (probe.A.test_sub_td) (i=1)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 14, in test_sub_td\n    with self.subTest(i=i): self.assertEqual(i, 0)\n                            ^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 0\n\n======================================================================\nFAIL: test_sub_then_error (probe.A.test_sub_then_error) (i=1)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "probe.py", line 16, in test_sub_then_error\n    with self.subTest(i=1): self.assertEqual(1, 0)\n                            ^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 0\n\n----------------------------------------------------------------------\nRan 5 tests in 0.003s\n\nFAILED (failures=3, errors=5)\n\n'
+TEARDOWN_IDS = ["probe.A." + n for n in ("test_fail_td", "test_ok_td", "test_sub_td", "test_sub_then_error", "test_teardown_method")]
+
+
+class OutcomeAccounting(unittest.TestCase):
+    def test_b1_1_missing_status_single_line_is_not_reconciled(self):
+        out = parse("test_a (probe.C.test_a) ...\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+        self.assertEqual(out["accounting_violations"][0]["id"], TID)
+
+    def test_b1_2_missing_status_description_form_is_not_reconciled(self):
+        out = parse("test_a (probe.C.test_a)\nA description. ...\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+
+    def test_b1_3_duplicate_ok_is_not_reconciled(self):
+        out = parse("test_a (probe.C.test_a) ... ok\ntest_a (probe.C.test_a) ... ok\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+
+    def test_b1_4_duplicate_ok_description_form_is_not_reconciled(self):
+        out = parse("test_a (probe.C.test_a)\nA description. ... ok\ntest_a (probe.C.test_a)\nA description. ... ok\n" + TAIL, [TID])
+        self.assertFalse(out["reconciled"])
+
+    def test_b1_5_join_never_takes_another_tests_status_line(self):
+        lines = list(join_description_lines(["test_a (probe.C.test_a)", "test_b (probe.C.test_b) ... ok"]))
+        self.assertEqual(lines, ["test_a (probe.C.test_a)", "test_b (probe.C.test_b) ... ok"])
+        text = "test_a (probe.C.test_a)\ntest_b (probe.C.test_b) ... ok\n" + TAIL.replace("Ran 1 test", "Ran 2 tests")
+        self.assertFalse(parse(text, [TID, "probe.C.test_b"])["reconciled"])
+
+    def test_b1_6_extra_error_without_a_teardown_block_is_not_reconciled(self):
+        text = "test_a (probe.C.test_a) ... ok\ntest_a (probe.C.test_a) ... ERROR\n" + TAIL
+        self.assertFalse(parse(text, [TID])["reconciled"])
+
+    def test_b1_7_positive_django_teardown_and_subtest_shapes_reconcile(self):
+        out = parse(TEARDOWN_LOG + "\nEXIT_STATUS: 1\n", TEARDOWN_IDS)
+        self.assertTrue(out["reconciled"], out["reconciliation"])
+        self.assertEqual(out["accounting_violations"], [])
+        by = {t["id"].rsplit(".", 1)[1]: t for t in out["tests"]}
+        self.assertEqual(by["test_ok_td"]["teardown_errors"], 1)
+        self.assertEqual(by["test_fail_td"]["body"], "FAIL")
+        self.assertEqual(by["test_sub_td"]["subtest_failures"], 1)
+
+    def test_b1_8_positive_all_real_shapes_from_the_synthetic_runner_still_reconcile(self):
+        for docs in (True, False):
+            text, ids = run_log(with_docstrings=docs)
+            out = parse(text, ids)
+            self.assertTrue(out["reconciled"], (docs, out["reconciliation"]))
+            self.assertEqual(out["accounting_violations"], [])

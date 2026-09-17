@@ -13,13 +13,16 @@ happened. It is the route described in the proposed HAT/IDOP amendment on cross-
 
 | Step | What | Database |
 |---|---|---|
-| `PARSER` | `verification.selftest_parser`: the result parser against real unittest output, including tests with docstrings, sub-tests, skips, a missing result and a missing verdict | none |
+| `IDENTITY` | the commit, its tree, every working-tree change with its bytes (renames, deletions and unusual paths included), and git's tree of the working files. A failure, or an unsupported entry such as a symlink, makes the run `INCOMPLETE` | none |
+| `OFFLINE` | `verification.selftest_parser` and `verification.selftest_route`: the parser's outcome accounting and the route's safeguards, each shown to accept valid evidence and reject defective evidence | none |
 | `SELF` | `verification.isolation.selfcheck_tests`: the isolation instrument's own self-check | a disposable test database |
 | `S015` | every `tests/test_s015_*.py` module under the isolation runner | a disposable test database |
-| `MUT-<name>` | each discrimination check in `verification/mutations.py`: its target tests must **fail** when the intended protection is replaced by an unrelated refusal | a disposable test database |
+| `OWNERSHIP` | live checks on the server: a database that already exists is refused and left untouched; a replaced database is not dropped; an owned database is dropped only by its oid | databases the step creates and removes itself |
+| `MUT-<name>` | each discrimination check in `verification/mutations.py`: its target tests must **fail by assertion** when the intended protection is replaced by an unrelated refusal | a disposable test database |
 
-Each step is `PASS`, `FAIL` or `INCOMPLETE`. A log that does not account for every collected test, a module that fails
-to load, missing isolation evidence or a setup failure is `INCOMPLETE`, never `PASS`.
+Each step is `PASS`, `FAIL` or `INCOMPLETE`. Every collected test must have exactly one lawful terminal outcome; a missing
+or repeated outcome, a module that fails to load, isolation evidence that is missing or not bound to the run, a skipped
+test, or a setup failure is `INCOMPLETE`, never `PASS`. A setup, sub-test or teardown error is `FAIL`.
 
 ## Result and exit status
 
@@ -32,17 +35,20 @@ to load, missing isolation evidence or a setup failure is `INCOMPLETE`, never `P
 
 ## Evidence
 
-The evidence folder (default `verification-evidence/<run id>/`, not committed) holds:
+`--evidence-dir` must name a directory that does not exist yet; an existing one is refused and nothing is written into
+it. The default is `verification-evidence/<run id>/` (not committed). It holds:
 
 - **`SUMMARY.md` and `summary.json`:**
-  - the commit and tree tested, and every uncommitted change with its SHA-256;
+  - the commit and its tree, the git tree of the working files, and every uncommitted change with its SHA-256 (or
+    `deleted`);
   - the core migration head;
   - Python, Django, psycopg and platform; the PostgreSQL server version and identity; the CI run, when there is one;
-  - the test scope and collection digest for each step;
-  - each step's outcome, test totals and every test that did not pass;
-  - isolation checkpoints: applicable, established and not applicable (with the reason and the test ids);
-  - cleanup per database, and the overall result.
-- **Per step:** collection, raw log, parsed results, isolation records.
+  - the run nonce, which binds each step's collection, isolation records and database receipts to this run;
+  - each step's scope, collection digest, outcome, test totals, every test that did not pass, and any accounting
+    violations;
+  - isolation checkpoints recomputed from the run's own records: applicable, established, not applicable (with ids);
+  - cleanup per database, with its ownership evidence, and the overall result.
+- **Per step:** collection, raw log, parsed results, isolation records, database receipts.
 - **`MANIFEST.sha256`:** the digest of every file in the folder.
 
 ## Running it locally
@@ -61,8 +67,16 @@ python -m verification.run                   # prompts for the password if INTEV
 
 ## Databases
 
-The route creates only `test_intevia_living_organism_v<run id>_<step>` databases, refuses to start if any of that run's
-names already exist, and drops only its own names that survive the test runner. It never touches any other database.
+- **One run at a time per server:** the route holds a PostgreSQL advisory lock for the whole run. If another run holds it,
+  the route stops `INCOMPLETE` before touching any database.
+- **Names:** `test_intevia_living_organism_v<run id>_<step>`, at most 63 characters.
+- **Creation:** the test runners create a database only if none of that name exists. They never drop and recreate, and
+  they write a receipt with the new database's oid only after creation succeeds.
+- **Destruction:** the runners and the route drop a database only when its current oid equals that receipt. A database
+  that exists without a receipt, or was replaced (same name, different oid), is left untouched and reported as unresolved
+  cleanup (exit 3).
+- **Limit:** PostgreSQL cannot drop a database by oid. The check and the drop are consecutive statements, and the advisory
+  lock serialises route runs, but not other actors.
 
 ## When a packet changes the schema or the tests
 

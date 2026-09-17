@@ -1,4 +1,4 @@
-"""S015 verification route - parse a Django 'manage.py test -v 2' log (r5).
+"""S015 verification route - parse a Django 'manage.py test -v 2' log (r6).
 
 Lineage: u1r4_parse_results.py (UFUND-1/UFUND-2 route), unchanged in its outcome model: per-test body, sub-test, setup and
 teardown outcomes, every total reconciled against the runner's own summary, a recognised final verdict required, and
@@ -10,6 +10,17 @@ so such a test's status was lost and the log did not reconcile. r5 joins a heade
 following description line when, and only when, that line carries " ..."; the status is what follows its last " ... ".
 A header with no such following line is left alone, so its result stays missing and the log stays unreconciled.
 
+r6 (UFUND-2 Change C v0.2, A1 finding C-A1-B1): identities and totals are no longer enough. Every collected test must
+have exactly one lawful terminal outcome:
+  - one main status line (ok, FAIL, ERROR, skipped, expected failure, unexpected success); or
+  - no main status line and at least one sub-test status line (failing sub-tests; the parent line carries no status); or
+  - a main status followed by exactly one ERROR, when a teardown-phase ERROR block exists for that test (Django reports
+    the result, then an error from its own post-test teardown).
+A recognised header without a status, a repeated status, an extra ERROR without a teardown block, or an 'ok'/'skipped'
+status contradicted by a FAIL/ERROR block outside teardown is an accounting violation: the log is not reconciled.
+The description join never treats a line that is itself a test status line as a description, so it cannot take another
+test's status.
+
 Usage: python -m verification.parse_results <log> <json_out> [<collected_ids_json>]   exit 0 reconciled, 3 not
 """
 import json
@@ -18,6 +29,8 @@ import sys
 from collections import OrderedDict
 
 HEADER_ALONE = re.compile(r"^(?P<indent>\s*)(?P<header>test\w+ \([\w\.]+\)(?: \(.*\))?)\s*$")
+TEST_TOKEN_START = re.compile(r"^\s*test\w+ \([\w\.]+\)")
+TERMINAL = ("ok", "ERROR", "FAIL", "skipped", "expected failure", "unexpected success")
 
 
 def join_description_lines(lines):
@@ -28,13 +41,35 @@ def join_description_lines(lines):
         m = HEADER_ALONE.match(line)
         if m and " ..." not in line and i + 1 < len(lines):
             nxt = lines[i + 1]
-            if " ..." in nxt and not HEADER_ALONE.match(nxt):
+            if " ..." in nxt and not TEST_TOKEN_START.match(nxt):
                 before, sep, status = nxt.rpartition(" ...")
                 yield m.group("indent") + m.group("header") + " ..." + status
                 i += 2
                 continue
         yield line
         i += 1
+
+
+def terminal_accounting(mains, subs, blocks):
+    """Returns (lawful, reason) for one test's status events and failure blocks (see the module docstring)."""
+    phases = [(b["kind"], b["phase"]) for b in blocks]
+    teardown_errors = sum(1 for k, ph in phases if ph == "teardown" and k == "ERROR")
+    contradicting = [k for k, ph in phases if ph in ("body", "setup", "subtest", "unclassified")]
+    if any(m not in TERMINAL for m in mains):
+        return False, "unrecognised status %s" % mains
+    if not mains and not subs:
+        return False, "no terminal outcome reported"
+    if not mains:
+        return (True, "sub-test outcomes only") if all(s in ("FAIL", "ERROR", "skipped") for s in subs) else (False, "sub-test status %s" % subs)
+    if len(mains) == 1:
+        if mains[0] in ("ok", "skipped", "expected failure") and contradicting:
+            return False, "status %s contradicted by %s block(s)" % (mains[0], contradicting)
+        return True, "one terminal status"
+    if len(mains) == 2 and mains[1] == "ERROR" and teardown_errors >= 1:
+        if mains[0] in ("ok", "skipped", "expected failure") and contradicting:
+            return False, "status %s contradicted by %s block(s)" % (mains[0], contradicting)
+        return True, "terminal status then a teardown ERROR"
+    return False, "%d terminal statuses %s (teardown ERROR blocks %d)" % (len(mains), mains, teardown_errors)
 
 
 def parse(text, collected=None, log_path=""):
@@ -130,6 +165,8 @@ def parse(text, collected=None, log_path=""):
         su = [x for x in bl if x["phase"] == "setup"]
         un = [x for x in bl if x["phase"] == "unclassified"]
         mains = [s for k, s in ev if k == "main"]
+        subs = [s for k, s in ev if k == "subtest"]
+        lawful, why = terminal_accounting(mains, subs, bl)
         if su:
             body = "NOT REACHED (setup error)"
         elif body_blocks:
@@ -155,7 +192,7 @@ def parse(text, collected=None, log_path=""):
             isolation = "not established by the log (requires an isolation checkpoint)"
         if td and first_teardown_failure_index is None:
             first_teardown_failure_index = i
-        tests.append({"id": tid, "position": i + 1, "body": body, "body_exception": (body_blocks[0]["exception"] + ": " + body_blocks[0]["message"]) if body_blocks else "",
+        tests.append({"id": tid, "position": i + 1, "body": body, "terminal_accounting": {"lawful": lawful, "reason": why}, "body_exception": (body_blocks[0]["exception"] + ": " + body_blocks[0]["message"]) if body_blocks else "",
                       "subtest_failures": len([x for x in sub_blocks if x["kind"] == "FAIL"]), "subtest_errors": len([x for x in sub_blocks if x["kind"] == "ERROR"]),
                       "setup_errors": len(su), "teardown_errors": len(td), "unclassified_entries": len(un),
                       "teardown_exception": (td[0]["exception"] + ": " + td[0]["message"]) if td else "", "isolation": isolation, "status_events": ev})
@@ -172,6 +209,8 @@ def parse(text, collected=None, log_path=""):
     recon["status line exit and log exit agree"] = (summary["exit"] is not None and ((summary["final"] or "").startswith("OK")) == (summary["exit"] == 0), summary["exit"], summary["final"])
     if collected is not None:
         recon["reported tests equal collected identities"] = (sorted(order) == sorted(collected), len(order), len(collected))
+    violations = [{"id": t["id"], "reason": t["terminal_accounting"]["reason"]} for t in tests if not t["terminal_accounting"]["lawful"]]
+    recon["every reported test has exactly one lawful terminal outcome"] = (not violations, len(violations), 0)
     numerically_reconciled = all(v[0] for v in recon.values())
     unclassified_entries = len([x for x in all_blocks if x["phase"] == "unclassified"])
     phase_classification_complete = unclassified_entries == 0
@@ -184,7 +223,7 @@ def parse(text, collected=None, log_path=""):
     out = {"log": log_path, "summary": summary, "lifecycle": lifecycle,
            "verdict_present": verdict_present, "numerically_reconciled": numerically_reconciled,
            "phase_classification_complete": phase_classification_complete, "unclassified_entries": unclassified_entries, "reconciliation": {k: {"ok": v[0], "observed": v[1], "reference": v[2]} for k, v in recon.items()},
-           "reconciled": reconciled, "entry_totals_by_phase": phase_totals, "test_totals_by_body_outcome": body_totals,
+           "reconciled": reconciled, "accounting_violations": violations, "entry_totals_by_phase": phase_totals, "test_totals_by_body_outcome": body_totals,
            "tests_with_teardown_errors": sum(1 for t in tests if t["teardown_errors"]),
            "first_teardown_failure_position": (first_teardown_failure_index + 1) if first_teardown_failure_index is not None else None,
            "tests": tests}

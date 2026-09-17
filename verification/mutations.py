@@ -13,12 +13,14 @@ import os
 from django.db import connection
 from django.test.runner import DiscoverRunner
 
+from verification.ownership import OwnedDatabaseRunnerMixin
+
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
     "fu-b2-unrelated-reuse-refusal": {
         "follow_up": "FU-B2 (A1 review O-2)",
-        "intended": "the reuse guardian's R-d refusal (design v0.6 section 5.5; 0022 RESOLUTION_REUSE_GUARD_BODY)",
+        "intended": "the reuse guardian's R-d refusal: R-d as ruled and landed (ILC Datacron section 3, What the packet builds, item 2; section 6) and implemented by 0022 RESOLUTION_REUSE_GUARD_BODY; design v0.6 section 5.5 posed the question",
         "targets": ["test_s015_0022_contract.S0150022ContractTests.test_reinsert_after_severance_is_refused"],
         "sql": [
             """CREATE OR REPLACE FUNCTION public.s015_0022_guard_resolution_reuse()
@@ -44,7 +46,7 @@ MUTATIONS = {
 }
 
 
-class MutationRunner(DiscoverRunner):
+class MutationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
     """Applies the mutation named in VERIFICATION_MUTATION to the freshly migrated test database, before any test."""
 
     def setup_databases(self, **kwargs):

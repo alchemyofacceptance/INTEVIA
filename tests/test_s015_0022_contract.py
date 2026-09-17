@@ -106,9 +106,10 @@ class S0150022ContractTests(TransactionTestCase):
                     [identity.pk],
                 )
 
-        # FU-B2 (UFUND-2 Change C; A1 review O-2): design v0.6 section 5.5 - a severed identity reference cannot receive
-        # another resolution (R-d). Only the reuse guardian's R-d refusal satisfies this test; any other database error
-        # fails it.
+        # FU-B2 (UFUND-2 Change C; A1 review O-2): R-d as ruled and landed - a severed identity reference cannot receive
+        # another resolution (ILC Datacron section 3, What the packet builds, item 2, and section 6; implemented by 0022's
+        # reuse guardian). Design v0.6 section 5.5 posed R-d as a reserved question. Only the reuse guardian's R-d refusal
+        # satisfies this test; any other database error fails it.
         with self.assertRaises(DatabaseError) as refused:
             with transaction.atomic():
                 self._insert_resolution(identity, display_name="new name")

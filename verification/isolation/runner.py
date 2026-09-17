@@ -24,6 +24,8 @@ from django.test.utils import iter_test_cases
 
 from intevia.test_postgresql_backend.operations import S015_TRUNCATE_GUARDIANS
 
+from verification.ownership import OwnedDatabaseRunnerMixin
+
 from . import state
 
 CURRENT = {"runner": None}
@@ -70,7 +72,7 @@ def database_access(test):
     return ("permitted" if "default" in databases else "forbidden"), databases
 
 
-class IsolationRunner(DiscoverRunner):
+class IsolationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
     def run_suite(self, suite, **kwargs):
         self.out_path = os.environ["VERIFICATION_ISOLATION_JSON"]
         self.emit_errors = 0
@@ -161,6 +163,7 @@ class IsolationRunner(DiscoverRunner):
         print("ISOLATION CP-A %s %s" % (label, test.id()), file=sys.stderr, flush=True)
 
     def _emit(self, rec):
+        rec = dict(rec, run_nonce=os.environ.get("VERIFICATION_RUN_NONCE"))  # binds every record to the current run (C-A1-B4)
         try:
             with open(self.out_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, default=str) + "\n")

@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install the pinned verification environment
+      - name: Install the verification requirements (Django pinned; psycopg within a range; service image tag postgres:17)
         run: python -m pip install --disable-pip-version-check --no-cache-dir -r requirements-verification.txt
 
       - name: Run the S015 verification route
