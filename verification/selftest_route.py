@@ -344,7 +344,7 @@ class B5Identity(_Tmp):
 
         def git(*a):
             subprocess.run(["git", "-C", g, "-c", "user.name=probe", "-c", "user.email=probe@example.invalid", *a], check=True, capture_output=True)
-        subprocess.run(["git", "init", "-q", g], check=True)
+        subprocess.run(["git", "init", "-q", g], check=True, capture_output=True)
         git("config", "core.autocrlf", "false")
         # files are written as bytes with LF endings, so the committed content is the same on every platform
         # (text mode would write CRLF on Windows - found in the qualifying run CHC_20260917T103926Z)
@@ -399,7 +399,7 @@ class B5Identity(_Tmp):
         # privilege on any platform (a symlink needs one on Windows - found in CHC_20260917T103926Z)
         g, git = self._repo()
         nested = os.path.join(g, "nested")
-        subprocess.run(["git", "init", "-q", nested], check=True)
+        subprocess.run(["git", "init", "-q", nested], check=True, capture_output=True)
         with open(os.path.join(nested, "x.py"), "wb") as f:
             f.write(b"# nested\n")
         ident = self.identity(g)
@@ -421,3 +421,42 @@ class B5Identity(_Tmp):
         ident = self.identity(g)
         self.assertTrue(ident["valid"], ident["problems"])
         self.assertEqual(ident["working_tree_git_tree"], ident["commit_tree"])  # same git content (the O-1 situation)
+
+
+class B5EvidenceInsideRepository(_Tmp):
+    """CI writes its evidence into the repository (verification-evidence/, which .gitignore ignores). Found in CI run
+    35215316126: identity failed there and the route correctly reported INCOMPLETE.
+
+    Every git call in these self-tests captures its output: Git for Windows prints line-ending warnings, which would
+    otherwise land inside the verbose runner's status lines (found in the v0.4 qualifying run)."""
+
+    def _repo(self, gitignore):
+        g = os.path.join(self.tmp, "repo"); os.makedirs(os.path.join(g, "core", "migrations"))
+        subprocess.run(["git", "init", "-q", g], check=True, capture_output=True)
+        files = {"core/migrations/0001_initial.py": b"# initial\n", "a.py": b"# a\n"}
+        if gitignore is not None:
+            files[".gitignore"] = gitignore
+        for rel, data in files.items():
+            with open(os.path.join(g, *rel.split("/")), "wb") as f:
+                f.write(data)
+        subprocess.run(["git", "-C", g, "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", g, "-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "commit", "-qm", "base"], check=True, capture_output=True)
+        return g
+
+    def _identity_with_evidence_inside(self, g):
+        r = route_mod.Route(os.path.join(g, "verification-evidence"), "probe")
+        self.addCleanup(lambda: r.transcript.close())
+        with mock.patch.object(route_mod, "ROOT", g):
+            return r.identity()
+
+    def test_b5_ignored_evidence_directory_inside_the_repository(self):
+        g = self._repo(b"verification-evidence/\n")
+        ident = self._identity_with_evidence_inside(g)
+        self.assertTrue(ident["valid"], ident["problems"])
+        self.assertTrue(ident["working_tree_clean"]); self.assertEqual(ident["working_tree_git_tree"], ident["commit_tree"])
+
+    def test_b5_unignored_evidence_directory_inside_the_repository_is_excluded(self):
+        g = self._repo(None)
+        ident = self._identity_with_evidence_inside(g)
+        self.assertTrue(ident["valid"], ident["problems"])
+        self.assertTrue(ident["working_tree_clean"]); self.assertEqual(ident["working_tree_git_tree"], ident["commit_tree"])

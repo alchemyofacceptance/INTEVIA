@@ -204,7 +204,17 @@ class Route:
         try:
             env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
             code, _, err = run_git(["read-tree", "HEAD"], env=env)
-            pathspec = ["--", "."] + ([":(exclude)" + rel_evidence] if inside else [])
+            pathspec = ["--", "."]
+            if inside:
+                # an evidence directory inside the repository is left out of the tree. If .gitignore already ignores it,
+                # naming it in an exclude pathspec makes `git add` fail ("paths are ignored"), so it is named only when
+                # git does not ignore it (found in CI run 35215316126, where the evidence directory is ignored)
+                ignored, _, err_ci = run_git(["check-ignore", "-q", rel_evidence + "/"])
+                if ignored not in (0, 1):
+                    out["problems"].append("git check-ignore failed (%d): %s" % (ignored, err_ci))
+                    return out
+                if ignored == 1:
+                    pathspec.append(":(exclude)" + rel_evidence)
             if code == 0:
                 code, _, err = run_git(["add", "-A"] + pathspec, env=env)
             if code == 0:
