@@ -271,7 +271,7 @@ class VocabulariesAndShapes(_S015NegativeBase):
         ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
         head = self._circle_head(ids)
         self.refuses(lambda cur: append_event(cur, "core_circlestateevent", ids["circle"], 2, "X", "DORMANT", "ACTIVE", ids["identity"], ids["basis"], fresh(), pred_id=head),
-                     contains="check constraint")
+                     contains="s015_0021_circleevent_resulting_state_vocab_ck")  # FU-B3 (Change C; A1 O-2): the circle vocabulary CHECK itself
 
     def _circle_head(self, ids):
         with connection.cursor() as cur:

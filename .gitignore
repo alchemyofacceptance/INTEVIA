@@ -240,3 +240,6 @@ m22.txt
 migrate_0022.txt
 binding_run_3_12_10.txt
 
+
+# S015 verification route evidence (retained as CI artifacts or returned with a run; not committed)
+verification-evidence/
