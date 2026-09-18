@@ -820,12 +820,12 @@ class Route:
         print("RESULT: %s  exit status %d  cleanup %s  evidence %s" % (summary["result"], summary["exit_status"], summary["cleanup"]["outcome"], self.dir), flush=True)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--evidence-dir", default=None, help="a directory that does not exist yet")
     ap.add_argument("--run-id", default=None, help="1-20 lowercase letters or digits; default: time-based")
     ap.add_argument("--skip-mutations", action="store_true")
-    a = ap.parse_args()
+    a = ap.parse_known_args(argv)[0]
     run_id = a.run_id or (datetime.datetime.now(datetime.timezone.utc).strftime("%y%m%d%H%M%S") + uuid.uuid4().hex[:4])
     if not re.fullmatch(r"[a-z0-9]{1,20}", run_id):
         ap.error("--run-id must be 1-20 lowercase letters or digits")

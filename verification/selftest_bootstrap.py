@@ -27,108 +27,39 @@ def _git(cwd, *args):
 
 
 def _fixture_repo(root, helper_mode=False):
+    trusted_v = Path(root) / "V"
     checkout = Path(root) / "checkout"
     checkout.mkdir()
+    trusted_v.mkdir()
     _write(checkout / "verification" / "__init__.py", "")
+    _write(checkout / "verification" / "fixture_v" / "v_only_helper.py", "print('A1_V_HELPER_EXECUTED', flush=True)\n")
+    _write(checkout / "verification" / "repo_helper.py", "print('A1_REPO_HELPER_EXECUTED', flush=True)\n")
     _write(checkout / "verification" / "route.py", textwrap.dedent(
         '''
-        def main(a, rec, ident, evidence_dir):
+        def main(argv=None):
             from verification import parse_results
-            rec["route_optional_helper"] = parse_results.OPTIONAL_HELPER
+            _ = parse_results.OPTIONAL_HELPER
             return 0
         '''
     ).lstrip())
-    parse_results = """try:\n    import optional_helper\n    OPTIONAL_HELPER = True\nexcept ImportError:\n    OPTIONAL_HELPER = False\n"""
+    parse_results = """import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fixture_v'))
+from verification import repo_helper
+import v_only_helper
+OPTIONAL_HELPER = False
+"""
     if helper_mode:
         parse_results = (
             "import os, sys\n"
+            "sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fixture_v'))\n"
+            "from verification import repo_helper\n"
             "sys.path.insert(0, os.environ['INTEVIA_A1_PROBE_W'])\n"
             "try:\n    import w_only_helper\nexcept ImportError:\n    pass\n"
             "OPTIONAL_HELPER = False\n"
         )
     _write(checkout / "verification" / "parse_results.py", parse_results)
-    _write(checkout / "verification" / "run.py", textwrap.dedent(
-        '''
-        from __future__ import annotations
-
-        import argparse
-        import importlib.machinery
-        import json
-        import os
-        import sys
-
-        def _forms(path):
-            return os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.realpath(path))
-
-        def _under(path, root):
-            return path == root or path.startswith(root + os.sep)
-
-        def _classify(path, roots):
-            if path is None or path in ("built-in", "frozen", "namespace"):
-                return "(no file)"
-            lit, real = _forms(path)
-            if _under(real, roots["checkout"][1]) and not _under(real, roots["snapshot"][1]):
-                return "W"
-            if _under(real, roots["snapshot"][1]):
-                return "E"
-            if _under(real, roots["V"][1]):
-                return "V"
-            if _under(real, roots["A"][1]):
-                return "A"
-            return "OTHER"
-
-        def _audit(rec, roots):
-            refusals = []
-            for name, mod in list(sys.modules.items()):
-                f = getattr(mod, "__file__", None)
-                cls = _classify(f, roots)
-                if cls in ("W", "OTHER"):
-                    refusals.append("module %s executed from outside the verified snapshot and the trusted roots: %s (%s)" % (name, f, cls))
-            return {"run_id": rec["run_id"], "launch_token": rec["launch_token"], "refusals": refusals}
-
-        def main(argv=None):
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--snapshot", required=True)
-            parser.add_argument("--checkout", required=True)
-            parser.add_argument("--evidence-dir", required=True)
-            parser.add_argument("--run-id", required=True)
-            parser.add_argument("--launch-token", required=True)
-            parser.add_argument("--commit", required=True)
-            parser.add_argument("--skip-mutations", action="store_true")
-            args = parser.parse_args(argv)
-            if not (sys.flags.isolated and sys.flags.no_site):
-                raise SystemExit(2)
-            snapshot = os.path.abspath(args.snapshot)
-            checkout = os.path.abspath(args.checkout)
-            rec = {
-                "run_id": args.run_id,
-                "launch_token": args.launch_token,
-                "root": snapshot,
-                "entry": os.path.realpath(__file__),
-                "mode": "snapshot-entry",
-                "site_dirs": list(__import__("site").getsitepackages()),
-            }
-            history = []
-            class Recorder(importlib.machinery.PathFinder.__class__):
-                pass
-            sys.path.append(snapshot)
-            from verification import route
-            result = route.main(args, rec, {"commit": args.commit}, args.evidence_dir)
-            audit = _audit(rec, {"checkout": _forms(checkout), "snapshot": _forms(snapshot), "V": _forms(sys.prefix), "A": _forms(sys.base_prefix)})
-            final_result = "PASS" if result == 0 and not audit["refusals"] else "INCOMPLETE"
-            final_exit = 0 if final_result == "PASS" else 2
-            summary = {"run_id": args.run_id, "result": final_result, "exit_status": final_exit, "execution": rec, "identity": {"commit": args.commit}}
-            os.makedirs(args.evidence_dir, exist_ok=True)
-            with open(os.path.join(args.evidence_dir, "summary.json"), "x", encoding="utf-8") as f:
-                json.dump(summary, f, indent=1)
-            with open(os.path.join(args.evidence_dir, "SOURCE_AUDIT.json"), "x", encoding="utf-8") as f:
-                json.dump(audit, f, indent=1)
-            return final_exit
-
-        if __name__ == "__main__":
-            raise SystemExit(main())
-        '''
-    ).lstrip())
+    production_run = Path(__file__).with_name("run.py").read_text(encoding="utf-8")
+    _write(checkout / "verification" / "run.py", production_run)
     _write(checkout / "w_only_helper.py", "print('A1_W_HELPER_EXECUTED', flush=True)\n")
     _git(checkout, "init", "-q")
     _git(checkout, "add", "-A")
@@ -140,7 +71,9 @@ def _fixture_repo(root, helper_mode=False):
 
 class BootstrapSurfaceTests(unittest.TestCase):
     def _run(self, checkout, commit, run_root, extra_args=None, env=None):
-        patch = mock.patch.dict(os.environ, env or {}, clear=False)
+        fixture_root = Path(checkout).parent
+        merged_env = dict(env or {}, INTEVIA_A1_PROBE_W=str(checkout))
+        patch = mock.patch.dict(os.environ, merged_env, clear=False)
         with patch:
             return bootstrap_mod.bootstrap(sys.executable, str(checkout), commit, str(run_root), extra_args or ["--run-id", Path(run_root).name])
 
@@ -152,10 +85,101 @@ class BootstrapSurfaceTests(unittest.TestCase):
             checkout, commit, _ = _fixture_repo(td)
             run_root = Path(td) / "run-1"
             result = self._run(checkout, commit, run_root)
+            surface = json.loads((run_root / "SURFACE_RESULT.json").read_text(encoding="utf-8"))
+            audit = json.loads((run_root / "evidence" / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
             gate = self._gate(run_root)
             self.assertEqual(result["exit"], 0, result)
             self.assertTrue(gate["qualifying"], gate)
             self.assertFalse(gate["refusals"], gate)
+            self.assertIn("A1_REPO_HELPER_EXECUTED", surface["coordinator_stdout"])
+            self.assertIn("A1_V_HELPER_EXECUTED", surface["coordinator_stdout"])
+            self.assertGreaterEqual(audit["history_by_origin"].get("E(root)", 0), 1, audit)
+            self.assertIn("verification.route", audit["history_modules_by_origin"].get("E(root)", []), audit)
+            self.assertIn("verification.repo_helper", audit["repository_modules"])
+            self.assertFalse(audit["final_cache_is_complete_history"])
+
+    def test_w_helper_success_is_refused_by_history_origin(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, commit, _ = _fixture_repo(td, helper_mode=True)
+            run_root = Path(td) / "run-2a"
+            result = self._run(checkout, commit, run_root)
+            surface = json.loads((run_root / "SURFACE_RESULT.json").read_text(encoding="utf-8"))
+            audit = json.loads((run_root / "evidence" / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
+            gate = self._gate(run_root)
+            self.assertEqual(result["exit"], 2, result)
+            self.assertFalse(gate["qualifying"], gate)
+            self.assertIn("A1_W_HELPER_EXECUTED", surface["coordinator_stdout"])
+            self.assertTrue(any(entry[0] == "w_only_helper" and entry[3] == "W" for entry in audit["history_refused"]), audit)
+            self.assertTrue(any("w_only_helper" in refusal and "does not clear it" in refusal for refusal in audit["refusals"]), audit)
+
+    def test_w_helper_importerror_is_refused_by_history_origin(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, commit, _ = _fixture_repo(td, helper_mode=True)
+            helper_path = Path(td) / "checkout" / "w_only_helper.py"
+            helper_path.write_text("print('A1_W_HELPER_EXECUTED', flush=True)\nraise ImportError('optional dependency unavailable')\n", encoding="utf-8")
+            run_root = Path(td) / "run-2b"
+            result = self._run(checkout, commit, run_root)
+            surface = json.loads((run_root / "SURFACE_RESULT.json").read_text(encoding="utf-8"))
+            audit = json.loads((run_root / "evidence" / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
+            gate = self._gate(run_root)
+            self.assertEqual(result["exit"], 2, result)
+            self.assertFalse(gate["qualifying"], gate)
+            self.assertIn("A1_W_HELPER_EXECUTED", surface["coordinator_stdout"])
+            self.assertGreaterEqual(audit["history_by_origin"].get("W", 0), 1, audit)
+            self.assertTrue(any(entry[0] == "w_only_helper" and entry[3] == "W" for entry in audit["history_refused"]), audit)
+            self.assertTrue(any("w_only_helper" in refusal and "does not clear it" in refusal for refusal in audit["refusals"]), audit)
+            self.assertEqual(audit["modules_by_origin"].get("W", 0), 0, audit)
+            self.assertFalse(audit["final_cache_is_complete_history"])
+
+    def test_caught_importerror_qualifies_when_source_audit_uses_final_inventory_only(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, commit, _ = _fixture_repo(td, helper_mode=True)
+            run_py = Path(checkout) / "verification" / "run.py"
+            original = run_py.read_text(encoding="utf-8")
+            mutated_source_audit = textwrap.dedent(
+                '''
+                def source_audit(rec, roots):
+                    modules_by_origin = {}
+                    repository_modules = []
+                    for name, mod in list(sys.modules.items()):
+                        f = getattr(mod, "__file__", None)
+                        if not f or name == "__main__":
+                            modules_by_origin["(no file)"] = modules_by_origin.get("(no file)", 0) + 1
+                            continue
+                        cls = classify(f, roots)
+                        modules_by_origin[cls] = modules_by_origin.get(cls, 0) + 1
+                        if cls == "E(root)":
+                            repository_modules.append(name)
+                    return {
+                        "run_id": rec["run_id"],
+                        "launch_token": rec["launch_token"],
+                        "refusals": [],
+                        "modules_by_origin": modules_by_origin,
+                        "repository_modules": sorted(repository_modules),
+                        "history_by_origin": {},
+                        "history_modules_by_origin": {},
+                        "history_entries": 0,
+                        "history_refused": [],
+                        "final_cache_is_complete_history": True,
+                    }
+                '''
+            ).lstrip()
+            try:
+                prefix, suffix = original.rsplit('if __name__ == "__main__":\n    sys.exit(main())', 1)
+                mutated = prefix + '\n\n' + mutated_source_audit + '\nif __name__ == "__main__":\n    sys.exit(main())' + suffix
+                run_py.write_text(mutated, encoding="utf-8")
+                _git(checkout, "add", "verification/run.py")
+                _git(checkout, "commit", "-qm", "mutated source audit")
+                commit = _git(checkout, "rev-parse", "HEAD")
+                helper_path = Path(td) / "checkout" / "w_only_helper.py"
+                helper_path.write_text("print('A1_W_HELPER_EXECUTED', flush=True)\nraise ImportError('optional dependency unavailable')\n", encoding="utf-8")
+                run_root = Path(td) / "run-mutated"
+                result = self._run(checkout, commit, run_root)
+                gate = self._gate(run_root)
+                self.assertEqual(result["exit"], 0, result)
+                self.assertTrue(gate["qualifying"], gate)
+            finally:
+                run_py.write_text(original, encoding="utf-8")
 
     def test_missing_launch_attestation_run_id_is_refused(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:

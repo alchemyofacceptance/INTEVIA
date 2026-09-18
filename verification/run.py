@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.abc
+import json
 import os
 import subprocess
 import sys
@@ -161,16 +163,154 @@ def identity():
     return out
 
 
+def forms(path):
+    return os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.realpath(path))
+
+
+def under(path, root):
+    return path == root or path.startswith(root + os.sep)
+
+
+def classify(path, roots):
+    if path is None or path in ("built-in", "frozen", "namespace"):
+        return "(no file)"
+    lit, real = forms(path)
+    if under(real, roots["W"][1]) and not under(real, roots["V"][1]):
+        return "W"
+    if under(real, roots["E"][1]):
+        return "E(root)"
+    if under(real, roots["V"][1]):
+        return "V"
+    if under(real, roots["A"][1]):
+        return "A"
+    if under(lit, roots["A"][0]):
+        return "A(interpreter-owned symlink)"
+    if under(lit, roots["V"][0]):
+        return "V(symlink out of V)"
+    return "OTHER"
+
+
+def install_witness(rec):
+    origins = []
+
+    class Recorder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):
+            for finder in sys.meta_path[1:]:
+                spec = finder.find_spec(name, path, target) if hasattr(finder, "find_spec") else None
+                if spec is not None:
+                    origins.append((name, spec.origin, type(spec.loader).__name__ if spec.loader else None))
+                    return spec
+            return None
+
+    sys.meta_path.insert(0, Recorder())
+    rec["witnesses"] = {"meta_path_origins": origins}
+
+
+def source_audit(rec, roots):
+    refusals = []
+    history_by_origin = {}
+    history_modules_by_origin = {}
+    history_refused = []
+    seen = set()
+    repository_modules = []
+
+    history = rec.get("witnesses", {}).get("meta_path_origins", [])
+    for name, origin, loader in history:
+        if origin is None or origin in ("built-in", "frozen", "namespace"):
+            history_by_origin["(no file)"] = history_by_origin.get("(no file)", 0) + 1
+            continue
+        cls = classify(origin, roots)
+        history_by_origin[cls] = history_by_origin.get(cls, 0) + 1
+        history_modules_by_origin.setdefault(cls, []).append(name)
+        resolved = forms(origin)[1]
+        if cls == "E(root)" and name not in repository_modules:
+            repository_modules.append(name)
+        if cls in ("W", "OTHER") and (name, resolved) not in seen:
+            seen.add((name, resolved))
+            history_refused.append([name, resolved, loader, cls])
+            refusals.append("module %s was resolved and executed from outside the verified snapshot and the trusted roots: %s (%s, %s); its absence from the final module inventory (import failed or module removed) does not clear it" % (name, resolved, cls, loader))
+
+    modules_by_origin = {}
+    for name, mod in list(sys.modules.items()):
+        f = getattr(mod, "__file__", None)
+        if not f or name == "__main__":
+            modules_by_origin["(no file)"] = modules_by_origin.get("(no file)", 0) + 1
+            continue
+        cls = classify(f, roots)
+        modules_by_origin[cls] = modules_by_origin.get(cls, 0) + 1
+        resolved = forms(f)[1]
+        if cls == "E(root)" and name not in repository_modules:
+            repository_modules.append(name)
+        elif cls in ("W", "OTHER") and (name, resolved) not in seen:
+            seen.add((name, resolved))
+            refusals.append("module %s executed from outside the verified snapshot and the trusted roots: %s (%s)" % (name, resolved, cls))
+
+    return {
+        "run_id": rec["run_id"],
+        "launch_token": rec["launch_token"],
+        "refusals": refusals,
+        "modules_by_origin": modules_by_origin,
+        "repository_modules": sorted(repository_modules),
+        "history_by_origin": history_by_origin,
+        "history_modules_by_origin": {key: sorted(value) for key, value in history_modules_by_origin.items()},
+        "history_entries": len(history),
+        "history_refused": history_refused,
+        "final_cache_is_complete_history": False,
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="S015 verification route entry point")
+    parser.add_argument("--snapshot", default=None)
+    parser.add_argument("--checkout", default=None)
     parser.add_argument("--evidence-dir", default=None)
     parser.add_argument("--run-id", default=None)
+    parser.add_argument("--launch-token", default=None)
+    parser.add_argument("--commit", default=None)
     parser.add_argument("--skip-mutations", action="store_true")
-    parser.parse_known_args(argv)
+    args, remainder = parser.parse_known_args(argv)
 
+    rec = {
+        "run_id": args.run_id,
+        "launch_token": args.launch_token,
+        "root": os.path.abspath(args.snapshot or ROOT),
+        "entry": os.path.realpath(__file__),
+        "mode": "snapshot-entry" if args.snapshot else "checkout-entry",
+        "site_dirs": list(__import__("site").getsitepackages()) if hasattr(__import__("site"), "getsitepackages") else [],
+    }
+    install_witness(rec)
+    sys.path.insert(0, os.path.abspath(args.snapshot or ROOT))
     from verification import route as route_mod
+    route_argv = list(remainder)
+    if args.snapshot and "--snapshot" not in route_argv:
+        route_argv.extend(["--snapshot", args.snapshot])
+    if args.checkout and "--checkout" not in route_argv:
+        route_argv.extend(["--checkout", args.checkout])
+    if args.evidence_dir and "--evidence-dir" not in route_argv:
+        route_argv.extend(["--evidence-dir", args.evidence_dir])
+    if args.run_id and "--run-id" not in route_argv:
+        route_argv.extend(["--run-id", args.run_id])
+    if args.launch_token and "--launch-token" not in route_argv:
+        route_argv.extend(["--launch-token", args.launch_token])
+    if args.commit and "--commit" not in route_argv:
+        route_argv.extend(["--commit", args.commit])
+    if args.skip_mutations and "--skip-mutations" not in route_argv:
+        route_argv.append("--skip-mutations")
 
-    return route_mod.main()
+    route_exit = route_mod.main(route_argv)
+
+    roots = {"W": forms(args.checkout or ROOT), "E": forms(args.snapshot or ROOT), "V": forms(sys.prefix), "A": forms(sys.base_prefix)}
+    audit = source_audit(rec, roots)
+    evidence_dir = args.evidence_dir or os.path.join(ROOT, "verification-evidence", args.run_id or "run")
+    os.makedirs(evidence_dir, exist_ok=True)
+    final_result = "PASS" if route_exit == 0 and not audit["refusals"] else "INCOMPLETE"
+    final_exit = 0 if final_result == "PASS" else (2 if route_exit == 0 else route_exit)
+    summary = {"run_id": args.run_id, "result": final_result, "exit_status": final_exit, "execution": rec, "identity": {"commit": args.commit}}
+    with open(os.path.join(evidence_dir, "summary.json"), "x", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=1)
+    with open(os.path.join(evidence_dir, "SOURCE_AUDIT.json"), "x", encoding="utf-8") as handle:
+        json.dump(audit, handle, indent=1)
+    return final_exit
 
 
 if __name__ == "__main__":
