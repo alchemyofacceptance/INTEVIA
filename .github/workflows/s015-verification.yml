@@ -1,6 +1,38 @@
-# S015 verification route in CI. It runs the same entry point as local verification (python -m verification.run) and
-# publishes its evidence. The job's check fails on FAIL, INCOMPLETE or a cleanup problem; the summary says which.
-# A passing check is evidence for the tested commit and environment. It is not review, landing or Human acceptance.
+# S015 verification route in CI (workflow v0.8, Change C design v0.5).
+#
+# Author : Vision Chamber (Claude Opus 5), UFUND-5, 18 September 2026. Human Governor: Carmian Owen.
+# Against: CONSUMER_REQUIREMENT_v0_5.md, sha256 995073dbf74a8722dbdb03a55d68acba29893534360e5e8e5364f903a3aafd20
+#
+# v0.8 changes from the workflow this replaces, and only these:
+#
+#   1. IDENTITY. On a pull_request the job checks out and binds to the PR HEAD commit, not the merge commit
+#      GitHub synthesises. ONE sha - CANDIDATE_SHA - is used for the checkout, the bootstrap extraction, the
+#      bootstrap's --commit and --expected-tree, and the evidence. The PR BASE sha is recorded beside it.
+#      Ruled by the Human Governor, 18 September 2026, option (b): clear candidate binding for this bounded
+#      task. This is NOT a claim that a merge commit cannot be identified - GitHub retains refs/pull/N/merge
+#      and its sha is recordable - nor that merge-result testing is invalid. It is a scoped choice.
+#      The base sha is recorded so it can be re-checked before any landing decision.
+#
+#   2. SURFACE. The route runs through the committed verification/bootstrap.py, extracted from the candidate
+#      commit's object store and blob-verified against its own git object id, under -I -S (design 5.3).
+#      It is NOT started as `python -m verification.run`. A direct invocation is non-qualifying by the route's
+#      own README, and since f7079ec the route refuses one outright: CI run #5 on e19f41f recorded
+#      DependencyValidationError, "validated dependency root was not supplied by the launcher". That refusal
+#      was correct. This step is what supplies it.
+#
+#   3. DECISION. The check is the CONJUNCTION of the exit mapping AND sections 1-3 of the consumer
+#      requirement, applied by .github/s015_gate.py. A route exit of 0 alone can no longer produce a green
+#      check. Missing, null or malformed evidence is a NAMED refusal and a non-qualifying outcome; a parsing
+#      or decision failure can never read green.
+#
+#   4. The WHOLE run root is retained as the artifact, not only the evidence directory.
+#
+# RETAINED from the previous workflow: the dependency-layout probe under -I -S. On CI run #5 it reported
+# dependency_root=/opt/hostedtoolcache/Python/3.12.14/x64, purelib_exists=True, django_importable=True.
+# It stays because it answers on every run rather than once.
+#
+# A passing check is evidence for the tested commit and environment. It is not review, landing, external
+# reproduction or Human acceptance.
 name: S015 verification
 
 on:
@@ -37,11 +69,42 @@ jobs:
       # A throwaway password for the job's own service container; it protects nothing outside this job.
       INTEVIA_POSTGRES_PASSWORD: intevia-ci-disposable
       INTEVIA_POSTGRES_DB: postgres
+      # The one sha this job binds to, everywhere. On a pull_request it is the PR head commit; on a push or a
+      # manual dispatch there is no PR, so it is the pushed commit and they are the same thing.
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
     steps:
-      - name: Check out the exact commit
+      - name: Check out the candidate commit
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
+
+      - name: Record the identity this run binds to, and prove the checkout matches it
+        run: |
+          set -euo pipefail
+          checked_out="$(git rev-parse HEAD)"
+          echo "candidate (bound): $CANDIDATE_SHA"
+          echo "checked out:       $checked_out"
+          echo "pr base:           ${BASE_SHA:-<none: not a pull_request>}"
+          echo "event:             $GITHUB_EVENT_NAME"
+          echo "github.sha:        $GITHUB_SHA"
+          if [ "$checked_out" != "$CANDIDATE_SHA" ]; then
+            echo "STOP: the checkout is not the candidate this run claims to bind to."
+            exit 1
+          fi
+          {
+            echo "### S015 verification - identity"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| candidate commit | \`$CANDIDATE_SHA\` |"
+            echo "| pr base commit | \`${BASE_SHA:-n/a}\` |"
+            echo "| event | \`$GITHUB_EVENT_NAME\` |"
+            echo "| github.sha | \`$GITHUB_SHA\` |"
+            echo ""
+            echo "The base sha is recorded for re-checking before any landing decision. It is not itself tested."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -74,41 +137,102 @@ jobs:
           print('django_importable=', django_importable)
           PY
 
-      - name: Run the S015 verification route
+      - name: Extract the committed bootstrap from the candidate commit's object store
+        id: bootstrap
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/s015-verification"
+          mkdir -p "$R"
+          blob="$(git rev-parse "$CANDIDATE_SHA:verification/bootstrap.py")"
+          git cat-file blob "$blob" > "$R/bootstrap.py"
+          extracted="$(git hash-object -- "$R/bootstrap.py")"
+          echo "declared blob : $blob"
+          echo "extracted blob: $extracted"
+          if [ "$extracted" != "$blob" ]; then
+            echo "STOP: the extracted bootstrap hashes to $extracted, expected $blob. The route was not run."
+            exit 1
+          fi
+          echo "blob=$blob"      >> "$GITHUB_OUTPUT"
+          echo "run_root=$R"     >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse "$CANDIDATE_SHA^{tree}")" >> "$GITHUB_OUTPUT"
+
+      - name: Run the S015 verification route through the committed bootstrap
         id: route
         run: |
           set +e
-          python -m verification.run --evidence-dir verification-evidence --run-id "gh${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
+          cd "${{ steps.bootstrap.outputs.run_root }}"
+          python -I -S bootstrap.py \
+            --checkout "$GITHUB_WORKSPACE" \
+            --commit "$CANDIDATE_SHA" \
+            --expected-tree "${{ steps.bootstrap.outputs.tree }}" \
+            --run-root "${{ steps.bootstrap.outputs.run_root }}" \
+            --evidence-dir "${{ steps.bootstrap.outputs.run_root }}/evidence" \
+            --run-id "gh${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
           status=$?
+          echo "route exit status: $status"
           echo "exit_status=$status" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Publish the summary
         if: always()
         run: |
-          if [ -f verification-evidence/SUMMARY.md ]; then
-            cat verification-evidence/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          S="${{ steps.bootstrap.outputs.run_root }}/evidence/SUMMARY.md"
+          if [ -f "$S" ]; then
+            cat "$S" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No evidence summary was written: the route did not complete setup. Treat this run as INCOMPLETE." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No evidence summary was written: the route did not reach the point of writing one. Treat this run as INCOMPLETE." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Retain the evidence
+      - name: Retain the whole run root
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: s015-verification-evidence-${{ github.sha }}-${{ github.run_attempt }}
-          path: verification-evidence/
+          name: s015-verification-evidence-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ steps.bootstrap.outputs.run_root }}
           if-no-files-found: warn
           retention-days: 90
 
-      - name: Fail the check unless the route passed and cleanup was clean
+      - name: Decide - the exit mapping AND sections 1-3 of the consumer requirement
         if: always()
         run: |
+          set +e
+          R="${{ steps.bootstrap.outputs.run_root }}"
           status="${{ steps.route.outputs.exit_status }}"
+
+          # 1. the qualification decision over the retained run root. Missing, null or malformed evidence is a
+          #    NAMED refusal and a non-qualifying outcome; it is never an unhandled error and never green.
+          python .github/s015_gate.py "$R" "$R/QUALIFICATION_DECISION.json"
+          gate=$?
+          if [ ! -f "$R/QUALIFICATION_DECISION.json" ]; then
+            echo "INCOMPLETE: the qualification decision produced no record. Not green."
+            echo "INCOMPLETE: the qualification decision produced no record. Not green." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          {
+            echo ""
+            echo "### S015 qualification decision"
+            python - "$R/QUALIFICATION_DECISION.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("- qualifying: **%s**" % d["qualifying"])
+          for r in d["reasons"]:
+              print("- refused: %s" % r)
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # 2. the exit mapping, unchanged in meaning
           case "$status" in
-            0) echo "PASS: every step passed and cleanup was clean." ;;
+            0) echo "route exit 0: every step passed and cleanup was clean." ;;
             1) echo "FAIL: at least one step failed. See the summary and evidence."; exit 1 ;;
             2) echo "INCOMPLETE: at least one step could not be completed. See the summary and evidence."; exit 1 ;;
             3) echo "CLEANUP NOT CLEAN: see the summary and evidence."; exit 1 ;;
             *) echo "INCOMPLETE: the route did not report an exit status ($status)."; exit 1 ;;
           esac
+
+          # 3. the conjunction. Exit 0 alone is not a green check.
+          if [ "$gate" -ne 0 ]; then
+            echo "NOT QUALIFYING: the route exited 0 but the qualification decision refused. See the decision above."
+            exit 1
+          fi
+          echo "PASS: the route exited 0 and the qualification decision holds."
