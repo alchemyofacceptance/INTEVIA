@@ -1,4 +1,4 @@
-"""S015 verification route - the single entry point used locally and by CI (route v0.3, Change C v0.6).
+"""S015 verification route - the single entry point used locally and by CI (route v0.5, Change C v0.6).
 
     python -m verification.run [--evidence-dir NEW_DIR] [--run-id ID] [--skip-mutations]
 
@@ -710,15 +710,16 @@ class Route:
         return {"outcome": "CLEAN" if not unresolved else "NOT CLEAN", "names": records, "unresolved": len(unresolved)}
 
     # ------------------------------------------------------------------ orchestration
-    def run(self, skip_mutations):
-        summary = {"route": "S015 verification route v0.3", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
-        self.say("S015 VERIFICATION ROUTE v0.3  run %s  %s" % (self.run_id, summary["started"]))
+    def run(self, skip_mutations, launch_token=None, snapshot=None, checkout=None, attested_commit=None):
+        summary = {"route": "S015 verification route v0.5", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
+        self.say("S015 VERIFICATION ROUTE v0.5  run %s  %s" % (self.run_id, summary["started"]))
+        summary["execution"] = {"launch_token": launch_token, "root": os.path.abspath(snapshot or ROOT), "entry": os.path.realpath(__file__), "mode": "snapshot-entry" if snapshot else "checkout-entry", "site_dirs": list(__import__("site").getsitepackages()) if hasattr(__import__("site"), "getsitepackages") else []}
         planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
             ident = self.identity()
-            summary["identity"] = ident
+            summary["identity"] = dict(ident, attested_commit=attested_commit or ident.get("commit"))
             self.steps.append({"id": "IDENTITY", "outcome": "PASS" if ident["valid"] else "INCOMPLETE", **({} if ident["valid"] else {"reason": "; ".join(ident["problems"])})})
             self.say("tested     : %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED: " + "; ".join(ident["problems"])))
             if not os.environ.get("INTEVIA_POSTGRES_PASSWORD"):
@@ -787,7 +788,7 @@ class Route:
         with open(self.path("summary.json"), "x", encoding="utf-8") as f:
             json.dump(summary, f, indent=1, default=str)
         ident, env = summary.get("identity", {}), summary["environment"]
-        lines = ["# S015 verification route v0.3 - %s" % summary["result"], "",
+        lines = ["# S015 verification route v0.5 - %s" % summary["result"], "",
                  "- **Result:** %s (exit status %d); cleanup %s" % (summary["result"], summary["exit_status"], summary["cleanup"]["outcome"]),
                  "- **Tested:** %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED"),
                  "- **Commit tree:** `%s`; working-files git tree `%s`; core migration head `%s`" % (ident.get("commit_tree"), ident.get("working_tree_git_tree"), ident.get("core_migration_head")),
@@ -824,6 +825,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--evidence-dir", default=None, help="a directory that does not exist yet")
     ap.add_argument("--run-id", default=None, help="1-20 lowercase letters or digits; default: time-based")
+    ap.add_argument("--snapshot", default=None)
+    ap.add_argument("--checkout", default=None)
+    ap.add_argument("--launch-token", default=None)
+    ap.add_argument("--commit", default=None)
     ap.add_argument("--skip-mutations", action="store_true")
     a = ap.parse_known_args(argv)[0]
     run_id = a.run_id or (datetime.datetime.now(datetime.timezone.utc).strftime("%y%m%d%H%M%S") + uuid.uuid4().hex[:4])
@@ -835,7 +840,7 @@ def main(argv=None):
     except RouteRefused as exc:
         print("REFUSED: %s" % exc, file=sys.stderr, flush=True)
         sys.exit(2)
-    sys.exit(route.run(a.skip_mutations))
+    sys.exit(route.run(a.skip_mutations, launch_token=a.launch_token, snapshot=a.snapshot, checkout=a.checkout, attested_commit=a.commit))
 
 
 if __name__ == "__main__":

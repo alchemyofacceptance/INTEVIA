@@ -36,10 +36,45 @@ def _fixture_repo(root, helper_mode=False):
     _write(checkout / "verification" / "repo_helper.py", "print('A1_REPO_HELPER_EXECUTED', flush=True)\n")
     _write(checkout / "verification" / "route.py", textwrap.dedent(
         '''
+        import argparse
+        import json
+        import os
+        import site
+        import sys
+
         def main(argv=None):
             from verification import parse_results
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--evidence-dir", required=True)
+            parser.add_argument("--run-id", required=True)
+            parser.add_argument("--launch-token", required=True)
+            parser.add_argument("--commit", required=True)
+            parser.add_argument("--snapshot", required=True)
+            parser.add_argument("--checkout", required=True)
+            parser.add_argument("--skip-mutations", action="store_true")
+            args = parser.parse_args(argv)
             _ = parse_results.OPTIONAL_HELPER
-            return 0
+            summary = {
+                "route": "S015 verification route v0.5",
+                "run_id": args.run_id,
+                "result": "PASS",
+                "exit_status": 0,
+                "execution": {
+                    "launch_token": args.launch_token,
+                    "root": args.snapshot,
+                    "entry": os.path.join(args.snapshot, "verification", "route.py"),
+                    "mode": "snapshot-entry",
+                    "site_dirs": list(site.getsitepackages()) if hasattr(site, "getsitepackages") else [],
+                },
+                "identity": {
+                    "commit": args.commit,
+                    "attested_commit": args.commit,
+                },
+            }
+            os.makedirs(args.evidence_dir, exist_ok=True)
+            with open(os.path.join(args.evidence_dir, "summary.json"), "x", encoding="utf-8") as handle:
+                json.dump(summary, handle, indent=1)
+            sys.exit(0)
         '''
     ).lstrip())
     parse_results = """import os, sys
@@ -85,12 +120,19 @@ class BootstrapSurfaceTests(unittest.TestCase):
             checkout, commit, _ = _fixture_repo(td)
             run_root = Path(td) / "run-1"
             result = self._run(checkout, commit, run_root)
+            summary = json.loads((run_root / "evidence" / "summary.json").read_text(encoding="utf-8"))
             surface = json.loads((run_root / "SURFACE_RESULT.json").read_text(encoding="utf-8"))
             audit = json.loads((run_root / "evidence" / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
             gate = self._gate(run_root)
             self.assertEqual(result["exit"], 0, result)
             self.assertTrue(gate["qualifying"], gate)
             self.assertFalse(gate["refusals"], gate)
+            self.assertEqual(summary["route"], "S015 verification route v0.5")
+            self.assertEqual(summary["identity"]["attested_commit"], commit)
+            self.assertEqual(summary["execution"]["launch_token"], surface["launch_token"])
+            self.assertTrue((run_root / "evidence" / "summary.json").exists())
+            self.assertTrue((run_root / "evidence" / "SOURCE_AUDIT.json").exists())
+            self.assertTrue(gate["qualifying"], gate)
             self.assertIn("A1_REPO_HELPER_EXECUTED", surface["coordinator_stdout"])
             self.assertIn("A1_V_HELPER_EXECUTED", surface["coordinator_stdout"])
             self.assertGreaterEqual(audit["history_by_origin"].get("E(root)", 0), 1, audit)
@@ -177,6 +219,7 @@ class BootstrapSurfaceTests(unittest.TestCase):
                 result = self._run(checkout, commit, run_root)
                 gate = self._gate(run_root)
                 self.assertEqual(result["exit"], 0, result)
+                self.assertTrue((run_root / "evidence" / "SOURCE_AUDIT.json").exists())
                 self.assertTrue(gate["qualifying"], gate)
             finally:
                 run_py.write_text(original, encoding="utf-8")

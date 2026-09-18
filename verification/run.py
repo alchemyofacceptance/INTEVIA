@@ -1,3 +1,13 @@
+"""Stage A of the verification route.
+
+`run.py` installs the import witness on `sys.meta_path` before any repository
+import, delegates to `verification.route`, derives its exit from the route's
+`SystemExit`, writes `SOURCE_AUDIT.json` from both the recorded import-origin
+history and the final module inventory, and returns the final exit. The route
+owns `summary.json`. An invocation without `--snapshot` records
+`checkout-entry` and is non-qualifying.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -297,7 +307,17 @@ def main(argv=None):
     if args.skip_mutations and "--skip-mutations" not in route_argv:
         route_argv.append("--skip-mutations")
 
-    route_exit = route_mod.main(route_argv)
+    try:
+        route_mod.main(route_argv)
+    except SystemExit as exc:
+        if isinstance(exc.code, int):
+            route_exit = exc.code
+        elif exc.code is None:
+            route_exit = 0
+        else:
+            route_exit = 1
+    else:
+        route_exit = 0
 
     roots = {"W": forms(args.checkout or ROOT), "E": forms(args.snapshot or ROOT), "V": forms(sys.prefix), "A": forms(sys.base_prefix)}
     audit = source_audit(rec, roots)
@@ -305,9 +325,6 @@ def main(argv=None):
     os.makedirs(evidence_dir, exist_ok=True)
     final_result = "PASS" if route_exit == 0 and not audit["refusals"] else "INCOMPLETE"
     final_exit = 0 if final_result == "PASS" else (2 if route_exit == 0 else route_exit)
-    summary = {"run_id": args.run_id, "result": final_result, "exit_status": final_exit, "execution": rec, "identity": {"commit": args.commit}}
-    with open(os.path.join(evidence_dir, "summary.json"), "x", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=1)
     with open(os.path.join(evidence_dir, "SOURCE_AUDIT.json"), "x", encoding="utf-8") as handle:
         json.dump(audit, handle, indent=1)
     return final_exit
