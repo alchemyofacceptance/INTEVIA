@@ -44,7 +44,6 @@ def _fixture_repo(root, helper_mode=False):
         "import argparse\n"
         "import json\n"
         "import os\n"
-        "import site\n"
         "import subprocess\n"
         "import sys\n"
         "class Route:\n"
@@ -66,6 +65,17 @@ def _fixture_repo(root, helper_mode=False):
         "            'tree_delta_paths': [],\n"
         "            'tested': 'commit %s exactly' % commit,\n"
         "        }\n\n"
+        "def _site_packages():\n"
+        "    executable_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+        "    for candidate in (executable_dir, os.path.dirname(executable_dir)):\n"
+        "        if os.path.isfile(os.path.join(candidate, 'pyvenv.cfg')):\n"
+        "            dependency_root = os.path.realpath(candidate)\n"
+        "            break\n"
+        "    else:\n"
+        "        dependency_root = os.path.realpath(sys.base_prefix)\n"
+        "    if os.name == 'nt':\n"
+        "        return os.path.join(dependency_root, 'Lib', 'site-packages')\n"
+        "    return os.path.join(dependency_root, 'lib', 'python%d.%d' % sys.version_info[:2], 'site-packages')\n\n"
         "def main(argv=None):\n"
         "    parser = argparse.ArgumentParser()\n"
         "    parser.add_argument(\"--evidence-dir\", default=None)\n"
@@ -91,7 +101,7 @@ def _fixture_repo(root, helper_mode=False):
         "            \"root\": os.path.abspath(args.snapshot or checkout),\n"
         "            \"entry\": os.path.realpath(__file__),\n"
         "            \"mode\": \"snapshot-entry\",\n"
-        "            \"site_dirs\": list(site.getsitepackages()) if hasattr(site, \"getsitepackages\") else [],\n"
+        "            \"site_dirs\": [_site_packages()],\n"
         "        },\n"
         "        \"identity\": ident,\n"
         "    }\n"
@@ -149,6 +159,7 @@ class BootstrapSurfaceTests(unittest.TestCase):
             run_root = Path(td) / "run-1"
             result = self._run(checkout, commit, run_root)
             summary = json.loads((run_root / "evidence" / "summary.json").read_text(encoding="utf-8"))
+            attestation = json.loads((run_root / "LAUNCH_ATTESTATION.json").read_text(encoding="utf-8"))
             surface = json.loads((run_root / "SURFACE_RESULT.json").read_text(encoding="utf-8"))
             audit = json.loads((run_root / "evidence" / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
             gate = self._gate(run_root)
@@ -158,6 +169,9 @@ class BootstrapSurfaceTests(unittest.TestCase):
             self.assertEqual(summary["route"], "S015 verification route v0.5")
             self.assertEqual(summary["identity"]["attested_commit"], commit)
             self.assertEqual(summary["execution"]["launch_token"], surface["launch_token"])
+            self.assertEqual(attestation["site_prequalification"]["validated_dependency_root"], attestation["site_prequalification"]["interpreter"]["dependency_root"])
+            self.assertEqual(attestation["site_prequalification"]["validated_site_packages"], summary["execution"]["site_dirs"][0])
+            self.assertEqual(attestation["site_prequalification"]["interpreter"]["site"], summary["execution"]["site_dirs"])
             self.assertTrue((run_root / "evidence" / "summary.json").exists())
             self.assertTrue((run_root / "evidence" / "SOURCE_AUDIT.json").exists())
             self.assertTrue(gate["qualifying"], gate)
@@ -168,13 +182,50 @@ class BootstrapSurfaceTests(unittest.TestCase):
             self.assertIn("verification.repo_helper", audit["repository_modules"])
             self.assertFalse(audit["final_cache_is_complete_history"])
 
+    def test_bogus_dependency_root_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, _, _ = _fixture_repo(td)
+            snapshot = Path(td) / "snapshot"
+            snapshot.mkdir()
+            bogus_root = Path(td) / "checkout" / "venv"
+            bogus_site_packages = bogus_root / "Lib" / "site-packages"
+            bogus_site_packages.mkdir(parents=True)
+            fake_environment = {
+                "executable": sys.executable,
+                "base_prefix": str(Path(td) / "base"),
+                "dependency_root": str(bogus_root),
+                "site_packages": str(bogus_site_packages),
+                "venv_root": str(bogus_root),
+                "pyvenv_cfg_home": str(Path(td) / "base"),
+            }
+            fake_distribution = type("FakeDist", (), {"metadata": {"Name": "Django"}})()
+            fake_psycopg = type("FakeDist", (), {"metadata": {"Name": "psycopg"}})()
+            with mock.patch.object(bootstrap_mod, "resolve_dependency_environment", return_value=fake_environment), \
+                    mock.patch.object(bootstrap_mod.importlib.metadata, "distributions", return_value=[fake_distribution, fake_psycopg]):
+                with self.assertRaises(bootstrap_mod.DependencyPrequalificationError) as exc:
+                    bootstrap_mod.validate_dependency_environment(str(checkout), str(snapshot))
+            self.assertIn("lies inside the checkout", str(exc.exception))
+
     def test_direct_run_records_checkout_entry(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
             checkout, _, _ = _fixture_repo(td)
             run_root = Path(td) / "run-direct"
             evidence_dir = run_root / "evidence"
+            dependency = bootstrap_mod.resolve_dependency_environment()
             proc = subprocess.run(
-                [sys.executable, "-m", "verification.run", "--evidence-dir", str(evidence_dir), "--run-id", "direct-run"],
+                [
+                    sys.executable,
+                    "-m",
+                    "verification.run",
+                    "--evidence-dir",
+                    str(evidence_dir),
+                    "--run-id",
+                    "direct-run",
+                    "--validated-dependency-root",
+                    dependency["dependency_root"],
+                    "--validated-site-packages",
+                    dependency["site_packages"],
+                ],
                 cwd=str(checkout),
                 capture_output=True,
                 text=True,
@@ -186,6 +237,34 @@ class BootstrapSurfaceTests(unittest.TestCase):
             self.assertTrue((evidence_dir / "SOURCE_AUDIT.json").exists())
             self.assertTrue(any("verification.route" in refusal and "outside the verified snapshot" in refusal for refusal in audit["refusals"]), audit)
             self.assertEqual(audit["run_id"], "direct-run")
+
+    def test_missing_dependency_root_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, _, _ = _fixture_repo(td)
+            evidence_dir = Path(td) / "run-missing" / "evidence"
+            missing_root = Path(td) / "missing-root"
+            missing_site = missing_root / "Lib" / "site-packages"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "verification.run",
+                    "--evidence-dir",
+                    str(evidence_dir),
+                    "--run-id",
+                    "missing-root",
+                    "--validated-dependency-root",
+                    str(missing_root),
+                    "--validated-site-packages",
+                    str(missing_site),
+                ],
+                cwd=str(checkout),
+                capture_output=True,
+                text=True,
+            )
+            audit = json.loads((evidence_dir / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("validated dependency root does not exist", audit["route_failure"]["message"])
 
     def test_w_helper_success_is_refused_by_history_origin(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:

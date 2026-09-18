@@ -54,6 +54,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import traceback
 import uuid
@@ -143,6 +144,49 @@ def parse_status_z(raw):
             i += 1
         entries.append({"xy": xy, "path": path, "orig_path": orig})
     return entries
+
+
+def _read_pyvenv_home(pyvenv_cfg):
+    with open(pyvenv_cfg, encoding="utf-8") as handle:
+        for line in handle:
+            key, sep, value = line.partition("=")
+            if sep and key.strip().lower() == "home":
+                return os.path.realpath(value.strip())
+    return None
+
+
+def _purelib_for_root(root=None):
+    scheme = sysconfig.get_default_scheme()
+    if root is None:
+        paths = sysconfig.get_paths(scheme=scheme)
+    else:
+        root = os.path.realpath(root)
+        paths = sysconfig.get_paths(scheme=scheme, vars={"base": root, "platbase": root})
+    return os.path.realpath(paths["purelib"])
+
+
+def resolve_dependency_environment(executable=None):
+    executable_path = os.path.realpath(executable or sys.executable)
+    executable_dir = os.path.dirname(executable_path)
+    venv_root = None
+    pyvenv_cfg_home = None
+    for candidate in (executable_dir, os.path.dirname(executable_dir)):
+        pyvenv_cfg = os.path.join(candidate, "pyvenv.cfg")
+        if os.path.isfile(pyvenv_cfg):
+            venv_root = os.path.realpath(candidate)
+            pyvenv_cfg_home = _read_pyvenv_home(pyvenv_cfg)
+            break
+    base_prefix = os.path.realpath(sys.base_prefix)
+    dependency_root = venv_root or base_prefix
+    site_packages = _purelib_for_root(dependency_root if venv_root is not None else None)
+    return {
+        "executable": executable_path,
+        "base_prefix": base_prefix,
+        "dependency_root": dependency_root,
+        "site_packages": site_packages,
+        "venv_root": venv_root,
+        "pyvenv_cfg_home": pyvenv_cfg_home,
+    }
 
 
 class Route:
@@ -714,7 +758,8 @@ class Route:
     def run(self, skip_mutations, launch_token=None, snapshot=None, checkout=None, attested_commit=None):
         summary = {"route": "S015 verification route v0.5", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
         self.say("S015 VERIFICATION ROUTE v0.5  run %s  %s" % (self.run_id, summary["started"]))
-        summary["execution"] = {"launch_token": launch_token, "root": os.path.abspath(snapshot or ROOT), "entry": os.path.realpath(__file__), "mode": "snapshot-entry" if snapshot else "checkout-entry", "site_dirs": list(__import__("site").getsitepackages()) if hasattr(__import__("site"), "getsitepackages") else []}
+        dependency = resolve_dependency_environment()
+        summary["execution"] = {"launch_token": launch_token, "root": os.path.abspath(snapshot or ROOT), "entry": os.path.realpath(__file__), "mode": "snapshot-entry" if snapshot else "checkout-entry", "site_dirs": [dependency["site_packages"]]}
         planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}

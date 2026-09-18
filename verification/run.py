@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import traceback
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -67,6 +68,26 @@ def parse_status_z(raw):
             index += 1
         entries.append({"xy": xy, "path": path, "orig_path": orig})
     return entries
+
+
+class DependencyValidationError(RuntimeError):
+    pass
+
+
+def resolve_validated_dependency_environment(args):
+    dependency_root = getattr(args, "validated_dependency_root", None)
+    site_packages = getattr(args, "validated_site_packages", None)
+    if not dependency_root:
+        raise DependencyValidationError("validated dependency root was not supplied by the launcher")
+    if not site_packages:
+        raise DependencyValidationError("validated site-packages was not supplied by the launcher")
+    dependency_root = os.path.realpath(dependency_root)
+    site_packages = os.path.realpath(site_packages)
+    if not os.path.isdir(dependency_root):
+        raise DependencyValidationError("validated dependency root does not exist: %s" % dependency_root)
+    if not os.path.isdir(site_packages):
+        raise DependencyValidationError("validated site-packages does not exist: %s" % site_packages)
+    return dependency_root, site_packages
 
 
 def identity():
@@ -185,17 +206,18 @@ def classify(path, roots):
     if path is None or path in ("built-in", "frozen", "namespace"):
         return "(no file)"
     lit, real = forms(path)
-    if under(real, roots["W"][1]) and not under(real, roots["V"][1]):
+    v_root = roots.get("V")
+    if under(real, roots["W"][1]) and not (v_root and under(real, v_root[1])):
         return "W"
     if under(real, roots["E"][1]):
         return "E(root)"
-    if under(real, roots["V"][1]):
+    if v_root and under(real, v_root[1]):
         return "V"
     if under(real, roots["A"][1]):
         return "A"
     if under(lit, roots["A"][0]):
         return "A(interpreter-owned symlink)"
-    if under(lit, roots["V"][0]):
+    if v_root and under(lit, v_root[0]):
         return "V(symlink out of V)"
     return "OTHER"
 
@@ -258,6 +280,7 @@ def source_audit(rec, roots):
     return {
         "run_id": rec["run_id"],
         "launch_token": rec["launch_token"],
+        "route_failure": rec.get("route_failure"),
         "refusals": refusals,
         "modules_by_origin": modules_by_origin,
         "repository_modules": sorted(repository_modules),
@@ -277,6 +300,8 @@ def main(argv=None):
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--launch-token", default=None)
     parser.add_argument("--commit", default=None)
+    parser.add_argument("--validated-dependency-root", default=None)
+    parser.add_argument("--validated-site-packages", default=None)
     parser.add_argument("--skip-mutations", action="store_true")
     args, remainder = parser.parse_known_args(argv)
 
@@ -286,29 +311,38 @@ def main(argv=None):
         "root": os.path.abspath(args.snapshot or ROOT),
         "entry": os.path.realpath(__file__),
         "mode": "snapshot-entry" if args.snapshot else "checkout-entry",
-        "site_dirs": list(__import__("site").getsitepackages()) if hasattr(__import__("site"), "getsitepackages") else [],
     }
     install_witness(rec)
-    sys.path.insert(0, os.path.abspath(args.snapshot or ROOT))
-    from verification import route as route_mod
-    route_argv = list(remainder)
-    if args.snapshot and "--snapshot" not in route_argv:
-        route_argv.extend(["--snapshot", args.snapshot])
-    if args.checkout and "--checkout" not in route_argv:
-        route_argv.extend(["--checkout", args.checkout])
-    if args.evidence_dir and "--evidence-dir" not in route_argv:
-        route_argv.extend(["--evidence-dir", args.evidence_dir])
-    if args.run_id and "--run-id" not in route_argv:
-        route_argv.extend(["--run-id", args.run_id])
-    if args.launch_token and "--launch-token" not in route_argv:
-        route_argv.extend(["--launch-token", args.launch_token])
-    if args.commit and "--commit" not in route_argv:
-        route_argv.extend(["--commit", args.commit])
-    if args.skip_mutations and "--skip-mutations" not in route_argv:
-        route_argv.append("--skip-mutations")
-
+    dependency_root = None
+    site_packages = None
+    route_exit = 0
+    route_failure = None
     try:
+        dependency_root, site_packages = resolve_validated_dependency_environment(args)
+        sys.path.insert(0, site_packages)
+        sys.path.insert(0, os.path.abspath(args.snapshot or ROOT))
+        route_argv = list(remainder)
+        if args.snapshot and "--snapshot" not in route_argv:
+            route_argv.extend(["--snapshot", args.snapshot])
+        if args.checkout and "--checkout" not in route_argv:
+            route_argv.extend(["--checkout", args.checkout])
+        if args.evidence_dir and "--evidence-dir" not in route_argv:
+            route_argv.extend(["--evidence-dir", args.evidence_dir])
+        if args.run_id and "--run-id" not in route_argv:
+            route_argv.extend(["--run-id", args.run_id])
+        if args.launch_token and "--launch-token" not in route_argv:
+            route_argv.extend(["--launch-token", args.launch_token])
+        if args.commit and "--commit" not in route_argv:
+            route_argv.extend(["--commit", args.commit])
+        if args.skip_mutations and "--skip-mutations" not in route_argv:
+            route_argv.append("--skip-mutations")
+
+        from verification import route as route_mod
         route_mod.main(route_argv)
+    except DependencyValidationError as exc:
+        route_exit = 2
+        route_failure = {"type": type(exc).__name__, "message": str(exc), "traceback": ""}
+        rec["route_failure"] = route_failure
     except SystemExit as exc:
         if isinstance(exc.code, int):
             route_exit = exc.code
@@ -316,17 +350,29 @@ def main(argv=None):
             route_exit = 0
         else:
             route_exit = 1
-    else:
-        route_exit = 0
-
-    roots = {"W": forms(args.checkout or ROOT), "E": forms(args.snapshot or ROOT), "V": forms(sys.prefix), "A": forms(sys.base_prefix)}
-    audit = source_audit(rec, roots)
-    evidence_dir = args.evidence_dir or os.path.join(ROOT, "verification-evidence", args.run_id or "run")
-    os.makedirs(evidence_dir, exist_ok=True)
+    except Exception as exc:
+        route_exit = 1
+        route_failure = {"type": type(exc).__name__, "message": str(exc), "traceback": traceback.format_exc()[-4000:]}
+        rec["route_failure"] = route_failure
+    finally:
+        if route_exit == 0 and route_failure is None:
+            rec["site_dirs"] = [site_packages]
+        roots = {"W": forms(args.checkout or ROOT), "E": forms(args.snapshot or ROOT), "V": forms(dependency_root) if dependency_root is not None else None, "A": forms(sys.base_prefix)}
+        audit = source_audit(rec, roots)
+        evidence_dir = args.evidence_dir or os.path.join(ROOT, "verification-evidence", args.run_id or "run")
+        os.makedirs(evidence_dir, exist_ok=True)
+        try:
+            with open(os.path.join(evidence_dir, "SOURCE_AUDIT.json"), "x", encoding="utf-8") as handle:
+                json.dump(audit, handle, indent=1)
+        except Exception as exc:
+            if route_failure is None:
+                route_exit = 1
+                route_failure = {"type": type(exc).__name__, "message": str(exc), "traceback": traceback.format_exc()[-4000:]}
+                rec["route_failure"] = route_failure
+    if route_failure is not None and route_failure["type"] != "DependencyValidationError":
+        raise RuntimeError("%s: %s" % (route_failure["type"], route_failure["message"]))
     final_result = "PASS" if route_exit == 0 and not audit["refusals"] else "INCOMPLETE"
     final_exit = 0 if final_result == "PASS" else (2 if route_exit == 0 else route_exit)
-    with open(os.path.join(evidence_dir, "SOURCE_AUDIT.json"), "x", encoding="utf-8") as handle:
-        json.dump(audit, handle, indent=1)
     return final_exit
 
 

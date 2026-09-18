@@ -9,12 +9,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.machinery
+import importlib.metadata
 import json
 import os
-import site
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import uuid
@@ -39,6 +40,92 @@ def forms(path):
 
 def under(path, root):
     return path == root or path.startswith(root + os.sep)
+
+
+class DependencyPrequalificationError(RuntimeError):
+    pass
+
+
+def _read_pyvenv_home(pyvenv_cfg):
+    for line in pyvenv_cfg.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip().lower() == "home":
+            return os.path.realpath(value.strip())
+    return None
+
+
+def _purelib_for_root(root=None):
+    scheme = sysconfig.get_default_scheme()
+    if root is None:
+        paths = sysconfig.get_paths(scheme=scheme)
+    else:
+        root = os.path.realpath(str(root))
+        paths = sysconfig.get_paths(scheme=scheme, vars={"base": root, "platbase": root})
+    return os.path.realpath(paths["purelib"])
+
+
+def resolve_dependency_environment(executable=None):
+    executable_path = Path(executable or sys.executable).resolve()
+    executable_dir = executable_path.parent
+    venv_root = None
+    pyvenv_cfg_home = None
+    for candidate in (executable_dir, executable_dir.parent):
+        pyvenv_cfg = candidate / "pyvenv.cfg"
+        if pyvenv_cfg.is_file():
+            venv_root = candidate.resolve()
+            pyvenv_cfg_home = _read_pyvenv_home(pyvenv_cfg)
+            break
+
+    base_prefix = Path(sys.base_prefix).resolve()
+    dependency_root = venv_root or base_prefix
+    site_packages = Path(_purelib_for_root(dependency_root if venv_root is not None else None))
+    return {
+        "executable": os.path.realpath(str(executable_path)),
+        "base_prefix": os.path.realpath(str(base_prefix)),
+        "dependency_root": os.path.realpath(str(dependency_root)),
+        "site_packages": os.path.realpath(str(site_packages)),
+        "venv_root": os.path.realpath(str(venv_root)) if venv_root is not None else None,
+        "pyvenv_cfg_home": pyvenv_cfg_home,
+    }
+
+
+def validate_dependency_environment(checkout, snapshot, executable=None):
+    env = resolve_dependency_environment(executable)
+    refusals = []
+    site_packages = Path(env["site_packages"])
+    base_prefix = Path(env["base_prefix"])
+    dependency_root = Path(env["dependency_root"])
+    if not site_packages.is_dir():
+        refusals.append("validated dependency root is missing its site-packages directory: %s" % site_packages)
+    if env["venv_root"] is not None:
+        pyvenv_cfg = Path(env["venv_root"]) / "pyvenv.cfg"
+        if not pyvenv_cfg.is_file():
+            refusals.append("claimed venv root %s is missing pyvenv.cfg" % pyvenv_cfg.parent)
+        home = env["pyvenv_cfg_home"]
+        if home is None:
+            refusals.append("claimed venv root %s has no home entry in pyvenv.cfg" % pyvenv_cfg.parent)
+        elif os.path.realpath(home) != str(base_prefix):
+            refusals.append("pyvenv.cfg home %s does not resolve to the base prefix %s" % (home, base_prefix))
+    checkout_real = Path(os.path.realpath(checkout))
+    snapshot_real = Path(os.path.realpath(snapshot))
+    if site_packages.is_relative_to(checkout_real):
+        refusals.append("validated dependency root %s lies inside the checkout %s" % (site_packages, checkout_real))
+    if site_packages.is_relative_to(snapshot_real):
+        refusals.append("validated dependency root %s lies inside the snapshot %s" % (site_packages, snapshot_real))
+    names = set()
+    if site_packages.is_dir():
+        for dist in importlib.metadata.distributions(path=[str(site_packages)]):
+            name = (dist.metadata.get("Name") or "").strip().lower().replace("-", "_")
+            if name:
+                names.add(name)
+    for required in ("django", "psycopg"):
+        if not any(name == required or name.startswith(required + "_") for name in names):
+            refusals.append("required distribution %s is absent from the validated dependency root %s" % (required, site_packages))
+    if refusals:
+        raise DependencyPrequalificationError("; ".join(refusals))
+    env["dependency_root"] = str(dependency_root)
+    env["site_packages"] = str(site_packages)
+    return env
 
 
 def git(args, cwd, input_bytes=None):
@@ -137,17 +224,28 @@ def inventory_of(root, entries=None):
     return rows, body, hashlib.sha256(body).hexdigest()
 
 
-def prequalify_site():
-    return {
+def prequalify_site(checkout, snapshot):
+    env = validate_dependency_environment(checkout, snapshot)
+    site_packages = env["site_packages"]
+    site_prequalification = {
         "interpreter": {
             "executable": sys.executable,
             "version": sys.version.split()[0],
-            "prefix": sys.prefix,
-            "base_prefix": sys.base_prefix,
-            "site": list(site.getsitepackages()) if hasattr(site, "getsitepackages") else [],
+            "base_prefix": env["base_prefix"],
+            "dependency_root": env["dependency_root"],
+            "site_packages": site_packages,
+            "site": [site_packages],
         },
+        "validated_dependency_root": env["dependency_root"],
+        "validated_site_packages": site_packages,
+        "venv_root": env["venv_root"],
+        "pyvenv_cfg_home": env["pyvenv_cfg_home"],
+        "base_prefix": env["base_prefix"],
         "refusals": [],
     }
+    if env["venv_root"] is not None:
+        site_prequalification["interpreter"]["venv_root"] = env["venv_root"]
+    return site_prequalification
 
 
 def digest_of(path):
@@ -250,10 +348,10 @@ def gate(run_root):
     return {"qualifying": not refusals, "refusals": refusals, "checks": checks, "records": records}
 
 
-def launch_coordinator(snapshot, checkout, evidence_dir, run_id, launch_token, commit, pycache_prefix, skip_mutations=False):
+def launch_coordinator(snapshot, checkout, evidence_dir, run_id, launch_token, commit, pycache_prefix, validated_dependency_root, validated_site_packages, skip_mutations=False):
     entry = os.path.join(snapshot, "verification", "run.py")
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SystemRoot", "SYSTEMROOT", "LANG") or k.startswith(("INTEVIA_", "LC_", "SSL_CERT_"))}
-    cmd = [sys.executable, "-I", "-S", "-u", "-X", "utf8", "-X", "pycache_prefix=" + pycache_prefix, entry, "--snapshot", snapshot, "--checkout", checkout, "--evidence-dir", evidence_dir, "--run-id", run_id, "--launch-token", launch_token, "--commit", commit]
+    cmd = [sys.executable, "-I", "-S", "-u", "-X", "utf8", "-X", "pycache_prefix=" + pycache_prefix, entry, "--snapshot", snapshot, "--checkout", checkout, "--evidence-dir", evidence_dir, "--run-id", run_id, "--launch-token", launch_token, "--commit", commit, "--validated-dependency-root", validated_dependency_root, "--validated-site-packages", validated_site_packages]
     if skip_mutations:
         cmd.append("--skip-mutations")
     proc = subprocess.run(cmd, cwd=os.path.dirname(snapshot), env=env, capture_output=True, text=True)
@@ -294,13 +392,17 @@ def main(argv=None):
         handle.write(body)
 
     token = uuid.uuid4().hex
+    try:
+        site_prequalification = prequalify_site(checkout, snapshot)
+    except DependencyPrequalificationError as exc:
+        die(str(exc))
     attestation = {
         "run_id": args.run_id,
         "launch_token": token,
         "commit": commit,
         "inventory_digest": digest,
         "snapshot": snapshot,
-        "site_prequalification": prequalify_site(),
+        "site_prequalification": site_prequalification,
         "tree": tree,
         "snapshot_files": len(rows),
         "checkout": checkout,
@@ -309,7 +411,7 @@ def main(argv=None):
     with open(os.path.join(run_root, "LAUNCH_ATTESTATION.json"), "x", encoding="utf-8") as handle:
         json.dump(attestation, handle, indent=1)
 
-    coordinator_exit, coordinator_stdout, coordinator_stderr = launch_coordinator(snapshot, checkout, evidence_dir, args.run_id, token, commit, pycache_prefix, args.skip_mutations)
+    coordinator_exit, coordinator_stdout, coordinator_stderr = launch_coordinator(snapshot, checkout, evidence_dir, args.run_id, token, commit, pycache_prefix, site_prequalification["validated_dependency_root"], site_prequalification["validated_site_packages"], args.skip_mutations)
     post_rows, _, digest_after = inventory_of(snapshot)
     post = {
         "run_id": args.run_id,
