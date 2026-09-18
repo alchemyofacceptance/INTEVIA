@@ -14,6 +14,7 @@ from django.db import connection
 from django.test.runner import DiscoverRunner
 
 from verification.ownership import OwnedDatabaseRunnerMixin
+from verification.recording import RecordingRunnerMixin
 
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
@@ -46,7 +47,7 @@ MUTATIONS = {
 }
 
 
-class MutationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
+class MutationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
     """Applies the mutation named in VERIFICATION_MUTATION to the freshly migrated test database, before any test."""
 
     def setup_databases(self, **kwargs):

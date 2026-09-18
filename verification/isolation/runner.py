@@ -25,6 +25,7 @@ from django.test.utils import iter_test_cases
 from intevia.test_postgresql_backend.operations import S015_TRUNCATE_GUARDIANS
 
 from verification.ownership import OwnedDatabaseRunnerMixin
+from verification.recording import RecordingResult, RecordingRunnerMixin
 
 from . import state
 
@@ -72,8 +73,9 @@ def database_access(test):
     return ("permitted" if "default" in databases else "forbidden"), databases
 
 
-class IsolationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
+class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
     def run_suite(self, suite, **kwargs):
+        assert getattr(self, "parallel", 1) == 1
         self.out_path = os.environ["VERIFICATION_ISOLATION_JSON"]
         self.emit_errors = 0
         self.checkpoints = []
@@ -107,7 +109,7 @@ class IsolationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
             self._summary(result)
 
     def get_resultclass(self):
-        base = super().get_resultclass() or unittest.TextTestResult
+        base = super(RecordingRunnerMixin, self).get_resultclass() or unittest.TextTestResult
         runner = self
 
         class IsolationResult(base):
@@ -140,7 +142,10 @@ class IsolationRunner(OwnedDatabaseRunnerMixin, DiscoverRunner):
             def addSubTest(self, test, subtest, err):
                 self._outcome(test); super().addSubTest(test, subtest, err)
 
-        return IsolationResult
+        class Result(RecordingResult, IsolationResult):
+            pass
+
+        return Result
 
     def checkpoint_a(self, test):
         rec = {"checkpoint": "CP-A", "test": test.id(), "established": False, "applicable": True}
