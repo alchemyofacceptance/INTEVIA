@@ -31,52 +31,80 @@ def _fixture_repo(root, helper_mode=False):
     checkout = Path(root) / "checkout"
     checkout.mkdir()
     trusted_v.mkdir()
+    production_repo_root = Path(__file__).resolve().parents[1]
+    production_route_path = Path(__file__).with_name("route.py").resolve()
+    _write(checkout / "core" / "migrations" / "0001_fixture.py", "# fixture migration\n")
     _write(checkout / "verification" / "__init__.py", "")
     _write(checkout / "verification" / "fixture_v" / "v_only_helper.py", "print('A1_V_HELPER_EXECUTED', flush=True)\n")
     _write(checkout / "verification" / "repo_helper.py", "print('A1_REPO_HELPER_EXECUTED', flush=True)\n")
-    _write(checkout / "verification" / "route.py", textwrap.dedent(
-        '''
-        import argparse
-        import json
-        import os
-        import site
-        import sys
-
-        def main(argv=None):
-            from verification import parse_results
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--evidence-dir", required=True)
-            parser.add_argument("--run-id", required=True)
-            parser.add_argument("--launch-token", required=True)
-            parser.add_argument("--commit", required=True)
-            parser.add_argument("--snapshot", required=True)
-            parser.add_argument("--checkout", required=True)
-            parser.add_argument("--skip-mutations", action="store_true")
-            args = parser.parse_args(argv)
-            _ = parse_results.OPTIONAL_HELPER
-            summary = {
-                "route": "S015 verification route v0.5",
-                "run_id": args.run_id,
-                "result": "PASS",
-                "exit_status": 0,
-                "execution": {
-                    "launch_token": args.launch_token,
-                    "root": args.snapshot,
-                    "entry": os.path.join(args.snapshot, "verification", "route.py"),
-                    "mode": "snapshot-entry",
-                    "site_dirs": list(site.getsitepackages()) if hasattr(site, "getsitepackages") else [],
-                },
-                "identity": {
-                    "commit": args.commit,
-                    "attested_commit": args.commit,
-                },
-            }
-            os.makedirs(args.evidence_dir, exist_ok=True)
-            with open(os.path.join(args.evidence_dir, "summary.json"), "x", encoding="utf-8") as handle:
-                json.dump(summary, handle, indent=1)
-            sys.exit(0)
-        '''
-    ).lstrip())
+    route_text = (
+        "# Fixture-only substitute identity: production route.identity() cannot be exercised at unit-test level because\n"
+        "# production verification.route imports django and intevia.test_postgresql_backend at module import time, and this\n"
+        "# minimal fixture does not provide that environment. The positive control therefore uses a substitute identity record.\n"
+        "import argparse\n"
+        "import json\n"
+        "import os\n"
+        "import site\n"
+        "import subprocess\n"
+        "import sys\n"
+        "class Route:\n"
+        "    def __init__(self, evidence_dir, run_id):\n"
+        "        self.dir = evidence_dir\n"
+        "        self.run_id = run_id\n"
+        "    def identity(self, checkout=None):\n"
+        "        cwd = os.path.abspath(checkout or os.getcwd())\n"
+        "        commit = subprocess.run(['git', '-C', cwd, 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()\n"
+        "        commit_tree = subprocess.run(['git', '-C', cwd, 'rev-parse', 'HEAD^{tree}'], capture_output=True, text=True, check=True).stdout.strip()\n"
+        "        return {\n"
+        "            'valid': True,\n"
+        "            'problems': [],\n"
+        "            'commit': commit,\n"
+        "            'commit_tree': commit_tree,\n"
+        "            'working_tree_changes': [],\n"
+        "            'working_tree_clean': True,\n"
+        "            'working_tree_git_tree': commit_tree,\n"
+        "            'tree_delta_paths': [],\n"
+        "            'tested': 'commit %s exactly' % commit,\n"
+        "        }\n\n"
+        "def main(argv=None):\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument(\"--evidence-dir\", default=None)\n"
+        "    parser.add_argument(\"--run-id\", default=None)\n"
+        "    parser.add_argument(\"--launch-token\", default=None)\n"
+        "    parser.add_argument(\"--commit\", default=None)\n"
+        "    parser.add_argument(\"--snapshot\", default=None)\n"
+        "    parser.add_argument(\"--checkout\", default=None)\n"
+        "    parser.add_argument(\"--skip-mutations\", action=\"store_true\")\n"
+        "    args = parser.parse_args(argv)\n"
+        "    checkout = args.checkout or os.getcwd()\n"
+        "    evidence_dir = args.evidence_dir or os.path.join(checkout, \"evidence\")\n"
+        "    route = Route(evidence_dir, args.run_id or \"run\")\n"
+        "    ident = route.identity(checkout=checkout)\n"
+        "    from verification import parse_results\n"
+        "    summary = {\n"
+        "        \"route\": \"S015 verification route v0.5\",\n"
+        "        \"run_id\": args.run_id or \"run\",\n"
+        "        \"result\": \"PASS\",\n"
+        "        \"exit_status\": 0,\n"
+        "        \"execution\": {\n"
+        "            \"launch_token\": args.launch_token,\n"
+        "            \"root\": os.path.abspath(args.snapshot or checkout),\n"
+        "            \"entry\": os.path.realpath(__file__),\n"
+        "            \"mode\": \"snapshot-entry\",\n"
+        "            \"site_dirs\": list(site.getsitepackages()) if hasattr(site, \"getsitepackages\") else [],\n"
+        "        },\n"
+        "        \"identity\": ident,\n"
+        "    }\n"
+        "    if args.snapshot is None:\n"
+        "        summary[\"execution\"][\"mode\"] = \"checkout-entry\"\n"
+        "    if args.commit is not None:\n"
+        "        summary[\"identity\"][\"attested_commit\"] = args.commit\n"
+        "    os.makedirs(evidence_dir, exist_ok=True)\n"
+        "    with open(os.path.join(evidence_dir, \"summary.json\"), \"x\", encoding=\"utf-8\") as handle:\n"
+        "        json.dump(summary, handle, indent=1)\n"
+        "    sys.exit(0)\n"
+    )
+    _write(checkout / "verification" / "route.py", route_text)
     parse_results = """import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fixture_v'))
 from verification import repo_helper
@@ -139,6 +167,25 @@ class BootstrapSurfaceTests(unittest.TestCase):
             self.assertIn("verification.route", audit["history_modules_by_origin"].get("E(root)", []), audit)
             self.assertIn("verification.repo_helper", audit["repository_modules"])
             self.assertFalse(audit["final_cache_is_complete_history"])
+
+    def test_direct_run_records_checkout_entry(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            checkout, _, _ = _fixture_repo(td)
+            run_root = Path(td) / "run-direct"
+            evidence_dir = run_root / "evidence"
+            proc = subprocess.run(
+                [sys.executable, "-m", "verification.run", "--evidence-dir", str(evidence_dir), "--run-id", "direct-run"],
+                cwd=str(checkout),
+                capture_output=True,
+                text=True,
+            )
+            summary = json.loads((evidence_dir / "summary.json").read_text(encoding="utf-8"))
+            audit = json.loads((evidence_dir / "SOURCE_AUDIT.json").read_text(encoding="utf-8"))
+            self.assertEqual(proc.returncode, 2)
+            self.assertEqual(summary["execution"]["mode"], "checkout-entry")
+            self.assertTrue((evidence_dir / "SOURCE_AUDIT.json").exists())
+            self.assertTrue(any("verification.route" in refusal and "outside the verified snapshot" in refusal for refusal in audit["refusals"]), audit)
+            self.assertEqual(audit["run_id"], "direct-run")
 
     def test_w_helper_success_is_refused_by_history_origin(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:

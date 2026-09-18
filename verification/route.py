@@ -172,19 +172,20 @@ class Route:
             self.transcript.flush()
 
     # ------------------------------------------------------------------ identity (C-A1-B5)
-    def identity(self):
+    def identity(self, checkout=None):
+        cwd = os.path.abspath(checkout or ROOT)
         out = {"valid": False, "problems": []}
-        code, head, err = run_git(["rev-parse", "--verify", "HEAD"])
+        code, head, err = run_git(["rev-parse", "--verify", "HEAD"], cwd=cwd)
         if code != 0:
             out["problems"].append("git rev-parse HEAD failed (%d): %s" % (code, err))
             return out
         out["commit"] = head.decode().strip()
-        code, tree, err = run_git(["rev-parse", "--verify", "HEAD^{tree}"])
+        code, tree, err = run_git(["rev-parse", "--verify", "HEAD^{tree}"], cwd=cwd)
         if code != 0:
             out["problems"].append("git rev-parse HEAD^{tree} failed (%d): %s" % (code, err))
             return out
         out["commit_tree"] = tree.decode().strip()
-        code, raw, err = run_git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"])
+        code, raw, err = run_git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], cwd=cwd)
         if code != 0:
             out["problems"].append("git status failed (%d): %s" % (code, err))
             return out
@@ -195,7 +196,7 @@ class Route:
             return out
         # RC-B4: index flags make git status skip a file's working bytes, so the change inventory above cannot see it.
         # The route refuses such a state (it never clears flags or touches the index): list the flagged paths and stop.
-        code, flags_raw, err = run_git(["ls-files", "-v", "-z"])
+        code, flags_raw, err = run_git(["ls-files", "-v", "-z"], cwd=cwd)
         if code != 0:
             out["problems"].append("git ls-files -v failed (%d): %s" % (code, err))
             return out
@@ -213,13 +214,13 @@ class Route:
                                    "inventory cannot be trusted: %s. The route does not clear them; clear them (git update-index "
                                    "--no-assume-unchanged / --no-skip-worktree) or use a checkout without them"
                                    % (len(flagged), "; ".join("%s (%s)" % (f["path"], ", ".join(f["flags"])) for f in flagged[:20])))
-        rel_evidence = os.path.relpath(self.dir, ROOT).replace(os.sep, "/")
+        rel_evidence = os.path.relpath(self.dir, cwd).replace(os.sep, "/")
         inside = not rel_evidence.startswith("..")
         changes = []
         for e in entries:
             if inside and (e["path"] == rel_evidence or e["path"].startswith(rel_evidence + "/")):
                 continue
-            full = os.path.join(ROOT, e["path"])
+            full = os.path.join(cwd, e["path"])
             rec = {"status": e["xy"], "path": e["path"], "orig_path": e["orig_path"]}
             if "D" in e["xy"] and not os.path.lexists(full):
                 rec.update(kind="deleted", sha256=None)
@@ -239,22 +240,22 @@ class Route:
         tmp = tempfile.mkdtemp(prefix="verification_index_")
         try:
             env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
-            code, _, err = run_git(["read-tree", "HEAD"], env=env)
+            code, _, err = run_git(["read-tree", "HEAD"], env=env, cwd=cwd)
             pathspec = ["--", "."]
             if inside:
                 # an evidence directory inside the repository is left out of the tree. If .gitignore already ignores it,
                 # naming it in an exclude pathspec makes `git add` fail ("paths are ignored"), so it is named only when
                 # git does not ignore it (found in CI run 35215316126, where the evidence directory is ignored)
-                ignored, _, err_ci = run_git(["check-ignore", "-q", rel_evidence + "/"])
+                ignored, _, err_ci = run_git(["check-ignore", "-q", rel_evidence + "/"], cwd=cwd)
                 if ignored not in (0, 1):
                     out["problems"].append("git check-ignore failed (%d): %s" % (ignored, err_ci))
                     return out
                 if ignored == 1:
                     pathspec.append(":(exclude)" + rel_evidence)
             if code == 0:
-                code, _, err = run_git(["add", "-A"] + pathspec, env=env)
+                code, _, err = run_git(["add", "-A"] + pathspec, env=env, cwd=cwd)
             if code == 0:
-                code, wt, err = run_git(["write-tree"], env=env)
+                code, wt, err = run_git(["write-tree"], env=env, cwd=cwd)
             if code != 0:
                 out["problems"].append("could not compute the working-tree git tree (%d): %s" % (code, err))
                 return out
@@ -265,7 +266,7 @@ class Route:
         # of the working files differs from the commit's tree must appear in the inventory; a clean inventory with a
         # different tree is therefore invalid. (The inventory may list more - e.g. a file whose only difference is line
         # endings git normalises away.)
-        code, delta, err = run_git(["diff-tree", "-r", "-z", "--no-renames", "--name-only", out["commit_tree"], out["working_tree_git_tree"]])
+        code, delta, err = run_git(["diff-tree", "-r", "-z", "--no-renames", "--name-only", out["commit_tree"], out["working_tree_git_tree"]], cwd=cwd)
         if code != 0:
             out["problems"].append("git diff-tree of the commit tree and the working-files tree failed (%d): %s" % (code, err))
             return out
@@ -718,8 +719,10 @@ class Route:
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
-            ident = self.identity()
-            summary["identity"] = dict(ident, attested_commit=attested_commit or ident.get("commit"))
+            ident = self.identity(checkout=checkout)
+            summary["identity"] = dict(ident)
+            if attested_commit is not None:
+                summary["identity"]["attested_commit"] = attested_commit
             self.steps.append({"id": "IDENTITY", "outcome": "PASS" if ident["valid"] else "INCOMPLETE", **({} if ident["valid"] else {"reason": "; ".join(ident["problems"])})})
             self.say("tested     : %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED: " + "; ".join(ident["problems"])))
             if not os.environ.get("INTEVIA_POSTGRES_PASSWORD"):
