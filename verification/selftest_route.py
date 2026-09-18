@@ -39,6 +39,55 @@ class _Tmp(unittest.TestCase):
         return r
 
 
+class B0PycachePrefixEnv(_Tmp):
+    def test_child_envs_follow_sys_pycache_prefix_and_omit_none(self):
+        r = self.route()
+
+        with mock.patch.object(route_mod.sys, "pycache_prefix", os.path.join(self.tmp, "pycache")):
+            django_env = r.django_env("test_db", "SELF")
+            offline_env = route_mod._child_python_env(PYTHONPATH=route_mod.ROOT, PYTHONIOENCODING="utf-8")
+            self.assertEqual(django_env["PYTHONPYCACHEPREFIX"], route_mod.sys.pycache_prefix)
+            self.assertEqual(offline_env["PYTHONPYCACHEPREFIX"], route_mod.sys.pycache_prefix)
+
+        with mock.patch.object(route_mod.sys, "pycache_prefix", None):
+            django_env = r.django_env("test_db", "SELF")
+            offline_env = route_mod._child_python_env(PYTHONPATH=route_mod.ROOT, PYTHONIOENCODING="utf-8")
+            self.assertNotIn("PYTHONPYCACHEPREFIX", django_env)
+            self.assertNotIn("PYTHONPYCACHEPREFIX", offline_env)
+
+    def test_offline_step_forwards_sys_pycache_prefix_to_run_logged(self):
+        r = self.route()
+        captured = {}
+        expected_prefix = os.path.join(self.tmp, "pycache")
+
+        def fake_run_logged(cmd, log_path, env):
+            captured["env"] = dict(env)
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write("offline log\n")
+            return 0
+
+        fake_out = {"summary": {"ran": 0, "final": "OK", "errors": 0}, "reconciled": True, "tests": [], "reconciliation": {},
+                    "test_totals_by_result": {}, "accounting_violations": []}
+
+        with mock.patch.object(route_mod.sys, "pycache_prefix", expected_prefix), \
+                mock.patch.object(r, "run_logged", side_effect=fake_run_logged), \
+                mock.patch.object(route_mod.parse_results, "parse", return_value=fake_out):
+            step = r.step_offline()
+
+        self.assertEqual(captured["env"]["PYTHONPYCACHEPREFIX"], expected_prefix)
+        self.assertEqual(step["outcome"], "PASS")
+
+        captured.clear()
+        os.remove(r.path("OFFLINE_results.json"))
+        with mock.patch.object(route_mod.sys, "pycache_prefix", None), \
+                mock.patch.object(r, "run_logged", side_effect=fake_run_logged), \
+                mock.patch.object(route_mod.parse_results, "parse", return_value=fake_out):
+            step = r.step_offline()
+
+        self.assertNotIn("PYTHONPYCACHEPREFIX", captured["env"])
+        self.assertEqual(step["outcome"], "PASS")
+
+
 # ------------------------------------------------------------------ B1
 class B1StepGating(_Tmp):
     def test_b1_missing_status_step_is_incomplete_not_pass(self):

@@ -189,6 +189,16 @@ def resolve_dependency_environment(executable=None):
     }
 
 
+def _child_python_env(**extra):
+    env = dict(os.environ)
+    env.update(extra)
+    if sys.pycache_prefix is not None:
+        env["PYTHONPYCACHEPREFIX"] = sys.pycache_prefix
+    else:
+        env.pop("PYTHONPYCACHEPREFIX", None)
+    return env
+
+
 class Route:
     def __init__(self, evidence_dir, run_id):
         self.dir = os.path.abspath(evidence_dir)
@@ -404,10 +414,10 @@ class Route:
 
     # ------------------------------------------------------------------ steps
     def django_env(self, db_name, sid, isolation=True, mutation=None):
-        env = dict(os.environ, DJANGO_SETTINGS_MODULE="intevia.test_settings", INTEVIA_S015_TEST_ROUTE=ROUTE, INTEVIA_DATABASE_ENGINE="postgresql",
-                   INTEVIA_POSTGRES_TEST_DB=db_name, INTEVIA_POSTGRES_DB=os.environ.get("INTEVIA_POSTGRES_DB", "postgres"),
-                   PYTHONPATH=os.pathsep.join([ROOT, os.path.join(ROOT, "tests")]), PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
-                   VERIFICATION_EXPECTED_CORE_HEAD=self.core_head() or "")
+        env = _child_python_env(DJANGO_SETTINGS_MODULE="intevia.test_settings", INTEVIA_S015_TEST_ROUTE=ROUTE, INTEVIA_DATABASE_ENGINE="postgresql",
+                                INTEVIA_POSTGRES_TEST_DB=db_name, INTEVIA_POSTGRES_DB=os.environ.get("INTEVIA_POSTGRES_DB", "postgres"),
+                                PYTHONPATH=os.pathsep.join([ROOT, os.path.join(ROOT, "tests")]), PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
+                                VERIFICATION_EXPECTED_CORE_HEAD=self.core_head() or "")
         env[NONCE_ENV] = self.nonce
         env[RECEIPT_ENV] = self.path(sid + "_db_receipts.jsonl")
         env["VERIFICATION_ISOLATION_JSON"] = self.path(sid + "_isolation.jsonl")
@@ -454,7 +464,7 @@ class Route:
     def step_offline(self):
         step = {"id": "OFFLINE", "scope": "verification.selftest_parser, verification.selftest_route, verification.selftest_recording, verification.selftest_bootstrap (no database)"}
         log = self.path("OFFLINE_test_output.log")
-        env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
+        env = _child_python_env(PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
         code = self.run_logged([sys.executable, "-m", "unittest", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
         out = parse_results.parse(read_text(log), None, log)
         with open(self.path("OFFLINE_results.json"), "x", encoding="utf-8") as f:
