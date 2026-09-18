@@ -392,7 +392,7 @@ class Route:
         if not out["reconciled"]:
             bad = [k for k, v in out["reconciliation"].items() if not v["ok"]]
             return "INCOMPLETE", "the log does not account for every collected test exactly once (%s)" % "; ".join(bad)
-        bodies = [t["body"] for t in out["tests"]]
+        bodies = [t["result"] for t in out["tests"]]
         if expect_fail:
             if bodies and all(b == "FAIL" for b in bodies) and out["summary"]["errors"] == 0 and code != 0:
                 return "PASS", ""
@@ -449,8 +449,8 @@ class Route:
         with open(self.path(sid + "_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
         step["tests"] = {"ran": out["summary"]["ran"], "verdict": out["summary"]["final"], "exit": code, "reconciled": out["reconciled"],
-                         "by_outcome": out["test_totals_by_body_outcome"], "accounting_violations": out["accounting_violations"],
-                         "not_ok": [{"id": t["id"], "body": t["body"], "exception": t["body_exception"]} for t in out["tests"] if t["body"] != "ok"]}
+                         "by_outcome": out["test_totals_by_result"], "accounting_violations": out["accounting_violations"],
+                         "not_ok": [{"id": t["id"], "result": t["result"], "exception": t["body_exception"]} for t in out["tests"] if t["result"] != "ok"]}
         if mutation:
             step["mutation_applied"] = ("VERIFICATION MUTATION APPLIED: %s" % mutation) in read_text(log)
         outcome, reason = self.classify(out, code, expect_fail)

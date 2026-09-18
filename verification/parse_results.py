@@ -43,11 +43,11 @@ import re
 import sys
 from collections import OrderedDict
 
+from verification import outcome
+from verification.outcome import FAILURE, NON_FAILURE, TERMINAL
+
 HEADER_ALONE = re.compile(r"^(?P<indent>\s*)(?P<header>test\w+ \([\w\.]+\)(?: \(.*\))?)\s*$")
 TEST_TOKEN_START = re.compile(r"^\s*test\w+ \([\w\.]+\)")
-TERMINAL = ("ok", "ERROR", "FAIL", "skipped", "expected failure", "unexpected success")
-NON_FAILURE = ("ok", "skipped", "expected failure", "unexpected success")
-FAILURE = ("FAIL", "ERROR")
 
 
 def join_description_lines(lines):
@@ -65,49 +65,6 @@ def join_description_lines(lines):
                 continue
         yield line
         i += 1
-
-
-def terminal_accounting(mains, subs, blocks):
-    """Returns (lawful, reason) for one test (see the module docstring, r7).
-
-    mains  - main status events in log order, e.g. ["ok"] or ["ERROR", "ERROR"]
-    subs   - sub-test status events in log order as (status, parameters), e.g. [("FAIL", "(i=1)")]
-    blocks - the test's failure blocks: dicts with kind (FAIL|ERROR), phase and subtest (parameters, or "")
-    """
-    from collections import Counter
-    if any(m not in TERMINAL for m in mains) or any(st not in TERMINAL for st, _ in subs):
-        return False, "unrecognised status %s %s" % (mains, [st for st, _ in subs])
-    if not mains and not subs:
-        return False, "no terminal outcome reported"
-    if any(st in ("ok", "expected failure", "unexpected success") for st, _ in subs):
-        return False, "sub-test status %s is not a sub-test outcome" % [st for st, _ in subs]
-    sub_events = Counter((st, p.strip()) for st, p in subs if st in FAILURE)
-    sub_blocks = Counter((b["kind"], b.get("subtest", "").strip()) for b in blocks if b["phase"] == "subtest")
-    if sub_events != sub_blocks:
-        return False, "sub-test events %s disagree with sub-test failure blocks %s" % (sorted(sub_events.items()), sorted(sub_blocks.items()))
-    unexpected_blocks = sum(1 for b in blocks if b["phase"] == "unexpected")
-    if unexpected_blocks != mains.count("unexpected success"):
-        return False, "%d unexpected success event(s) but %d UNEXPECTED SUCCESS block(s)" % (mains.count("unexpected success"), unexpected_blocks)
-    main_blocks = [b for b in blocks if b["phase"] not in ("subtest", "unexpected")]
-    for kind in FAILURE:
-        events_n, blocks_n = mains.count(kind), sum(1 for b in main_blocks if b["kind"] == kind)
-        if events_n != blocks_n:
-            return False, "%d main %s event(s) but %d %s block(s)" % (events_n, kind, blocks_n, kind)
-    outside_teardown = [b["phase"] for b in main_blocks if b["phase"] != "teardown"]
-    if len(outside_teardown) > 1:
-        return False, "more than one failure block outside teardown %s" % outside_teardown
-    non_failure = [m for m in mains if m in NON_FAILURE]
-    if non_failure:
-        if len(non_failure) > 1 or mains[0] not in NON_FAILURE:
-            return False, "status %s contradicted by the order or number of status events %s" % (non_failure, mains)
-        if sub_events:
-            return False, "status %s contradicted by sub-test failure event(s) %s" % (mains[0], sorted(sub_events.elements()))
-        if outside_teardown:
-            return False, "status %s contradicted by %s block(s)" % (mains[0], outside_teardown)
-        return True, ("one terminal status" if len(mains) == 1 else "terminal status then %d teardown event(s)" % (len(mains) - 1))
-    if not mains:
-        return True, "sub-test outcomes only"
-    return True, ("one failure status" if len(mains) == 1 else "failure status then %d teardown event(s)" % (len(mains) - 1))
 
 
 def parse(text, collected=None, log_path=""):
@@ -204,6 +161,7 @@ def parse(text, collected=None, log_path=""):
         "existing_database_line": kept_m.group(0) if kept_m else None,
     }
     tests = []
+    violations = []
     first_teardown_failure_index = None
     for i, tid in enumerate(order):
         bl = per.get(tid, {"blocks": []})["blocks"]
@@ -215,21 +173,7 @@ def parse(text, collected=None, log_path=""):
         un = [x for x in bl if x["phase"] == "unclassified"]
         mains = [s for k, s, _ in ev if k == "main"]
         subs = [(s, p) for k, s, p in ev if k == "subtest"]
-        lawful, why = terminal_accounting(mains, subs, bl)
-        if su:
-            body = "NOT REACHED (setup error)"
-        elif body_blocks:
-            body = body_blocks[0]["kind"]
-        elif un:
-            body = "UNCLASSIFIED"
-        elif "skipped" in mains or (not mains and subs and all(st == "skipped" for st, _ in subs)):
-            body = "skipped"
-        elif sub_blocks:
-            body = "SUBTEST FAILURES"
-        elif "ok" in mains:
-            body = "ok"
-        else:
-            body = "NO BODY STATUS REPORTED"
+        derived = outcome.derive(mains, subs, bl)
         if i == 0:
             if lifecycle["creation_before_first_test"] and not lifecycle["existing_database_line"]:
                 isolation = "database created for this run before this test (lifecycle line); no earlier test"
@@ -241,7 +185,9 @@ def parse(text, collected=None, log_path=""):
             isolation = "not established by the log (requires an isolation checkpoint)"
         if td and first_teardown_failure_index is None:
             first_teardown_failure_index = i
-        tests.append({"id": tid, "position": i + 1, "body": body, "terminal_accounting": {"lawful": lawful, "reason": why}, "body_exception": (body_blocks[0]["exception"] + ": " + body_blocks[0]["message"]) if body_blocks else "",
+        if not derived["lawful"]:
+            violations.append({"id": tid, "reason": derived["reason"]})
+        tests.append({"id": tid, "position": i + 1, "result": derived["result"], "body_exception": (body_blocks[0]["exception"] + ": " + body_blocks[0]["message"]) if body_blocks else "",
                       "subtest_failures": len([x for x in sub_blocks if x["kind"] == "FAIL"]), "subtest_errors": len([x for x in sub_blocks if x["kind"] == "ERROR"]),
                       "setup_errors": len(su), "teardown_errors": len(td), "unclassified_entries": len(un),
                       "teardown_exception": (td[0]["exception"] + ": " + td[0]["message"]) if td else "", "isolation": isolation, "status_events": [[k, s] for k, s, _ in ev],
@@ -265,7 +211,6 @@ def parse(text, collected=None, log_path=""):
     recon["status line exit and log exit agree"] = (summary["exit"] is not None and ((summary["final"] or "").startswith("OK")) == (summary["exit"] == 0), summary["exit"], summary["final"])
     if collected is not None:
         recon["reported tests equal collected identities"] = (sorted(order) == sorted(collected), len(order), len(collected))
-    violations = [{"id": t["id"], "reason": t["terminal_accounting"]["reason"]} for t in tests if not t["terminal_accounting"]["lawful"]]
     recon["every reported test has exactly one lawful terminal outcome"] = (not violations, len(violations), 0)
     numerically_reconciled = all(v[0] for v in recon.values())
     unclassified_entries = len([x for x in all_blocks if x["phase"] == "unclassified"])
@@ -273,13 +218,13 @@ def parse(text, collected=None, log_path=""):
     reconciled = numerically_reconciled and verdict_present
 
     phase_totals = OrderedDict((p, len([x for x in all_blocks if x["phase"] == p])) for p in ("body", "subtest", "setup", "teardown", "unclassified"))
-    body_totals = OrderedDict()
+    result_totals = OrderedDict()
     for t in tests:
-        body_totals[t["body"]] = body_totals.get(t["body"], 0) + 1
+        result_totals[t["result"]] = result_totals.get(t["result"], 0) + 1
     out = {"log": log_path, "summary": summary, "lifecycle": lifecycle,
            "verdict_present": verdict_present, "numerically_reconciled": numerically_reconciled,
            "phase_classification_complete": phase_classification_complete, "unclassified_entries": unclassified_entries, "reconciliation": {k: {"ok": v[0], "observed": v[1], "reference": v[2]} for k, v in recon.items()},
-           "reconciled": reconciled, "accounting_violations": violations, "entry_totals_by_phase": phase_totals, "test_totals_by_body_outcome": body_totals,
+           "reconciled": reconciled, "accounting_violations": violations, "entry_totals_by_phase": phase_totals, "test_totals_by_result": result_totals,
            "tests_with_teardown_errors": sum(1 for t in tests if t["teardown_errors"]),
            "first_teardown_failure_position": (first_teardown_failure_index + 1) if first_teardown_failure_index is not None else None,
            "tests": tests}
@@ -289,7 +234,7 @@ def parse(text, collected=None, log_path=""):
 def report_lines(out):
     summary, recon, lifecycle, reconciled = out["summary"], out["reconciliation"], out["lifecycle"], out["reconciled"]
     phase_classification_complete, unclassified_entries = out["phase_classification_complete"], out["unclassified_entries"]
-    phase_totals, body_totals, tests = out["entry_totals_by_phase"], out["test_totals_by_body_outcome"], out["tests"]
+    phase_totals, result_totals, tests = out["entry_totals_by_phase"], out["test_totals_by_result"], out["tests"]
     verdict_present = out["verdict_present"]
     lines = []
     lines.append("PARSE: runner summary      : ran=%s %s exit=%s" % (summary["ran"], summary["final"], summary["exit"]))
@@ -300,10 +245,10 @@ def report_lines(out):
     lines.append("PARSE: PHASE CLASSIFICATION COMPLETE: %s (unclassified entries %d)" % (phase_classification_complete, unclassified_entries))
     lines.append("PARSE: lifecycle           : creation line %s; before first test %s; existing-database line %s" % (bool(lifecycle["creation_line"]), lifecycle["creation_before_first_test"], bool(lifecycle["existing_database_line"])))
     lines.append("PARSE: entries by phase    : " + ", ".join("%s=%d" % kv for kv in phase_totals.items()))
-    lines.append("PARSE: tests by body       : " + ", ".join("%s=%d" % kv for kv in body_totals.items()))
+    lines.append("PARSE: tests by result     : " + ", ".join("%s=%d" % kv for kv in result_totals.items()))
     lines.append("PARSE: tests with teardown errors: %d; first at position %s" % (out["tests_with_teardown_errors"], out["first_teardown_failure_position"]))
     for t in tests:
-        lines.append("PARSE: %3d %-55s body=%-22s sub F/E=%d/%d setup=%d teardown=%d | %s" % (t["position"], t["id"][-55:], t["body"], t["subtest_failures"], t["subtest_errors"], t["setup_errors"], t["teardown_errors"], t["isolation"]))
+        lines.append("PARSE: %3d %-55s result=%-22s sub F/E=%d/%d setup=%d teardown=%d | %s" % (t["position"], t["id"][-55:], t["result"], t["subtest_failures"], t["subtest_errors"], t["setup_errors"], t["teardown_errors"], t["isolation"]))
 
     return lines
 

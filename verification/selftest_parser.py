@@ -69,7 +69,7 @@ EXPECTED_BODY = {"test_a_pass": "ok", "test_b_fail": "FAIL", "test_c_error": "ER
 
 
 def outcomes(out):
-    return {t["id"].rsplit(".", 1)[1]: t["body"] for t in out["tests"]}
+    return {t["id"].rsplit(".", 1)[1]: t["result"] for t in out["tests"]}
 
 
 class DescriptionLineParsing(unittest.TestCase):
@@ -168,7 +168,7 @@ class OutcomeAccounting(unittest.TestCase):
         self.assertEqual(out["accounting_violations"], [])
         by = {t["id"].rsplit(".", 1)[1]: t for t in out["tests"]}
         self.assertEqual(by["test_ok_td"]["teardown_errors"], 1)
-        self.assertEqual(by["test_fail_td"]["body"], "FAIL")
+        self.assertEqual(by["test_fail_td"]["result"], "FAIL")
         self.assertEqual(by["test_sub_td"]["subtest_failures"], 1)
 
     def test_b1_8_positive_all_real_shapes_from_the_synthetic_runner_still_reconcile(self):
@@ -243,14 +243,14 @@ class EventReconciliation(unittest.TestCase):
         out = parse(cap["log"], cap["collected"])
         self.assertTrue(out["reconciled"], out["reconciliation"])
         t = out["tests"][0]
-        self.assertEqual((t["body"], t["teardown_errors"]), ("ERROR", 2))
+        self.assertEqual((t["result"], t["teardown_errors"]), ("ERROR", 2))
 
     def test_r7_9_real_skipped_subtests_reconcile_counted_per_event(self):
         cap = CAPTURES["SkippedSubtests"]
         out = parse(cap["log"], cap["collected"])
         self.assertTrue(out["reconciled"], out["reconciliation"])
         self.assertEqual(out["summary"]["skipped"], 4)
-        self.assertEqual({t["body"] for t in out["tests"]}, {"skipped"})
+        self.assertEqual({t["result"] for t in out["tests"]}, {"skipped"})
 
     def test_r7_10_real_teardown_assertion_and_expected_outcomes_reconcile(self):
         for name in ("TeardownFail", "Expected"):
