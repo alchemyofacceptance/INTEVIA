@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from verification import bootstrap as bootstrap_mod
+from verification.recording import ParallelExecutionRefused
 
 
 def _write(path, text):
@@ -205,6 +206,34 @@ class BootstrapSurfaceTests(unittest.TestCase):
                 with self.assertRaises(bootstrap_mod.DependencyPrequalificationError) as exc:
                     bootstrap_mod.validate_dependency_environment(str(checkout), str(snapshot))
             self.assertIn("lies inside the checkout", str(exc.exception))
+
+    def test_parallel_gt_one_is_refused_before_database_setup(self):
+        from verification.isolation.runner import IsolationRunner
+        from verification.mutations import MutationRunner
+
+        with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
+            _fixture_repo(td)
+            with mock.patch.object(IsolationRunner, "setup_databases", autospec=True) as setup_databases:
+                runner = IsolationRunner(parallel=0, verbosity=0, nonce="test-nonce", step="SELF")
+                self.assertEqual(runner.parallel, 0)
+                runner.setup_databases()
+                setup_databases.assert_called_once()
+            with mock.patch.object(IsolationRunner, "setup_databases", autospec=True) as setup_databases:
+                with self.assertRaises(ParallelExecutionRefused) as exc:
+                    IsolationRunner(parallel=2, verbosity=0, nonce="test-nonce", step="SELF")
+                setup_databases.assert_not_called()
+            self.assertIn("IsolationRunner was configured for 2 parallel processes", str(exc.exception))
+
+            with mock.patch.object(MutationRunner, "setup_databases", autospec=True) as setup_databases:
+                runner = MutationRunner(parallel=0, verbosity=0, nonce="test-nonce", step="MUT-test")
+                self.assertEqual(runner.parallel, 0)
+                runner.setup_databases()
+                setup_databases.assert_called_once()
+            with mock.patch.object(MutationRunner, "setup_databases", autospec=True) as setup_databases:
+                with self.assertRaises(ParallelExecutionRefused) as exc:
+                    MutationRunner(parallel=3, verbosity=0, nonce="test-nonce", step="MUT-test")
+                setup_databases.assert_not_called()
+            self.assertIn("MutationRunner was configured for 3 parallel processes", str(exc.exception))
 
     def test_direct_run_records_checkout_entry(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:

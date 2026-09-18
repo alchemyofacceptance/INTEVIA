@@ -14,6 +14,10 @@ _TESTCASE_RUN_GUARD_INSTALLED = False
 _ACTIVE_RECORD_SINK = None
 
 
+class ParallelExecutionRefused(RuntimeError):
+    pass
+
+
 def _require_nonce(explicit=None):
     nonce = explicit or os.environ.get("VERIFICATION_RUN_NONCE")
     if not nonce:
@@ -237,7 +241,14 @@ class RecordingRunnerMixin:
         self.pid = os.getpid()
         self.suite_ids = []
         self._run_end_emitted = False
+        class_name = self.__class__.__name__
+        parallel = kwargs.get("parallel", 1)
+        if parallel > 1:
+            raise ParallelExecutionRefused("the %s was configured for %s parallel processes; this route requires serial execution" % (class_name, parallel))
         super().__init__(*args, **kwargs)
+        parallel = getattr(self, "parallel", parallel)
+        if parallel > 1:
+            raise ParallelExecutionRefused("the %s was configured for %s parallel processes; this route requires serial execution" % (class_name, parallel))
         self._append_record("RUNNER-START", self, target=self.__class__.__name__, phase="other")
 
     def _append_record(self, kind, test, *, target=None, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
@@ -312,7 +323,7 @@ class RecordingRunnerMixin:
         return old_config
 
     def run_suite(self, suite, **kwargs):
-        assert getattr(self, "parallel", 1) == 1
+        assert getattr(self, "parallel", 1) <= 1
         self._append_record("SUITE-RUN-START", suite, target="suite", phase="other", extra={"suite_ids": self.suite_ids or _suite_ids(suite)})
         result = None
         previous_sink = _activate_record_sink(self)

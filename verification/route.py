@@ -489,7 +489,7 @@ class Route:
         runner = MUTATION_RUNNER if mutation else ISOLATION_RUNNER
         log = self.path(sid + "_test_output.log")
         self.attempted.append((sid, db, env[RECEIPT_ENV]))
-        code = self.run_logged([sys.executable, "manage.py", "test", *labels, "--testrunner", runner, "--noinput", "-v", "2"], log, env)
+        code = self.run_logged([sys.executable, "manage.py", "test", *labels, "--testrunner", runner, "--parallel", "1", "--noinput", "-v", "2"], log, env)
         out = parse_results.parse(read_text(log), collection["ids"], log)
         with open(self.path(sid + "_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
@@ -612,7 +612,7 @@ class Route:
         collide = self.create_fixture("OWN-COLLIDE")
         env = self.django_env(collide["name"], "OWN-COLLIDE")
         log = self.path("OWN-COLLIDE_test_output.log")
-        code = self.run_logged([sys.executable, "manage.py", "test", OWNERSHIP_PROBE_TEST, "--testrunner", ISOLATION_RUNNER, "--noinput", "-v", "2"], log, env)
+        code = self.run_logged([sys.executable, "manage.py", "test", OWNERSHIP_PROBE_TEST, "--testrunner", ISOLATION_RUNNER, "--parallel", "1", "--noinput", "-v", "2"], log, env)
         receipts, problem = read_receipts(env[RECEIPT_ENV], self.nonce)
         parsed = parse_results.parse(read_text(log))
         check = {"runner_exit_nonzero": code != 0,
