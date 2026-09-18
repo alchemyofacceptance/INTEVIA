@@ -12,7 +12,7 @@ MANIFEST.sha256.
 
 Steps (each PASS, FAIL or INCOMPLETE):
   IDENTITY    the commit, git tree of the working files, and every change with its bytes; a failure makes the run INCOMPLETE
-  OFFLINE     verification.selftest_parser, verification.selftest_route and verification.selftest_recording (no database)
+  OFFLINE     verification.selftest_parser, verification.selftest_route, verification.selftest_recording and verification.selftest_bootstrap (no database)
   SELF        the isolation instrument's self-check under the isolation runner
   S015        the S015 test set (tests/, pattern test_s015_*.py) under the isolation runner
   OWNERSHIP   live checks of the database safeguards: a colliding database is refused and left untouched; a replaced
@@ -407,10 +407,10 @@ class Route:
         return "PASS", ""
 
     def step_offline(self):
-        step = {"id": "OFFLINE", "scope": "verification.selftest_parser, verification.selftest_route, verification.selftest_recording (no database)"}
+        step = {"id": "OFFLINE", "scope": "verification.selftest_parser, verification.selftest_route, verification.selftest_recording, verification.selftest_bootstrap (no database)"}
         log = self.path("OFFLINE_test_output.log")
         env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-        code = self.run_logged([sys.executable, "-m", "unittest", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording"], log, env)
+        code = self.run_logged([sys.executable, "-m", "unittest", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
         out = parse_results.parse(read_text(log), None, log)
         with open(self.path("OFFLINE_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
