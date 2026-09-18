@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from verification import ownership
-from verification import run as route_mod
+from verification import route as route_mod
 from verification.parse_results import parse
 
 TID = "probe.C.test_a"
