@@ -336,6 +336,113 @@ class EnvelopeAndDbControl(unittest.TestCase):
             self.assertEqual(refusal_log, [("install", "DatabaseCreation")])
 
 
+class _WritelnStringIO(io.StringIO):
+    """A stream with unittest's writeln, without depending on the private unittest.runner._WritelnDecorator."""
+
+    def writeln(self, line=None):
+        if line:
+            self.write(line)
+        self.write("\n")
+
+
+class SelfSinkRecorderControl(unittest.TestCase):
+    """The self-sink path: RecordingResult as its own record sink, driven through every callback.
+
+    Every other control in this module drives the runner-as-sink path, where the runner is the sink and the
+    result delegates to it. The self-sink path - record_sink=None, so the result is its own sink - is what the
+    route's own Django invocations produce, and it is the path that carried three defects on 18 September 2026.
+    Each was the same defect, and each was found by a full launcher run against live PostgreSQL rather than here.
+    """
+
+    def test_append_record_signatures_are_identical(self):
+        result_signature = inspect.signature(recording_mod.RecordingResult._append_record)
+        runner_signature = inspect.signature(recording_mod.RecordingRunnerMixin._append_record)
+        self.assertEqual(result_signature, runner_signature)
+
+    def test_self_sink_result_records_every_callback(self):
+        class SelfSinkCases(unittest.TestCase):
+            def test_pass(self):
+                pass
+
+            def test_fail(self):
+                self.fail("deliberate failure")
+
+            def test_error(self):
+                raise RuntimeError("deliberate error")
+
+            def test_skip(self):
+                self.skipTest("deliberate skip")
+
+            @unittest.expectedFailure
+            def test_xfail(self):
+                self.fail("expected failure")
+
+            @unittest.expectedFailure
+            def test_xpass(self):
+                pass
+
+            def test_subtests(self):
+                for index, label in enumerate(("ok", "fail", "error", "skip")):
+                    with self.subTest(msg="probe", label=index):
+                        if label == "fail":
+                            self.fail("subtest failure")
+                        elif label == "error":
+                            raise RuntimeError("subtest error")
+                        elif label == "skip":
+                            self.skipTest("subtest skip")
+
+        class BrokenSetUpClass(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise RuntimeError("deliberate setUpClass failure")
+
+            def test_never_runs(self):
+                pass
+
+        previous_sink = recording_mod._ACTIVE_RECORD_SINK
+        with _recording_env():
+            recording_mod.install_testcase_run_guard()
+            result = recording_mod.RecordingResult(_WritelnStringIO(), True, 2, record_sink=None, step="PROBE")
+            suite = unittest.TestSuite([
+                unittest.defaultTestLoader.loadTestsFromTestCase(SelfSinkCases),
+                unittest.defaultTestLoader.loadTestsFromTestCase(BrokenSetUpClass),
+            ])
+            suite.run(result)
+
+        self.assertEqual(recording_mod._ACTIVE_RECORD_SINK, previous_sink)
+        self.assertIs(result.record_sink, result)
+
+        records = result.records
+        allowed, offenders = _allowed(records)
+        self.assertTrue(allowed, offenders)
+
+        for record in records:
+            for field in ("seq", "nonce", "step", "pid", "kind", "target"):
+                self.assertIn(field, record, _json(record))
+            self.assertEqual(record["step"], "PROBE", _json(record))
+        self.assertEqual([record["seq"] for record in records], list(range(1, len(records) + 1)))
+
+        entered = [record for record in records if record["kind"] == "TEST-ENTERED"]
+        self.assertEqual(len(entered), 7, [record["kind"] for record in records])
+        for record in entered:
+            self.assertTrue(record["target"], _json(record))
+            self.assertEqual(record["result_class"], "RecordingResult", _json(record))
+
+        subtests = [record for record in records if record["kind"].startswith("SUB-")]
+        self.assertEqual({record["kind"] for record in subtests}, {"SUB-OK", "SUB-FAIL", "SUB-ERROR", "SUB-SKIP"})
+        for record in subtests:
+            self.assertEqual(record["phase"], "subtest", _json(record))
+            for field in ("is_subtest", "message", "params"):
+                self.assertIn(field, record, _json(record))
+            self.assertIs(record["is_subtest"], True, _json(record))
+
+        kinds = [record["kind"] for record in records]
+        for kind in ("START", "STOP", "OK", "FAIL", "ERROR", "SKIP", "XFAIL", "XPASS", "HOLDER-ERROR"):
+            self.assertIn(kind, kinds)
+        if hasattr(unittest.TestResult, "addDuration"):
+            self.assertIn("DURATION", kinds)
+
+
 class ControlIntegration(unittest.TestCase):
     def test_import_boundary_and_parser_delegation_remain_intact(self):
         import subprocess
