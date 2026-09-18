@@ -252,6 +252,24 @@ class BootstrapSurfaceTests(unittest.TestCase):
         self.assertEqual(result.records[-1]["message"], "sub-message")
         self.assertEqual(result.records[-1]["params"], {"alpha": 1})
 
+    def test_recording_result_self_sink_records_test_entered(self):
+        class EnteredCase(unittest.TestCase):
+            def test_entered(self):
+                pass
+
+        stream = unittest.runner._WritelnDecorator(io.StringIO())
+        result = RecordingResult(stream, True, 2, record_sink=None, nonce="test-nonce", step="SELFTEST")
+        case = EnteredCase("test_entered")
+
+        case.run(result)
+
+        entered = [record for record in result.records if record["kind"] == "TEST-ENTERED"]
+        self.assertEqual(len(entered), 1, result.records)
+        record = entered[0]
+        self.assertEqual(record["target"], case.id())
+        self.assertEqual(record["result_class"], "RecordingResult")
+        self.assertTrue({"seq", "nonce", "step", "pid", "kind", "target"}.issubset(record))
+
     def test_resultclass_falls_back_when_super_returns_none(self):
         class NullBase:
             def __init__(self, *args, **kwargs):

@@ -109,6 +109,13 @@ def _record_fields(*, is_subtest=None, message=None, params=None):
     return fields
 
 
+def _append_record_common(sink, kind, test, *, target=None, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
+    folded = _record_fields(is_subtest=is_subtest, message=message, params=params)
+    if extra:
+        folded.update(extra)
+    return _append_record(sink, kind, test, target=target, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=folded)
+
+
 def _resultclass_base(runner, getter):
     base = getter() if getter is not None else None
     if base is None:
@@ -170,8 +177,8 @@ class RecordingResult(unittest.TextTestResult):
             self.pid = self.record_sink.pid
         self.events = self.records
 
-    def _append_record(self, kind, test, *, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
-        return _append_record(self, kind, test, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=_record_fields(is_subtest=is_subtest, message=message, params=params))
+    def _append_record(self, kind, test, *, target=None, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
+        return _append_record_common(self, kind, test, target=target, phase=phase, details=details, is_subtest=is_subtest, message=message, params=params, exc=exc, elapsed=elapsed, extra=extra)
 
     def startTest(self, test):
         self.record_sink._append_record("START", test, phase="other")
@@ -270,10 +277,7 @@ class RecordingRunnerMixin:
         current = globals().get("_ACTIVE_RECORD_SINK")
         try:
             globals()["_ACTIVE_RECORD_SINK"] = self
-            folded = _record_fields(is_subtest=is_subtest, message=message, params=params)
-            if extra:
-                folded.update(extra)
-            return _append_record(self, kind, test, target=target, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=folded)
+            return _append_record_common(self, kind, test, target=target, phase=phase, details=details, is_subtest=is_subtest, message=message, params=params, exc=exc, elapsed=elapsed, extra=extra)
         finally:
             globals()["_ACTIVE_RECORD_SINK"] = current
 
