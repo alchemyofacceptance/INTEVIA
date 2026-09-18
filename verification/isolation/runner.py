@@ -109,7 +109,10 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             self._summary(result)
 
     def get_resultclass(self):
-        base = super(RecordingRunnerMixin, self).get_resultclass() or unittest.TextTestResult
+        base_getter = super(RecordingRunnerMixin, self).get_resultclass
+        base = base_getter()
+        if base is None:
+            base = getattr(self, "resultclass", None) or unittest.TextTestResult
         runner = self
 
         class IsolationResult(base):

@@ -98,6 +98,26 @@ def _append_record(sink, kind, test, *, target=None, phase="other", details=None
     return record
 
 
+def _record_fields(*, is_subtest=None, message=None, params=None):
+    fields = {}
+    if is_subtest is not None:
+        fields["is_subtest"] = is_subtest
+    if message is not None:
+        fields["message"] = message
+    if params is not None:
+        fields["params"] = params
+    return fields
+
+
+def _resultclass_base(runner, getter):
+    base = getter() if getter is not None else None
+    if base is None:
+        base = getattr(runner, "resultclass", None)
+    if base is None:
+        base = unittest.TextTestResult
+    return base
+
+
 def _record_sink_for_result(result):
     sink = getattr(result, "record_sink", None)
     if sink is not None:
@@ -150,8 +170,8 @@ class RecordingResult(unittest.TextTestResult):
             self.pid = self.record_sink.pid
         self.events = self.records
 
-    def _append_record(self, kind, test, **fields):
-        return _append_record(self, kind, test, **fields)
+    def _append_record(self, kind, test, *, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
+        return _append_record(self, kind, test, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=_record_fields(is_subtest=is_subtest, message=message, params=params))
 
     def startTest(self, test):
         self.record_sink._append_record("START", test, phase="other")
@@ -189,7 +209,7 @@ class RecordingResult(unittest.TextTestResult):
             message = getattr(test, "_message", None)
             if not isinstance(message, str):
                 message = None
-            fields.update(is_subtest=True, message=message, params=dict(getattr(getattr(test, "params", {}), "items", lambda: [])()))
+            fields.update(_record_fields(is_subtest=True, message=message, params=dict(getattr(getattr(test, "params", {}), "items", lambda: [])())))
         self.record_sink._append_record(kind, test, **fields)
         super().addSkip(test, reason)
 
@@ -214,12 +234,7 @@ class RecordingResult(unittest.TextTestResult):
         if not isinstance(message, str):
             message = None
         params = dict(getattr(getattr(subtest, "params", {}), "items", lambda: [])())
-        fields = {
-            "is_subtest": True,
-            "message": message,
-            "params": params,
-            "phase": "subtest",
-        }
+        fields = {"phase": "subtest", "is_subtest": True, "message": message, "params": params}
         if err is not None:
             fields.update(details=self._exc_info_to_string(err, subtest), exc=err[0].__name__)
         self.record_sink._append_record(kind, subtest, **fields)
@@ -252,18 +267,13 @@ class RecordingRunnerMixin:
         self._append_record("RUNNER-START", self, target=self.__class__.__name__, phase="other")
 
     def _append_record(self, kind, test, *, target=None, phase="other", details=None, is_subtest=None, message=None, params=None, exc=None, elapsed=None, extra=None):
-        if extra is None:
-            extra = {}
-        if is_subtest is not None:
-            extra.setdefault("is_subtest", is_subtest)
-        if message is not None:
-            extra.setdefault("message", message)
-        if params is not None:
-            extra.setdefault("params", params)
         current = globals().get("_ACTIVE_RECORD_SINK")
         try:
             globals()["_ACTIVE_RECORD_SINK"] = self
-            return _append_record(self, kind, test, target=target, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=extra)
+            folded = _record_fields(is_subtest=is_subtest, message=message, params=params)
+            if extra:
+                folded.update(extra)
+            return _append_record(self, kind, test, target=target, phase=phase, details=details, exc=exc, elapsed=elapsed, extra=folded)
         finally:
             globals()["_ACTIVE_RECORD_SINK"] = current
 
@@ -290,7 +300,7 @@ class RecordingRunnerMixin:
 
     def get_resultclass(self):
         base_getter = getattr(super(), "get_resultclass", None)
-        base = base_getter() if base_getter is not None else getattr(self, "resultclass", None) or unittest.TextTestResult
+        base = _resultclass_base(self, base_getter)
         if issubclass(base, RecordingResult):
             return base
 

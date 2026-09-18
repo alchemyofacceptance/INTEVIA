@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -14,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from verification import bootstrap as bootstrap_mod
-from verification.recording import ParallelExecutionRefused
+from verification.recording import ParallelExecutionRefused, RecordingResult, RecordingRunnerMixin
 
 
 def _write(path, text):
@@ -234,6 +235,39 @@ class BootstrapSurfaceTests(unittest.TestCase):
                     MutationRunner(parallel=3, verbosity=0, nonce="test-nonce", step="MUT-test")
                 setup_databases.assert_not_called()
             self.assertIn("MutationRunner was configured for 3 parallel processes", str(exc.exception))
+
+    def test_recording_result_self_sink_preserves_subtest_fields(self):
+        stream = unittest.runner._WritelnDecorator(io.StringIO())
+        result = RecordingResult(stream, True, 2, record_sink=None, nonce="test-nonce", step="SELFTEST")
+        base_case = unittest.TestCase("runTest")
+        subtest = unittest.case._SubTest(base_case, "sub-message", {"alpha": 1})
+
+        result.addSubTest(base_case, subtest, (AssertionError, AssertionError("boom"), None))
+        result.addSkip(subtest, "skip reason")
+
+        self.assertEqual(result.records[-2]["is_subtest"], True)
+        self.assertEqual(result.records[-2]["message"], "sub-message")
+        self.assertEqual(result.records[-2]["params"], {"alpha": 1})
+        self.assertEqual(result.records[-1]["is_subtest"], True)
+        self.assertEqual(result.records[-1]["message"], "sub-message")
+        self.assertEqual(result.records[-1]["params"], {"alpha": 1})
+
+    def test_resultclass_falls_back_when_super_returns_none(self):
+        class NullBase:
+            def __init__(self, *args, **kwargs):
+                self.resultclass = None
+
+            def get_resultclass(self):
+                return None
+
+        class NullResultRunner(RecordingRunnerMixin, NullBase):
+            pass
+
+        runner = NullResultRunner(nonce="test-nonce", step="SELFTEST")
+        resultclass = runner.get_resultclass()
+        self.assertTrue(issubclass(resultclass, RecordingResult))
+        result = resultclass(io.StringIO(), True, 2)
+        self.assertIsInstance(result, RecordingResult)
 
     def test_direct_run_records_checkout_entry(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
