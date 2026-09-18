@@ -1,9 +1,18 @@
-# S015 verification route in CI (workflow v0.8, Change C design v0.5).
+# S015 verification route in CI (workflow v0.9, Change C design v0.5).
 #
 # Author : Vision Chamber (Claude Opus 5), UFUND-5, 18 September 2026. Human Governor: Carmian Owen.
 # Against: CONSUMER_REQUIREMENT_v0_5.md, sha256 995073dbf74a8722dbdb03a55d68acba29893534360e5e8e5364f903a3aafd20
 #
-# v0.8 changes from the workflow this replaces, and only these:
+# v0.9 change from v0.8, and only this:
+#
+#   5. THE DECISION RECORD IS RETAINED. In v0.8 the artifact upload ran BEFORE the decision step, so
+#      QUALIFICATION_DECISION.json was written into the run root after the run root had already been
+#      uploaded: the gate's own output existed only in the step log, never in retained evidence
+#      (F-VC-UFUND5-14, CI run #6). The decision is now applied first, the whole run root including the
+#      decision record is uploaded second, and the check is failed third. Each step does one thing, and
+#      only the third can turn the check red.
+#
+# v0.8 changes from the workflow before it, and only these:
 #
 #   1. IDENTITY. On a pull_request the job checks out and binds to the PR HEAD commit, not the merge commit
 #      GitHub synthesises. ONE sha - CANDIDATE_SHA - is used for the checkout, the bootstrap extraction, the
@@ -184,30 +193,34 @@ jobs:
             echo "No evidence summary was written: the route did not reach the point of writing one. Treat this run as INCOMPLETE." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Retain the whole run root
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: s015-verification-evidence-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
-          path: ${{ steps.bootstrap.outputs.run_root }}
-          if-no-files-found: warn
-          retention-days: 90
-
-      - name: Decide - the exit mapping AND sections 1-3 of the consumer requirement
+      - name: Apply the qualification decision - sections 1-3 of the consumer requirement
+        id: decision
         if: always()
         run: |
           set +e
           R="${{ steps.bootstrap.outputs.run_root }}"
-          status="${{ steps.route.outputs.exit_status }}"
+          if [ -z "$R" ] || [ ! -d "$R" ]; then
+            echo "INCOMPLETE: there is no run root to decide over; the run did not reach the route."
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### S015 qualification decision" >> "$GITHUB_STEP_SUMMARY"
+            echo "- INCOMPLETE: there is no run root to decide over." >> "$GITHUB_STEP_SUMMARY"
+            echo "gate=99" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          # 1. the qualification decision over the retained run root. Missing, null or malformed evidence is a
-          #    NAMED refusal and a non-qualifying outcome; it is never an unhandled error and never green.
+          # Missing, null or malformed evidence is a NAMED refusal and a non-qualifying outcome; it is never
+          # an unhandled error and never green. The decision record is written INTO the run root, before the
+          # run root is uploaded, so the gate's own output is retained evidence rather than console output.
           python .github/s015_gate.py "$R" "$R/QUALIFICATION_DECISION.json"
           gate=$?
+          echo "gate=$gate" >> "$GITHUB_OUTPUT"
+
           if [ ! -f "$R/QUALIFICATION_DECISION.json" ]; then
             echo "INCOMPLETE: the qualification decision produced no record. Not green."
-            echo "INCOMPLETE: the qualification decision produced no record. Not green." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### S015 qualification decision" >> "$GITHUB_STEP_SUMMARY"
+            echo "- INCOMPLETE: the qualification decision produced no record." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           {
             echo ""
@@ -220,8 +233,27 @@ jobs:
               print("- refused: %s" % r)
           PY
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
-          # 2. the exit mapping, unchanged in meaning
+      - name: Retain the whole run root, decision record included
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s015-verification-evidence-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ steps.bootstrap.outputs.run_root }}
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Fail the check unless the route passed AND the decision holds
+        if: always()
+        run: |
+          set +e
+          status="${{ steps.route.outputs.exit_status }}"
+          gate="${{ steps.decision.outputs.gate }}"
+          echo "route exit status: $status"
+          echo "gate exit status : $gate"
+
+          # 1. the exit mapping, unchanged in meaning
           case "$status" in
             0) echo "route exit 0: every step passed and cleanup was clean." ;;
             1) echo "FAIL: at least one step failed. See the summary and evidence."; exit 1 ;;
@@ -230,9 +262,9 @@ jobs:
             *) echo "INCOMPLETE: the route did not report an exit status ($status)."; exit 1 ;;
           esac
 
-          # 3. the conjunction. Exit 0 alone is not a green check.
-          if [ "$gate" -ne 0 ]; then
-            echo "NOT QUALIFYING: the route exited 0 but the qualification decision refused. See the decision above."
+          # 2. the conjunction. Exit 0 alone is not a green check.
+          if [ "$gate" != "0" ]; then
+            echo "NOT QUALIFYING: the route exited 0 but the qualification decision did not hold (gate $gate)."
             exit 1
           fi
           echo "PASS: the route exited 0 and the qualification decision holds."
