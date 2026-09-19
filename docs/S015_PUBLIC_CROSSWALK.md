@@ -30,9 +30,16 @@ A reader should be able to check every claim below from the repository alone.
 recording state transitions so that history is append-only and the sequence of events is checkable in
 the database rather than by convention in application code.
 
-**PKT-A-3 — the INTEVIA Lineage-Chain (0022).** Schema, triggers and functions establishing the chain
-of identity records, including severance and reuse guards, and append-only protection on the severance
-table.
+**PKT-A-3 — the INTEVIA Lineage-Chain (0022).** Schema, triggers and functions for four things, not one:
+
+- **actor states** — the recorded states an actor may hold;
+- **parts** — the constituent records the chain binds together;
+- **L1 commitments** across the twelve governed event tables;
+- **identity resolution and severance** — a resolution table with an append-only severance ledger, and
+  the reuse and severance guards over it.
+
+Identity and severance are **one limb of the packet**, not the whole of it. Describing 0022 as "the
+identity chain" under-describes what landed, and the earlier version of this document did exactly that.
 
 Both are **schema-level**: the rules are installed in PostgreSQL. The accompanying tests exercise them
 by direct SQL as well as through the application layer.
