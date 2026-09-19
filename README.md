@@ -39,22 +39,13 @@ Everything below states which of those two it belongs to.
 
 A passing check is evidence at the checked properties for the tested tree and environment. It is not review, external reproduction, or acceptance of the wider product.
 
-## Why INTEVIA exists, and the layer it works at
-
-*INTEVIA is an AI-assisted human-governed constitutional and operational automation platform for making
-AI-mediated work inspectable, accountable, correctable, and recoverable.*
-
-> **This is how professionals learn to govern AI, not just use it.**
+## The layer this works at
 
 An organisation that connects its rules to its actions has to answer the same questions about the
-AI-assisted work inside it as about anything else. So the organisational purpose above and the AI-work
-layer below are one concern, not two.
+AI-assisted work inside it as about anything else. Model-level safety matters; this is the
+complementary layer — the system of work around the model.
 
-Model-level safety matters. INTEVIA works at a different, complementary layer: the system of work around AI.
-
-If you have ever wondered who is actually making the decisions in AI-assisted work — and how anyone could later inspect what happened — INTEVIA is being built around that question.
-
-More specifically, it asks whether AI-assisted work can show:
+The question is whether AI-assisted work can show:
 
 - who authorised it;
 - what boundary constrained it;
@@ -65,16 +56,16 @@ More specifically, it asks whether AI-assisted work can show:
 - what can be corrected or recovered; and
 - what claim can safely be made.
 
-Governance that cannot be inspected becomes trust theatre.
-
-INTEVIA is therefore a human-centred organisational evolution platform and governance system for
-AI-mediated work, designed to help Humans and organisations preserve intention, meaning, evidence,
-authority, accountability, correction, lineage, and ratification. **It does not remove the Human from
-responsibility. It makes Human responsibility visible.**
+Governance that cannot be inspected becomes trust theatre. **INTEVIA does not remove the Human from
+responsibility; it makes Human responsibility visible.**
 
 ## Repository posture
 
-This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0. It contains implementation and test-definition paths associated with governed foundations across Identity, Events, Services, Library, CARE, contribution lineage, profile effect, a bounded Education Course-definition slice, and — since September 2026 — the **Living Organism substrate** (organism, circle and membership anchors with an append-only recorded chain and bitemporal fold) and the **INTEVIA Lineage-Chain (ILC)** contract laid onto that chain.
+This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0.
+
+Its current centre is the **Living Organism substrate** — organism, circle and membership anchors with an append-only recorded chain and bitemporal fold — and the **INTEVIA Lineage-Chain (ILC)** contract laid onto that chain, both landed since September 2026, together with the verification route that checks them.
+
+It also contains implementation and test-definition paths from earlier work: Identity, Events, Services, Library, CARE, contribution lineage, profile effect, and a bounded Education Course-definition slice.
 
 ## What this repository currently lets you inspect
 
@@ -273,3 +264,5 @@ This repository does not claim finished-product maturity, deployment, production
 ## Keeper
 
 > INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or Human judgement. The missing layer is governed Human–AI work.
+>
+> **This is how professionals learn to govern AI, not just use it.**
