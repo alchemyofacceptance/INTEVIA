@@ -146,7 +146,8 @@ interchangeable.
 
 #### Durable evidence reference
 
-The run directory has been archived and its evidence manifest verified.
+The run directory has been archived, its evidence manifest verified, and a copy retained off the
+machine that produced it.
 
 | | |
 |---|---|
@@ -154,10 +155,12 @@ The run directory has been archived and its evidence manifest verified.
 | Size | 87,897,559 bytes |
 | SHA-256 | `db8a239529c690a267c40524623ff660f6563149a8c9e586b45a0105c18bb2b1` |
 | Evidence manifest | verified at archiving: **27 members, 0 failed, 0 unrecognised lines** |
-| Location | `C:\Users\Carewen\Downloads\CHANGE_C_FINAL_LOCAL_EVIDENCE\` on the machine that produced the run |
+| Location, producing machine | `C:\Users\Carewen\Downloads\CHANGE_C_FINAL_LOCAL_EVIDENCE\` |
+| Location, off-machine | INTEVIA Google Drive, `/INTEVIA` — [`LOCAL_RUN_CHC_20260919T101422Z.zip`](https://drive.google.com/file/d/1Shy7g9OqaLnPJDrhw9rkH1rkgRhbAJlA/view) |
 
-Copying the archive to storage independent of that machine is outstanding work. Until it is done, this
-report does not claim off-machine retention.
+The archive is retained in two places, one of them independent of the machine that produced the run.
+Access to the Drive copy is controlled by the Human Governor; a reader without access can reproduce the
+result rather than read the archive, as §1 and the verification hub describe.
 
 **An earlier local run is retained as historical evidence only**: `CHC_20260918T214620Z`, 87,852,429
 bytes, SHA-256 `73c778111aa4a162a7ef2cf3825e0dcd4c6e34e2bb04cf6a1584f304b87605be`, manifest verified
