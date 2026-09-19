@@ -304,6 +304,69 @@ def _empty_not_ok(root):
     _steps(fn)(root)
 
 
+def _edit_surface(fn):
+    """SURFACE_RESULT.json is sealed over by nothing, so it needs no re-seal."""
+    def apply(root):
+        surface = json.loads(_read(root, "SURFACE_RESULT.json").decode("utf-8"))
+        fn(surface)
+        _write_json(os.path.join(root, "SURFACE_RESULT.json"), surface)
+    return apply
+
+
+def _raw_duplicate_member(record, member, first, second):
+    """Write a record with the SAME member twice. A default JSON reader keeps the last value."""
+    def apply(root):
+        text = '{ "%s": %s, "%s": %s' % (member, json.dumps(first), member, json.dumps(second))
+        rest = json.loads(_read(root, record).decode("utf-8"))
+        rest.pop(member, None)
+        for key, value in rest.items():
+            text += ', %s: %s' % (json.dumps(key), json.dumps(value))
+        text += ' }\n'
+        with open(os.path.join(root, record), "wb") as fh:
+            fh.write(text.encode("utf-8"))
+    return apply
+
+
+def _duplicate_inventory_row(good_first):
+    """Two rows for the registry with conflicting digests, and every inventory binding rebuilt.
+
+    A whole-package rewrite, as case R3 is: without it the inventory seal refuses first and the row
+    cardinality rule is never reached.
+    """
+    def apply(root):
+        inv = json.loads(_read(root, "execution_inventory.json").decode("utf-8"))
+        rows = [r for r in inv if r.get("path") != "verification/mutations.py"]
+        real = [r for r in inv if r.get("path") == "verification/mutations.py"][0]
+        fake = dict(real); fake["sha256"] = "0" * 64
+        pair = [real, fake] if good_first else [fake, real]
+        rows = rows + pair
+        body = json.dumps(rows, indent=1, sort_keys=True).encode("utf-8")
+        with open(os.path.join(root, "execution_inventory.json"), "wb") as fh:
+            fh.write(body)
+        digest = hashlib.sha256(body).hexdigest()
+        _edit_record("LAUNCH_ATTESTATION.json", lambda a: a.__setitem__("inventory_digest", digest))(root)
+        _edit_record("POST_RUN_SNAPSHOT_CHECK.json",
+                     lambda w: (w.__setitem__("inventory_digest", digest),
+                                w.__setitem__("digest_after", digest)))(root)
+        surface = json.loads(_read(root, "SURFACE_RESULT.json").decode("utf-8"))
+        surface["inventory_digest"] = digest
+        surface["digest_after"] = digest
+        surface["post_run_witness_sha256"] = hashlib.sha256(
+            _read(root, "POST_RUN_SNAPSHOT_CHECK.json")).hexdigest()
+        _write_json(os.path.join(root, "SURFACE_RESULT.json"), surface)
+    return apply
+
+
+def _mutation_tests_field(field, value):
+    def fn(steps):
+        for step in steps:
+            if str(step["id"]).startswith("MUT-"):
+                step["tests"][field] = value
+                break
+        return steps
+    return _steps(fn)
+
+
 def _edit_pair(prequalified, live):
     """Set the attestation's interpreter.site AND the summary's execution.site_dirs together.
 
@@ -433,12 +496,10 @@ CASES = [
       "refused rather than compared"]),
     ("S6", "site_dirs a SCALAR string, not an array",
      _edit_summary(lambda s: s["execution"].__setitem__("site_dirs", "C:/one")), False,
-     ["the prequalified site list or the recorded site directories are not a list of paths: "
-      "refused rather than compared"]),
+     ["binding field site_dirs of the coordinator summary execution record (summary.json execution) is not a JSON array of strings: refused before any comparison"]),
     ("S7", "site_dirs an array of MIXED types",
      _edit_summary(lambda s: s["execution"].__setitem__("site_dirs", ["C:/one", 2])), False,
-     ["the prequalified site list or the recorded site directories are not a list of paths: "
-      "refused rather than compared"]),
+     ["binding field site_dirs of the coordinator summary execution record (summary.json execution) is not a JSON array of strings: refused before any comparison"]),
     ("S8", "both are lists of strings but their MEMBERS DIFFER",
      _edit_pair(["C:/a"], ["C:/b"]), False,
      ["the live site directories differ from the prequalified list"]),
@@ -449,6 +510,44 @@ CASES = [
     ("V2", "summary.route names a different route version",
      _edit_summary(lambda s: s.__setitem__("route", "S015 verification route v0.4")), False,
      ["the evidence is from <found>, not the route this decision is written against (<expected>)"]),
+
+    ("A1-01", "SOURCE_AUDIT.refusals is false, not an array",
+     _edit_audit(lambda u: u.__setitem__("refusals", False)), False,
+     ["binding field refusals of the source audit (SOURCE_AUDIT.json) is a <found>, not a JSON array: refused before any comparison"]),
+    ("A1-02", "SOURCE_AUDIT.refusals is 0, not an array",
+     _edit_audit(lambda u: u.__setitem__("refusals", 0)), False,
+     ["binding field refusals of the source audit (SOURCE_AUDIT.json) is a <found>, not a JSON array: refused before any comparison"]),
+    ("A1-03", "SOURCE_AUDIT.refusals is an empty OBJECT, not an array",
+     _edit_audit(lambda u: u.__setitem__("refusals", {})), False,
+     ["binding field refusals of the source audit (SOURCE_AUDIT.json) is a <found>, not a JSON array: refused before any comparison"]),
+    ("A1-04", "site_prequalification.refusals is false, not an array",
+     _edit_record("LAUNCH_ATTESTATION.json",
+                  lambda a: a["site_prequalification"].__setitem__("refusals", False)), False,
+     ["binding field refusals of the launch attestation site prequalification (LAUNCH_ATTESTATION.json site_prequalification) is a <found>, not a JSON array: refused before any comparison"]),
+    ("A1-05", "SURFACE_RESULT.final_exit is false, not an integer",
+     _edit_surface(lambda s: s.__setitem__("final_exit", False)), False,
+     ["binding field final_exit of the completed surface result (SURFACE_RESULT.json) is a <found>, not a JSON integer: refused before any comparison"]),
+    ("A1-06", "SURFACE_RESULT.final_exit is 0.0, not an integer",
+     _edit_surface(lambda s: s.__setitem__("final_exit", 0.0)), False,
+     ["binding field final_exit of the completed surface result (SURFACE_RESULT.json) is a <found>, not a JSON integer: refused before any comparison"]),
+    ("A1-07", "a mutation records FAIL count 0 beside a failing target",
+     _mutation_tests_field("by_outcome", {"FAIL": 0}), False,
+     ["the run's mutation controls are incomplete or unsound: <found>"]),
+    ("A1-08", "a mutation records FAIL count null",
+     _mutation_tests_field("by_outcome", {"FAIL": None}), False,
+     ["the run's mutation controls are incomplete or unsound: <found>"]),
+    ("A1-09", "a mutation records reconciled false",
+     _mutation_tests_field("reconciled", False), False,
+     ["the run's mutation controls are incomplete or unsound: <found>"]),
+    ("A1-10", "SURFACE_RESULT carries final_exit TWICE, 2 then 0",
+     _raw_duplicate_member("SURFACE_RESULT.json", "final_exit", 2, 0), False,
+     ["final evidence contradictory: completed surface result (SURFACE_RESULT.json) contains a repeated member <name>: refused"]),
+    ("A1-11", "two inventory rows for the registry, the good one first",
+     _duplicate_inventory_row(True), False,
+     ["the mutation registry cannot be derived: the bound inventory carries <n> rows for verification/mutations.py: exactly one is required"]),
+    ("A1-12", "two inventory rows for the registry, the bad one first",
+     _duplicate_inventory_row(False), False,
+     ["the mutation registry cannot be derived: the bound inventory carries <n> rows for verification/mutations.py: exactly one is required"]),
 
     ("T1", "attestation site_prequalification.refusals NON-EMPTY",
      _edit_record("LAUNCH_ATTESTATION.json",
@@ -462,8 +561,7 @@ CASES = [
 
     ("P6", "site_dirs malformed (a list of non-strings)",
      _edit_summary(lambda s: s["execution"].__setitem__("site_dirs", [1, {"a": 2}])), False,
-     ["the prequalified site list or the recorded site directories are not a list of paths: "
-      "refused rather than compared"]),
+     ["binding field site_dirs of the coordinator summary execution record (summary.json execution) is not a JSON array of strings: refused before any comparison"]),
 
     ("R1", "registry absent from the retained snapshot",
      lambda r: os.remove(os.path.join(r, "snapshot", "verification", "mutations.py")), False,
