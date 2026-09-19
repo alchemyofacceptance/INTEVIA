@@ -214,3 +214,14 @@ This repository does not claim finished-product maturity, deployment, production
 ## Keeper
 
 > INTEVIA helps professionals use AI responsibly without losing structure, evidence, oversight, or Human judgement. The missing layer is governed Human–AI work.
+
+<!-- verification-front-door -->
+## Verifying this repository
+
+INTEVIA's S015 database foundations are checked by a re-runnable verification route whose result is
+decided by a separate program, with the evidence retained. Start at
+[docs/verification](docs/verification/README.md), or read
+[the guide for funders and assessors](docs/ASSESSOR_GUIDE.md).
+
+A passing check is evidence at the checked properties for the tested tree and environment. It is not
+review, external reproduction, or acceptance of the wider product.
