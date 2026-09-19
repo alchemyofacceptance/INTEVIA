@@ -18,6 +18,7 @@ from core.models import Identity
 #       credential, and the schema check expects the four design columns.
 #   C-2 section 5.4 and U-14 - the L2 body canonical form is undefined and outside this bound, so
 #       s015_0022_l2_preimage refuses every body; the test asserts that specific refusal for object and non-object bodies.
+#   FU-B1, FU-B2 (Change C) - see the comments at the identity-trigger assertions and in test_reinsert_after_severance_is_refused.
 #   C-3 section 5.5 - no guardian refuses DELETE on the resolution table (the takedown is that delete); the rollback test
 #       rolls back deliberately after the delete and asserts the recorded severance does not survive.
 # This file was not collected before UFUND-2 Change B (finding F-B1) and its expectations predated the design (F-B2).
@@ -105,9 +106,15 @@ class S0150022ContractTests(TransactionTestCase):
                     [identity.pk],
                 )
 
-        with self.assertRaises(DatabaseError):
+        # FU-B2 (UFUND-2 Change C; A1 review O-2): R-d as ruled and landed - a severed identity reference cannot receive
+        # another resolution (ILC Datacron section 3, What the packet builds, item 2, and section 6; implemented by 0022's
+        # reuse guardian). Design v0.6 section 5.5 posed R-d as a reserved question. Only the reuse guardian's R-d refusal
+        # satisfies this test; any other database error fails it.
+        with self.assertRaises(DatabaseError) as refused:
             with transaction.atomic():
                 self._insert_resolution(identity, display_name="new name")
+        self.assertIn("S015 R-d: identity reference", str(refused.exception))
+        self.assertIn("is severed and cannot receive another resolution", str(refused.exception))
 
         self.assertEqual(self._resolution_count(identity.pk), 0)
         self.assertEqual(self._severed_count(identity.pk), 1)
@@ -213,8 +220,10 @@ class S0150022ContractTests(TransactionTestCase):
             )
             row = cursor.fetchone()
 
-        # Existence and timing only. The guardian's body is a no-op (0022 IDENTITY_GUARD_BODY; ILC Datacron: not delivered;
-        # kept under PKT-B by the Q-F1 ruling). Passing this test does not establish the insert-only protection.
+        # FU-B1 (UFUND-2 Change C; A1 review O-1): these assertions check only that the trigger exists, that its type
+        # includes INSERT and that it excludes UPDATE. They do not check its timing, deferral or the exclusion of DELETE.
+        # The guardian's body is a no-op (0022 IDENTITY_GUARD_BODY; ILC Datacron: not delivered; kept under PKT-B by the
+        # Q-F1 ruling). Passing this test does not establish the insert-only protection.
         self.assertIsNotNone(row)
         self.assertTrue(row[1] & 4)
         self.assertFalse(row[1] & 16)

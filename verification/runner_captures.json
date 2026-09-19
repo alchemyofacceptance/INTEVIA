@@ -1,0 +1,32 @@
+{
+ "captures": {
+  "Expected": {
+   "collected": [
+    "capture.Expected.test_xfail",
+    "capture.Expected.test_xpass"
+   ],
+   "log": "test_xfail (capture.Expected.test_xfail) ... expected failure\ntest_xpass (capture.Expected.test_xpass) ... unexpected success\n\n======================================================================\nUNEXPECTED SUCCESS: test_xpass (capture.Expected.test_xpass)\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nFAILED (expected failures=1, unexpected successes=1)\n\nEXIT_STATUS: 1\n"
+  },
+  "SkippedSubtests": {
+   "collected": [
+    "capture.SkippedSubtests.test_one_skipped",
+    "capture.SkippedSubtests.test_skip_then_pass",
+    "capture.SkippedSubtests.test_two_skipped"
+   ],
+   "log": "test_one_skipped (capture.SkippedSubtests.test_one_skipped) ... \n  test_one_skipped (capture.SkippedSubtests.test_one_skipped) (i=1) ... skipped 'n/a'\ntest_skip_then_pass (capture.SkippedSubtests.test_skip_then_pass) ... \n  test_skip_then_pass (capture.SkippedSubtests.test_skip_then_pass) (i=1) ... skipped 'n/a'\ntest_two_skipped (capture.SkippedSubtests.test_two_skipped) ... \n  test_two_skipped (capture.SkippedSubtests.test_two_skipped) (i=0) ... skipped 'n/a'\n  test_two_skipped (capture.SkippedSubtests.test_two_skipped) (i=1) ... skipped 'n/a'\n\n----------------------------------------------------------------------\nRan 3 tests in 0.000s\n\nOK (skipped=4)\n\nEXIT_STATUS: 0\n"
+  },
+  "TeardownFail": {
+   "collected": [
+    "capture.TeardownFail.test_ok_then_teardown_assert"
+   ],
+   "log": "test_ok_then_teardown_assert (capture.TeardownFail.test_ok_then_teardown_assert) ... FAIL\n\n======================================================================\nFAIL: test_ok_then_teardown_assert (capture.TeardownFail.test_ok_then_teardown_assert)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/claude/cap/cap.py\", line 25, in tearDown\n    def tearDown(self): self.assertEqual(1, 2)\n                        ^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 2\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n\nEXIT_STATUS: 1\n"
+  },
+  "ThreeErrors": {
+   "collected": [
+    "capture.ThreeErrors.test_body"
+   ],
+   "log": "test_body (capture.ThreeErrors.test_body) ... ERROR\ntest_body (capture.ThreeErrors.test_body) ... ERROR\ntest_body (capture.ThreeErrors.test_body) ... ERROR\n\n======================================================================\nERROR: test_body (capture.ThreeErrors.test_body)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/claude/cap/cap.py\", line 11, in test_body\n    def test_body(self): raise RuntimeError('body error')\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: body error\n\n======================================================================\nERROR: test_body (capture.ThreeErrors.test_body)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/claude/cap/cap.py\", line 12, in tearDown\n    def tearDown(self): raise RuntimeError('tearDown error')\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: tearDown error\n\n======================================================================\nERROR: test_body (capture.ThreeErrors.test_body)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/claude/cap/cap.py\", line 13, in _post_teardown\n    def _post_teardown(self): raise RuntimeError('post-teardown error')\n                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: post-teardown error\n\n----------------------------------------------------------------------\nRan 1 test in 0.004s\n\nFAILED (errors=3)\n\nEXIT_STATUS: 1\n"
+  }
+ },
+ "source": "real unittest TextTestRunner(verbosity=2) output captured by the UFUND-3 Vision Chamber, 17 September 2026; Python 3.12.3, Django 5.2.15 (SimpleTestCase for _post_teardown), Linux. Each log carries the route-style EXIT_STATUS footer the route itself appends. Captured bytes, not hand-written."
+}
