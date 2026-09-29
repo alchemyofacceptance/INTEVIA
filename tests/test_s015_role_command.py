@@ -972,6 +972,8 @@ class S015RoleCommandTests(TransactionTestCase):
                 results.put(("ok", result))
             except Exception as exc:  # pragma: no cover - thread assertion channel
                 results.put(("err", exc))
+            finally:
+                connection.close()
 
         thread_one = threading.Thread(target=worker, daemon=True)
         thread_two = threading.Thread(target=worker, daemon=True)
