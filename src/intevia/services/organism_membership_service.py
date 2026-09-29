@@ -38,6 +38,7 @@ _COMMAND_DOMAIN = b"INTEVIA:S015:ORGANISM_MEMBERSHIP_COMMAND:v1\x00"
 _TARGET_SCHEMA = "intevia.s015.organism-membership-target.v1"
 _COMMAND_SCHEMA = "intevia.s015.organism-membership-command.v1"
 _LINEAGE_SCHEMA = "intevia.s015.organism-membership-lineage.v1"
+# Interim S1 mapping from the Human Governor (28 Sep); HD-B7 is still open and this is not final vocabulary.
 _ACTION = OrganismAction.TRANSITION_MEMBERSHIP
 _OPEN_STATE = "PROPOSED"
 _STATE_UNUSED = frozenset({"SUSPENDED", "RESTRICTED", "PRIVACY_TRANSFORMED"})
@@ -609,7 +610,7 @@ def _validate_member_state(value: object) -> str:
     state = _canonical_key(value, "resulting_state", 19)
     if state in _STATE_UNUSED:
         raise S015MembershipStateUnused(
-            f"membership state {state} is unused by v1.0"
+            f"membership state {state} is unused by v1.0 (⟨B.049⟩)"
         )
     if state not in {"PROPOSED", "ACTIVE", "PROBATIONARY", "ENDED"}:
         raise S015MembershipEdgeRefused(f"membership edge {state} is not decided")
@@ -619,13 +620,13 @@ def _validate_member_state(value: object) -> str:
 def _validate_edge(current_state: str, target_state: str, membership: OrganismMembership) -> None:
     if current_state in _STATE_UNUSED or target_state in _STATE_UNUSED:
         raise S015MembershipStateUnused(
-            f"membership state {current_state}->{target_state} is unused by v1.0"
+            f"membership state {current_state}->{target_state} is unused by v1.0 (⟨B.049⟩)"
         )
     if current_state == "ENDED" and target_state == "PROPOSED":
         raise S015OperationNotYetImplemented("rejoin", "IL-1", "S4")
     if target_state == "ENDED" and current_state in {"ACTIVE", "PROBATIONARY"}:
         if membership.contextual_role_assignments.filter(state="ACTIVE").exists():
-            raise S015OperationNotYetImplemented("leave_with_office", "IL-2", "S2")
+            raise S015OperationNotYetImplemented("leave_with_office", "IL-2", "S5")
     allowed = _STATE_ALLOWED.get(current_state)
     if allowed is None or target_state not in allowed:
         raise S015MembershipEdgeRefused(
@@ -825,6 +826,16 @@ class OrganismMembershipService:
         if replay is not None:
             return replay
 
+        decision = self._evaluate_authority(
+            actor=actor,
+            actor_membership=actor_membership,
+            actor_role_refs=actor_role_refs,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            target_fingerprint=target_fingerprint,
+            received_at=received_at,
+        )
+
         basis_id = organism.founding_authority_basis_id
         if basis_id is None:
             raise S015MembershipAuthorityUnavailable(
@@ -842,16 +853,6 @@ class OrganismMembershipService:
             .exists()
         ):
             raise S015MembershipExists("membership already exists")
-
-        decision = self._evaluate_authority(
-            actor=actor,
-            actor_membership=actor_membership,
-            actor_role_refs=actor_role_refs,
-            request_reference=request_reference,
-            idempotency_key=idempotency_key,
-            target_fingerprint=target_fingerprint,
-            received_at=received_at,
-        )
 
         membership_uuid = uuid4()
         membership_event_uuid = uuid4()
@@ -1033,6 +1034,16 @@ class OrganismMembershipService:
         if replay is not None:
             return replay
 
+        decision = self._evaluate_authority(
+            actor=actor,
+            actor_membership=actor_membership,
+            actor_role_refs=actor_role_refs,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            target_fingerprint=target_fingerprint,
+            received_at=received_at,
+        )
+
         current_state = _canonical_key(membership.state, "membership.state", 19)
         _validate_edge(current_state, target_state, membership)
 
@@ -1049,16 +1060,6 @@ class OrganismMembershipService:
                 head_transition.received_at,
             ):
                 raise S015OperationNotYetImplemented("out_of_order_transition", "IL-3", "S5")
-
-        decision = self._evaluate_authority(
-            actor=actor,
-            actor_membership=actor_membership,
-            actor_role_refs=actor_role_refs,
-            request_reference=request_reference,
-            idempotency_key=idempotency_key,
-            target_fingerprint=target_fingerprint,
-            received_at=received_at,
-        )
 
         basis_id = membership.living_organism.founding_authority_basis_id
         if basis_id is None:
@@ -1155,8 +1156,18 @@ class OrganismMembershipService:
             result=result,
         )
 
-
-QualifiedOrganismCommandReplay = MembershipCommandResult
+@dataclass(frozen=True, slots=True)
+class QualifiedOrganismCommandReplay:
+    database_alias: str
+    receipt_pk: int
+    actor_identity_id: UUID
+    action: OrganismAction
+    idempotency_key: str
+    request_reference: str
+    payload_fingerprint: str
+    authority_decision_reference: str
+    lineage_reference: str
+    result_payload: object
 
 
 def qualify_completed_replay(
@@ -1168,7 +1179,7 @@ def qualify_completed_replay(
     request_reference: str,
     payload_fingerprint: str,
     authority_decision_reference: str,
-) -> MembershipCommandResult | None:
+) -> QualifiedOrganismCommandReplay | None:
     connection = connections[database_alias]
     if not connection.in_atomic_block:
         raise S015CommandAtomicityRequired("outer atomic transaction required")
@@ -1201,7 +1212,18 @@ def qualify_completed_replay(
     )
     if observed != expected:
         raise S015CommandReplayMismatch("completed receipt does not match request")
-    return _expected_replay_result(receipt.result_payload)
+    return QualifiedOrganismCommandReplay(
+        database_alias=database_alias,
+        receipt_pk=receipt.pk,
+        actor_identity_id=actor.identity_id,
+        action=action,
+        idempotency_key=receipt.idempotency_key,
+        request_reference=receipt.request_reference,
+        payload_fingerprint=receipt.payload_fingerprint,
+        authority_decision_reference=receipt.authority_decision_reference,
+        lineage_reference=receipt.lineage_reference,
+        result_payload=receipt.result_payload,
+    )
 
 
 __all__ = [

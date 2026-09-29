@@ -252,6 +252,79 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual([probation_result.resulting_state, active_result.resulting_state], ["PROBATIONARY", "ACTIVE"])
         self.assertEqual(membership.state, "ACTIVE")
 
+    def test_leaving_from_proposed_edge(self):
+        ids, actor, target = self._setup_organism("leave-proposed")
+        service = self._service(_ExactProvider())
+        open_result = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:leave-proposed:open",
+                idempotency_key="idem:leave-proposed:open",
+                reason_class="TEST_ONLY_REASON_OPEN",
+            )
+        )
+        leave_result = service.transition_membership(
+            self._transition_command(
+                actor=actor,
+                membership_uuid=open_result.membership_uuid,
+                resulting_state="ENDED",
+                request_reference="request:leave-proposed:end",
+                idempotency_key="idem:leave-proposed:end",
+                reason_class="TEST_ONLY_REASON_LEAVE",
+            )
+        )
+        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        transitions = list(
+            OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
+        )
+        self.assertEqual(leave_result.resulting_state, "ENDED")
+        self.assertEqual(membership.state, "ENDED")
+        self.assertEqual([transition.resulting_state for transition in transitions], ["PROPOSED", "ENDED"])
+
+    def test_leaving_from_probationary_edge(self):
+        ids, actor, target = self._setup_organism("leave-probationary")
+        service = self._service(_ExactProvider())
+        open_result = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:leave-probationary:open",
+                idempotency_key="idem:leave-probationary:open",
+                reason_class="TEST_ONLY_REASON_OPEN",
+            )
+        )
+        probation_result = service.transition_membership(
+            self._transition_command(
+                actor=actor,
+                membership_uuid=open_result.membership_uuid,
+                resulting_state="PROBATIONARY",
+                request_reference="request:leave-probationary:probation",
+                idempotency_key="idem:leave-probationary:probation",
+                reason_class="TEST_ONLY_REASON_PROBATION",
+            )
+        )
+        leave_result = service.transition_membership(
+            self._transition_command(
+                actor=actor,
+                membership_uuid=open_result.membership_uuid,
+                resulting_state="ENDED",
+                request_reference="request:leave-probationary:end",
+                idempotency_key="idem:leave-probationary:end",
+                reason_class="TEST_ONLY_REASON_LEAVE",
+            )
+        )
+        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        transitions = list(
+            OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
+        )
+        self.assertEqual(probation_result.resulting_state, "PROBATIONARY")
+        self.assertEqual(leave_result.resulting_state, "ENDED")
+        self.assertEqual(membership.state, "ENDED")
+        self.assertEqual([transition.resulting_state for transition in transitions], ["PROPOSED", "PROBATIONARY", "ENDED"])
+
     def test_leaving_keeps_history_intact(self):
         _, actor, target, service, open_result, active_result = self._open_then_transition(
             target_state="ACTIVE",
@@ -294,6 +367,28 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_REJOIN",
                 )
             )
+
+    def test_rejoin_refused_with_design_token_reason(self):
+        _, actor, target, service, open_result, active_result = self._open_then_transition(
+            target_state="ENDED",
+            reason_transition="TEST_ONLY_REASON_LEAVE",
+            organism_label="rejoin-token",
+        )
+        transition_count = OrganismMembershipTransition.objects.count()
+        receipt_count = OrganismCommandReceipt.objects.count()
+        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-1, S4"):
+            service.transition_membership(
+                self._transition_command(
+                    actor=actor,
+                    membership_uuid=open_result.membership_uuid,
+                    resulting_state="PROPOSED",
+                    request_reference="request:rejoin-token:next-period",
+                    idempotency_key="idem:rejoin-token:next-period",
+                    reason_class="TEST_ONLY_REASON_REMOVAL",
+                )
+            )
+        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
 
     def test_unused_states_are_refused(self):
         ids, actor, target = self._setup_organism("unused")
@@ -383,7 +478,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
         role_definition_id = ids["roles"]["COORDINATOR"]
         self._assign_office(ids=ids, membership=membership, role_definition_id=role_definition_id, tag="office:leave")
-        with self.assertRaisesRegex(S015OperationNotYetImplemented, "IL-2"):
+        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-2, S5"):
             service.transition_membership(
                 self._transition_command(
                     actor=actor,
@@ -470,6 +565,18 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_TWO",
                 )
             )
+        with self.assertRaises(S015CommandReplayMismatch):
+            service.open_membership(
+                self._open_command(
+                    actor=actor,
+                    organism_id=ids["organism_uuid"],
+                    target_identity_id=target.identity_id,
+                    request_reference="request:replay-mismatch:open",
+                    idempotency_key="idem:replay-mismatch:open",
+                    reason_class="TEST_ONLY_REASON_ONE",
+                    effective_at=NOW + timedelta(minutes=1),
+                )
+            )
         self.assertEqual(OrganismMembership.objects.count(), 2)
         self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
         self.assertIsInstance(first, MembershipCommandResult)
@@ -495,6 +602,54 @@ class S015MembershipCommandTests(TransactionTestCase):
                     service.open_membership(command)
         self.assertEqual(OrganismMembership.objects.count(), 1)
         self.assertEqual(OrganismCommandReceipt.objects.count(), 0)
+
+    def test_denied_authority_preempts_edge_and_exists_refusals(self):
+        ids, actor, target = self._setup_organism("authority-order")
+        service = self._service(_ExactProvider())
+        open_result = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:authority-order:open",
+                idempotency_key="idem:authority-order:open",
+                reason_class="TEST_ONLY_REASON_AUTHORITY",
+            )
+        )
+        membership_count = OrganismMembership.objects.count()
+        receipt_count = OrganismCommandReceipt.objects.count()
+        transition_count = OrganismMembershipTransition.objects.count()
+
+        denied_service = self._service(_DeniedProvider())
+        with self.assertRaises(S015AuthorityDenied):
+            denied_service.transition_membership(
+                self._transition_command(
+                    actor=actor,
+                    membership_uuid=open_result.membership_uuid,
+                    resulting_state="PROPOSED",
+                    request_reference="request:authority-order:invalid-edge",
+                    idempotency_key="idem:authority-order:invalid-edge",
+                    reason_class="TEST_ONLY_REASON_AUTHORITY",
+                )
+            )
+        self.assertEqual(OrganismMembership.objects.count(), membership_count)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
+        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
+
+        with self.assertRaises(S015AuthorityDenied):
+            denied_service.open_membership(
+                self._open_command(
+                    actor=actor,
+                    organism_id=ids["organism_uuid"],
+                    target_identity_id=target.identity_id,
+                    request_reference="request:authority-order:existing-membership",
+                    idempotency_key="idem:authority-order:existing-membership",
+                    reason_class="TEST_ONLY_REASON_AUTHORITY",
+                )
+            )
+        self.assertEqual(OrganismMembership.objects.count(), membership_count)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
+        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
 
     def test_reason_token_does_not_change_refusal_paths(self):
         reason_token = "TEST_ONLY_REASON_REMOVAL"
@@ -553,7 +708,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
         role_definition_id = ids["roles"]["COORDINATOR"]
         self._assign_office(ids=ids, membership=membership, role_definition_id=role_definition_id, tag="reason-token:office")
-        with self.assertRaisesRegex(S015OperationNotYetImplemented, "IL-2"):
+        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-2, S5"):
             service.transition_membership(
                 self._transition_command(
                     actor=actor,
@@ -713,7 +868,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 idempotency_key="idem:atomicity",
             )
 
-    def test_atomic_failure_leaves_no_partial_rows(self):
+    def test_insert_time_refusal_rolls_back(self):
         ids, actor, target = self._setup_organism("atomic-failure")
         service = self._service(_ExactProvider())
         future = NOW + timedelta(days=1)
