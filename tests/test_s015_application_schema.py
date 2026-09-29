@@ -7,6 +7,7 @@ from unittest import skipUnless
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
 from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
@@ -40,8 +41,13 @@ class HistoricalActorBytes(TransactionTestCase):
         self.at_0024 = True
 
     def tearDown(self):
-        if self.at_0024:
-            MigrationExecutor(connection).migrate([("core", "0025_s015_application_routes")])
+        # Restore the current head AND verify it, so later tests in this process run on it (0026 since S3 round 2b).
+        MigrationExecutor(connection).migrate([("core", "0026_s015_application_admission_time")])
+        self.assertIn(("core", "0026_s015_application_admission_time"),
+                      MigrationRecorder(connection).applied_migrations())
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_get_functiondef('public.s3_terminal_lock()'::regprocedure)")
+            self.assertIn("NEW.recorded_at := clock_timestamp();", cursor.fetchone()[0])
 
     def compare_before_after(self, actorless):
         with transaction.atomic(), connection.cursor() as cursor:

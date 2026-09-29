@@ -148,6 +148,17 @@ class S015ApplicantCommandTests(TransactionTestCase):
             self.service().submit_application(self.submit())
         self.assertFalse(OrganismCommandReceipt.objects.filter(actor=self.applicant).exists())
 
+    def test_clock_before_activation_does_not_refuse_eligible_submission(self):
+        self.history()
+        service = OrganismApplicationService(
+            authority=S015Authority(provider=self.provider),
+            clock=lambda: T0 + timedelta(minutes=30),
+        )
+        result = service.submit_application(self.submit())
+        application = Application.objects.get(pk=result.application_id)
+        self.assertEqual(result.recorded_at, application.recorded_at)
+        self.assertEqual(application.applicant_id, self.applicant.pk)
+
     def test_current_member_is_refused(self):
         self.history()
         self.membership("ACTIVE")
