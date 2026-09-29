@@ -42,12 +42,12 @@ Implementation limits in force — temporary refusals, not office or membership 
   landed), so none is written, and the departure's actor is never substituted.
 - IL-3 (S5): an out-of-order office event (`effective_at, occurred_at, received_at` before the
   head's), refused after authority, as in S1.
-- IL-4 (S2b, after HD-E6): ACTIVE ⇄ SUSPENDED role suspension — needs the landed
-  `role_suspension_enabled` setting and the constitutional-instrument reference (⟨E1.038⟩).
+- IL-4 (S2b, after HD-E6): ACTIVE ⇄ SUSPENDED role suspension — needs the
+  `role_suspension_enabled` setting (no settings store is landed; HD-E6 open) and the constitutional-instrument reference (⟨E1.038⟩).
 - IL-5 (S5, after the rule home): the writer that records a term's end — a scheduled,
   rule-composed act (actor NONE, the term-end rule). No command is exposed for it in S2.
   Effective expiry is a read rule (`assignment_in_effect`); the ending is a record.
-- IL-6 (S4): a Circle-scoped office (`circle` not NULL, or a CIRCLE-scoped role definition).
+- IL-6 (S4): a Circle-scoped office (`circle` not NULL, or a CIRCLE-scoped role definition); refused on propose and on every transition.
 - IL-7 (SB — the Birthing slice): an END or REASSIGN of the founder's original founding
   COORDINATOR assignment by an executor who is not the LO's founder (the Human Governor's ruling
   of 29 September 2026: refuse until Birthing can be determined from governed records; this limit
@@ -63,7 +63,7 @@ Implementation limits in force — temporary refusals, not office or membership 
   limits). A later appointment held by the founder is not protected. The founder's own ending
   remains available, subject to authority and the other checks. When Birthing (SB) lands, this
   limit is replaced by PE-04's rule evaluated at the attempted ending's effective time (⟨E1.019⟩).
-- IL-8 (SR): appointment to a role definition other than COORDINATOR. The landed schema lets an
+- IL-8 (SR): appointment to, or any transition of, an office whose role definition is not COORDINATOR. The landed schema lets an
   organism define offices of its own, beyond COORDINATOR and the root's reserved five (which exist
   only on the platform root, `s015_platform_root_unset_ck` shipping FALSE-only, D-39); SR's row
   covers the reserved offices and organism-defined offices alike. The check is an exact code
@@ -740,8 +740,10 @@ class OrganismRoleService(_OrganismCommandService):
         result = self._refresh_and_result(
             assignment=assignment,
             event_id=event_id,
-            effective_until=effective_until,
-            effective_until_state=effective_until_state,
+            # the result describes the written row: the PROPOSE row establishes no term; the
+            # proposed term stays proposal content in the fingerprints (the Reviewer's S2 F4)
+            effective_until=None,
+            effective_until_state="NOT_ESTABLISHED",
             with_tolling=False,
             decision=decision,
             effective_at=effective_at,
@@ -872,6 +874,13 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
         # Every refusal that reads the target's state sits after authority (the d6af911 order).
+        # IL-6 and IL-8 bind every act on an office, not only its proposal (the Reviewer's S2 F2):
+        # scope before code, as in _execute_propose
+        role_definition = assignment.role_definition
+        if role_definition.scope != OrganismRoleDefinition.Scope.LIVING_ORGANISM:
+            raise S015OperationNotYetImplemented("circle_scoped_office", "IL-6", "S4")
+        if role_definition.code != _COORDINATOR_ROLE_CODE:
+            raise S015OperationNotYetImplemented("transition_non_coordinator_office", "IL-8", "SR")
         current_state = _canonical_key(assignment.state, "assignment.state", 19)
         _validate_assignment_edge(
             current_state=current_state,

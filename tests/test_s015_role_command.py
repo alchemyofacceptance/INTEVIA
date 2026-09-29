@@ -304,6 +304,13 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(assign_term, ("FIXED", until))
         self.assertEqual(assign_result.effective_until_state, "FIXED")
         self.assertEqual(assign_result.effective_until, until)
+        # the propose result and receipt describe the written row (the Reviewer's S2 F4)
+        self.assertEqual(propose_result.effective_until_state, "NOT_ESTABLISHED")
+        self.assertIsNone(propose_result.effective_until)
+        propose_receipts = [r for r in receipts if r.result_payload["event_action"] == "PROPOSE"]
+        self.assertEqual(len(propose_receipts), 1)
+        self.assertEqual(propose_receipts[0].result_payload["effective_until_state"], "NOT_ESTABLISHED")
+        self.assertIsNone(propose_receipts[0].result_payload["effective_until"])
 
     # R2 — the term: FIXED with a value; NONE without; FIXED with effective_until <= effective_at refused before any write.
     def test_term_validation_refused_before_any_write(self):
@@ -596,6 +603,35 @@ class S015RoleCommandTests(TransactionTestCase):
                     request_reference="request:edge:privacy", idempotency_key="idem:edge:privacy",
                 )
             )
+        self.assertEqual(self._counts(), before)
+
+    # R6b — an office standing at PROBATIONARY (a test-only fixture; no decided edge enters it)
+    # has no decided out-edge: END, REASSIGN and ASSIGN out of it are refused; no row (the
+    # Reviewer's S2 F1).
+    def test_probationary_office_out_edges_refused_without_write(self):
+        ids, founder = self._setup_organism("probedge")
+        membership_id, member, _ = self._add_active_member(ids, "probedge")
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                _, probationary_uuid = _assignment_at_state(
+                    cur, ids, membership_id, ids["roles"]["COORDINATOR"], "probedge:fixture", "PROBATIONARY",
+                )
+        service = self._service(_ExactProvider())
+        before = self._counts()
+        for action, resulting_state, term_state in (
+            ("END", "ENDED", None),
+            ("REASSIGN", "ENDED", None),
+            ("ASSIGN", "ACTIVE", "NONE"),
+        ):
+            with self.assertRaises(S015AssignmentEdgeRefused):
+                service.transition_assignment(
+                    self._transition_command(
+                        actor=founder, assignment_uuid=probationary_uuid, action=action,
+                        resulting_state=resulting_state, effective_until_state=term_state,
+                        request_reference=f"request:probedge:{action.lower()}",
+                        idempotency_key=f"idem:probedge:{action.lower()}",
+                    )
+                )
         self.assertEqual(self._counts(), before)
 
     # R7 — IL-4: suspension, both directions, refused; no row.
@@ -1071,6 +1107,28 @@ class S015RoleCommandTests(TransactionTestCase):
                     role_definition_uuid=archivist_uuid,
                     request_reference="request:reserved:propose",
                     idempotency_key="idem:reserved:propose",
+                )
+            )
+        self.assertEqual(self._counts(), before)
+
+    # R18b — IL-8 binds transitions too: an ACTIVE office on an organism-defined, non-COORDINATOR
+    # role definition (a test-only fixture) cannot be ended through S2; no row (the Reviewer's S2 F2).
+    def test_non_coordinator_office_transition_refused_il8(self):
+        ids, founder = self._setup_organism("otheroffice")
+        membership_id, member, _ = self._add_active_member(ids, "otheroffice")
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                archivist_id, _ = _add_role_definition(cur, ids, "otheroffice", "TEST_ONLY_ARCHIVIST")
+                _, office_uuid = _assignment_at_state(
+                    cur, ids, membership_id, archivist_id, "otheroffice:fixture", "ACTIVE",
+                )
+        service = self._service(_ExactProvider())
+        before = self._counts()
+        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-8, SR"):
+            service.transition_assignment(
+                self._transition_command(
+                    actor=founder, assignment_uuid=office_uuid, action="END", resulting_state="ENDED",
+                    request_reference="request:otheroffice:end", idempotency_key="idem:otheroffice:end",
                 )
             )
         self.assertEqual(self._counts(), before)
