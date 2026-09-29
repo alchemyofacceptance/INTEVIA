@@ -13,6 +13,7 @@ from uuid import UUID
 
 from django.db import connections
 
+from core.models import Application, Identity
 from core.organism_contract import OrganismAction, qualification_planes
 
 
@@ -71,6 +72,23 @@ class S015PostFoundingAuthorityRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class S015OwnApplicantAuthorityRequest:
+    database_alias: str
+    actor_pk: int
+    actor_identity_id: UUID
+    actor_credential_pk: int
+    actor_access_epoch: int
+    action: OrganismAction
+    command_subtype: str
+    target_fingerprint: str
+    request_reference: str
+    idempotency_key: str
+    evaluated_at: datetime
+    living_organism_pk: int
+    application_pk: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class S015PreFoundingAuthorityResponse:
     database_alias: str
     actor_pk: int
@@ -99,6 +117,24 @@ class S015PostFoundingAuthorityResponse:
     evaluated_at: datetime
     active_membership_head_reference: str
     contextual_role_head_references: tuple[str, ...]
+    authority_reference: str
+
+
+@dataclass(frozen=True, slots=True)
+class S015OwnApplicantAuthorityResponse:
+    database_alias: str
+    actor_pk: int
+    actor_identity_id: UUID
+    actor_credential_pk: int
+    actor_access_epoch: int
+    action: OrganismAction
+    command_subtype: str
+    target_fingerprint: str
+    request_reference: str
+    idempotency_key: str
+    evaluated_at: datetime
+    living_organism_pk: int
+    application_pk: int | None
     authority_reference: str
 
 
@@ -134,12 +170,32 @@ class S015PostFoundingAuthorityRefusal:
     refusal_code: S015AuthorityRefusalCode
 
 
-S015AuthorityRequest = S015PreFoundingAuthorityRequest | S015PostFoundingAuthorityRequest
+@dataclass(frozen=True, slots=True)
+class S015OwnApplicantAuthorityRefusal:
+    database_alias: str
+    actor_pk: int
+    actor_identity_id: UUID
+    actor_credential_pk: int
+    actor_access_epoch: int
+    action: OrganismAction
+    command_subtype: str
+    target_fingerprint: str
+    request_reference: str
+    idempotency_key: str
+    evaluated_at: datetime
+    living_organism_pk: int
+    application_pk: int | None
+    refusal_code: S015AuthorityRefusalCode
+
+
+S015AuthorityRequest = S015PreFoundingAuthorityRequest | S015PostFoundingAuthorityRequest | S015OwnApplicantAuthorityRequest
 S015AuthorityResult = (
     S015PreFoundingAuthorityResponse
     | S015PostFoundingAuthorityResponse
     | S015PreFoundingAuthorityRefusal
     | S015PostFoundingAuthorityRefusal
+    | S015OwnApplicantAuthorityResponse
+    | S015OwnApplicantAuthorityRefusal
 )
 
 
@@ -230,6 +286,7 @@ def _validate_request(request: S015AuthorityRequest) -> None:
     if type(request) not in {
         S015PreFoundingAuthorityRequest,
         S015PostFoundingAuthorityRequest,
+        S015OwnApplicantAuthorityRequest,
     }:
         raise S015AuthorityMalformed("authority request type is invalid")
     if type(request.database_alias) is not str or not request.database_alias:
@@ -260,11 +317,25 @@ def _validate_request(request: S015AuthorityRequest) -> None:
             raise S015AuthorityMalformed("contextual role heads must be a tuple")
         for reference in request.contextual_role_head_references:
             _canonical_reference(reference, "contextual_role_head_reference", 255)
+    if type(request) is S015OwnApplicantAuthorityRequest:
+        if request.action not in {OrganismAction.SUBMIT_APPLICATION, OrganismAction.WITHDRAW_APPLICATION}:
+            raise S015AuthorityMalformed("own-applicant action is invalid")
+        if type(request.actor_credential_pk) is not int or request.actor_credential_pk < 1:
+            raise S015AuthorityMalformed("actor credential is invalid")
+        if type(request.living_organism_pk) is not int or request.living_organism_pk < 1:
+            raise S015AuthorityMalformed("living organism is invalid")
+        if request.action is OrganismAction.SUBMIT_APPLICATION:
+            if request.application_pk is not None:
+                raise S015AuthorityMalformed("submission cannot name an application")
+        elif type(request.application_pk) is not int or request.application_pk < 1:
+            raise S015AuthorityMalformed("withdrawal requires an application")
 
 
 def _response_types(request: S015AuthorityRequest) -> tuple[type[object], type[object]]:
     if type(request) is S015PreFoundingAuthorityRequest:
         return S015PreFoundingAuthorityResponse, S015PreFoundingAuthorityRefusal
+    if type(request) is S015OwnApplicantAuthorityRequest:
+        return S015OwnApplicantAuthorityResponse, S015OwnApplicantAuthorityRefusal
     return S015PostFoundingAuthorityResponse, S015PostFoundingAuthorityRefusal
 
 
@@ -289,6 +360,22 @@ class S015Authority:
             raise S015AuthorityMalformed("database alias mismatch")
         if not connections[self.database_alias].in_atomic_block:
             raise S015AuthorityMalformed("outer atomic transaction required")
+        if type(request) is S015OwnApplicantAuthorityRequest:
+            if not Identity.objects.using(self.database_alias).filter(
+                pk=request.actor_pk,
+                identity_id=request.actor_identity_id,
+                credential_id=request.actor_credential_pk,
+                access_epoch=request.actor_access_epoch,
+                access_state=Identity.AccessState.ACTIVE,
+                credential__is_active=True,
+            ).exists():
+                raise S015AuthorityDenied("applicant identity does not match actor")
+            if request.application_pk is not None and not Application.objects.using(self.database_alias).filter(
+                pk=request.application_pk,
+                applicant_id=request.actor_pk,
+                living_organism_id=request.living_organism_pk,
+            ).exists():
+                raise S015AuthorityDenied("application is not the actor's")
         try:
             result = self.provider.evaluate_organism_authority(request)
         except Exception as exc:
@@ -349,6 +436,9 @@ __all__ = [
     "S015PostFoundingAuthorityRefusal",
     "S015PostFoundingAuthorityRequest",
     "S015PostFoundingAuthorityResponse",
+    "S015OwnApplicantAuthorityRefusal",
+    "S015OwnApplicantAuthorityRequest",
+    "S015OwnApplicantAuthorityResponse",
     "S015PreFoundingAuthorityRefusal",
     "S015PreFoundingAuthorityRequest",
     "S015PreFoundingAuthorityResponse",

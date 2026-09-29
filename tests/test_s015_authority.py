@@ -53,8 +53,8 @@ class S015AuthorityContractTests(TestCase):
             evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
 
-    def test_matrix_has_26_complete_noninheriting_rows(self):
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 26)
+    def test_matrix_has_31_complete_noninheriting_rows(self):
+        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 31)
         self.assertTrue(all(len(row) == 4 for row in QUALIFICATION_PLANE_MATRIX.values()))
         genesis = QUALIFICATION_PLANE_MATRIX[
             "REGISTER_AUTHORITY_PRINCIPAL/GENESIS_BOOTSTRAP"
