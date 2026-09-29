@@ -4693,6 +4693,113 @@ class OrganismCommandReceipt(_S015AppendOnly):
         ]
 
 
+class Application(_S015AppendOnly):
+    application_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    applicant = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="organism_applications")
+    living_organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="applications")
+    predecessor_reference = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True)
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="submitted_organism_applications")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_organism_applications")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class CSAAssignment(_S015AppendOnly):
+    assignment_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    application = models.ForeignKey(Application, on_delete=models.PROTECT, related_name="csa_assignments")
+    replaces = models.OneToOneField("self", on_delete=models.PROTECT, null=True, blank=True, related_name="replacement")
+    assignee_membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT)
+    assignee_office = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT)
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="claimed_csa_assignments")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_csa_assignments")
+    completion_due_at = models.DateTimeField()
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class CSAAssignmentEnd(_S015AppendOnly):
+    ending_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    assignment = models.OneToOneField(CSAAssignment, on_delete=models.PROTECT, related_name="ending")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="ended_csa_assignments")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_csa_assignment_ends")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class ApplicationEngagement(_S015AppendOnly):
+    class Route(models.TextChoices):
+        LO_CQ = "LO_CQ", "LO_CQ"
+        LO_CSA = "LO_CSA", "LO_CSA"
+        CIRCLE_CQ = "CIRCLE_CQ", "CIRCLE_CQ"
+        CIRCLE_CSA = "CIRCLE_CSA", "CIRCLE_CSA"
+
+    application = models.ForeignKey(Application, on_delete=models.PROTECT, related_name="engagements")
+    engagement_ordinal = models.PositiveIntegerField()
+    route = models.CharField(max_length=16, choices=Route.choices)
+    deciding_party = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT)
+    engagement_reference = models.CharField(max_length=255)
+    settings_basis = models.CharField(max_length=255)
+    basis_reference = models.CharField(max_length=255, null=True, blank=True)
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="engaged_organism_applications")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_engagements")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("application", "engagement_ordinal"), name="s3_engagement_ordinal_uniq")]
+
+
+class ApplicationDecision(_S015AppendOnly):
+    class Outcome(models.TextChoices):
+        ACCEPT = "ACCEPT", "ACCEPT"
+        DECLINE = "DECLINE", "DECLINE"
+
+    decision_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    application = models.OneToOneField(Application, on_delete=models.PROTECT, related_name="decision")
+    route = models.CharField(max_length=16, choices=ApplicationEngagement.Route.choices)
+    deciding_party = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT)
+    outcome = models.CharField(max_length=7, choices=Outcome.choices)
+    assignment_reference = models.ForeignKey(CSAAssignment, on_delete=models.PROTECT, null=True, blank=True)
+    supporting_result_reference = models.CharField(max_length=255, null=True, blank=True)
+    responsible_coordinator = models.ForeignKey(Identity, on_delete=models.PROTECT, null=True, blank=True, related_name="coordinated_application_decisions")
+    responsible_capacity = models.CharField(max_length=48, null=True, blank=True)
+    qualifying_office = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, null=True, blank=True)
+    authority_decision_reference = models.CharField(max_length=71)
+    executor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="executed_application_decisions")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_decisions")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class ApplicationWithdrawal(_S015AppendOnly):
+    application = models.OneToOneField(Application, on_delete=models.PROTECT, related_name="withdrawal")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="withdrawn_organism_applications")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_withdrawals")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class ApplicationDecisionEffect(_S015AppendOnly):
+    decision = models.OneToOneField(ApplicationDecision, on_delete=models.PROTECT, related_name="membership_effect")
+    transition = models.OneToOneField("OrganismMembershipTransition", on_delete=models.PROTECT, related_name="application_effect")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
 # =====================================================================================
 # S015 migration 0021 — the recorded-chain closure contract and the bitemporal fold.
 # Specification v0.8 §5.1–§5.4 (requirement); construction per design v0.6 §6–§7.
@@ -4848,6 +4955,8 @@ class CircleStateEvent(_S015ChainEvent):
 
 class OrganismMembershipTransition(_S015ChainEvent):
     membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
     prior_state = models.CharField(max_length=19, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
     resulting_state = models.CharField(max_length=19)
     reason_class = models.CharField(max_length=48)

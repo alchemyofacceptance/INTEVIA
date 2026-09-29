@@ -30,9 +30,11 @@ from django.db import connection
 #         0022: 322 - D-S015-PKT-A-3 section 7 (0021's 246 + 0022's 76) [S]; U0 runs 2 and 3 observed 322 [O]
 #         0023: 322 - 0023 creates and drops no trigger (it replaces two functions and five CHECKs) [D]
 #         0024: 322 - 0024 creates and drops no trigger (it replaces two function bodies) [D]
+#         0025: 354 - seven record-time, seven row and seven truncate, six route guards,
+#               one decision guard, one scoped actor guard, three deferred link guards [D]
 # REQ-G1  the twelve required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
-#         ground: no migration 0001-0024 creates a constraint NOT VALID [D]
+#         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
 # REQ-D1  core_role holds exactly the rows migration 0003's create_triad_roles defines
 #         ground: the migration function itself, executed against a recording stub (values not copied)
 # REQ-D2  every other table holds zero rows, except the framework tables below
@@ -53,7 +55,7 @@ FRAMEWORK_TABLES = ("django_content_type", "auth_permission")
 SEED_TABLES = ("core_role",)
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
-                          "0024_s015_compact_commitment_preimages": 322}
+                          "0024_s015_compact_commitment_preimages": 322, "0025_s015_application_routes": 354}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 
