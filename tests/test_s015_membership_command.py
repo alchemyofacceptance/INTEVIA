@@ -40,6 +40,7 @@ from src.intevia.services.organism_membership_service import (
 )
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "membership command slice is PostgreSQL-only")
 
 
@@ -871,7 +872,7 @@ class S015MembershipCommandTests(TransactionTestCase):
     def test_insert_time_refusal_rolls_back(self):
         ids, actor, target = self._setup_organism("atomic-failure")
         service = self._service(_ExactProvider())
-        future = NOW + timedelta(days=1)
+        future = FAR_FUTURE
         with self.assertRaises(IntegrityError):
             service.open_membership(
                 self._open_command(
