@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
 from django.db import connections, transaction
 
 from core.models import (
-    ContextualRoleAssignment,
     AuthorityBasis,
     Identity,
     LivingOrganism,
@@ -22,18 +19,32 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision,
-    S015Authority,
     S015AuthorityDenied,
     S015AuthorityMalformed,
     S015AuthorityUnavailable,
-    S015PostFoundingAuthorityRequest,
     authority_target_fingerprint,
     canonical_json_bytes,
     canonical_timestamp,
 )
+from src.intevia.services.organism_command_support import (
+    S015CommandAtomicityRequired,
+    S015CommandMutexUnavailable,
+    S015CommandReplayMismatch,
+    S015CommandSubstrateError,
+    _canonical_key,
+    _canonical_uuid,
+    _command_payload,
+    _empty_anchor_fingerprint,
+    _lock_actor,
+    _lock_actor_membership_context,
+    _OrganismCommandService,
+    _resulting_temporal_basis,
+    _validate_timestamp,
+    acquire_organism_command_mutex,
+    command_mutex_key,
+)
 
 
-_MUTEX_DOMAIN = b"INTEVIA:S015:ORGANISM_COMMAND_MUTEX:v1\x00"
 _COMMAND_DOMAIN = b"INTEVIA:S015:ORGANISM_MEMBERSHIP_COMMAND:v1\x00"
 _TARGET_SCHEMA = "intevia.s015.organism-membership-target.v1"
 _COMMAND_SCHEMA = "intevia.s015.organism-membership-command.v1"
@@ -48,22 +59,6 @@ _STATE_ALLOWED = {
     "ACTIVE": frozenset({"ENDED"}),
     "ENDED": frozenset({"PROPOSED"}),
 }
-
-
-class S015CommandSubstrateError(Exception):
-    pass
-
-
-class S015CommandAtomicityRequired(S015CommandSubstrateError):
-    pass
-
-
-class S015CommandMutexUnavailable(S015CommandSubstrateError):
-    pass
-
-
-class S015CommandReplayMismatch(S015CommandSubstrateError):
-    pass
 
 
 class S015MembershipCommandError(Exception):
@@ -142,42 +137,8 @@ class MembershipCommandResult:
     authority_reference: str
     authority_decision_reference: str
 
-
-def _canonical_key(value: object, name: str, maximum: int) -> str:
-    if type(value) is not str:
-        raise TypeError(f"{name} must be a string")
-    canonical = unicodedata.normalize("NFC", value).strip()
-    if canonical != value or not canonical or len(canonical) > maximum:
-        raise ValueError(f"{name} is not canonical")
-    return canonical
-
-
-def _canonical_reason(value: object) -> str:
-    return _canonical_key(value, "reason_class", 48)
-
-
-def _canonical_uuid(value: object, name: str) -> UUID:
-    if type(value) is not UUID:
-        raise TypeError(f"{name} must be a UUID")
-    return value
-
-
-def _validate_timestamp(value: object, name: str) -> datetime:
-    if type(value) is not datetime or value.tzinfo is None or value.utcoffset() is None:
-        raise TypeError(f"{name} must be timezone-aware")
-    return value.astimezone(timezone.utc)
-
-
-def _resulting_temporal_basis(
-    *,
-    payload_fingerprint: str,
-    effective_at: datetime,
-    received_at: datetime,
-) -> tuple[str | None, str | None]:
-    if effective_at == received_at:
-        return None, None
-    kind = "RETROSPECTIVE" if effective_at < received_at else "PROSPECTIVE"
-    return kind, f"s015tb1:{payload_fingerprint}"
+    def receipt_payload(self) -> dict[str, object]:
+        return _result_payload(self)
 
 
 def _insert_membership_transition_row(
@@ -334,211 +295,6 @@ def _parse_canonical_timestamp(value: object) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _command_payload(
-    *,
-    action: OrganismAction,
-    actor_identity_id: UUID,
-    actor_access_epoch: int,
-    request_reference: str,
-    idempotency_key: str,
-    occurred_at: datetime,
-    target: dict[str, object],
-    command: dict[str, object],
-) -> str:
-    payload = {
-        "action": action.value,
-        "actor_access_epoch": actor_access_epoch,
-        "actor_identity_id": str(actor_identity_id),
-        "command": command,
-        "idempotency_key": idempotency_key,
-        "occurred_at": canonical_timestamp(occurred_at),
-        "request_reference": request_reference,
-        "schema": _COMMAND_SCHEMA,
-        "target": target,
-    }
-    return hashlib.sha256(_COMMAND_DOMAIN + canonical_json_bytes(payload)).hexdigest()
-
-
-def command_mutex_key(
-    *,
-    actor_identity_id: UUID,
-    action: OrganismAction,
-    idempotency_key: str,
-) -> int:
-    if type(actor_identity_id) is not UUID:
-        raise TypeError("actor_identity_id must be a UUID")
-    if type(action) is not OrganismAction:
-        raise TypeError("action must be an OrganismAction")
-    canonical_key = _canonical_key(idempotency_key, "idempotency_key", 120)
-    digest = hashlib.sha256(
-        _MUTEX_DOMAIN
-        + actor_identity_id.bytes
-        + b"\x00"
-        + action.value.encode("ascii")
-        + b"\x00"
-        + canonical_key.encode("utf-8")
-    ).digest()
-    return int.from_bytes(digest[:8], byteorder="big", signed=True)
-
-
-def acquire_organism_command_mutex(
-    *,
-    database_alias: str,
-    actor_identity_id: UUID,
-    action: OrganismAction,
-    idempotency_key: str,
-) -> int:
-    if type(database_alias) is not str or not database_alias:
-        raise ValueError("database_alias is required")
-    connection = connections[database_alias]
-    if not connection.in_atomic_block:
-        raise S015CommandAtomicityRequired("outer atomic transaction required")
-    if connection.vendor != "postgresql":
-        raise S015CommandMutexUnavailable(
-            "S015 advisory mutex requires PostgreSQL"
-        )
-    lock_key = command_mutex_key(
-        actor_identity_id=actor_identity_id,
-        action=action,
-        idempotency_key=idempotency_key,
-    )
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
-    return lock_key
-
-
-def _empty_anchor_fingerprint(
-    *,
-    database_alias: str,
-    anchor_token: str,
-    anchor_uuid: UUID,
-) -> str:
-    with connections[database_alias].cursor() as cursor:
-        cursor.execute(
-            "SELECT public.s015_digest_envelope(public.s015_canonical_envelope(%s, %s::uuid, '{}'::text[]))",
-            [anchor_token, anchor_uuid],
-        )
-        return cursor.fetchone()[0]
-
-
-def _lock_actor(
-    *,
-    database_alias: str,
-    credential: User,
-) -> Identity:
-    try:
-        identity = (
-            Identity.objects.using(database_alias)
-            .select_for_update()
-            .select_related("credential")
-            .get(credential=credential)
-        )
-    except Identity.DoesNotExist as exc:
-        raise S015MembershipAuthorityUnavailable("actor Identity not found") from exc
-    if identity.access_state != Identity.AccessState.ACTIVE:
-        raise S015MembershipAuthorityUnavailable("actor Identity is not active")
-    if not identity.credential.is_active:
-        raise S015MembershipAuthorityUnavailable("actor credential is not active")
-    return identity
-
-
-def _lock_actor_membership_context(
-    *,
-    database_alias: str,
-    actor_identity_id: UUID,
-    living_organism_id: UUID,
-) -> tuple[OrganismMembership, tuple[str, ...]]:
-    try:
-        membership = (
-            OrganismMembership.objects.using(database_alias)
-            .select_for_update()
-            .get(identity__identity_id=actor_identity_id, living_organism__organism_id=living_organism_id)
-        )
-    except OrganismMembership.DoesNotExist as exc:
-        raise S015MembershipAuthorityUnavailable(
-            "actor active membership is required"
-        ) from exc
-    if membership.state != "ACTIVE" or membership.head_transition_id is None:
-        raise S015MembershipAuthorityUnavailable(
-            "actor active membership is required"
-        )
-    role_refs = tuple(
-        assignment.head_state_event.lineage_reference
-        for assignment in (
-            ContextualRoleAssignment.objects.using(database_alias)
-            .select_for_update()
-            .select_related("head_state_event")
-            .filter(membership=membership, state="ACTIVE", head_state_event__isnull=False)
-            .order_by("pk")
-        )
-    )
-    return membership, role_refs
-
-
-def _authority_request(
-    *,
-    database_alias: str,
-    actor: Identity,
-    actor_membership: OrganismMembership,
-    actor_role_head_refs: tuple[str, ...],
-    request_reference: str,
-    idempotency_key: str,
-    received_at: datetime,
-    target_fingerprint: str,
-) -> S015PostFoundingAuthorityRequest:
-    return S015PostFoundingAuthorityRequest(
-        database_alias=database_alias,
-        actor_pk=actor.pk,
-        actor_identity_id=actor.identity_id,
-        actor_access_epoch=actor.access_epoch,
-        action=_ACTION,
-        command_subtype=_ACTION.value,
-        target_fingerprint=target_fingerprint,
-        request_reference=request_reference,
-        idempotency_key=idempotency_key,
-        evaluated_at=received_at,
-        active_membership_head_reference=actor_membership.head_transition.lineage_reference,
-        contextual_role_head_references=actor_role_head_refs,
-    )
-
-
-def _target_fingerprint_open(
-    *,
-    member_identity_id: UUID,
-    living_organism_id: UUID,
-    reason_class: str,
-) -> str:
-    return authority_target_fingerprint(
-        {
-            "action": _ACTION.value,
-            "living_organism_id": str(living_organism_id),
-            "member_identity_id": str(member_identity_id),
-            "reason_class": reason_class,
-            "resulting_state": _OPEN_STATE,
-            "schema": _TARGET_SCHEMA,
-        }
-    )
-
-
-def _target_fingerprint_transition(
-    *,
-    membership_uuid: UUID,
-    living_organism_id: UUID,
-    resulting_state: str,
-    reason_class: str,
-) -> str:
-    return authority_target_fingerprint(
-        {
-            "action": _ACTION.value,
-            "living_organism_id": str(living_organism_id),
-            "membership_uuid": str(membership_uuid),
-            "reason_class": reason_class,
-            "resulting_state": resulting_state,
-            "schema": _TARGET_SCHEMA,
-        }
-    )
-
-
 def _expected_replay_result(
     payload: object,
 ) -> MembershipCommandResult:
@@ -634,114 +390,77 @@ def _validate_edge(current_state: str, target_state: str, membership: OrganismMe
         )
 
 
-class OrganismMembershipService:
-    def __init__(
-        self,
-        *,
-        authority: S015Authority,
-        clock: Callable[[], datetime],
-        database_alias: str = "default",
-    ) -> None:
-        if not isinstance(authority, S015Authority):
-            raise TypeError("authority must be an S015Authority")
-        if not callable(clock):
-            raise TypeError("clock must be callable")
-        if type(database_alias) is not str or not database_alias:
-            raise ValueError("database_alias is required")
-        if authority.database_alias != database_alias:
-            raise ValueError("authority database_alias mismatch")
-        self._authority = authority
-        self._clock = clock
-        self._alias = database_alias
+def _canonical_reason(value: object) -> str:
+    return _canonical_key(value, "reason_class", 48)
 
-    def _lock_existing_receipt(
+
+def _target_fingerprint_open(
+    *,
+    member_identity_id: UUID,
+    living_organism_id: UUID,
+    reason_class: str,
+) -> str:
+    return authority_target_fingerprint(
+        {
+            "action": _ACTION.value,
+            "living_organism_id": str(living_organism_id),
+            "member_identity_id": str(member_identity_id),
+            "reason_class": reason_class,
+            "resulting_state": _OPEN_STATE,
+            "schema": _TARGET_SCHEMA,
+        }
+    )
+
+
+def _target_fingerprint_transition(
+    *,
+    membership_uuid: UUID,
+    living_organism_id: UUID,
+    resulting_state: str,
+    reason_class: str,
+) -> str:
+    return authority_target_fingerprint(
+        {
+            "action": _ACTION.value,
+            "living_organism_id": str(living_organism_id),
+            "membership_uuid": str(membership_uuid),
+            "reason_class": reason_class,
+            "resulting_state": resulting_state,
+            "schema": _TARGET_SCHEMA,
+        }
+    )
+
+
+class OrganismMembershipService(_OrganismCommandService):
+    _action = _ACTION
+    _not_found = S015MembershipNotFound
+    _authority_unavailable = S015MembershipAuthorityUnavailable
+
+    def _replay_result(self, payload: object) -> MembershipCommandResult:
+        return _expected_replay_result(payload)
+
+    def _command_fingerprint(
         self,
         *,
         actor: Identity,
         request_reference: str,
-        payload_fingerprint: str,
         idempotency_key: str,
-    ) -> OrganismCommandReceipt | None:
-        receipt = (
-            OrganismCommandReceipt.objects.using(self._alias)
-            .select_for_update()
-            .filter(
-                actor=actor,
-                action=_ACTION.value,
-                idempotency_key=idempotency_key,
-            )
-            .first()
-        )
-        if receipt is None:
-            return None
-        if (
-            receipt.request_reference != request_reference
-            or receipt.payload_fingerprint != payload_fingerprint
-        ):
-            raise S015CommandReplayMismatch("completed receipt does not match request")
-        return receipt
-
-    def _evaluate_authority(
-        self,
-        *,
-        actor: Identity,
-        actor_membership: OrganismMembership,
-        actor_role_refs: tuple[str, ...],
-        request_reference: str,
-        idempotency_key: str,
-        target_fingerprint: str,
-        received_at: datetime,
-    ) -> QualifiedS015AuthorityDecision:
-        request = _authority_request(
-            database_alias=self._alias,
-            actor=actor,
-            actor_membership=actor_membership,
-            actor_role_head_refs=actor_role_refs,
+        occurred_at: datetime,
+        target: dict[str, object],
+        command: dict[str, object],
+    ) -> str:
+        return _command_payload(
+            domain=_COMMAND_DOMAIN,
+            schema=_COMMAND_SCHEMA,
+            action=_ACTION,
+            actor_identity_id=actor.identity_id,
+            actor_access_epoch=actor.access_epoch,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
-            received_at=received_at,
-            target_fingerprint=target_fingerprint,
+            occurred_at=occurred_at,
+            target=target,
+            command=command,
         )
-        return self._authority.qualify(request)
-
-    def _finalise(
-        self,
-        *,
-        actor: Identity,
-        request_reference: str,
-        idempotency_key: str,
-        payload_fingerprint: str,
-        result: MembershipCommandResult,
-    ) -> MembershipCommandResult:
-        receipt = OrganismCommandReceipt.objects.using(self._alias).create(
-            actor=actor,
-            action=_ACTION.value,
-            idempotency_key=idempotency_key,
-            request_reference=request_reference,
-            payload_fingerprint=payload_fingerprint,
-            authority_decision_reference=result.authority_decision_reference,
-            lineage_reference=result.lineage_reference,
-            result_payload=_result_payload(result),
-        )
-        return _expected_replay_result(receipt.result_payload)
-
-    def _attempt_replay(
-        self,
-        *,
-        actor: Identity,
-        request_reference: str,
-        payload_fingerprint: str,
-        idempotency_key: str,
-    ) -> MembershipCommandResult | None:
-        receipt = self._lock_existing_receipt(
-            actor=actor,
-            request_reference=request_reference,
-            payload_fingerprint=payload_fingerprint,
-            idempotency_key=idempotency_key,
-        )
-        if receipt is None:
-            return None
-        return _expected_replay_result(receipt.result_payload)
 
     def open_membership(self, command: OpenMembershipCommand) -> MembershipCommandResult:
         with transaction.atomic(using=self._alias):
@@ -757,7 +476,11 @@ class OrganismMembershipService:
         living_organism_id = _canonical_uuid(command.living_organism_id, "living_organism_id")
         member_identity_id = _canonical_uuid(command.member_identity_id, "member_identity_id")
 
-        actor = _lock_actor(database_alias=self._alias, credential=command.credential)
+        actor = _lock_actor(
+            database_alias=self._alias,
+            credential=command.credential,
+            unavailable=S015MembershipAuthorityUnavailable,
+        )
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
@@ -785,6 +508,7 @@ class OrganismMembershipService:
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
             living_organism_id=living_organism_id,
+            unavailable=S015MembershipAuthorityUnavailable,
         )
 
         target_fingerprint = _target_fingerprint_open(
@@ -792,10 +516,8 @@ class OrganismMembershipService:
             living_organism_id=living_organism_id,
             reason_class=reason_class,
         )
-        command_fingerprint = _command_payload(
-            action=_ACTION,
-            actor_identity_id=actor.identity_id,
-            actor_access_epoch=actor.access_epoch,
+        command_fingerprint = self._command_fingerprint(
+            actor=actor,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
@@ -972,7 +694,11 @@ class OrganismMembershipService:
         membership_uuid = _canonical_uuid(command.membership_uuid, "membership_uuid")
         target_state = _validate_member_state(command.resulting_state)
 
-        actor = _lock_actor(database_alias=self._alias, credential=command.credential)
+        actor = _lock_actor(
+            database_alias=self._alias,
+            credential=command.credential,
+            unavailable=S015MembershipAuthorityUnavailable,
+        )
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
@@ -993,6 +719,7 @@ class OrganismMembershipService:
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
             living_organism_id=membership.living_organism.organism_id,
+            unavailable=S015MembershipAuthorityUnavailable,
         )
 
         target_fingerprint = _target_fingerprint_transition(
@@ -1001,10 +728,8 @@ class OrganismMembershipService:
             resulting_state=target_state,
             reason_class=reason_class,
         )
-        command_fingerprint = _command_payload(
-            action=_ACTION,
-            actor_identity_id=actor.identity_id,
-            actor_access_epoch=actor.access_epoch,
+        command_fingerprint = self._command_fingerprint(
+            actor=actor,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
