@@ -4700,10 +4700,21 @@ class Application(_S015AppendOnly):
     predecessor_reference = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True)
     actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="submitted_organism_applications")
     enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_organism_applications")
+    authority_decision_reference = models.CharField(max_length=71)
+    authority_reference = models.CharField(max_length=255)
+    actor_access_epoch = models.PositiveBigIntegerField()
     occurred_at = models.DateTimeField()
     effective_at = models.DateTimeField()
     received_at = models.DateTimeField()
     recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(authority_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$"),
+                name="s3fu_application_decision_shape_ck",
+            ),
+        ]
 
 
 class CSAAssignment(_S015AppendOnly):
@@ -4785,10 +4796,21 @@ class ApplicationWithdrawal(_S015AppendOnly):
     application = models.OneToOneField(Application, on_delete=models.PROTECT, related_name="withdrawal")
     actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="withdrawn_organism_applications")
     enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_withdrawals")
+    authority_decision_reference = models.CharField(max_length=71)
+    authority_reference = models.CharField(max_length=255)
+    actor_access_epoch = models.PositiveBigIntegerField()
     occurred_at = models.DateTimeField()
     effective_at = models.DateTimeField()
     received_at = models.DateTimeField()
     recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(authority_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$"),
+                name="s3fu_withdrawal_decision_shape_ck",
+            ),
+        ]
 
 
 class ApplicationDecisionEffect(_S015AppendOnly):

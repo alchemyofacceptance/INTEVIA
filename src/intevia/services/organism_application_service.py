@@ -164,6 +164,7 @@ def _insert_admission_transition(
     reason_class: str, evidence_reference: str, authority_decision_reference: str,
     request_reference: str, idempotency_key: str, payload_fingerprint: str,
     occurred_at: datetime, effective_at: datetime, received_at: datetime,
+    actor_access_epoch: int | None = None,
 ) -> int:
     event_uuid = uuid4()
     sequence = 1 if predecessor is None else predecessor.sequence + 1
@@ -209,7 +210,7 @@ def _insert_admission_transition(
             "NA_NO_PARTY" if actor is None else "STANDING", enterer.pk, "TRANSPORT",
             "NA_TRANSPORT", None, "NA_TRANSPORT", None,
             None, "NONE", None, predecessor_commitment, None, parts_commitment,
-            None if actor is None else actor.access_epoch, basis_id,
+            None if actor is None else actor_access_epoch, basis_id,
             authority_decision_reference, evidence_reference, request_reference, idempotency_key,
             payload_fingerprint, lineage_reference, temporal_kind, temporal_reference,
             occurred_at, effective_at, received_at, prior_state, resulting_state, reason_class,
@@ -500,7 +501,8 @@ class OrganismApplicationService:
             application = Application.objects.using(self._alias).create(
                 applicant=actor, living_organism=organism, predecessor_reference=predecessor,
                 actor=actor, enterer=actor, occurred_at=occurred_at, effective_at=effective_at,
-                received_at=received_at,
+                received_at=received_at, authority_decision_reference=decision.authority_decision_reference,
+                authority_reference=decision.authority_reference, actor_access_epoch=actor.access_epoch,
             )
             application.refresh_from_db(using=self._alias)
             if predecessor is not None and not ApplicationWithdrawal.objects.using(self._alias).filter(
@@ -568,6 +570,8 @@ class OrganismApplicationService:
             withdrawal = ApplicationWithdrawal.objects.using(self._alias).create(
                 application=application, actor=actor, enterer=actor,
                 occurred_at=occurred_at, effective_at=effective_at, received_at=received_at,
+                authority_decision_reference=decision.authority_decision_reference,
+                authority_reference=decision.authority_reference, actor_access_epoch=actor.access_epoch,
             )
             withdrawal.refresh_from_db(using=self._alias)
             return self._finish(
@@ -711,10 +715,11 @@ class OrganismApplicationService:
                 database_alias=self._alias, membership=membership, predecessor=None, actor=applicant,
                 enterer=context.actor, basis_id=basis_id, prior_state=None, resulting_state="PROPOSED",
                 reason_class="APPLICATION", evidence_reference=f"application:{application.application_uuid}",
-                authority_decision_reference=context.decision.authority_decision_reference,
+                authority_decision_reference=application.authority_decision_reference,
                 request_reference=context.request_reference, idempotency_key=context.idempotency_key,
                 payload_fingerprint=context.fingerprint, occurred_at=application.occurred_at,
                 effective_at=application.effective_at, received_at=application.received_at,
+                actor_access_epoch=application.actor_access_epoch,
             )
             self._refresh_membership(membership, application.effective_at)
         predecessor = OrganismMembershipTransition.objects.using(self._alias).get(

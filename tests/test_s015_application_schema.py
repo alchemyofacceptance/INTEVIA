@@ -41,9 +41,8 @@ class HistoricalActorBytes(TransactionTestCase):
         self.at_0024 = True
 
     def tearDown(self):
-        # Restore the current head AND verify it, so later tests in this process run on it (0026 since S3 round 2b).
-        MigrationExecutor(connection).migrate([("core", "0026_s015_application_admission_time")])
-        self.assertIn(("core", "0026_s015_application_admission_time"),
+        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
+        self.assertIn(("core", "0027_s015_application_authority_lineage"),
                       MigrationRecorder(connection).applied_migrations())
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_get_functiondef('public.s3_terminal_lock()'::regprocedure)")
@@ -83,6 +82,79 @@ class HistoricalActorBytes(TransactionTestCase):
 
 
 @POSTGRESQL_ONLY
+class ApplicationAuthorityMigration(TransactionTestCase):
+    def tearDown(self):
+        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
+        self.assertIn(("core", "0027_s015_application_authority_lineage"),
+                      MigrationRecorder(connection).applied_migrations())
+
+    def test_0027_schema_and_historical_chain_bytes(self):
+        MigrationExecutor(connection).migrate([("core", "0026_s015_application_admission_time")])
+        self.assertNotIn(("core", "0027_s015_application_authority_lineage"),
+                         MigrationRecorder(connection).applied_migrations())
+        with transaction.atomic(), connection.cursor() as cursor:
+            ids = found_nonroot(cursor, tag=f"s3fu-0027-{fresh()}")
+            event_id = ids["events"][EVENT_TABLE]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' "
+                "AND table_name IN ('core_application', 'core_applicationwithdrawal') "
+                "AND column_name IN ('authority_decision_reference', 'authority_reference', 'actor_access_epoch')"
+            )
+            self.assertEqual(cursor.fetchall(), [])
+            before = snapshot(cursor, event_id, ids["membership"])
+            cursor.execute(
+                "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+            )
+            functions_before = cursor.fetchall()
+        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
+        self.assertIn(("core", "0027_s015_application_authority_lineage"),
+                      MigrationRecorder(connection).applied_migrations())
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT table_name, column_name, is_nullable, data_type, character_maximum_length "
+                "FROM information_schema.columns WHERE table_schema = 'public' "
+                "AND table_name IN ('core_application', 'core_applicationwithdrawal') "
+                "AND column_name IN ('authority_decision_reference', 'authority_reference', 'actor_access_epoch') "
+                "ORDER BY table_name, column_name"
+            )
+            columns = cursor.fetchall()
+            expected = [(name, column, "NO", kind, width)
+                        for name in ("core_application", "core_applicationwithdrawal")
+                        for column, kind, width in (("actor_access_epoch", "bigint", None),
+                                                    ("authority_decision_reference", "character varying", 71),
+                                                    ("authority_reference", "character varying", 255))]
+            self.assertEqual(columns, expected)
+            cursor.execute(
+                "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname IN ('s3fu_application_decision_shape_ck', 's3fu_withdrawal_decision_shape_ck') "
+                "ORDER BY conname"
+            )
+            constraints = cursor.fetchall()
+            self.assertEqual(len(constraints), 2)
+            for _, definition in constraints:
+                self.assertIn("s015d1:[0-9a-f]{64}", definition)
+            after = snapshot(cursor, event_id, ids["membership"])
+            cursor.execute(
+                "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+            )
+            self.assertEqual(cursor.fetchall(), functions_before)
+        self.assertEqual(after, before)
+        self.assertEqual(after[0][0].encode("utf-8"), before[0][0].encode("utf-8"))
+        self.assertEqual(after[1][0].encode("utf-8"), before[1][0].encode("utf-8"))
+
+
+@POSTGRESQL_ONLY
 class ApplicationSchemaGuards(TransactionTestCase):
     def setUp(self):
         self.tag = f"s3-{fresh()}"
@@ -104,9 +176,10 @@ class ApplicationSchemaGuards(TransactionTestCase):
             refresh(cursor, ANCHOR, self.member_id)
             cursor.execute(
                 "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, enterer_id, "
-                "occurred_at, effective_at, received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (u(f"application:{self.tag}"), self.applicant_id, self.ids["lo"], self.applicant_id,
-                 self.applicant_id, T0, T0, T0),
+                 self.applicant_id, "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0),
             )
             self.application_id = cursor.fetchone()[0]
 
@@ -298,9 +371,10 @@ class ApplicationSchemaGuards(TransactionTestCase):
     def test_s3_b_g10_applicant_only_and_no_decision(self):
         def withdraw(cursor, actor):
             cursor.execute(
-                "INSERT INTO core_applicationwithdrawal (application_id, actor_id, enterer_id, occurred_at, effective_at, received_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (self.application_id, actor, actor, T0, T0, T0),
+                "INSERT INTO core_applicationwithdrawal (application_id, actor_id, enterer_id, "
+                "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (self.application_id, actor, actor, "s015d1:" + "b" * 64, "s3:test:withdraw", 0, T0, T0, T0),
             )
 
         self.assert_refused(lambda cursor: withdraw(cursor, self.ids["identity"]))
@@ -313,9 +387,11 @@ class ApplicationSchemaGuards(TransactionTestCase):
     def test_s3_applicant_withdrawal_closes_the_application(self):
         with connection.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO core_applicationwithdrawal (application_id, actor_id, enterer_id, occurred_at, effective_at, received_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING recorded_at",
-                (self.application_id, self.applicant_id, self.applicant_id, T0, T0, T0),
+                "INSERT INTO core_applicationwithdrawal (application_id, actor_id, enterer_id, "
+                "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING recorded_at",
+                (self.application_id, self.applicant_id, self.applicant_id,
+                 "s015d1:" + "b" * 64, "s3:test:withdraw", 0, T0, T0, T0),
             )
             self.assertIsNotNone(cursor.fetchone()[0])
         self.assert_refused(lambda cursor: self.claim(cursor))
@@ -361,8 +437,10 @@ class ApplicationSchemaGuards(TransactionTestCase):
     def test_s6_application_references_are_database_foreign_keys(self):
         self.assert_refused(lambda cursor: cursor.execute(
             "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, enterer_id, "
-            "occurred_at, effective_at, received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (str(uuid.uuid4()), -1, self.ids["lo"], self.applicant_id, self.applicant_id, T0, T0, T0),
+            "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (str(uuid.uuid4()), -1, self.ids["lo"], self.applicant_id, self.applicant_id,
+             "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0),
         ))
         self.assert_refused(lambda cursor: cursor.execute(
             "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, deciding_party_id, "

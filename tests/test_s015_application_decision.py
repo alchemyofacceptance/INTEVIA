@@ -332,7 +332,26 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertEqual(submission_receipt.authority_decision_reference,
                          submission.authority_decision_reference)
         self.assertNotEqual(submission_receipt.authority_decision_reference, decision_digest)
-        self.assertEqual(proposal.authority_decision_reference, decision_digest)
+        self.assertEqual((linked_application.authority_decision_reference, linked_application.authority_reference,
+                          linked_application.actor_access_epoch),
+                         (submission.authority_decision_reference, submission.authority_reference,
+                          self.applicant.access_epoch))
+        self.assertEqual((proposal.authority_decision_reference, proposal.actor_access_epoch),
+                         (linked_application.authority_decision_reference, linked_application.actor_access_epoch))
+
+    def test_proposal_retains_submission_epoch_after_applicant_epoch_changes(self):
+        submission = self.submit()
+        application = Application.objects.get(pk=submission.application_id)
+        submission_epoch = application.actor_access_epoch
+        Identity.objects.filter(pk=self.applicant.pk).update(access_epoch=submission_epoch + 1)
+        self.assertEqual(Identity.objects.get(pk=self.applicant.pk).access_epoch, submission_epoch + 1)
+        self.service().claim_application(self.command(application))
+        self.service().decide_application(self.command(application, kind="decide"))
+        proposal = OrganismMembershipTransition.objects.get(
+            membership__identity=self.applicant, membership__living_organism_id=self.ids["lo"], sequence=1,
+        )
+        self.assertEqual((proposal.authority_decision_reference, proposal.actor_access_epoch),
+                         (submission.authority_decision_reference, submission_epoch))
 
     def test_accept_existing_proposed_membership_has_only_activation(self):
         application = self.claimed()
@@ -472,6 +491,8 @@ class ApplicationDecisionTests(TransactionTestCase):
                 application = Application.objects.create(
                     applicant=self.applicant, living_organism_id=self.ids["lo"],
                     actor=self.applicant, enterer=self.applicant,
+                    authority_decision_reference="s015d1:" + "a" * 64,
+                    authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
                     occurred_at=NOW, effective_at=NOW, received_at=NOW,
                 )
 
@@ -566,6 +587,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def _migration_witness(self, terminator):
         old_head = [("core", "0025_s015_application_routes")]
         new_head = [("core", "0026_s015_application_admission_time")]
+        restore_head = [("core", "0027_s015_application_authority_lineage")]
         try:
             for head in (old_head, new_head):
                 # A fresh executor per step: a reused one plans from its loader's applied set, fixed when it was built.
@@ -592,8 +614,42 @@ class ApplicationDecisionTests(TransactionTestCase):
                     self.assertEqual(ApplicationWithdrawal.objects.filter(application=application).count(), 1)
                     self.assertFalse(ApplicationDecision.objects.filter(application=application).exists())
         finally:
-            MigrationExecutor(connection).migrate(new_head)
+            self._test_only_cleanup_migration_witness_rows()
+            MigrationExecutor(connection).migrate(restore_head)
             self._assert_schema_in_force(post_lock_time=True)
+            self.assertIn(restore_head[0], MigrationRecorder(connection).applied_migrations())
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' "
+                    "AND table_name IN ('core_application', 'core_applicationwithdrawal') "
+                    "AND column_name IN ('authority_decision_reference', 'authority_reference', 'actor_access_epoch') "
+                    "AND is_nullable = 'NO'"
+                )
+                self.assertEqual(cursor.fetchone()[0], 6)
+
+    def _test_only_cleanup_migration_witness_rows(self):
+        """Test-only fixture cleanup before 0027's locked-empty preflight; never used by production."""
+        tables = (
+            "core_applicationdecisioneffect", "core_applicationdecision", "core_applicationwithdrawal",
+            "core_applicationengagement", "core_csaassignmentend", "core_csaassignment", "core_application",
+        )
+        # One transaction: on any failure PostgreSQL rolls back the DISABLE with everything else, so no guard is left disabled.
+        with transaction.atomic(), connection.cursor() as cursor:
+            for table in tables:
+                cursor.execute(f"ALTER TABLE public.{table} DISABLE TRIGGER USER")
+            for table in tables:
+                cursor.execute(f"DELETE FROM public.{table}")
+            # The deletions queue deferred foreign-key checks; fire them now, or ALTER TABLE refuses ("pending trigger events").
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            for table in reversed(tables):
+                cursor.execute(f"ALTER TABLE public.{table} ENABLE TRIGGER USER")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "WHERE c.relname = ANY(%s) AND NOT t.tgisinternal AND t.tgenabled <> 'O'",
+                [list(tables)],
+            )
+            self.assertEqual(cursor.fetchall(), [])
 
     def _chain_columns(self, transition_id):
         """Read the 0022 chain columns the Django model does not expose, from the stored row itself."""
@@ -624,11 +680,35 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertIn(message, str(outcome), f"refused, but not by {message!r}: {outcome}")
 
     def _fresh_claim(self):
-        application = Application.objects.create(
-            applicant=self.applicant, living_organism_id=self.ids["lo"], actor=self.applicant,
-            enterer=self.applicant, occurred_at=NOW, effective_at=NOW, received_at=NOW,
-        )
-        self.service().claim_application(self.command(application, suffix=str(application.pk)))
+        application_uuid = uuid4()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, "
+                "enterer_id, occurred_at, effective_at, received_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                [str(application_uuid), self.applicant.pk, self.ids["lo"], self.applicant.pk,
+                 self.applicant.pk, NOW, NOW, NOW],
+            )
+            application_id = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO core_csaassignment (assignment_uuid, application_id, assignee_membership_id, "
+                "assignee_office_id, actor_id, enterer_id, completion_due_at, occurred_at, effective_at, received_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                [str(uuid4()), application_id, self.ids["membership"], self.ids["assignments"]["COORDINATOR"],
+                 self.coordinator.pk, self.coordinator.pk, NOW + timedelta(days=27), NOW, NOW, NOW],
+            )
+            claim_id = cursor.fetchone()[0]
+            cursor.execute("SELECT assignment_uuid FROM core_csaassignment WHERE id = %s", [claim_id])
+            assignment_uuid = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, "
+                "deciding_party_id, engagement_reference, settings_basis, actor_id, enterer_id, "
+                "occurred_at, effective_at, received_at) "
+                "VALUES (%s, 1, 'LO_CSA', %s, %s, %s, %s, %s, %s, %s, %s)",
+                [application_id, self.ids["lo"], str(assignment_uuid), SETTINGS,
+                 self.coordinator.pk, self.coordinator.pk, NOW, NOW, NOW],
+            )
+        application = Application(pk=application_id, application_uuid=application_uuid)
         return application
 
     def _direct_decision(self, cursor, application, claim):
@@ -692,9 +772,10 @@ class ApplicationDecisionTests(TransactionTestCase):
                         occurred_at=NOW, effective_at=NOW, received_at=NOW,
                     )
                 else:
-                    ApplicationWithdrawal.objects.create(
-                        application=application, actor=self.applicant, enterer=self.applicant,
-                        occurred_at=NOW, effective_at=NOW, received_at=NOW,
+                    cursor.execute(
+                        "INSERT INTO core_applicationwithdrawal (application_id, actor_id, enterer_id, "
+                        "occurred_at, effective_at, received_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                        [application.pk, self.applicant.pk, self.applicant.pk, NOW, NOW, NOW],
                     )
         finally:
             # A's transaction has ended here — committed, or rolled back by a failure — so its lock is released and B can

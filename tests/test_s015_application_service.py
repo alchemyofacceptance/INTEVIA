@@ -230,12 +230,21 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.assertFalse(OrganismCommandReceipt.objects.filter(action=OrganismAction.WITHDRAW_APPLICATION.value).exists())
 
     def test_applicant_may_withdraw_waiting_application(self):
-        _, application = self.submitted()
+        submission, application = self.submitted()
         result = self.service().withdraw_application(self.withdraw(application))
         self.assertEqual(result.action, OrganismAction.WITHDRAW_APPLICATION)
         withdrawal = ApplicationWithdrawal.objects.get(application=application)
         self.assertEqual((withdrawal.actor_id, withdrawal.enterer_id), (self.applicant.pk, self.applicant.pk))
         self.assertEqual(result.recorded_at, withdrawal.recorded_at)
+        self.assertEqual((application.authority_decision_reference, application.authority_reference,
+                  application.actor_access_epoch),
+                 (submission.authority_decision_reference, submission.authority_reference,
+                  self.applicant.access_epoch))
+        self.assertEqual((withdrawal.authority_decision_reference, withdrawal.authority_reference,
+                  withdrawal.actor_access_epoch),
+                 (result.authority_decision_reference, result.authority_reference,
+                  self.applicant.access_epoch))
+        self.assertNotEqual(withdrawal.authority_decision_reference, application.authority_decision_reference)
 
     def test_reapplication_after_eligible_withdrawal(self):
         _, previous = self.submitted()
@@ -249,6 +258,8 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.history()
         previous = Application.objects.create(
             applicant=self.applicant, living_organism_id=self.ids["lo"], actor=self.applicant, enterer=self.applicant,
+            authority_decision_reference="s015d1:" + "a" * 64,
+            authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,
         )
         with self.assertRaises(S015ApplicationRefused):
@@ -261,6 +272,8 @@ class S015ApplicantCommandTests(TransactionTestCase):
         other = Identity.objects.get(pk=other_pk)
         previous = Application.objects.create(
             applicant=other, living_organism_id=self.ids["lo"], actor=other, enterer=other,
+            authority_decision_reference="s015d1:" + "a" * 64,
+            authority_reference="s3:test:fixture", actor_access_epoch=other.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,
         )
         with self.assertRaises(S015ApplicationRefused):
@@ -272,6 +285,8 @@ class S015ApplicantCommandTests(TransactionTestCase):
             other_lo = found_nonroot(cursor, tag=f"other-lo-{self.tag}")["lo"]
         previous = Application.objects.create(
             applicant=self.applicant, living_organism_id=other_lo, actor=self.applicant, enterer=self.applicant,
+            authority_decision_reference="s015d1:" + "a" * 64,
+            authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,
         )
         with self.assertRaises(S015ApplicationRefused):
