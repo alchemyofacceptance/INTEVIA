@@ -5084,3 +5084,22 @@ class PlanningClassificationEvent(_S015ChainEvent):
 
     class Meta:
         constraints = _s015_event_constraints("planningclassificationevent", "case")
+
+
+class ApplicationLineage(_S015ImmutableAnchor):
+    S015_IMMUTABLE_FIELDS = ("lineage_uuid", "application_id")
+
+    lineage_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    application = models.OneToOneField(Application, on_delete=models.PROTECT, related_name="lineage")
+    head_event = models.OneToOneField("ApplicationLineageEvent", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+
+
+class ApplicationLineageEvent(_S015ChainEvent):
+    application_lineage = models.ForeignKey(ApplicationLineage, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    prior_state = models.CharField(max_length=10, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
+    resulting_state = models.CharField(max_length=10)
+
+    class Meta:
+        constraints = _s015_event_constraints("applicationlineageevent", "application_lineage")

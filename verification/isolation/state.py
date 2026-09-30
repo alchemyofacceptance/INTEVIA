@@ -34,6 +34,8 @@ from django.db import connection
 #               one decision guard, one scoped actor guard, three deferred link guards [D]
 #         0026: 354 - replaces four guard-function bodies; adds or removes no triggers [D]
 #         0027: 354 - adds columns and two CHECKs; adds or removes no triggers [D]
+#         0028: 377 - 7 event + 2 anchor + 4 immutable + 5 contract + 3 application
+#               guards + 2 membership guards = 23 additional non-internal triggers [D]
 # REQ-G1  the twelve required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -59,7 +61,8 @@ LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
                           "0024_s015_compact_commitment_preimages": 322, "0025_s015_application_routes": 354,
                           "0026_s015_application_admission_time": 354,
-                          "0027_s015_application_authority_lineage": 354}
+                          "0027_s015_application_authority_lineage": 354,
+                          "0028_s015_application_lineage_chain": 377}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 

@@ -10,13 +10,111 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
-from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
 from tests.test_s015_0024_commitment_preimages import canonical_value, digest, l1_preimage, parts_preimage
+from verification.isolation.state import REQUIRED_TRIGGER_COUNT
 
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3 guardians require PostgreSQL")
 EVENT_TABLE = "core_organismmembershiptransition"
 ANCHOR = "core_organismmembership"
+
+
+@POSTGRESQL_ONLY
+class ApplicationLineageSchema(TransactionTestCase):
+    def test_application_chain_map_triggers_and_lock_route(self):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                           "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                           "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0028_s015_application_lineage_chain"])
+            cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
+                           "FROM public.s015_anchor_map() ORDER BY anchor_token")
+            anchors = cursor.fetchall()
+            self.assertEqual(len(anchors), 13)
+            self.assertIn(("core_applicationlineage", "core_applicationlineageevent", "head_event_id",
+                           "application_lineage_id", False, False), anchors)
+            cursor.execute("SELECT tgname, p.proname FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid "
+                           "WHERE t.tgrelid = 'public.core_applicationlineageevent'::regclass "
+                           "AND NOT t.tgisinternal ORDER BY tgname")
+            triggers = dict(cursor.fetchall())
+            self.assertEqual(len(triggers), 15)
+            for name, function in (
+                ("s015_0021_alineageevent_organism_lock", "s015_acquire_owning_organism_lock"),
+                ("s015_0021_alineageevent_record_time", "s015_assign_event_record_time"),
+                ("s015_0022_applicationlineageevent_l1_commit", "s015_0022_assign_l1_commitment"),
+                ("s3fu_00_capacity", "s3fu_guard_lo_capacity"),
+                ("s3fu_10_actor", "s3fu_guard_application_lineage_actor"),
+                ("s3fu_20_permission", "s3fu_guard_lo_admission_permission"),
+            ):
+                self.assertEqual(triggers[name], function)
+            self.assertLess("s015_0021_alineageevent_record_time", "s3fu_00_capacity")
+            self.assertLess("s015_0021_alineageevent_record_time", "s3fu_20_permission")
+            for function in ("s3fu_guard_lo_capacity", "s3fu_guard_lo_admission_permission"):
+                cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", (f"public.{function}()",))
+                self.assertIn("NEW.recorded_at", cursor.fetchone()[0])
+            cursor.execute("SELECT pg_get_functiondef('public.s015_acquire_owning_organism_lock()'::regprocedure)")
+            self.assertIn("core_applicationlineage l JOIN public.core_application a", cursor.fetchone()[0])
+            for table, check in (("core_governedeventpart", "s015_0022_part_table_vocab_ck"),
+                                 ("core_governedeventcontent", "s015_0022_content_table_vocab_ck")):
+                cursor.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = %s::regclass "
+                               "AND conname = %s", (f"public.{table}", check))
+                definition = cursor.fetchone()[0]
+                self.assertIn("core_applicationlineageevent", definition)
+                self.assertNotIn("core_unknown_event", definition)
+
+    def test_part_and_content_vocab_admits_new_table_only(self):
+        class Rollback(Exception):
+            pass
+
+        for table, columns, values in (
+            ("core_governedeventpart", "part_ordinal, part_class, posture, ground, office",
+             (1, "EVIDENCE", "OPEN", "s3fu:test", None)),
+            ("core_governedeventcontent", "body, commitment_key", ("{}", bytes(32))),
+        ):
+            sql = (f"INSERT INTO public.{table} (event_table, event_uuid, {columns}) "
+                   f"VALUES (%s, %s, {', '.join(['%s'] * len(values))})")
+            with self.subTest(table=table):
+                with self.assertRaises(Rollback):
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute(sql, ("core_applicationlineageevent", uuid.uuid4(), *values))
+                        raise Rollback()
+                with self.assertRaises(IntegrityError):
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute(sql, ("core_unknown_event", uuid.uuid4(), *values))
+
+    def test_0028_preserves_historical_bytes_and_protected_functions(self):
+        head = current_core_leaf(connection)
+        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                ids = found_nonroot(cursor, tag=f"s3fu-lineage-{fresh()}")
+                event_id = ids["events"][EVENT_TABLE]
+            with connection.cursor() as cursor:
+                before = snapshot(cursor, event_id, ids["membership"])
+                cursor.execute(
+                    "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                    "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                    "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                    "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+                )
+                functions_before = cursor.fetchall()
+            MigrationExecutor(connection).migrate(head)
+            with connection.cursor() as cursor:
+                self.assertEqual(snapshot(cursor, event_id, ids["membership"]), before)
+                cursor.execute(
+                    "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                    "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                    "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                    "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+                )
+                self.assertEqual(cursor.fetchall(), functions_before)
+        finally:
+            MigrationExecutor(connection).migrate(head)
 
 
 def snapshot(cursor, event_id, membership_id):
@@ -41,9 +139,9 @@ class HistoricalActorBytes(TransactionTestCase):
         self.at_0024 = True
 
     def tearDown(self):
-        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
-        self.assertIn(("core", "0027_s015_application_authority_lineage"),
-                      MigrationRecorder(connection).applied_migrations())
+        head = current_core_leaf(connection)
+        MigrationExecutor(connection).migrate(head)
+        self.assertIn(head[0], MigrationRecorder(connection).applied_migrations())
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_get_functiondef('public.s3_terminal_lock()'::regprocedure)")
             self.assertIn("NEW.recorded_at := clock_timestamp();", cursor.fetchone()[0])
@@ -84,9 +182,9 @@ class HistoricalActorBytes(TransactionTestCase):
 @POSTGRESQL_ONLY
 class ApplicationAuthorityMigration(TransactionTestCase):
     def tearDown(self):
-        MigrationExecutor(connection).migrate([("core", "0027_s015_application_authority_lineage")])
-        self.assertIn(("core", "0027_s015_application_authority_lineage"),
-                      MigrationRecorder(connection).applied_migrations())
+        head = current_core_leaf(connection)
+        MigrationExecutor(connection).migrate(head)
+        self.assertIn(head[0], MigrationRecorder(connection).applied_migrations())
 
     def test_0027_schema_and_historical_chain_bytes(self):
         MigrationExecutor(connection).migrate([("core", "0026_s015_application_admission_time")])
@@ -226,7 +324,7 @@ class ApplicationSchemaGuards(TransactionTestCase):
 
     def admit(self, cursor, decision_id, decision_uuid, *, overrides=None, member_id=None, proposal_id=None):
         changes = {
-            "actor_access_epoch": None, "actor_state": "LIVING_ORGANISM", "actor_capacity": "NA_NO_PARTY",
+            "actor_access_epoch": None, "actor_state": "LIVING_ORGANISM", "actor_capacity": "STANDING",
             "enterer_identity_id": self.ids["identity"], "evidence_reference": f"application-decision:{decision_uuid}",
         }
         changes.update(overrides or {})
@@ -256,7 +354,8 @@ class ApplicationSchemaGuards(TransactionTestCase):
     def test_c4_other_eleven_chains_reject_lo_token(self):
         with transaction.atomic(), connection.cursor() as cursor:
             add_remaining_aggregates(cursor, self.ids, self.tag)
-            cursor.execute("SELECT event_table FROM public.s015_anchor_map() WHERE event_table <> %s", (EVENT_TABLE,))
+            cursor.execute("SELECT event_table FROM public.s015_anchor_map() "
+                           "WHERE event_table <> %s AND event_table <> 'core_applicationlineageevent'", (EVENT_TABLE,))
             tables = [row[0] for row in cursor.fetchall()]
         self.assertEqual(len(tables), 11)
         for table in tables:
@@ -276,7 +375,7 @@ class ApplicationSchemaGuards(TransactionTestCase):
             decision_id, decision_uuid = self.decide(cursor, claim_id, outcome="ACCEPT")
             for malformed in (
                 {"actor_id": self.ids["identity"]}, {"actor_access_epoch": 0},
-                {"actor_capacity": "STANDING"}, {"entry_mode": "COMPOSED"},
+                {"actor_capacity": "NA_NO_PARTY"}, {"entry_mode": "COMPOSED"},
                 {"prior_state": None}, {"resulting_state": "PROPOSED"},
                 {"evidence_reference": "application-decision:" + str(uuid.uuid4())},
                 {"evidence_reference": "missing"},

@@ -453,8 +453,10 @@ class FixedVectors(_S015PositiveBase):
         with connection.cursor() as cur:
             cur.execute("SELECT event_table FROM public.s015_anchor_map() ORDER BY 1")
             tables = [r[0] for r in cur.fetchall()]
-            self.assertEqual(sorted(tables), sorted(published))
-            for table in tables:
+            # 0028 (S3-FU) adds the application-chain type, which this published twelve-table corpus predates;
+            # the installed set is the twelve plus that one table, and every published inventory is still checked.
+            self.assertEqual(sorted(tables), sorted(list(published) + ["core_applicationlineageevent"]))
+            for table in sorted(published):
                 with self.subTest(table=table):
                     cur.execute("SELECT public.s015_canonical_columns(%s::regclass)", (f"public.{table}",))
                     installed = cur.fetchone()[0]

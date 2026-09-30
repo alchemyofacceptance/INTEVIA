@@ -12,7 +12,8 @@ from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 
 from core.models import (
-    Application, ApplicationWithdrawal, Identity, IdentityTransition,
+    Application, ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal,
+    Identity, IdentityTransition,
     OrganismCommandReceipt, OrganismMembership,
 )
 from core.organism_contract import OrganismAction
@@ -103,6 +104,32 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.history()
         result = self.service().submit_application(self.submit())
         return result, Application.objects.get(pk=result.application_id)
+
+    def test_pending_and_withdrawn_applications_leave_chain(self):
+        submission, application = self.submitted()
+        lineage = ApplicationLineage.objects.get(application=application)
+        first = lineage.head_event
+        self.assertEqual((first.sequence, first.action, first.resulting_state, first.actor_id),
+                         (1, "SUBMIT_APPLICATION", "SUBMITTED", self.applicant.pk))
+        self.assertEqual(first.authority_decision_reference, submission.authority_decision_reference)
+        self.assertEqual(first.evidence_reference, f"application:{application.application_uuid}")
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT public.s015_fold_effective_state(%s, %s, %s, clock_timestamp())",
+                           ["core_applicationlineage", lineage.pk, NOW])
+            self.assertEqual(cursor.fetchone()[0], "SUBMITTED")
+        withdrawal = self.service().withdraw_application(self.withdraw(application))
+        lineage.refresh_from_db()
+        last = lineage.head_event
+        self.assertEqual((last.sequence, last.action, last.prior_state, last.resulting_state,
+                          last.predecessor_id, last.actor_id),
+                         (2, "WITHDRAW_APPLICATION", "SUBMITTED", "WITHDRAWN", first.pk, self.applicant.pk))
+        self.assertEqual(last.evidence_reference, f"application-withdrawal:{application.application_uuid}")
+        self.assertEqual(last.authority_decision_reference, withdrawal.authority_decision_reference)
+        self.assertEqual(ApplicationLineageEvent.objects.filter(application_lineage=lineage).count(), 2)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT public.s015_fold_effective_state(%s, %s, %s, clock_timestamp())",
+                           ["core_applicationlineage", lineage.pk, NOW])
+            self.assertEqual(cursor.fetchone()[0], "WITHDRAWN")
 
     def membership(self, state):
         with transaction.atomic(), connection.cursor() as cursor:

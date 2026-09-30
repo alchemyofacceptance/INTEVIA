@@ -1,5 +1,6 @@
 """S3 2b PostgreSQL Coordinator route and admission witnesses (Human Governor executes)."""
 
+import json
 import threading
 import time
 from dataclasses import asdict, replace
@@ -16,7 +17,8 @@ from django.test import TransactionTestCase
 
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
-    ApplicationWithdrawal, CSAAssignment, CSAAssignmentEnd, Identity, IdentityTransition,
+    ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal,
+    CSAAssignment, CSAAssignmentEnd, Identity, IdentityTransition,
     OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
@@ -24,7 +26,7 @@ from src.intevia.services.organism_application_service import (
     ClaimApplicationCommand, DecideApplicationCommand, OrganismApplicationService,
     ReassignApplicationCommand, S015ApplicationAuthorityUnavailable,
     S015ApplicationNotFound, S015ApplicationRefused,
-    SubmitApplicationCommand, WithdrawApplicationCommand,
+    SubmitApplicationCommand, WithdrawApplicationCommand, _append_application_event,
 )
 from src.intevia.services.organism_authority import (
     S015Authority, S015AuthorityDenied, S015AuthorityRefusalCode,
@@ -33,7 +35,8 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
-from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
@@ -256,6 +259,160 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertFalse(ApplicationDecisionEffect.objects.exists())
         self.assertFalse(OrganismMembership.objects.filter(identity=self.applicant).exists())
 
+    def test_application_chain_replays_five_acts_and_independent_commitments(self):
+        submission = self.submit()
+        application = Application.objects.get(pk=submission.application_id)
+        claim = self.service().claim_application(self.command(application))
+        replacement = self.service().reassign_application(self.command(application, kind="reassign"))
+        decided = self.service().decide_application(self.command(application, kind="decide"))
+        lineage = ApplicationLineage.objects.get(application=application)
+        events = list(ApplicationLineageEvent.objects.filter(application_lineage=lineage).order_by("sequence"))
+        self.assertEqual([row.action for row in events], [
+            "SUBMIT_APPLICATION", "CLAIM_APPLICATION", "REASSIGN_APPLICATION",
+            "DECIDE_APPLICATION",
+        ])
+        self.assertEqual([row.resulting_state for row in events], [
+            "SUBMITTED", "IN_REVIEW", "IN_REVIEW", "ACCEPTED",
+        ])
+        self.assertEqual([row.prior_state for row in events], [None, "SUBMITTED", "IN_REVIEW", "IN_REVIEW"])
+        self.assertEqual([row.actor_id for row in events], [
+            self.applicant.pk, self.coordinator.pk, self.coordinator.pk, None,
+        ])
+        self.assertEqual([row.authority_decision_reference for row in events], [
+            submission.authority_decision_reference, claim.authority_decision_reference,
+            replacement.authority_decision_reference, decided.authority_decision_reference,
+        ])
+        decision = ApplicationDecision.objects.get(application=application)
+        self.assertEqual([row.evidence_reference for row in events], [
+            f"application:{application.application_uuid}", f"csa-assignment:{claim.record_uuid}",
+            f"csa-assignment:{replacement.record_uuid}", f"application-decision:{decision.decision_uuid}",
+        ])
+        self.assertEqual(lineage.head_event_id, events[-1].pk)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT public.s015_fold_effective_state(%s, %s, %s, clock_timestamp())",
+                           ["core_applicationlineage", lineage.pk, NOW])
+            self.assertEqual(cursor.fetchone()[0], "ACCEPTED")
+            cursor.execute(
+                "SELECT a.attname, a.atttypid::regtype::text FROM pg_catalog.pg_attribute a "
+                "WHERE a.attrelid = 'public.core_applicationlineageevent'::regclass AND a.attnum > 0 "
+                "AND NOT a.attisdropped ORDER BY a.attname COLLATE \"C\""
+            )
+            inventory = [{"column": name, "pg_type": {"character varying": "varchar", "timestamp with time zone": "timestamptz"}.get(kind, kind)}
+                         for name, kind in cursor.fetchall()]
+            for event in events:
+                cursor.execute("SELECT to_jsonb(t), t.l1_commitment, t.parts_commitment, "
+                               "t.actor_state, t.actor_capacity, t.enterer_identity_id, t.l2_commitment "
+                               "FROM public.core_applicationlineageevent t WHERE id = %s", [event.pk])
+                row, l1, parts, actor_state, capacity, enterer, l2 = cursor.fetchone()
+                row = json.loads(row) if isinstance(row, str) else row
+                self.assertIsNotNone(row["recorded_at"])
+                self.assertEqual(l1, digest("s015r1", l1_preimage("core_applicationlineageevent", inventory, row)))
+                self.assertEqual(parts, digest("s015p1", parts_preimage("core_applicationlineageevent", event.event_uuid, [])))
+                self.assertIsNone(l2)
+                self.assertEqual(capacity, "STANDING")
+                self.assertEqual(actor_state, "LIVING_ORGANISM" if event.actor_id is None else "PARTY")
+                self.assertEqual(enterer, self.applicant.pk if event.sequence == 1 else self.coordinator.pk)
+
+    def test_declined_application_leaves_terminal_lineage(self):
+        application = self.claimed()
+        self.service().decide_application(self.command(application, kind="decide", outcome="DECLINE"))
+        lineage = ApplicationLineage.objects.get(application=application)
+        self.assertEqual(lineage.head_event.resulting_state, "DECLINED")
+        self.assertEqual(ApplicationLineageEvent.objects.filter(application_lineage=lineage).count(), 3)
+
+    def test_care_actor_and_composed_entry_are_not_round_two_routes(self):
+        application = self.claimed()
+        event = ApplicationLineage.objects.get(application=application).head_event
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT attname FROM pg_attribute WHERE attrelid = "
+                           "'public.core_applicationlineageevent'::regclass "
+                           "AND attnum > 0 AND NOT attisdropped AND attname <> 'id' ORDER BY attnum")
+            columns = [name for (name,) in cursor.fetchall()]
+        for changes in (
+            {"actor_state": "'CARE'"},
+            {"entry_mode": "'COMPOSED'", "composing_rule_state": "'NOT_NAMED'",
+             "composer_state": "'NOT_ESTABLISHED'"},
+        ):
+            with self.subTest(changes=changes):
+                expressions = [changes.get(column, "NULL" if column in ("recorded_at", "l1_commitment")
+                                           else "%s::uuid" if column == "event_uuid" else f"t.{column}")
+                               for column in columns]
+                with self.assertRaisesMessage(IntegrityError, "S3FU application actor/entry refused"):
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute(
+                            f"INSERT INTO public.core_applicationlineageevent ({', '.join(columns)}) "
+                            f"SELECT {', '.join(expressions)} FROM public.core_applicationlineageevent t WHERE t.id = %s",
+                            [uuid4(), event.pk],
+                        )
+
+    def test_lo_permission_and_capacity_refuse_independently(self):
+        application = self.claimed()
+        decided = self.service().decide_application(self.command(application, kind="decide"))
+        decision = ApplicationDecision.objects.get(application=application)
+
+        def repeat_decision(effective_at):
+            with transaction.atomic():
+                _append_application_event(
+                    database_alias="default", application=application,
+                    action=OrganismAction.DECIDE_APPLICATION, resulting_state="ACCEPTED",
+                    actor=None, enterer=self.coordinator, actor_access_epoch=None,
+                    authority_decision_reference=decided.authority_decision_reference,
+                    evidence_reference=f"application-decision:{decision.decision_uuid}",
+                    request_reference=f"s3:guard:{self.tag}", idempotency_key=f"s3:guard:{self.tag}",
+                    payload_fingerprint="0" * 64, occurred_at=effective_at,
+                    effective_at=effective_at, received_at=effective_at,
+                )
+
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused"):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute("ALTER TABLE public.core_livingorganismevent DISABLE TRIGGER USER")
+                    cursor.execute("DELETE FROM public.core_livingorganismevent WHERE id = %s",
+                                   [self.ids["events"]["core_livingorganismevent"]])
+                repeat_decision(NOW)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_trigger WHERE tgrelid = "
+                           "'public.core_livingorganismevent'::regclass AND NOT tgisinternal AND tgenabled <> 'O'")
+            self.assertEqual(cursor.fetchone()[0], 0)
+        dormant_at = NOW + timedelta(minutes=1)
+        with transaction.atomic(), connection.cursor() as cursor:
+            dormant_id, _ = append_event(
+                cursor, "core_livingorganismevent", self.ids["lo"], 2, "DORMANT",
+                "ACTIVE", "DORMANT", self.coordinator.pk, self.ids["basis"], fresh(),
+                pred_id=self.ids["events"]["core_livingorganismevent"],
+                eff=dormant_at, occ=dormant_at, rec=dormant_at,
+            )
+            refresh(cursor, "core_livingorganism", self.ids["lo"], dormant_at)
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO admission not permitted"):
+            repeat_decision(dormant_at + timedelta(seconds=1))
+        closed_at = NOW + timedelta(minutes=2)
+        with transaction.atomic(), connection.cursor() as cursor:
+            append_event(
+                cursor, "core_livingorganismevent", self.ids["lo"], 3, "CLOSE",
+                "DORMANT", "CLOSED", self.coordinator.pk, self.ids["basis"], fresh(),
+                pred_id=dormant_id, eff=closed_at, occ=closed_at, rec=closed_at,
+            )
+            refresh(cursor, "core_livingorganism", self.ids["lo"], closed_at)
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused"):
+            repeat_decision(closed_at + timedelta(seconds=1))
+        self.assertEqual(ApplicationLineageEvent.objects.filter(application_lineage__application=application).count(), 3)
+
+    def test_restricted_continuity_accept_is_temporary_implementation_limit(self):
+        application = self.claimed()
+        with transaction.atomic(), connection.cursor() as cursor:
+            append_event(
+                cursor, "core_livingorganismevent", self.ids["lo"], 2, "RESTRICT",
+                "ACTIVE", "RESTRICTED_CONTINUITY", self.coordinator.pk,
+                self.ids["basis"], fresh(),
+                pred_id=self.ids["events"]["core_livingorganismevent"],
+                eff=NOW, occ=NOW, rec=NOW,
+            )
+            refresh(cursor, "core_livingorganism", self.ids["lo"], NOW)
+        with self.assertRaises(S015OperationNotYetImplemented) as refused:
+            self.service().decide_application(self.command(application, kind="decide"))
+        self.assertIn("S3-IL-RC", str(refused.exception))
+        self.assertFalse(ApplicationDecision.objects.filter(application=application).exists())
+
     def test_non_assignee_cannot_decide(self):
         application = self.claimed()
         other = self.second_coordinator()
@@ -297,7 +454,7 @@ class ApplicationDecisionTests(TransactionTestCase):
                          (2, "PROPOSED", "ACTIVE", "LIVING_ORGANISM", None, None))
         self.assertEqual((admitted["actor_capacity"], admitted["entry_mode"], admitted["composer_state"],
                   admitted["enterer_identity_id"], admission.reason_class),
-                         ("NA_NO_PARTY", "TRANSPORT", "NA_TRANSPORT", self.coordinator.pk, "ADMISSION"))
+                    ("STANDING", "TRANSPORT", "NA_TRANSPORT", self.coordinator.pk, "ADMISSION"))
         self.assertEqual(admission.evidence_reference, f"application-decision:{decision.decision_uuid}")
         self.assertEqual(ApplicationDecisionEffect.objects.get(decision=decision).transition_id, admission.pk)
 
@@ -587,7 +744,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def _migration_witness(self, terminator):
         old_head = [("core", "0025_s015_application_routes")]
         new_head = [("core", "0026_s015_application_admission_time")]
-        restore_head = [("core", "0027_s015_application_authority_lineage")]
+        restore_head = current_core_leaf(connection)
         try:
             for head in (old_head, new_head):
                 # A fresh executor per step: a reused one plans from its loader's applied set, fixed when it was built.

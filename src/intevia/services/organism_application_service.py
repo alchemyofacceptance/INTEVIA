@@ -12,6 +12,7 @@ from django.db import connections, transaction
 
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
+    ApplicationLineage, ApplicationLineageEvent,
     ApplicationWithdrawal, CSAAssignment, CSAAssignmentEnd, ContextualRoleAssignment,
     Identity, IdentityTransition, LivingOrganism, OrganismCommandReceipt, OrganismMembership,
     OrganismMembershipTransition,
@@ -207,7 +208,7 @@ def _insert_admission_transition(
             event_uuid, membership.pk, sequence, None if predecessor is None else predecessor.pk,
             None if predecessor is None else predecessor.sequence, OrganismAction.TRANSITION_MEMBERSHIP.value,
             None if actor is None else actor.pk, "LIVING_ORGANISM" if actor is None else "PARTY",
-            "NA_NO_PARTY" if actor is None else "STANDING", enterer.pk, "TRANSPORT",
+            "STANDING", enterer.pk, "TRANSPORT",
             "NA_TRANSPORT", None, "NA_TRANSPORT", None,
             None, "NONE", None, predecessor_commitment, None, parts_commitment,
             None if actor is None else actor_access_epoch, basis_id,
@@ -216,6 +217,85 @@ def _insert_admission_transition(
             occurred_at, effective_at, received_at, prior_state, resulting_state, reason_class,
         ])
         return cursor.fetchone()[0]
+
+
+def _lock_owning_organism(database_alias: str, organism_id) -> None:
+    """Take the owning organism's lock ahead of the application lock (S3-FU F2-6).
+
+    Lock order for every application act: identities, then the owning organism, then the application, then its lineage.
+    Appending to the application's lineage takes the organism lock through its trigger; taking it here, first, keeps every
+    act in the same order. A second request in the same transaction returns at once.
+    """
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organism_id])
+
+
+def _append_application_event(
+    *, database_alias: str, application: Application, action: OrganismAction,
+    resulting_state: str, actor: Identity | None, enterer: Identity,
+    actor_access_epoch: int | None, authority_decision_reference: str,
+    evidence_reference: str, request_reference: str, idempotency_key: str,
+    payload_fingerprint: str, occurred_at: datetime, effective_at: datetime,
+    received_at: datetime,
+) -> None:
+    lineage = ApplicationLineage.objects.using(database_alias).select_for_update().get(application=application)
+    predecessor = ApplicationLineageEvent.objects.using(database_alias).filter(
+        pk=lineage.head_event_id,
+    ).first()
+    if predecessor is not None and (effective_at, occurred_at, received_at) < (
+        predecessor.effective_at, predecessor.occurred_at, predecessor.received_at,
+    ):
+        raise S015OperationNotYetImplemented("out_of_order_application_act", "IL-3", "S5")
+    event_uuid = uuid4()
+    sequence = 1 if predecessor is None else predecessor.sequence + 1
+    temporal_kind, temporal_reference = _resulting_temporal_basis(
+        payload_fingerprint=payload_fingerprint, effective_at=effective_at, received_at=received_at,
+    )
+    lineage_reference = "s015l1:" + hashlib.sha256(_COMMAND_DOMAIN + canonical_json_bytes({
+        "event": event_uuid, "application": application.application_uuid,
+        "sequence": sequence, "fingerprint": payload_fingerprint,
+    })).hexdigest()
+    with connections[database_alias].cursor() as cursor:
+        predecessor_commitment = None
+        if predecessor is not None:
+            cursor.execute(
+                "SELECT l1_commitment FROM public.core_applicationlineageevent WHERE id = %s",
+                [predecessor.pk],
+            )
+            predecessor_commitment = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage(%s, %s::uuid))",
+            ["core_applicationlineageevent", event_uuid],
+        )
+        parts_commitment = cursor.fetchone()[0]
+        columns = (
+            "event_uuid", "application_lineage_id", "sequence", "predecessor_id",
+            "predecessor_sequence", "action", "actor_id", "actor_state", "actor_capacity",
+            "enterer_identity_id", "entry_mode", "composing_rule_state", "composing_rule_reference",
+            "composer_state", "composer_identity_id", "effective_until", "effective_until_state",
+            "l1_commitment", "predecessor_l1_commitment", "l2_commitment", "parts_commitment",
+            "actor_access_epoch", "authority_basis_id", "authority_decision_reference",
+            "evidence_reference", "request_reference", "idempotency_key", "payload_fingerprint",
+            "lineage_reference", "temporal_basis_kind", "temporal_basis_reference", "occurred_at",
+            "effective_at", "received_at", "prior_state", "resulting_state",
+        )
+        values = (
+            event_uuid, lineage.pk, sequence, None if predecessor is None else predecessor.pk,
+            None if predecessor is None else predecessor.sequence, action.value,
+            None if actor is None else actor.pk, "LIVING_ORGANISM" if actor is None else "PARTY",
+            "STANDING", enterer.pk, "TRANSPORT", "NA_TRANSPORT", None, "NA_TRANSPORT", None,
+            None, "NONE", None, predecessor_commitment, None, parts_commitment,
+            actor_access_epoch, application.living_organism.founding_authority_basis_id,
+            authority_decision_reference, evidence_reference, request_reference, idempotency_key,
+            payload_fingerprint, lineage_reference, temporal_kind, temporal_reference,
+            occurred_at, effective_at, received_at,
+            None if predecessor is None else predecessor.resulting_state, resulting_state,
+        )
+        cursor.execute(
+            f"INSERT INTO public.core_applicationlineageevent ({', '.join(columns)}) "
+            f"VALUES ({', '.join(['%s'] * len(columns))})",
+            values,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,6 +421,16 @@ class OrganismApplicationService:
             )
         except Application.DoesNotExist as exc:
             raise S015ApplicationNotFound("application not found") from exc
+        if action is OrganismAction.DECIDE_APPLICATION:
+            # Lock order for every application act (S3-FU F2-6): identities first -- the actor, then for a decision the
+            # applicant's key share (an ACCEPT's membership rows take it through their foreign keys, and the withdrawal holds
+            # the applicant FOR UPDATE as its actor lock) -- then the owning organism, then the application, then its lineage.
+            # The key share is taken here, before the actor-context lock, so no decision holds an organism-level lock while it
+            # waits for the applicant.
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
+                )
         actor_membership, role_refs = _lock_actor_membership_context(
             database_alias=self._alias, actor_identity_id=actor.identity_id,
             living_organism_id=application.living_organism.organism_id,
@@ -367,15 +457,7 @@ class OrganismApplicationService:
             idempotency_key=idempotency_key, received_at=received_at,
             target_fingerprint=authority_target_fingerprint(target),
         ))
-        if action is OrganismAction.DECIDE_APPLICATION:
-            # Lock order, to avoid a deadlock with the applicant's withdrawal: an ACCEPT writes membership rows whose foreign keys
-            # take FOR KEY SHARE on the applicant's Identity, which the withdrawal holds FOR UPDATE (its actor lock) before it
-            # takes the application lock. Taking the applicant's key share first makes both commands lock applicant, then
-            # application, so neither can hold what the other waits for.
-            with connections[self._alias].cursor() as cursor:
-                cursor.execute(
-                    "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
-                )
+        _lock_owning_organism(self._alias, application.living_organism.organism_id)
         application = Application.objects.using(self._alias).select_for_update().get(pk=application.pk)
         return _CoordinatorContext(
             actor, actor_membership, application, decision, fingerprint, request_reference,
@@ -512,6 +594,17 @@ class OrganismApplicationService:
                 raise S015ApplicationRefused("predecessor is not an eligible withdrawn application")
             if not applicant_eligible(actor, effective_at, application.recorded_at, database_alias=self._alias):
                 raise S015ApplicationRefused("applicant account is not eligible at record time")
+            ApplicationLineage.objects.using(self._alias).create(application=application)
+            _append_application_event(
+                database_alias=self._alias, application=application,
+                action=OrganismAction.SUBMIT_APPLICATION, resulting_state="SUBMITTED",
+                actor=actor, enterer=actor, actor_access_epoch=actor.access_epoch,
+                authority_decision_reference=decision.authority_decision_reference,
+                evidence_reference=f"application:{application.application_uuid}",
+                request_reference=request_reference, idempotency_key=idempotency_key,
+                payload_fingerprint=fingerprint, occurred_at=occurred_at,
+                effective_at=effective_at, received_at=received_at,
+            )
             return self._finish(
                 actor=actor, action=OrganismAction.SUBMIT_APPLICATION, request_reference=request_reference,
                 idempotency_key=idempotency_key, fingerprint=fingerprint, application=application,
@@ -561,6 +654,7 @@ class OrganismApplicationService:
                 target=target, request_reference=request_reference, idempotency_key=idempotency_key,
                 received_at=received_at,
             )
+            _lock_owning_organism(self._alias, application.living_organism.organism_id)
             if ApplicationDecision.objects.using(self._alias).filter(application=application).exists():
                 raise S015ApplicationRefused("application already decided")
             if ApplicationWithdrawal.objects.using(self._alias).filter(application=application).exists():
@@ -574,6 +668,16 @@ class OrganismApplicationService:
                 authority_reference=decision.authority_reference, actor_access_epoch=actor.access_epoch,
             )
             withdrawal.refresh_from_db(using=self._alias)
+            _append_application_event(
+                database_alias=self._alias, application=application,
+                action=OrganismAction.WITHDRAW_APPLICATION, resulting_state="WITHDRAWN",
+                actor=actor, enterer=actor, actor_access_epoch=actor.access_epoch,
+                authority_decision_reference=decision.authority_decision_reference,
+                evidence_reference=f"application-withdrawal:{application.application_uuid}",
+                request_reference=request_reference, idempotency_key=idempotency_key,
+                payload_fingerprint=fingerprint, occurred_at=occurred_at,
+                effective_at=effective_at, received_at=received_at,
+            )
             return self._finish(
                 actor=actor, action=OrganismAction.WITHDRAW_APPLICATION, request_reference=request_reference,
                 idempotency_key=idempotency_key, fingerprint=fingerprint, application=application,
@@ -603,6 +707,16 @@ class OrganismApplicationService:
                 deciding_party_id=context.application.living_organism_id,
                 engagement_reference=str(claim.assignment_uuid), settings_basis=_SETTINGS_BASIS,
                 actor=context.actor, enterer=context.actor, occurred_at=context.occurred_at,
+                effective_at=context.effective_at, received_at=context.received_at,
+            )
+            _append_application_event(
+                database_alias=self._alias, application=context.application,
+                action=OrganismAction.CLAIM_APPLICATION, resulting_state="IN_REVIEW",
+                actor=context.actor, enterer=context.actor, actor_access_epoch=context.actor.access_epoch,
+                authority_decision_reference=context.decision.authority_decision_reference,
+                evidence_reference=f"csa-assignment:{claim.assignment_uuid}",
+                request_reference=context.request_reference, idempotency_key=context.idempotency_key,
+                payload_fingerprint=context.fingerprint, occurred_at=context.occurred_at,
                 effective_at=context.effective_at, received_at=context.received_at,
             )
             return self._finish_coordinator(
@@ -646,6 +760,16 @@ class OrganismApplicationService:
                 occurred_at=context.occurred_at, effective_at=context.effective_at,
                 received_at=context.received_at,
             )
+            _append_application_event(
+                database_alias=self._alias, application=context.application,
+                action=OrganismAction.REASSIGN_APPLICATION, resulting_state="IN_REVIEW",
+                actor=context.actor, enterer=context.actor, actor_access_epoch=context.actor.access_epoch,
+                authority_decision_reference=context.decision.authority_decision_reference,
+                evidence_reference=f"csa-assignment:{replacement.assignment_uuid}",
+                request_reference=context.request_reference, idempotency_key=context.idempotency_key,
+                payload_fingerprint=context.fingerprint, occurred_at=context.occurred_at,
+                effective_at=context.effective_at, received_at=context.received_at,
+            )
             return self._finish_coordinator(
                 context, OrganismAction.REASSIGN_APPLICATION, replacement.assignment_uuid,
                 replacement.recorded_at, completion_due_at=due_at,
@@ -671,6 +795,14 @@ class OrganismApplicationService:
             ).order_by("-engagement_ordinal").first()
             if engagement is None or engagement.route != "LO_CSA" or engagement.engagement_reference != str(claim.assignment_uuid):
                 raise S015ApplicationRefused("no current CSA engagement")
+            if outcome == "ACCEPT":
+                with connections[self._alias].cursor() as cursor:
+                    cursor.execute(
+                        "SELECT public.s015_fold_effective_state(%s, %s, %s, clock_timestamp())",
+                        ["core_livingorganism", context.application.living_organism_id, context.effective_at],
+                    )
+                    if cursor.fetchone()[0] == "RESTRICTED_CONTINUITY":
+                        raise S015OperationNotYetImplemented("restricted_continuity_admission", "S3-IL-RC", "S4")
             decision = ApplicationDecision.objects.using(self._alias).create(
                 application=context.application, route="LO_CSA",
                 deciding_party_id=context.application.living_organism_id, outcome=outcome,
@@ -683,6 +815,17 @@ class OrganismApplicationService:
             decision.refresh_from_db(using=self._alias)
             if outcome == "ACCEPT":
                 self._admit(context, decision)
+            _append_application_event(
+                database_alias=self._alias, application=context.application,
+                action=OrganismAction.DECIDE_APPLICATION,
+                resulting_state="ACCEPTED" if outcome == "ACCEPT" else "DECLINED",
+                actor=None, enterer=context.actor, actor_access_epoch=None,
+                authority_decision_reference=context.decision.authority_decision_reference,
+                evidence_reference=f"application-decision:{decision.decision_uuid}",
+                request_reference=context.request_reference, idempotency_key=context.idempotency_key,
+                payload_fingerprint=context.fingerprint, occurred_at=context.occurred_at,
+                effective_at=context.effective_at, received_at=context.received_at,
+            )
             return self._finish_coordinator(
                 context, OrganismAction.DECIDE_APPLICATION, decision.decision_uuid, decision.recorded_at,
             )

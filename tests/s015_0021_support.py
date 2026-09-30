@@ -13,6 +13,16 @@ import uuid
 
 from django.db import connection
 
+
+def current_core_leaf(connection):
+    from django.db.migrations.executor import MigrationExecutor
+
+    leaves = MigrationExecutor(connection).loader.graph.leaf_nodes("core")
+    if len(leaves) != 1:
+        raise AssertionError(f"expected one core migration leaf, found {leaves!r}")
+    return leaves
+
+
 T0 = dt.datetime(2026, 9, 5, 10, 0, 0, tzinfo=dt.timezone.utc)
 T_MINUS_1D = T0 - dt.timedelta(days=1)
 SIX_CODES = ["INTEVIA_FOUNDER_STEWARD", "INTEVIA_STEWARD", "INTEVIA_GUIDING_STEWARD", "INTEVIA_EMERGENCY_STEWARD", "INTEVIA_PRIVACY_COORDINATOR", "COORDINATOR"]
