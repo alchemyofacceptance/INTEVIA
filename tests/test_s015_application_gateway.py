@@ -12,7 +12,9 @@ from django.test import TransactionTestCase
 
 from core.forms import LOApplicationQuestionDraftForm, LOApplicationSettingsDraftForm
 from core.models import (
-    Application, Identity, IdentityTransition, LivingOrganism, LivingOrganismEvent,
+    Application, ApplicationDecision, ApplicationEngagement, ApplicationLineageEvent, Identity,
+    IdentityTransition, LivingOrganism, LivingOrganismEvent, OrganismMembership,
+    OrganismMembershipTransition,
     LOApplicationQuestionVersion, LOApplicationSettingsVersion, LOGovernanceConfigurationVersion,
 )
 from core.organism_contract import OrganismAction
@@ -47,6 +49,26 @@ class _TestFixtureLONameSource:
 
     def name_for(self, living_organism):
         return self.fixture_name
+
+
+class FakeCareExecutor:
+    """TEST SUBSTITUTE — stands in for the CARE principal (S3-IL-CARE-EXEC); never a production source."""
+
+    def __init__(self, identity):
+        self.identity = identity
+
+    def identity_for(self, living_organism):
+        return self.identity
+
+
+class _TestDiscussionWelcome:
+    """Test-only substitute for the unavailable DISCUSSION welcome (S3-IL-NOTICE)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def send_for(self, application, decision):
+        self.calls.append((application.pk, decision.pk))
 
 
 @POSTGRES
@@ -119,6 +141,321 @@ class ApplicationGatewayTests(TransactionTestCase):
             request_reference=f"s3:submit:{token}", idempotency_key=f"s3:submit:{token}",
             occurred_at=NOW, effective_at=NOW, received_at=NOW, answer=answer,
         ))
+
+    def automatic_gateway(self):
+        with transaction.atomic(), connection.cursor() as cursor:
+            seed_test_gateway(cursor, self.ids)
+        settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": True, "processing_responsibility": "LO",
+        })
+        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        return settings
+
+    def automatic_service(self):
+        with transaction.atomic(), connection.cursor() as cursor:
+            care_pk = seed_identity(cursor, f"fake-care-{fresh()}")
+        care = Identity.objects.select_related("credential").get(pk=care_pk)
+        welcome = _TestDiscussionWelcome()
+        self.service = OrganismApplicationService(
+            authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
+            name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care), welcome=welcome,
+        )
+        return care, welcome
+
+    def test_automatic_acceptance_has_separate_applicant_and_composed_lo_acts(self):
+        settings = self.automatic_gateway()
+        care, welcome = self.automatic_service()
+        applicant = self.applicant()
+        result = self.submit(applicant)
+        application = Application.objects.get(pk=result.application_id)
+        decision = ApplicationDecision.objects.get(application=application)
+        engagement = ApplicationEngagement.objects.get(application=application)
+        admission = OrganismMembershipTransition.objects.get(
+            membership__identity=applicant, membership__living_organism=self.organism,
+            resulting_state="ACTIVE",
+        )
+        lineage = list(ApplicationLineageEvent.objects.filter(
+            application_lineage__application=application,
+        ).order_by("sequence"))
+        chain_columns = ("actor_state", "entry_mode", "composing_rule_reference",
+                         "composer_identity_id", "enterer_identity_id")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT actor_state, entry_mode, composing_rule_reference, composer_identity_id, "
+                "enterer_identity_id FROM core_organismmembershiptransition WHERE id = %s",
+                [admission.pk],
+            )
+            admission_chain = dict(zip(chain_columns, cursor.fetchone()))
+            cursor.execute(
+                "SELECT e.actor_state, e.entry_mode, e.composing_rule_reference, "
+                "e.composer_identity_id, e.enterer_identity_id "
+                "FROM core_applicationlineageevent e "
+                "JOIN core_applicationlineage l ON l.id = e.application_lineage_id "
+                "WHERE l.application_id = %s ORDER BY e.sequence",
+                [application.pk],
+            )
+            lineage_chain = [dict(zip(chain_columns, row)) for row in cursor.fetchall()]
+        rule = f"application-settings-version:{settings.version_uuid}"
+        self.assertEqual(application.actor_id, applicant.pk)
+        self.assertEqual(application.enterer_id, applicant.pk)
+        self.assertEqual(application.settings_version_id, settings.pk)
+        self.assertEqual(engagement.route, "LO_AUTOMATIC")
+        self.assertIsNone(engagement.actor_id)
+        self.assertEqual(engagement.enterer_id, care.pk)
+        self.assertEqual(engagement.settings_basis, rule)
+        self.assertEqual(decision.route, "LO_AUTOMATIC")
+        self.assertEqual(decision.outcome, "ACCEPT")
+        self.assertEqual(decision.deciding_party_id, self.organism.pk)
+        self.assertEqual(decision.executor_id, care.pk)
+        self.assertIsNone(decision.responsible_coordinator_id)
+        self.assertIsNone(decision.assignment_reference_id)
+        self.assertEqual(admission_chain["actor_state"], "LIVING_ORGANISM")
+        self.assertIsNone(admission.actor_id)
+        self.assertEqual(admission_chain["entry_mode"], "COMPOSED")
+        self.assertEqual(admission_chain["composing_rule_reference"], rule)
+        self.assertEqual(admission_chain["composer_identity_id"], care.pk)
+        self.assertEqual(admission_chain["enterer_identity_id"], care.pk)
+        self.assertEqual(len(lineage), 2)
+        self.assertEqual(len(lineage_chain), 2)
+        self.assertEqual([event.action for event in lineage], ["SUBMIT_APPLICATION", "DECIDE_APPLICATION"])
+        self.assertEqual(lineage[0].actor_id, applicant.pk)
+        self.assertEqual(lineage_chain[0]["entry_mode"], "TRANSPORT")
+        self.assertEqual(lineage_chain[1]["actor_state"], "LIVING_ORGANISM")
+        self.assertIsNone(lineage[1].actor_id)
+        self.assertEqual(lineage_chain[1]["entry_mode"], "COMPOSED")
+        self.assertEqual(lineage_chain[1]["composing_rule_reference"], rule)
+        self.assertEqual(lineage_chain[1]["composer_identity_id"], care.pk)
+        self.assertEqual(lineage_chain[1]["enterer_identity_id"], care.pk)
+        self.assertNotEqual(lineage[0].authority_decision_reference, lineage[1].authority_decision_reference)
+        self.assertEqual(welcome.calls, [(application.pk, decision.pk)])
+        self.assertEqual(OrganismMembership.objects.get(identity=applicant, living_organism=self.organism).state, "ACTIVE")
+        self.assertFalse(OrganismMembershipTransition.objects.filter(
+            membership__identity=applicant, resulting_state="PROBATIONARY",
+        ).exists())
+
+    def test_automatic_real_use_refuses_before_application_write(self):
+        self.automatic_gateway()
+        applicant = self.applicant()
+        before = (Application.objects.count(), ApplicationLineageEvent.objects.count(), ApplicationDecision.objects.count())
+        with self.assertRaises(S015OperationNotYetImplemented) as refused:
+            self.submit(applicant)
+        self.assertEqual(refused.exception.limit_id, "S3-IL-CARE-EXEC")
+        self.assertEqual(
+            (Application.objects.count(), ApplicationLineageEvent.objects.count(), ApplicationDecision.objects.count()),
+            before,
+        )
+
+    def test_automatic_welcome_unavailable_rolls_back_every_row(self):
+        self.automatic_gateway()
+        care, _ = self.automatic_service()
+        self.service = OrganismApplicationService(
+            authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
+            name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care),
+        )
+        applicant = self.applicant()
+        with self.assertRaises(S015OperationNotYetImplemented) as refused:
+            self.submit(applicant)
+        self.assertEqual(refused.exception.limit_id, "S3-IL-NOTICE")
+        self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
+        self.assertFalse(OrganismMembership.objects.filter(identity=applicant, living_organism=self.organism).exists())
+
+    def test_automatic_closed_gateway_refuses_without_admission(self):
+        self.automatic_gateway()
+        self.automatic_service()
+        applicant = self.applicant()
+        with transaction.atomic(), connection.cursor() as cursor:
+            self.organism.refresh_from_db()
+            append_event(cursor, "core_livingorganismevent", self.organism.pk,
+                         self.organism.head_event.sequence + 1, "CLOSE", "ACTIVE", "CLOSED",
+                         self.actor.pk, self.ids["basis"], fresh(), pred_id=self.organism.head_event_id,
+                         eff=NOW, occ=NOW, rec=NOW)
+            refresh(cursor, "core_livingorganism", self.organism.pk, NOW)
+        with self.assertRaisesMessage(S015ApplicationRefused, "S3FU gateway closed"):
+            self.submit(applicant)
+        self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
+
+    def test_automatic_off_remains_pending(self):
+        with transaction.atomic(), connection.cursor() as cursor:
+            seed_test_gateway(cursor, self.ids)
+        applicant = self.applicant()
+        result = self.submit(applicant)
+        self.assertFalse(ApplicationDecision.objects.filter(application_id=result.application_id).exists())
+        self.assertEqual(ApplicationLineageEvent.objects.filter(
+            application_lineage__application_id=result.application_id,
+        ).count(), 1)
+
+    def test_automatic_route_vocabulary_and_off_version_sql_refusal(self):
+        self.assertEqual(
+            {value for value, _ in ApplicationEngagement.Route.choices},
+            {"LO_CQ", "LO_CSA", "LO_AUTOMATIC", "CIRCLE_CQ", "CIRCLE_CSA"},
+        )
+        with transaction.atomic(), connection.cursor() as cursor:
+            seeded = seed_test_gateway(cursor, self.ids)
+        applicant = self.applicant()
+        application = Application.objects.get(pk=self.submit(applicant).application_id)
+        off = LOApplicationSettingsVersion.objects.get(pk=seeded["core_loapplicationsettingsversion"])
+        rule = f"application-settings-version:{off.version_uuid}"
+        with self.assertRaisesMessage(IntegrityError, "S3FU automatic engagement refused"):
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, "
+                    "deciding_party_id, engagement_reference, settings_basis, actor_id, enterer_id, "
+                    "occurred_at, effective_at, received_at) "
+                    "VALUES (%s, 1, 'LO_AUTOMATIC', %s, %s, %s, NULL, %s, %s, %s, %s)",
+                    [application.pk, self.organism.pk, rule, rule, self.actor.pk, NOW, NOW, NOW],
+                )
+        self.assertFalse(ApplicationEngagement.objects.filter(application=application).exists())
+
+    def test_automatic_uses_recorded_setting_after_later_effective_change(self):
+        setting = self.automatic_gateway()
+        self.automatic_service()
+        applicant = self.applicant()
+        accept = self.service._automatic_accept
+
+        def change_then_accept(application, care, request_reference, idempotency_key, fingerprint):
+            # Test-only effect fixture: interposes a later effective setting, not a concurrent race.
+            later = LOApplicationSettingsVersion.objects.create(
+                living_organism=self.organism, actor=self.actor, enterer=self.actor,
+                supersedes=setting, occurred_at=NOW + timedelta(seconds=1),
+                effective_at=NOW + timedelta(seconds=1), received_at=NOW + timedelta(seconds=1),
+                applications_open=False, automatic_acceptance=False, processing_responsibility="LO",
+            )
+            with connection.cursor() as cursor:
+                self.organism.refresh_from_db()
+                predecessor = self.organism.head_event
+                append_event(
+                    cursor, "core_livingorganismevent", self.organism.pk, predecessor.sequence + 1,
+                    "EFFECT_APPLICATION_SETTINGS", predecessor.resulting_state, predecessor.resulting_state,
+                    None, self.ids["basis"], fresh(), pred_id=predecessor.pk,
+                    eff=NOW + timedelta(seconds=1), occ=NOW + timedelta(seconds=1),
+                    rec=NOW + timedelta(seconds=1),
+                    extra={"actor_state": "LIVING_ORGANISM", "actor_access_epoch": None,
+                           "enterer_identity_id": self.actor.pk,
+                           "evidence_reference": f"application-settings-version:{later.version_uuid}"},
+                )
+                refresh(cursor, "core_livingorganism", self.organism.pk, NOW + timedelta(seconds=1))
+            accepted = accept(application, care, request_reference, idempotency_key, fingerprint)
+            self.assertEqual(gateway_version_status("default", later, datetime.now(timezone.utc)), "EFFECTIVE")
+            return accepted
+
+        self.service._automatic_accept = change_then_accept
+        result = self.submit(applicant)
+        application = Application.objects.get(pk=result.application_id)
+        self.assertEqual(application.settings_version_id, setting.pk)
+        self.assertEqual(ApplicationDecision.objects.get(application=application).route, "LO_AUTOMATIC")
+        self.assertEqual(ApplicationEngagement.objects.get(application=application).settings_basis,
+                         f"application-settings-version:{setting.version_uuid}")
+
+    def test_0030_reverse_refuses_live_automatic_rows(self):
+        self.automatic_gateway()
+        self.automatic_service()
+        self.submit(self.applicant())
+        migration = importlib.import_module("core.migrations.0030_s015_automatic_application")
+        with self.assertRaisesMessage(RuntimeError, "LO_AUTOMATIC rows require forward correction"):
+            migration.reverse(None, type("Editor", (), {"connection": connection})())
+        self.assertTrue(ApplicationDecision.objects.filter(route="LO_AUTOMATIC").exists())
+
+    def test_automatic_composed_admission_direct_sql_refusals(self):
+        self.automatic_gateway()
+        care, _ = self.automatic_service()
+        applicant = self.applicant()
+        result = self.submit(applicant)
+        admission = OrganismMembershipTransition.objects.get(
+            membership__identity=applicant, membership__living_organism=self.organism,
+            resulting_state="ACTIVE",
+        )
+        off_version = LOApplicationSettingsVersion.objects.create(
+            living_organism=self.organism, actor=self.actor, enterer=self.actor,
+            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            applications_open=True, automatic_acceptance=False, processing_responsibility="LO",
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'core_organismmembershiptransition' "
+                "AND is_generated = 'NEVER' AND column_name NOT IN ('id', 'recorded_at') "
+                "ORDER BY ordinal_position"
+            )
+            columns = [row[0] for row in cursor.fetchall()]
+        for label, overrides, message in (
+            ("wrong recorded rule", {"composing_rule_reference": "application-settings-version:" + str(uuid4())},
+             "S3FU composed LO admission refused"),
+            ("unrecorded off version", {"composing_rule_reference": f"application-settings-version:{off_version.version_uuid}"},
+             "S3FU composed LO admission refused"),
+            ("CARE as actor", {"actor_id": care.pk}, "S3FU composed LO admission refused"),
+            ("TRANSPORT with automatic route", {
+                "entry_mode": "TRANSPORT", "composing_rule_state": "NA_TRANSPORT",
+                "composing_rule_reference": None, "composer_state": "NA_TRANSPORT",
+                "composer_identity_id": None,
+            }, "S3 LO actor lacks matching ACCEPT decision"),
+        ):
+            with self.subTest(label=label), self.assertRaisesMessage(IntegrityError, message):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    event_uuid = str(uuid4())
+                    values = {
+                        "event_uuid": ("%s", event_uuid), "sequence": ("t.sequence + 1", None),
+                        "predecessor_id": ("t.id", None),
+                        "predecessor_sequence": ("t.sequence", None), "l1_commitment": ("NULL", None),
+                        "predecessor_l1_commitment": ("t.l1_commitment", None), "parts_commitment": (
+                            "public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage("
+                            "'core_organismmembershiptransition', %s::uuid))", event_uuid),
+                        "lineage_reference": ("%s", f"s015l1:{'a' * 64}"),
+                        "effective_at": ("%s", NOW + timedelta(seconds=1)),
+                        "occurred_at": ("%s", NOW + timedelta(seconds=1)),
+                        "received_at": ("%s", NOW + timedelta(seconds=1)),
+                    }
+                    for column, value in overrides.items():
+                        values[column] = ("%s", value)
+                    parameters = []
+                    expressions = []
+                    for column in columns:
+                        expression, parameter = values.get(column, (f"t.{column}", None))
+                        expressions.append(expression)
+                        if "%s" in expression:
+                            parameters.append(parameter)
+                    cursor.execute(
+                        f"INSERT INTO core_organismmembershiptransition ({', '.join(columns)}) "
+                        f"SELECT {', '.join(expressions)} FROM core_organismmembershiptransition t WHERE t.id = %s",
+                        [*parameters, admission.pk],
+                    )
+
+    def test_automatic_decision_direct_sql_refusals(self):
+        class Rollback(Exception):
+            pass
+
+        self.automatic_gateway()
+        care, _ = self.automatic_service()
+        applicant = self.applicant()
+        with self.assertRaises(Rollback):
+            with transaction.atomic():
+                # Test-only incomplete automatic act; the outer transaction is always rolled back.
+                self.service._automatic_accept = lambda *args: None
+                result = self.submit(applicant)
+                application = Application.objects.get(pk=result.application_id)
+                rule = f"application-settings-version:{application.settings_version.version_uuid}"
+                ApplicationEngagement.objects.create(
+                    application=application, engagement_ordinal=1, route="LO_AUTOMATIC",
+                    deciding_party=self.organism, engagement_reference=rule, settings_basis=rule,
+                    actor=None, enterer=care, occurred_at=NOW, effective_at=NOW, received_at=NOW,
+                )
+                for label, outcome, coordinator in (
+                    ("DECLINE", "DECLINE", None),
+                    ("Coordinator fields", "ACCEPT", self.actor.pk),
+                ):
+                    with self.subTest(label=label), self.assertRaisesMessage(
+                        IntegrityError, "S3FU automatic decision refused",
+                    ):
+                        with transaction.atomic(), connection.cursor() as cursor:
+                            cursor.execute(
+                                "INSERT INTO core_applicationdecision (decision_uuid, application_id, route, "
+                                "deciding_party_id, outcome, responsible_coordinator_id, "
+                                "authority_decision_reference, executor_id, enterer_id, "
+                                "occurred_at, effective_at, received_at) "
+                                "VALUES (%s, %s, 'LO_AUTOMATIC', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                [str(uuid4()), application.pk, self.organism.pk, outcome, coordinator,
+                                 "s015d1:" + "a" * 64, care.pk, care.pk, NOW, NOW, NOW],
+                            )
+                raise Rollback()
 
     def test_name_dependency_default_draft_and_unselected_settings(self):
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
@@ -345,6 +682,58 @@ class ApplicationGatewayTests(TransactionTestCase):
                         self.draft(action, {})
                     self.assertEqual(refused.exception.limit_id, limit)
                     raise Rollback()
+
+    def test_cq_active_without_governing_flags_allows_coordinator_changes(self):
+        # TEST FIXTURE — installs a configuration whose production creation route is unavailable (S3-IL-CQ);
+        # establishes behaviour under it, not delivery of that route.
+        with transaction.atomic(), connection.cursor() as cursor:
+            self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {})
+            configuration = LOGovernanceConfigurationVersion.objects.create(
+                living_organism=self.organism, actor=self.actor, enterer=self.actor,
+                occurred_at=NOW, effective_at=NOW, received_at=NOW,
+                cq_active=True, inherit_portal_cq_settings=False,
+                require_cq_to_change_lo_settings=False,
+                require_cq_to_change_application_question=False,
+            )
+            self.direct_effect(OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                               f"governance-configuration-version:{configuration.version_uuid}")
+            refresh(cursor, "core_livingorganism", self.organism.pk, NOW)
+        for action, fields in (
+            (OrganismAction.EFFECT_APPLICATION_QUESTION,
+             {"question_text": "Test-only replacement?", "answer_format": "LONG_ANSWER"}),
+            (OrganismAction.EFFECT_APPLICATION_SETTINGS,
+             {"applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO"}),
+        ):
+            with self.subTest(action=action):
+                version = self.draft(action, fields)
+                self.effect(version, action)
+                self.assertEqual(gateway_version_status("default", version, datetime.now(timezone.utc)), "EFFECTIVE")
+        with transaction.atomic(), connection.cursor() as cursor:
+            other_pk = seed_identity(cursor, f"cq-other-{fresh()}")
+            membership_uuid = u(f"cq-non-coordinator:{fresh()}")
+            cursor.execute(
+                "INSERT INTO core_organismmembership (membership_uuid, state, created_at, "
+                "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
+                "identity_id, living_organism_id) "
+                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
+                (membership_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                 other_pk, self.organism.pk),
+            )
+            membership_id = cursor.fetchone()[0]
+            append_event(cursor, "core_organismmembershiptransition", membership_id, 1, "JOIN", None, "ACTIVE",
+                         other_pk, self.ids["basis"], fresh(), extra={"reason_class": "FOUNDING"})
+            refresh(cursor, "core_organismmembership", membership_id)
+        other = Identity.objects.select_related("credential").get(pk=other_pk)
+        for action in (OrganismAction.EFFECT_APPLICATION_QUESTION, OrganismAction.EFFECT_APPLICATION_SETTINGS):
+            with self.subTest(non_coordinator=action), self.assertRaisesMessage(
+                S015ApplicationRefused, "effective Coordinator office is required",
+            ):
+                self.service.save_gateway_draft(GatewayDraftCommand(
+                    credential=other.credential, living_organism_id=self.organism.organism_id,
+                    action=action, request_reference=f"s4:noncoord:{action.value}",
+                    idempotency_key=f"s4:noncoord:{action.value}",
+                    occurred_at=NOW, effective_at=NOW, received_at=NOW, fields={},
+                ))
 
     def test_four_closed_states_and_version_evidence_survives_a_change(self):
         class Rollback(Exception):

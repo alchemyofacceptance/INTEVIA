@@ -1,7 +1,10 @@
 """S3 round-1 PostgreSQL schema and historical canonical-byte contracts."""
 
 import datetime as dt
+import hashlib
+import importlib
 import json
+import re
 import uuid
 from unittest import skipUnless
 
@@ -27,7 +30,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0029_s015_application_gateway"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0030_s015_automatic_application"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -62,6 +65,111 @@ class ApplicationLineageSchema(TransactionTestCase):
                 definition = cursor.fetchone()[0]
                 self.assertIn("core_applicationlineageevent", definition)
                 self.assertNotIn("core_unknown_event", definition)
+
+    def test_s015_admission_guard_census(self):
+        routes = importlib.import_module("core.migrations.0025_s015_application_routes")
+        time_guards = importlib.import_module("core.migrations.0026_s015_application_admission_time")
+        chain = importlib.import_module("core.migrations.0028_s015_application_lineage_chain")
+        gateway = importlib.import_module("core.migrations.0029_s015_application_gateway")
+        automatic = importlib.import_module("core.migrations.0030_s015_automatic_application")
+        declared = {
+            name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
+            for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
+                         "s3_decision_guard", "s3_assign_record_time")
+        }
+        declared.update({sql.split("public.", 1)[1].split("()", 1)[0]: sql
+                         for sql in time_guards.guard_bodies(post_lock_time=True)
+                         if sql.split("public.", 1)[1].split("()", 1)[0] in
+                         {"s3_engagement_guard", "s3_terminal_lock"}})
+        declared.update({
+            "s3_guard_lo_actor": automatic.member_sql(),
+            "s3fu_guard_lo_capacity": gateway.capacity_sql(chain.CAPACITY_SQL),
+            "s3fu_guard_lo_admission_permission": gateway.permission_sql(chain.PERMISSION_SQL),
+            "s3fu_guard_application_lineage_actor": automatic.lineage_sql(),
+            "s3fu_guard_auto_engagement": automatic.AUTO_ENGAGEMENT_SQL,
+            "s3fu_guard_auto_decision": automatic.AUTO_DECISION_SQL,
+        })
+        declared_triggers = {
+            "core_organismmembershiptransition": {
+                "s3_lo_actor_scope": "s3_guard_lo_actor", "s3_lo_effect_check": "s3_guard_lo_effect",
+                "s3fu_00_capacity": "s3fu_guard_lo_capacity",
+                "s3fu_20_permission": "s3fu_guard_lo_admission_permission",
+            },
+            "core_applicationlineageevent": {
+                "s3fu_00_capacity": "s3fu_guard_lo_capacity",
+                "s3fu_10_actor": "s3fu_guard_application_lineage_actor",
+                "s3fu_20_permission": "s3fu_guard_lo_admission_permission",
+            },
+            "core_applicationdecision": {
+                "s3_00_record_time": "s3_assign_record_time",
+                "s3_10_s3_terminal_lock": "s3_terminal_lock",
+                "s3_20_s3_decision_guard": "s3_decision_guard",
+                "s3_decision_effect_check": "s3_guard_decision_effect",
+                "s3_21_auto_decision": "s3fu_guard_auto_decision",
+            },
+            "core_applicationdecisioneffect": {
+                "s3_00_record_time": "s3_assign_record_time", "s3_effect_check": "s3_guard_effect",
+            },
+            "core_applicationengagement": {
+                "s3_00_record_time": "s3_assign_record_time",
+                "s3_10_s3_engagement_guard": "s3_engagement_guard",
+                "s3_11_auto_engagement": "s3fu_guard_auto_engagement",
+            },
+        }
+        for table in ("core_applicationdecision", "core_applicationdecisioneffect", "core_applicationengagement"):
+            declared_triggers[table]["s3_row_immutable"] = "s015_refuse_row_mutation"
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.proname, md5(pg_get_functiondef(p.oid)), p.prosrc "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.proname = ANY(%s)", [list(declared)],
+            )
+            installed = {name: (hash_value, body) for name, hash_value, body in cursor.fetchall()}
+            self.assertEqual(set(installed), set(declared))
+            cursor.execute(
+                "SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND (proname LIKE 's3_guard_lo_%' "
+                "OR proname LIKE 's3fu_guard_lo_%' OR proname LIKE 's3fu_guard_auto_%' "
+                "OR proname LIKE 's3fu_guard_application_lineage_%' "
+                "OR proname LIKE 's3_guard_decision_%')"
+            )
+            self.assertEqual(
+                {row[0] for row in cursor.fetchall()},
+                {"s3_guard_lo_actor", "s3_guard_lo_effect", "s3fu_guard_lo_capacity",
+                 "s3fu_guard_lo_admission_permission", "s3fu_guard_auto_engagement",
+                 "s3fu_guard_auto_decision", "s3fu_guard_application_lineage_actor",
+                 "s3_guard_decision_effect"},
+            )
+            for name, sql in declared.items():
+                with self.subTest(function=name, installed_md5=installed[name][0]):
+                    self.assertEqual(installed[name][1], sql.split("AS $$", 1)[1].rsplit("$$;", 1)[0])
+                    cursor.execute(sql.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
+                    cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [f"pg_temp.{name}()"])
+                    expected_definition = re.sub(
+                        r"(?<=FUNCTION )pg_temp(?:_\d+)?\.", "public.", cursor.fetchone()[0], count=1,
+                    )
+                    expected_md5 = hashlib.md5(expected_definition.encode("utf-8")).hexdigest()
+                    self.assertEqual(installed[name][0], expected_md5)
+            cursor.execute(
+                "SELECT c.relname, t.tgname, p.proname, pg_get_triggerdef(t.oid) "
+                "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_proc p ON p.oid = t.tgfoid "
+                "WHERE n.nspname = 'public' AND c.relname = ANY(%s) "
+                "AND (t.tgname LIKE 's3\\_%%' ESCAPE '\\' OR t.tgname LIKE 's3fu\\_%%' ESCAPE '\\') "
+                "AND NOT t.tgisinternal", [list(declared_triggers)],
+            )
+            installed_triggers = {}
+            for table, trigger, function, definition in cursor.fetchall():
+                installed_triggers.setdefault(table, {})[trigger] = function
+                with self.subTest(table=table, trigger=trigger):
+                    self.assertIn(f"{function}()", definition)
+                    if trigger in {"s3_10_s3_engagement_guard", "s3_20_s3_decision_guard",
+                                   "s3_11_auto_engagement", "s3_21_auto_decision"}:
+                        self.assertIn("LO_AUTOMATIC", definition)
+                        self.assertIn("<>" if trigger in {"s3_10_s3_engagement_guard",
+                                                               "s3_20_s3_decision_guard"} else "=", definition)
+            self.assertEqual(installed_triggers, declared_triggers)
 
     def test_part_and_content_vocab_admits_new_table_only(self):
         class Rollback(Exception):
@@ -165,6 +273,26 @@ class ApplicationLineageSchema(TransactionTestCase):
                     "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
                 )
                 self.assertEqual(cursor.fetchall(), functions_before)
+        finally:
+            MigrationExecutor(connection).migrate(head)
+
+    def test_0030_empty_reverse_reapply_preserves_historical_bytes(self):
+        head = current_core_leaf(connection)
+        with transaction.atomic(), connection.cursor() as cursor:
+            ids = found_nonroot(cursor, tag=f"s3fu-0030-{fresh()}")
+        with connection.cursor() as cursor:
+            before = snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"])
+        try:
+            MigrationExecutor(connection).migrate([("core", "0029_s015_application_gateway")])
+            with connection.cursor() as cursor:
+                self.assertEqual(snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"]), before)
+                cursor.execute("SELECT pg_get_functiondef('public.s3_guard_lo_actor()'::regprocedure)")
+                self.assertNotIn("IF NEW.entry_mode = 'COMPOSED'", cursor.fetchone()[0])
+            MigrationExecutor(connection).migrate(head)
+            with connection.cursor() as cursor:
+                self.assertEqual(snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"]), before)
+                cursor.execute("SELECT pg_get_functiondef('public.s3_guard_lo_actor()'::regprocedure)")
+                self.assertIn("IF NEW.entry_mode = 'COMPOSED'", cursor.fetchone()[0])
         finally:
             MigrationExecutor(connection).migrate(head)
 

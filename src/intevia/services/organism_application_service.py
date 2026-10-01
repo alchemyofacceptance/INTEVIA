@@ -64,6 +64,19 @@ class FormationLONameSource:
         raise S015OperationNotYetImplemented("lo_name", "S3-IL-LONAME", "FORMATION")
 
 
+class CareExecutor(Protocol):
+    def identity_for(self, living_organism: LivingOrganism) -> Identity: ...
+
+
+class DiscussionWelcome(Protocol):
+    def send_for(self, application: Application, decision: ApplicationDecision) -> None: ...
+
+
+class UnavailableDiscussionWelcome:
+    def send_for(self, application: Application, decision: ApplicationDecision) -> None:
+        raise S015OperationNotYetImplemented("automatic_welcome", "S3-IL-NOTICE", "DISCUSSION")
+
+
 def default_application_question(living_organism: LivingOrganism, name_source: LONameSource | None = None) -> dict[str, str]:
     name = (name_source or FormationLONameSource()).name_for(living_organism)
     if type(name) is not str or not name.strip():
@@ -191,11 +204,15 @@ _VERSION_KINDS = {
 }
 
 
-def _effective_gateway_version(database_alias: str, organism: LivingOrganism, action: OrganismAction, at: datetime):
+def _effective_gateway_version(
+    database_alias: str, organism: LivingOrganism, action: OrganismAction,
+    at: datetime, known_at: datetime | None = None,
+):
     model, prefix = _VERSION_KINDS[action]
+    known_at = at if known_at is None else known_at
     references = LivingOrganismEvent.objects.using(database_alias).filter(
         living_organism=organism, action=action.value,
-        effective_at__lte=at, received_at__lte=at, recorded_at__lte=at,
+        effective_at__lte=at, received_at__lte=known_at, recorded_at__lte=known_at,
     ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid")
     reference = references.values_list("evidence_reference", flat=True).first()
     return None if reference is None else model.objects.using(database_alias).get(version_uuid=UUID(reference.removeprefix(prefix)))
@@ -286,6 +303,7 @@ def _insert_admission_transition(
     request_reference: str, idempotency_key: str, payload_fingerprint: str,
     occurred_at: datetime, effective_at: datetime, received_at: datetime,
     actor_access_epoch: int | None = None,
+    composing_rule_reference: str | None = None,
 ) -> int:
     event_uuid = uuid4()
     sequence = 1 if predecessor is None else predecessor.sequence + 1
@@ -328,8 +346,10 @@ def _insert_admission_transition(
             event_uuid, membership.pk, sequence, None if predecessor is None else predecessor.pk,
             None if predecessor is None else predecessor.sequence, OrganismAction.TRANSITION_MEMBERSHIP.value,
             None if actor is None else actor.pk, "LIVING_ORGANISM" if actor is None else "PARTY",
-            "STANDING", enterer.pk, "TRANSPORT",
-            "NA_TRANSPORT", None, "NA_TRANSPORT", None,
+            "STANDING", enterer.pk, "COMPOSED" if composing_rule_reference else "TRANSPORT",
+            "REFERENCE" if composing_rule_reference else "NA_TRANSPORT", composing_rule_reference,
+            "REFERENCE" if composing_rule_reference else "NA_TRANSPORT",
+            enterer.pk if composing_rule_reference else None,
             None, "NONE", None, predecessor_commitment, None, parts_commitment,
             None if actor is None else actor_access_epoch, basis_id,
             authority_decision_reference, evidence_reference, request_reference, idempotency_key,
@@ -352,6 +372,7 @@ def _append_application_event(
     evidence_reference: str, request_reference: str, idempotency_key: str,
     payload_fingerprint: str, occurred_at: datetime, effective_at: datetime,
     received_at: datetime,
+    composing_rule_reference: str | None = None,
 ) -> None:
     lineage = ApplicationLineage.objects.using(database_alias).select_for_update().get(application=application)
     predecessor = ApplicationLineageEvent.objects.using(database_alias).filter(
@@ -398,7 +419,10 @@ def _append_application_event(
             event_uuid, lineage.pk, sequence, None if predecessor is None else predecessor.pk,
             None if predecessor is None else predecessor.sequence, action.value,
             None if actor is None else actor.pk, "LIVING_ORGANISM" if actor is None else "PARTY",
-            "STANDING", enterer.pk, "TRANSPORT", "NA_TRANSPORT", None, "NA_TRANSPORT", None,
+            "STANDING", enterer.pk, "COMPOSED" if composing_rule_reference else "TRANSPORT",
+            "REFERENCE" if composing_rule_reference else "NA_TRANSPORT", composing_rule_reference,
+            "REFERENCE" if composing_rule_reference else "NA_TRANSPORT",
+            enterer.pk if composing_rule_reference else None,
             None, "NONE", None, predecessor_commitment, None, parts_commitment,
             actor_access_epoch, application.living_organism.founding_authority_basis_id,
             authority_decision_reference, evidence_reference, request_reference, idempotency_key,
@@ -427,10 +451,25 @@ class _CoordinatorContext:
     received_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class _AdmissionDetails:
+    application: Application
+    enterer: Identity
+    authority_decision_reference: str
+    request_reference: str
+    idempotency_key: str
+    fingerprint: str
+    occurred_at: datetime
+    effective_at: datetime
+    received_at: datetime
+    composing_rule_reference: str | None = None
+
+
 class OrganismApplicationService:
     def __init__(
         self, *, authority: S015Authority, clock: Callable[[], datetime], database_alias: str = "default",
         name_source: LONameSource | None = None,
+        care_executor: CareExecutor | None = None, welcome: DiscussionWelcome | None = None,
     ) -> None:
         if not isinstance(authority, S015Authority) or authority.database_alias != database_alias:
             raise TypeError("matching S015 authority is required")
@@ -440,6 +479,8 @@ class OrganismApplicationService:
         self._clock = clock
         self._alias = database_alias
         self._name_source = name_source
+        self._care_executor = care_executor
+        self._welcome = welcome or UnavailableDiscussionWelcome()
 
     def _receipt_or_none(
         self, *, actor: Identity, action: OrganismAction, request_reference: str,
@@ -513,6 +554,44 @@ class OrganismApplicationService:
         ).digest()[:8], "big", signed=True)
         with connections[self._alias].cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+
+    def _automatic_accept(self, application: Application, care: Identity, request_reference: str,
+                          idempotency_key: str, fingerprint: str) -> tuple[ApplicationDecision, str, str, str, str, str]:
+        settings = _effective_gateway_version(
+            self._alias, application.living_organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
+            application.effective_at, application.recorded_at,
+        )
+        if settings is None or settings.pk != application.settings_version_id or not settings.applications_open or not settings.automatic_acceptance:
+            raise S015ApplicationRefused("automatic acceptance requires the application's recorded effective setting")
+        rule = f"application-settings-version:{settings.version_uuid}"
+        decision_fingerprint = hashlib.sha256(_COMMAND_DOMAIN + canonical_json_bytes({
+            "action": "LO_AUTOMATIC", "application": application.application_uuid,
+            "rule": rule, "submission": fingerprint,
+        })).hexdigest()
+        decision_reference = "s015d1:" + hashlib.sha256(
+            _COMMAND_DOMAIN + canonical_json_bytes({"automatic": decision_fingerprint, "rule": rule})
+        ).hexdigest()
+        automatic_key = f"s3fu:auto:{decision_fingerprint}"
+        automatic_request = f"s3fu:auto:{decision_fingerprint}"
+        ApplicationEngagement.objects.using(self._alias).create(
+            application=application, engagement_ordinal=1, route="LO_AUTOMATIC",
+            deciding_party=application.living_organism, engagement_reference=rule,
+            settings_basis=rule, actor=None, enterer=care,
+            occurred_at=application.occurred_at, effective_at=application.effective_at,
+            received_at=application.received_at,
+        )
+        decision = ApplicationDecision.objects.using(self._alias).create(
+            application=application, route="LO_AUTOMATIC", deciding_party=application.living_organism,
+            outcome="ACCEPT", authority_decision_reference=decision_reference, executor=care, enterer=care,
+            occurred_at=application.occurred_at, effective_at=application.effective_at,
+            received_at=application.received_at,
+        )
+        self._admit(_AdmissionDetails(
+            application, care, decision_reference, automatic_request, automatic_key,
+            decision_fingerprint, application.occurred_at, application.effective_at,
+            application.received_at, rule,
+        ), decision)
+        return decision, decision_fingerprint, decision_reference, rule, automatic_key, automatic_request
 
     def _gateway_start(self, command, *, create_head: bool):
         action = command.action
@@ -823,6 +902,12 @@ class OrganismApplicationService:
                 organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
             except LivingOrganism.DoesNotExist as exc:
                 raise S015ApplicationNotFound("living organism not found") from exc
+            care = None
+            if self._care_executor is not None:
+                candidate = self._care_executor.identity_for(organism)
+                care = Identity.objects.using(self._alias).select_for_update().get(pk=candidate.pk)
+                if care.pk == actor.pk or care.access_state != Identity.AccessState.ACTIVE:
+                    raise S015ApplicationAuthorityUnavailable("distinct active CARE executor identity required")
             target = {"action": OrganismAction.SUBMIT_APPLICATION.value, "organism": organism_uuid,
                       "applicant": actor.identity_id}
             fingerprint = _command_payload(
@@ -868,7 +953,16 @@ class OrganismApplicationService:
             )
             if settings is None or question is None or settings.applications_open is not True:
                 raise S015ApplicationRefused("S3FU gateway closed")
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT public.s015_fold_effective_state(%s, %s, %s, %s)",
+                    ["core_livingorganism", organism.pk, effective_at, gateway_at],
+                )
+                if cursor.fetchone()[0] != "ACTIVE":
+                    raise S015ApplicationRefused("S3FU gateway closed")
             _validate_gateway_answer(question, command.answer)
+            if settings.automatic_acceptance is True and care is None:
+                raise S015OperationNotYetImplemented("automatic_acceptance", "S3-IL-CARE-EXEC", "CARE")
             self._pair_lock(actor, organism)
             _lock_owning_organism(self._alias, organism.organism_id)
             open_application = Application.objects.using(self._alias).filter(
@@ -899,6 +993,9 @@ class OrganismApplicationService:
             if not applicant_eligible(actor, effective_at, application.recorded_at, database_alias=self._alias):
                 raise S015ApplicationRefused("applicant account is not eligible at record time")
             ApplicationLineage.objects.using(self._alias).create(application=application)
+            automatic = None
+            if settings.automatic_acceptance is True:
+                automatic = self._automatic_accept(application, care, request_reference, idempotency_key, fingerprint)
             _append_application_event(
                 database_alias=self._alias, application=application,
                 action=OrganismAction.SUBMIT_APPLICATION, resulting_state="SUBMITTED",
@@ -909,6 +1006,19 @@ class OrganismApplicationService:
                 payload_fingerprint=fingerprint, occurred_at=occurred_at,
                 effective_at=effective_at, received_at=received_at,
             )
+            if automatic is not None:
+                accepted, accepted_fingerprint, accepted_reference, rule, automatic_key, automatic_request = automatic
+                _append_application_event(
+                    database_alias=self._alias, application=application, action=OrganismAction.DECIDE_APPLICATION,
+                    resulting_state="ACCEPTED", actor=None, enterer=care, actor_access_epoch=None,
+                    authority_decision_reference=accepted_reference,
+                    evidence_reference=f"application-decision:{accepted.decision_uuid}",
+                    request_reference=automatic_request, idempotency_key=automatic_key,
+                    payload_fingerprint=accepted_fingerprint, occurred_at=application.occurred_at,
+                    effective_at=application.effective_at, received_at=application.received_at,
+                    composing_rule_reference=rule,
+                )
+                self._welcome.send_for(application, accepted)
             return self._finish(
                 actor=actor, action=OrganismAction.SUBMIT_APPLICATION, request_reference=request_reference,
                 idempotency_key=idempotency_key, fingerprint=fingerprint, application=application,
@@ -1118,7 +1228,11 @@ class OrganismApplicationService:
             )
             decision.refresh_from_db(using=self._alias)
             if outcome == "ACCEPT":
-                self._admit(context, decision)
+                self._admit(_AdmissionDetails(
+                    context.application, context.actor, context.decision.authority_decision_reference,
+                    context.request_reference, context.idempotency_key, context.fingerprint,
+                    context.occurred_at, context.effective_at, context.received_at,
+                ), decision)
             _append_application_event(
                 database_alias=self._alias, application=context.application,
                 action=OrganismAction.DECIDE_APPLICATION,
@@ -1134,7 +1248,7 @@ class OrganismApplicationService:
                 context, OrganismAction.DECIDE_APPLICATION, decision.decision_uuid, decision.recorded_at,
             )
 
-    def _admit(self, context: _CoordinatorContext, decision: ApplicationDecision) -> None:
+    def _admit(self, context: _AdmissionDetails, decision: ApplicationDecision) -> None:
         application = context.application
         applicant = Identity.objects.using(self._alias).get(pk=application.applicant_id)
         membership = OrganismMembership.objects.using(self._alias).filter(
@@ -1160,7 +1274,7 @@ class OrganismApplicationService:
             )
             _insert_admission_transition(
                 database_alias=self._alias, membership=membership, predecessor=None, actor=applicant,
-                enterer=context.actor, basis_id=basis_id, prior_state=None, resulting_state="PROPOSED",
+                enterer=context.enterer, basis_id=basis_id, prior_state=None, resulting_state="PROPOSED",
                 reason_class="APPLICATION", evidence_reference=f"application:{application.application_uuid}",
                 authority_decision_reference=application.authority_decision_reference,
                 request_reference=context.request_reference, idempotency_key=context.idempotency_key,
@@ -1178,13 +1292,14 @@ class OrganismApplicationService:
             raise S015OperationNotYetImplemented("out_of_order_admission", "IL-3", "S5")
         transition_id = _insert_admission_transition(
             database_alias=self._alias, membership=membership, predecessor=predecessor,
-            actor=None, enterer=context.actor, basis_id=basis_id,
+            actor=None, enterer=context.enterer, basis_id=basis_id,
             prior_state="PROPOSED", resulting_state="ACTIVE", reason_class="ADMISSION",
             evidence_reference=f"application-decision:{decision.decision_uuid}",
-            authority_decision_reference=context.decision.authority_decision_reference,
+            authority_decision_reference=context.authority_decision_reference,
             request_reference=context.request_reference, idempotency_key=context.idempotency_key,
             payload_fingerprint=context.fingerprint, occurred_at=context.occurred_at,
             effective_at=context.effective_at, received_at=context.received_at,
+            composing_rule_reference=context.composing_rule_reference,
         )
         ApplicationDecisionEffect.objects.using(self._alias).create(
             decision=decision, transition_id=transition_id,

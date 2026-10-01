@@ -4790,6 +4790,7 @@ class ApplicationEngagement(_S015AppendOnly):
     class Route(models.TextChoices):
         LO_CQ = "LO_CQ", "LO_CQ"
         LO_CSA = "LO_CSA", "LO_CSA"
+        LO_AUTOMATIC = "LO_AUTOMATIC", "LO_AUTOMATIC"
         CIRCLE_CQ = "CIRCLE_CQ", "CIRCLE_CQ"
         CIRCLE_CSA = "CIRCLE_CSA", "CIRCLE_CSA"
 
@@ -4800,7 +4801,7 @@ class ApplicationEngagement(_S015AppendOnly):
     engagement_reference = models.CharField(max_length=255)
     settings_basis = models.CharField(max_length=255)
     basis_reference = models.CharField(max_length=255, null=True, blank=True)
-    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="engaged_organism_applications")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="engaged_organism_applications", null=True, blank=True)
     enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_engagements")
     occurred_at = models.DateTimeField()
     effective_at = models.DateTimeField()

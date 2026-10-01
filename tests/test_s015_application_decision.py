@@ -332,16 +332,17 @@ class ApplicationDecisionTests(TransactionTestCase):
                            "'public.core_applicationlineageevent'::regclass "
                            "AND attnum > 0 AND NOT attisdropped AND attname <> 'id' ORDER BY attnum")
             columns = [name for (name,) in cursor.fetchall()]
-        for changes in (
-            {"actor_state": "'CARE'"},
-            {"entry_mode": "'COMPOSED'", "composing_rule_state": "'NOT_NAMED'",
-             "composer_state": "'NOT_ESTABLISHED'"},
+        for changes, message in (
+            ({"actor_state": "'CARE'"}, "S3FU application actor/entry refused"),
+            ({"entry_mode": "'COMPOSED'", "composing_rule_state": "'NOT_NAMED'",
+              "composer_state": "'NOT_ESTABLISHED'"},
+             "S3FU composed application acceptance refused: recorded automatic setting required"),
         ):
             with self.subTest(changes=changes):
                 expressions = [changes.get(column, "NULL" if column in ("recorded_at", "l1_commitment")
                                            else "%s::uuid" if column == "event_uuid" else f"t.{column}")
                                for column in columns]
-                with self.assertRaisesMessage(IntegrityError, "S3FU application actor/entry refused"):
+                with self.assertRaisesMessage(IntegrityError, message):
                     with transaction.atomic(), connection.cursor() as cursor:
                         cursor.execute(
                             f"INSERT INTO public.core_applicationlineageevent ({', '.join(columns)}) "
