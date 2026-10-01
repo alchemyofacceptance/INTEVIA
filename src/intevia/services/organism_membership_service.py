@@ -771,6 +771,10 @@ class OrganismMembershipService(_OrganismCommandService):
 
         current_state = _canonical_key(membership.state, "membership.state", 19)
         _validate_edge(current_state, target_state, membership)
+        if (current_state, target_state) == ("PROPOSED", "ACTIVE"):
+            raise S015OperationNotYetImplemented("membership_admission", "S1-IL-ADMISSION", "S3")
+        if (current_state, target_state) in {("PROPOSED", "PROBATIONARY"), ("PROBATIONARY", "ACTIVE")}:
+            raise S015OperationNotYetImplemented("membership_probation", "S3-IL-PROBATION", "S5")
 
         head_transition = None
         if membership.head_transition_id is not None:

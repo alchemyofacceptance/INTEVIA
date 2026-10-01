@@ -30,7 +30,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0030_s015_automatic_application"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -67,20 +67,24 @@ class ApplicationLineageSchema(TransactionTestCase):
                 self.assertNotIn("core_unknown_event", definition)
 
     def test_s015_admission_guard_census(self):
+        """Compare installed bodies with migration source re-derived now, not frozen digests; triggers use declared DDL."""
         routes = importlib.import_module("core.migrations.0025_s015_application_routes")
         time_guards = importlib.import_module("core.migrations.0026_s015_application_admission_time")
         chain = importlib.import_module("core.migrations.0028_s015_application_lineage_chain")
         gateway = importlib.import_module("core.migrations.0029_s015_application_gateway")
         automatic = importlib.import_module("core.migrations.0030_s015_automatic_application")
+        admission = importlib.import_module("core.migrations.0031_s1fu_admission_actor_requirement")
         declared = {
             name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
             for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
                          "s3_decision_guard", "s3_assign_record_time")
         }
-        declared.update({sql.split("public.", 1)[1].split("()", 1)[0]: sql
-                         for sql in time_guards.guard_bodies(post_lock_time=True)
-                         if sql.split("public.", 1)[1].split("()", 1)[0] in
-                         {"s3_engagement_guard", "s3_terminal_lock"}})
+        for sql in routes.INSTALL_SQL:
+            match = re.match(r"\s*CREATE FUNCTION public\.(s3_[a-z_]+)\(", sql)
+            if match:
+                declared[match[1]] = sql
+        for sql in time_guards.guard_bodies(post_lock_time=True):
+            declared[re.search(r"FUNCTION public\.(s3_[a-z_]+)\(", sql)[1]] = sql
         declared.update({
             "s3_guard_lo_actor": automatic.member_sql(),
             "s3fu_guard_lo_capacity": gateway.capacity_sql(chain.CAPACITY_SQL),
@@ -88,36 +92,79 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s3fu_guard_application_lineage_actor": automatic.lineage_sql(),
             "s3fu_guard_auto_engagement": automatic.AUTO_ENGAGEMENT_SQL,
             "s3fu_guard_auto_decision": automatic.AUTO_DECISION_SQL,
+            "s3fu_guard_gateway_effect": gateway.EFFECT_SQL,
+            "s3fu_guard_gateway_version": gateway.VERSION_GUARD_SQL,
+            "s1fu_guard_admission_route": admission.ADMISSION_ROUTE_SQL,
         })
-        declared_triggers = {
-            "core_organismmembershiptransition": {
-                "s3_lo_actor_scope": "s3_guard_lo_actor", "s3_lo_effect_check": "s3_guard_lo_effect",
-                "s3fu_00_capacity": "s3fu_guard_lo_capacity",
-                "s3fu_20_permission": "s3fu_guard_lo_admission_permission",
-            },
-            "core_applicationlineageevent": {
-                "s3fu_00_capacity": "s3fu_guard_lo_capacity",
-                "s3fu_10_actor": "s3fu_guard_application_lineage_actor",
-                "s3fu_20_permission": "s3fu_guard_lo_admission_permission",
-            },
-            "core_applicationdecision": {
-                "s3_00_record_time": "s3_assign_record_time",
-                "s3_10_s3_terminal_lock": "s3_terminal_lock",
-                "s3_20_s3_decision_guard": "s3_decision_guard",
-                "s3_decision_effect_check": "s3_guard_decision_effect",
-                "s3_21_auto_decision": "s3fu_guard_auto_decision",
-            },
-            "core_applicationdecisioneffect": {
-                "s3_00_record_time": "s3_assign_record_time", "s3_effect_check": "s3_guard_effect",
-            },
-            "core_applicationengagement": {
-                "s3_00_record_time": "s3_assign_record_time",
-                "s3_10_s3_engagement_guard": "s3_engagement_guard",
-                "s3_11_auto_engagement": "s3fu_guard_auto_engagement",
-            },
-        }
-        for table in ("core_applicationdecision", "core_applicationdecisioneffect", "core_applicationengagement"):
-            declared_triggers[table]["s3_row_immutable"] = "s015_refuse_row_mutation"
+        declared_triggers = {}
+
+        def declare(table, name, ddl):
+            declared_triggers.setdefault(table, {})[name] = ddl
+
+        for table in routes.TABLES:
+            declare(table, "s3_00_record_time", f"CREATE TRIGGER s3_00_record_time BEFORE INSERT ON public.{table} "
+                    "FOR EACH ROW EXECUTE FUNCTION public.s3_assign_record_time()")
+            declare(table, "s3_row_immutable", f"CREATE TRIGGER s3_row_immutable BEFORE UPDATE OR DELETE "
+                    f"ON public.{table} FOR EACH ROW EXECUTE FUNCTION public.s015_refuse_row_mutation()")
+        for table, function in (
+            ("core_csaassignment", "s3_claim_guard"), ("core_csaassignmentend", "s3_end_guard"),
+            ("core_applicationengagement", "s3_engagement_guard"),
+            ("core_applicationdecision", "s3_terminal_lock"),
+            ("core_applicationwithdrawal", "s3_terminal_lock"),
+            ("core_applicationwithdrawal", "s3_withdraw_guard"),
+        ):
+            name = f"s3_10_{function}"
+            declare(table, name, f"CREATE TRIGGER {name} BEFORE INSERT ON public.{table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION public.{function}()")
+        for table, name, function, when in (
+            ("core_applicationengagement", "s3_10_s3_engagement_guard", "s3_engagement_guard", "<>"),
+            ("core_applicationdecision", "s3_20_s3_decision_guard", "s3_decision_guard", "<>"),
+            ("core_applicationengagement", "s3_11_auto_engagement", "s3fu_guard_auto_engagement", "="),
+            ("core_applicationdecision", "s3_21_auto_decision", "s3fu_guard_auto_decision", "="),
+        ):
+            declare(table, name, f"CREATE TRIGGER {name} BEFORE INSERT ON public.{table} FOR EACH ROW "
+                    f"WHEN (NEW.route {when} 'LO_AUTOMATIC') EXECUTE FUNCTION public.{function}()")
+        for table, name, function in (
+            ("core_applicationdecisioneffect", "s3_effect_check", "s3_guard_effect"),
+            ("core_applicationdecision", "s3_decision_effect_check", "s3_guard_decision_effect"),
+            ("core_organismmembershiptransition", "s3_lo_effect_check", "s3_guard_lo_effect"),
+        ):
+            declare(table, name, f"CREATE CONSTRAINT TRIGGER {name} AFTER INSERT ON public.{table} "
+                    f"DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.{function}()")
+        declare("core_organismmembershiptransition", "s3_lo_actor_scope",
+                "CREATE TRIGGER s3_lo_actor_scope BEFORE INSERT ON public.core_organismmembershiptransition "
+                "FOR EACH ROW EXECUTE FUNCTION public.s3_guard_lo_actor()")
+        declare("core_organismmembershiptransition", "s1fu_05_admission_route",
+            "CREATE TRIGGER s1fu_05_admission_route BEFORE INSERT "
+            "ON public.core_organismmembershiptransition FOR EACH ROW "
+            "EXECUTE FUNCTION public.s1fu_guard_admission_route()")
+        for table in ("core_organismmembershiptransition", "core_applicationlineageevent"):
+            for name, function in (("s3fu_00_capacity", "s3fu_guard_lo_capacity"),
+                                   ("s3fu_20_permission", "s3fu_guard_lo_admission_permission")):
+                declare(table, name, f"CREATE TRIGGER {name} BEFORE INSERT ON public.{table} "
+                        f"FOR EACH ROW EXECUTE FUNCTION public.{function}()")
+        declare("core_applicationlineageevent", "s3fu_10_actor",
+                "CREATE TRIGGER s3fu_10_actor BEFORE INSERT ON public.core_applicationlineageevent "
+                "FOR EACH ROW EXECUTE FUNCTION public.s3fu_guard_application_lineage_actor()")
+        for table in ("core_loapplicationsettingsversion", "core_loapplicationquestionversion",
+                      "core_logovernanceconfigurationversion"):
+            token = table.removeprefix("core_")
+            name = f"s3fu_{token}_record_time"
+            declare(table, name, f"CREATE TRIGGER {name} BEFORE INSERT ON public.{table} "
+                    "FOR EACH ROW EXECUTE FUNCTION public.s3_assign_record_time()")
+            for operation in ("UPDATE", "DELETE"):
+                name = f"s3fu_{token}_{operation.lower()}"
+                declare(table, name, f"CREATE TRIGGER {name} BEFORE {operation} ON public.{table} "
+                        "FOR EACH ROW EXECUTE FUNCTION public.s3fu_guard_gateway_version()")
+        for operation in ("UPDATE", "DELETE"):
+            name = f"s3fu_gateway_{operation.lower()}"
+            declare("core_loapplicationgateway", name,
+                    f"CREATE TRIGGER {name} BEFORE {operation} ON public.core_loapplicationgateway "
+                    "FOR EACH ROW EXECUTE FUNCTION public.s015_refuse_row_mutation()")
+        for name, function in (("s3fu_00_capacity", "s3fu_guard_lo_capacity"),
+                               ("s3fu_10_gateway_effect", "s3fu_guard_gateway_effect")):
+            declare("core_livingorganismevent", name, f"CREATE TRIGGER {name} BEFORE INSERT "
+                    f"ON public.core_livingorganismevent FOR EACH ROW EXECUTE FUNCTION public.{function}()")
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT p.proname, md5(pg_get_functiondef(p.oid)), p.prosrc "
@@ -128,48 +175,47 @@ class ApplicationLineageSchema(TransactionTestCase):
             self.assertEqual(set(installed), set(declared))
             cursor.execute(
                 "SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
-                "WHERE n.nspname = 'public' AND (proname LIKE 's3_guard_lo_%' "
-                "OR proname LIKE 's3fu_guard_lo_%' OR proname LIKE 's3fu_guard_auto_%' "
-                "OR proname LIKE 's3fu_guard_application_lineage_%' "
-                "OR proname LIKE 's3_guard_decision_%')"
+                "WHERE n.nspname = 'public' AND proname ~ '^(s3_|s3fu_|s1fu_)'"
             )
-            self.assertEqual(
-                {row[0] for row in cursor.fetchall()},
-                {"s3_guard_lo_actor", "s3_guard_lo_effect", "s3fu_guard_lo_capacity",
-                 "s3fu_guard_lo_admission_permission", "s3fu_guard_auto_engagement",
-                 "s3fu_guard_auto_decision", "s3fu_guard_application_lineage_actor",
-                 "s3_guard_decision_effect"},
-            )
+            self.assertEqual({row[0] for row in cursor.fetchall()}, set(declared))
             for name, sql in declared.items():
                 with self.subTest(function=name, installed_md5=installed[name][0]):
                     self.assertEqual(installed[name][1], sql.split("AS $$", 1)[1].rsplit("$$;", 1)[0])
                     cursor.execute(sql.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
-                    cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [f"pg_temp.{name}()"])
+                    signature = "bigint" if name == "s3_lock_application" else ""
+                    cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [f"pg_temp.{name}({signature})"])
                     expected_definition = re.sub(
                         r"(?<=FUNCTION )pg_temp(?:_\d+)?\.", "public.", cursor.fetchone()[0], count=1,
                     )
                     expected_md5 = hashlib.md5(expected_definition.encode("utf-8")).hexdigest()
                     self.assertEqual(installed[name][0], expected_md5)
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SET LOCAL search_path = pg_catalog")
             cursor.execute(
-                "SELECT c.relname, t.tgname, p.proname, pg_get_triggerdef(t.oid) "
+                "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid) "
                 "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "JOIN pg_proc p ON p.oid = t.tgfoid "
-                "WHERE n.nspname = 'public' AND c.relname = ANY(%s) "
-                "AND (t.tgname LIKE 's3\\_%%' ESCAPE '\\' OR t.tgname LIKE 's3fu\\_%%' ESCAPE '\\') "
-                "AND NOT t.tgisinternal", [list(declared_triggers)],
+                "WHERE n.nspname = 'public' AND t.tgname ~ '^(s3_|s3fu_|s1fu_)' "
+                "AND NOT t.tgisinternal"
             )
-            installed_triggers = {}
-            for table, trigger, function, definition in cursor.fetchall():
-                installed_triggers.setdefault(table, {})[trigger] = function
-                with self.subTest(table=table, trigger=trigger):
-                    self.assertIn(f"{function}()", definition)
-                    if trigger in {"s3_10_s3_engagement_guard", "s3_20_s3_decision_guard",
-                                   "s3_11_auto_engagement", "s3_21_auto_decision"}:
-                        self.assertIn("LO_AUTOMATIC", definition)
-                        self.assertIn("<>" if trigger in {"s3_10_s3_engagement_guard",
-                                                               "s3_20_s3_decision_guard"} else "=", definition)
-            self.assertEqual(installed_triggers, declared_triggers)
+            installed_triggers = {(table, name): definition for table, name, definition in cursor.fetchall()}
+            self.assertEqual(set(installed_triggers), {
+                (table, name) for table, triggers in declared_triggers.items() for name in triggers
+            })
+            for table, triggers in declared_triggers.items():
+                shadow = f"s1fu_census_{table}"
+                cursor.execute(f"CREATE TEMP TABLE {shadow} (LIKE public.{table}) ON COMMIT DROP")
+                for name, ddl in triggers.items():
+                    with self.subTest(table=table, trigger=name):
+                        cursor.execute(ddl.replace(f"ON public.{table} ", f"ON pg_temp.{shadow} ", 1))
+                        cursor.execute(
+                            "SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t "
+                            "WHERE t.tgrelid = %s::regclass AND t.tgname = %s",
+                            [f"pg_temp.{shadow}", name],
+                        )
+                        expected = re.sub(rf" ON (?:pg_temp(?:_\d+)?\.)?{shadow} ",
+                                          f" ON public.{table} ", cursor.fetchone()[0], count=1)
+                        self.assertEqual(installed_triggers[table, name], expected)
 
     def test_part_and_content_vocab_admits_new_table_only(self):
         class Rollback(Exception):
@@ -293,6 +339,31 @@ class ApplicationLineageSchema(TransactionTestCase):
                 self.assertEqual(snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"]), before)
                 cursor.execute("SELECT pg_get_functiondef('public.s3_guard_lo_actor()'::regprocedure)")
                 self.assertIn("IF NEW.entry_mode = 'COMPOSED'", cursor.fetchone()[0])
+        finally:
+            MigrationExecutor(connection).migrate(head)
+
+    def test_0031_reverse_reapply_only_changes_admission_guard(self):
+        head = current_core_leaf(connection)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_get_functiondef('public.s1fu_guard_admission_route()'::regprocedure)")
+            expected_function = cursor.fetchone()[0]
+        try:
+            MigrationExecutor(connection).migrate([("core", "0030_s015_automatic_application")])
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT to_regprocedure('public.s1fu_guard_admission_route()')")
+                self.assertIsNone(cursor.fetchone()[0])
+                cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                               "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                               "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0030_s015_automatic_application"])
+            MigrationExecutor(connection).migrate(head)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_get_functiondef('public.s1fu_guard_admission_route()'::regprocedure)")
+                self.assertEqual(cursor.fetchone()[0], expected_function)
+                cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                               "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                               "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"])
         finally:
             MigrationExecutor(connection).migrate(head)
 
@@ -527,8 +598,9 @@ class ApplicationSchemaGuards(TransactionTestCase):
 
     def test_c3_fresh_party_transition_preserves_original_grammar(self):
         with connection.cursor() as cursor:
+            # S1-FU refuses PARTY admissions (NB-R3); this edge tests grammar, not the separately tracked PROPOSED -> ENDED attribution.
             event_id, _ = append_event(
-                cursor, EVENT_TABLE, self.member_id, 2, "ACTIVATE", "PROPOSED", "ACTIVE",
+                cursor, EVENT_TABLE, self.member_id, 2, "LEAVE", "PROPOSED", "ENDED",
                 self.applicant_id, self.ids["basis"], f"party-{self.tag}", pred_id=self.proposal_id,
                 eff=T0 + dt.timedelta(hours=1), occ=T0 + dt.timedelta(hours=1),
                 rec=T0 + dt.timedelta(hours=1), extra={"reason_class": "TEST"},

@@ -40,6 +40,7 @@ from django.db import connection
 #               update/delete + two LO event insert = 13 additional non-internal triggers [D]
 #         0030: 392 - replaces two existing route triggers with scoped equivalents and adds
 #               one automatic engagement and one automatic decision insert trigger [D]
+#         0031: 393 - one new admission-route BEFORE INSERT trigger; no existing trigger replaced [D]
 # REQ-G1  the twelve required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -68,7 +69,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0027_s015_application_authority_lineage": 354,
                           "0028_s015_application_lineage_chain": 377,
                           "0029_s015_application_gateway": 390,
-                          "0030_s015_automatic_application": 392}
+                          "0030_s015_automatic_application": 392,
+                          "0031_s1fu_admission_actor_requirement": 393}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 

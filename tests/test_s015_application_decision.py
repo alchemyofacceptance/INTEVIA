@@ -467,6 +467,128 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertEqual(admission.evidence_reference, f"application-decision:{decision.decision_uuid}")
         self.assertEqual(ApplicationDecisionEffect.objects.get(decision=decision).transition_id, admission.pk)
 
+    def test_s1fu_admission_route_refuses_invalid_actor_probation_and_missing_decision(self):
+        application = self.claimed()
+        self.service().decide_application(self.command(application, kind="decide"))
+        admission = OrganismMembershipTransition.objects.get(
+            membership__identity=self.applicant, membership__living_organism_id=self.ids["lo"],
+            resulting_state="ACTIVE",
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT actor_state, entry_mode FROM core_organismmembershiptransition WHERE id = %s",
+                           [admission.pk])
+            self.assertEqual(cursor.fetchone(), ("LIVING_ORGANISM", "TRANSPORT"))
+            cursor.execute("SELECT column_name FROM information_schema.columns "
+                           "WHERE table_schema = 'public' AND table_name = 'core_organismmembershiptransition' "
+                           "AND is_generated = 'NEVER' AND column_name NOT IN ('id', 'recorded_at') "
+                           "ORDER BY ordinal_position")
+            columns = [row[0] for row in cursor.fetchall()]
+        for label, overrides, message in (
+            ("PARTY actor", {"actor_state": "PARTY", "actor_id": self.applicant.pk,
+                             "actor_access_epoch": self.applicant.access_epoch},
+             "S1FU admission refused: an LO-decided admission requires the LO as actor"),
+            ("NONE actor", {"actor_state": "NONE", "actor_capacity": "NA_NO_PARTY"},
+             "S1FU admission refused: an LO-decided admission requires the LO as actor"),
+            ("NOT_ESTABLISHED actor", {"actor_state": "NOT_ESTABLISHED", "actor_capacity": "NA_NO_PARTY"},
+             "S1FU admission refused: an LO-decided admission requires the LO as actor"),
+            ("PROPOSED to PROBATIONARY", {"resulting_state": "PROBATIONARY"},
+             "S1FU admission refused: no mapped probation route"),
+            ("no ACCEPT", {"evidence_reference": f"application-decision:{uuid4()}"},
+             "S3 LO actor lacks matching ACCEPT decision"),
+        ):
+            with self.subTest(label=label), self.assertRaisesMessage(IntegrityError, message):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    event_uuid = str(uuid4())
+                    values = {
+                        "event_uuid": ("%s", event_uuid), "recorded_at": ("NULL", None),
+                        "l1_commitment": ("NULL", None),
+                        "parts_commitment": (
+                            "public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage("
+                            "'core_organismmembershiptransition', %s::uuid))", event_uuid),
+                        "lineage_reference": ("%s", f"s015l1:{'a' * 64}"),
+                    }
+                    values.update({column: ("%s", value) for column, value in overrides.items()})
+                    expressions = []
+                    parameters = []
+                    for column in columns:
+                        expression, parameter = values.get(column, (f"t.{column}", None))
+                        expressions.append(expression)
+                        if "%s" in expression:
+                            parameters.append(parameter)
+                    cursor.execute(
+                        f"INSERT INTO core_organismmembershiptransition ({', '.join(columns)}) "
+                        f"SELECT {', '.join(expressions)} FROM core_organismmembershiptransition t WHERE t.id = %s",
+                        [*parameters, admission.pk],
+                    )
+
+    def test_s1fu_probation_prior_refuses_admission_but_allows_departure(self):
+        application = self.claimed()
+        self.service().decide_application(self.command(application, kind="decide"))
+        admission = OrganismMembershipTransition.objects.get(
+            membership__identity=self.applicant, membership__living_organism_id=self.ids["lo"],
+            resulting_state="ACTIVE",
+        )
+        membership = admission.membership
+        # TEST-ONLY prior-state construction: ACTIVE -> PROBATIONARY is not an operational probation route.
+        with transaction.atomic(), connection.cursor() as cursor:
+            probation_id, _ = append_event(
+                cursor, "core_organismmembershiptransition", membership.pk, admission.sequence + 1,
+                "TRANSITION_MEMBERSHIP", "ACTIVE", "PROBATIONARY", self.applicant.pk,
+                self.ids["basis"], "s1fu-prior", pred_id=admission.pk,
+                eff=NOW + timedelta(seconds=1), occ=NOW + timedelta(seconds=1),
+                rec=NOW + timedelta(seconds=1), extra={"reason_class": "TEST"},
+            )
+            refresh(cursor, "core_organismmembership", membership.pk, NOW + timedelta(seconds=1))
+            cursor.execute("SELECT l1_commitment FROM core_organismmembershiptransition WHERE id = %s",
+                           [probation_id])
+            predecessor_commitment = cursor.fetchone()[0]
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT column_name FROM information_schema.columns "
+                           "WHERE table_schema = 'public' AND table_name = 'core_organismmembershiptransition' "
+                           "AND is_generated = 'NEVER' AND column_name NOT IN ('id', 'recorded_at') "
+                           "ORDER BY ordinal_position")
+            columns = [row[0] for row in cursor.fetchall()]
+        with self.assertRaisesMessage(IntegrityError, "S1FU admission refused: no mapped probation route"):
+            with transaction.atomic(), connection.cursor() as cursor:
+                event_uuid = str(uuid4())
+                values = {
+                    "event_uuid": ("%s", event_uuid), "sequence": ("%s", admission.sequence + 2),
+                    "predecessor_id": ("%s", probation_id),
+                    "predecessor_sequence": ("%s", admission.sequence + 1),
+                    "prior_state": ("%s", "PROBATIONARY"),
+                    "predecessor_l1_commitment": ("%s", predecessor_commitment),
+                    "l1_commitment": ("NULL", None),
+                    "parts_commitment": (
+                        "public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage("
+                        "'core_organismmembershiptransition', %s::uuid))", event_uuid),
+                    "lineage_reference": ("%s", f"s015l1:{'b' * 64}"),
+                    "effective_at": ("%s", NOW + timedelta(seconds=2)),
+                    "occurred_at": ("%s", NOW + timedelta(seconds=2)),
+                    "received_at": ("%s", NOW + timedelta(seconds=2)),
+                }
+                expressions = []
+                parameters = []
+                for column in columns:
+                    expression, parameter = values.get(column, (f"t.{column}", None))
+                    expressions.append(expression)
+                    if "%s" in expression:
+                        parameters.append(parameter)
+                cursor.execute(
+                    f"INSERT INTO core_organismmembershiptransition ({', '.join(columns)}) "
+                    f"SELECT {', '.join(expressions)} FROM core_organismmembershiptransition t WHERE t.id = %s",
+                    [*parameters, admission.pk],
+                )
+        with transaction.atomic(), connection.cursor() as cursor:
+            departed_id, _ = append_event(
+                cursor, "core_organismmembershiptransition", membership.pk, admission.sequence + 2,
+                "TRANSITION_MEMBERSHIP", "PROBATIONARY", "ENDED", self.applicant.pk,
+                self.ids["basis"], "s1fu-departure", pred_id=probation_id,
+                eff=NOW + timedelta(seconds=2), occ=NOW + timedelta(seconds=2),
+                rec=NOW + timedelta(seconds=2), extra={"reason_class": "TEST"},
+            )
+            refresh(cursor, "core_organismmembership", membership.pk, NOW + timedelta(seconds=2))
+        self.assertEqual(OrganismMembershipTransition.objects.get(pk=departed_id).resulting_state, "ENDED")
+
     def test_admission_lineage_reaches_both_authorities(self):
         submission = self.submit()
         application = Application.objects.get(pk=submission.application_id)
