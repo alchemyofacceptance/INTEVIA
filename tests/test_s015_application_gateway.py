@@ -1,6 +1,7 @@
 """S3-FU Round 3 gateway, change and SQL-guard witnesses on disposable PostgreSQL."""
 
 import importlib
+import hashlib
 import json
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,8 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_service import (
     EffectGatewayVersionCommand, FormationLONameSource, GatewayDraftCommand,
-    OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand, _validate_gateway_answer,
+    OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand, _PAIR_DOMAIN,
+    _validate_gateway_answer,
     default_application_question, gateway_version_status,
 )
 from src.intevia.services.organism_authority import (
@@ -30,6 +32,14 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_concurrency_support import (
+    ORGANISM_LOCK_RELATIONS,
+    backend_pid,
+    cleanup_workers,
+    start_worker,
+    wait_for_blocker_set,
+    wait_until_locked,
+)
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
@@ -162,6 +172,299 @@ class ApplicationGatewayTests(TransactionTestCase):
             name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care), welcome=welcome,
         )
         return care, welcome
+
+    def open_gateway(self):
+        self.automatic_gateway()
+        version = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        self.effect(version, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        return version
+
+    def _draft_settings_as(self, actor, fields):
+        token = fresh()
+        return self.service.save_gateway_draft(GatewayDraftCommand(
+            credential=actor.credential, living_organism_id=self.organism.organism_id,
+            action=OrganismAction.EFFECT_APPLICATION_SETTINGS,
+            request_reference=f"s3:draft:{token}", idempotency_key=f"s3:draft:{token}",
+            occurred_at=NOW, effective_at=NOW, received_at=NOW, fields=fields,
+        ))
+
+    def _effect_settings_as(self, actor, version):
+        token = fresh()
+        return self.service.effect_gateway_version(EffectGatewayVersionCommand(
+            credential=actor.credential, living_organism_id=self.organism.organism_id,
+            action=OrganismAction.EFFECT_APPLICATION_SETTINGS, version_uuid=version.version_uuid,
+            request_reference=f"s3:effect:{token}", idempotency_key=f"s3:effect:{token}",
+            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+        ))
+
+    def _workers(self):
+        workers = []
+        self.addCleanup(cleanup_workers, workers)
+        return workers
+
+    def _start_worker(self, workers, operation):
+        worker = start_worker(operation)
+        workers.append(worker)
+        return worker
+
+    def _join_worker(self, worker):
+        worker.thread.join(timeout=30)
+        self.assertFalse(worker.thread.is_alive())
+        return worker.result(timeout=10)
+
+    def _pair_lock_key(self, applicant):
+        return int.from_bytes(
+            hashlib.sha256(
+                _PAIR_DOMAIN + applicant.identity_id.bytes + self.organism.organism_id.bytes,
+            ).digest()[:8],
+            "big",
+            signed=True,
+        )
+
+    def _assert_no_deadlock(self, *outcomes):
+        for outcome in outcomes:
+            self.assertNotIn("deadlock detected", str(outcome).lower(), repr(outcome))
+
+    def _second_coordinator(self):
+        # TEST-ONLY second current Coordinator with a distinct Identity and credential.
+        with transaction.atomic(), connection.cursor() as cursor:
+            other_pk = seed_identity(cursor, f"gateway-coordinator2-{self.tag}")
+            member_uuid = u(f"gateway-member2:{self.tag}")
+            cursor.execute(
+                "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
+                "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
+                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
+                [member_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", member_uuid),
+                 other_pk, self.ids["lo"]],
+            )
+            member_id = cursor.fetchone()[0]
+            append_event(cursor, "core_organismmembershiptransition", member_id, 1, "JOIN", None,
+                         "ACTIVE", other_pk, self.ids["basis"], f"gateway-second:{self.tag}",
+                         extra={"reason_class": "TEST"})
+            refresh(cursor, "core_organismmembership", member_id)
+            office_uuid = u(f"gateway-office2:{self.tag}")
+            cursor.execute(
+                "INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, "
+                "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
+                "membership_id, role_definition_id) VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) "
+                "RETURNING id",
+                [office_uuid, T0, T0, empty_fp(cursor, "core_contextualroleassignment", office_uuid),
+                 member_id, self.ids["roles"]["COORDINATOR"]],
+            )
+            office_id = cursor.fetchone()[0]
+            append_event(cursor, "core_contextualroleassignmentstateevent", office_id, 1, "ASSIGN", None,
+                         "ACTIVE", other_pk, self.ids["basis"], f"gateway-office2:{self.tag}")
+            refresh(cursor, "core_contextualroleassignment", office_id)
+        return Identity.objects.select_related("credential").get(pk=other_pk)
+
+    def _assert_latest_settings_effect(self, version):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT evidence_reference FROM public.core_livingorganismevent "
+                "WHERE living_organism_id = %s AND action = %s ORDER BY sequence DESC LIMIT 1",
+                [self.organism.pk, OrganismAction.EFFECT_APPLICATION_SETTINGS.value],
+            )
+            latest_reference = cursor.fetchone()[0]
+        self.assertEqual(latest_reference, f"application-settings-version:{version.version_uuid}")
+
+    def test_xw1_lock_cycle_regression_witness(self):
+        """On old code, the gateway NOWAIT probe fails while submission waits and submission ends in deadlock detected; corrected order leaves the gateway head free and refuses after closure."""
+        self.open_gateway()
+        closure = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": False, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        applicant = self.applicant()
+        with connection.cursor() as cursor:  # TEST SETUP: remove stale register rows left by fixture transactions
+            cursor.execute(
+                "DELETE FROM public.s015_transaction_register WHERE kind = %s AND pg_xact_status(xid) IS DISTINCT FROM %s",
+                ["ORGANISM_LOCK", "in progress"],
+            )
+        workers = self._workers()
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism.organism_id])
+                close = self._start_worker(
+                    workers, lambda: self.effect(closure, OrganismAction.EFFECT_APPLICATION_SETTINGS),
+                )
+                close_snapshot = wait_until_locked(cursor, close.pid(), holder_pid)
+                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit_snapshot = wait_for_blocker_set(cursor, submit.pid(), {holder_pid, close.pid()})
+
+                class _RollbackProbe(Exception):
+                    pass
+
+                try:
+                    with transaction.atomic():
+                        cursor.execute(
+                            "SELECT id FROM public.core_loapplicationgateway "
+                            "WHERE living_organism_id = %s FOR UPDATE NOWAIT",
+                            [self.organism.pk],
+                        )
+                        gateway_id = cursor.fetchone()[0]
+                        raise _RollbackProbe
+                except _RollbackProbe:
+                    pass
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        close_result = self._join_worker(close)
+        submit_result = self._join_worker(submit)
+        self._assert_no_deadlock(close_result, submit_result)
+        self.assertEqual(close_result, "ok", f"closure wait: {close_snapshot!r}")
+        self.assertIsInstance(submit_result, S015ApplicationRefused, f"submission wait: {submit_snapshot!r}")
+        self.assertEqual(str(submit_result), "S3FU gateway closed", f"submission wait: {submit_snapshot!r}")
+        self.assertTrue(gateway_id, f"gateway probe snapshot: {submit_snapshot!r}")
+        self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
+
+    def test_cr1_submission_first_completes_open_then_closure_applies(self):
+        open_version = self.open_gateway()
+        closure = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": False, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        applicant = self.applicant()
+        workers = self._workers()
+        holder_pid = backend_pid(connection)
+        pair_key = self._pair_lock_key(applicant)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [pair_key])
+                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit_snapshot = wait_until_locked(cursor, submit.pid(), holder_pid, locktype="advisory")
+                close = self._start_worker(
+                    workers, lambda: self.effect(closure, OrganismAction.EFFECT_APPLICATION_SETTINGS),
+                )
+                close_snapshot = wait_until_locked(
+                    cursor, close.pid(), submit.pid(), relations=ORGANISM_LOCK_RELATIONS,
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        submit_result = self._join_worker(submit)
+        close_result = self._join_worker(close)
+        self.assertEqual(submit_result, "ok", f"submission wait: {submit_snapshot!r}")
+        self.assertEqual(close_result, "ok", f"closure wait: {close_snapshot!r}")
+        application = Application.objects.get(applicant=applicant, living_organism=self.organism)
+        self.assertEqual(application.settings_version_id, open_version.pk)
+        self._assert_latest_settings_effect(closure)
+
+    def test_cr2_closure_first_then_submission_refused_closed(self):
+        self.open_gateway()
+        closure = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": False, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        applicant = self.applicant()
+        workers = self._workers()
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM public.core_loapplicationsettingsversion WHERE id = %s FOR UPDATE",
+                    [closure.pk],
+                )
+                close = self._start_worker(
+                    workers, lambda: self.effect(closure, OrganismAction.EFFECT_APPLICATION_SETTINGS),
+                )
+                close_snapshot = wait_until_locked(
+                    cursor, close.pid(), holder_pid, relations={"core_loapplicationsettingsversion"},
+                )
+                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit_snapshot = wait_until_locked(
+                    cursor, submit.pid(), close.pid(), relations=ORGANISM_LOCK_RELATIONS,
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        close_result = self._join_worker(close)
+        submit_result = self._join_worker(submit)
+        self.assertEqual(close_result, "ok", f"closure wait: {close_snapshot!r}")
+        self.assertIsInstance(submit_result, S015ApplicationRefused, f"submission wait: {submit_snapshot!r}")
+        self.assertEqual(str(submit_result), "S3FU gateway closed", f"submission wait: {submit_snapshot!r}")
+        self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
+
+    def test_cr3_automatic_submission_first_accepted_under_recorded_version(self):
+        automatic = self.automatic_gateway()
+        _, welcome = self.automatic_service()
+        changed = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        applicant = self.applicant()
+        workers = self._workers()
+        holder_pid = backend_pid(connection)
+        pair_key = self._pair_lock_key(applicant)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [pair_key])
+                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit_snapshot = wait_until_locked(cursor, submit.pid(), holder_pid, locktype="advisory")
+                change = self._start_worker(
+                    workers, lambda: self.effect(changed, OrganismAction.EFFECT_APPLICATION_SETTINGS),
+                )
+                change_snapshot = wait_until_locked(
+                    cursor, change.pid(), submit.pid(), relations=ORGANISM_LOCK_RELATIONS,
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        submit_result = self._join_worker(submit)
+        change_result = self._join_worker(change)
+        self.assertEqual(submit_result, "ok", f"submission wait: {submit_snapshot!r}")
+        self.assertEqual(change_result, "ok", f"change wait: {change_snapshot!r}")
+        application = Application.objects.get(applicant=applicant, living_organism=self.organism)
+        decision = ApplicationDecision.objects.get(application=application)
+        self.assertEqual(application.settings_version_id, automatic.pk)
+        self.assertEqual((decision.route, decision.outcome), ("LO_AUTOMATIC", "ACCEPT"))
+        self.assertEqual(welcome.calls, [(application.pk, decision.pk)])
+        self._assert_latest_settings_effect(changed)
+
+    def test_cc1_second_coordinator_change_refused_for_continuity_after_waiting(self):
+        """The second change waits on the first at the organism lock, then continuity refuses it; no update is lost, and the second Coordinator must redraft against V1."""
+        self.open_gateway()
+        second = self._second_coordinator()
+        self.assertNotEqual(self.actor.pk, second.pk)
+        version_one = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        version_two = self._draft_settings_as(second, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        workers = self._workers()
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM public.core_loapplicationsettingsversion WHERE id = %s FOR UPDATE",
+                    [version_one.pk],
+                )
+                effect_one = self._start_worker(
+                    workers, lambda: self.effect(version_one, OrganismAction.EFFECT_APPLICATION_SETTINGS),
+                )
+                effect_one_snapshot = wait_until_locked(
+                    cursor, effect_one.pid(), holder_pid, relations={"core_loapplicationsettingsversion"},
+                )
+                effect_two = self._start_worker(workers, lambda: self._effect_settings_as(second, version_two))
+                effect_two_snapshot = wait_until_locked(
+                    cursor, effect_two.pid(), effect_one.pid(), relations=ORGANISM_LOCK_RELATIONS,
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        effect_one_result = self._join_worker(effect_one)
+        effect_two_result = self._join_worker(effect_two)
+        self.assertEqual(effect_one_result, "ok", f"T1 wait: {effect_one_snapshot!r}")
+        self.assertIsInstance(effect_two_result, IntegrityError, f"T2 wait: {effect_two_snapshot!r}")
+        self.assertIn("S3FU gateway effect: continuity", str(effect_two_result), f"T2 wait: {effect_two_snapshot!r}")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT evidence_reference FROM public.core_livingorganismevent "
+                "WHERE living_organism_id = %s AND action = %s AND evidence_reference IN (%s, %s) "
+                "ORDER BY sequence",
+                [self.organism.pk, OrganismAction.EFFECT_APPLICATION_SETTINGS.value,
+                 f"application-settings-version:{version_one.version_uuid}",
+                 f"application-settings-version:{version_two.version_uuid}"],
+            )
+            events = cursor.fetchall()
+        self.assertEqual([row[0] for row in events], [
+            f"application-settings-version:{version_one.version_uuid}",
+        ])
+        self._assert_latest_settings_effect(version_one)
 
     def test_automatic_acceptance_has_separate_applicant_and_composed_lo_acts(self):
         settings = self.automatic_gateway()

@@ -608,6 +608,7 @@ class OrganismApplicationService:
         acquire_organism_command_mutex(database_alias=self._alias, actor_identity_id=actor.identity_id,
                                        action=action, idempotency_key=idempotency_key)
         organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
+        _lock_owning_organism(self._alias, organism.organism_id)
         membership, role_refs = _lock_actor_membership_context(
             database_alias=self._alias, actor_identity_id=actor.identity_id,
             living_organism_id=organism_uuid, unavailable=S015ApplicationAuthorityUnavailable,
@@ -794,6 +795,7 @@ class OrganismApplicationService:
                 cursor.execute(
                     "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
                 )
+        _lock_owning_organism(self._alias, application.living_organism.organism_id)
         actor_membership, role_refs = _lock_actor_membership_context(
             database_alias=self._alias, actor_identity_id=actor.identity_id,
             living_organism_id=application.living_organism.organism_id,
@@ -936,6 +938,7 @@ class OrganismApplicationService:
                     raise S015ApplicationRefused("applicant is already a current member")
                 if membership.state == "ENDED":
                     raise S015OperationNotYetImplemented("rejoin_by_application", "IL-1", "S4")
+            _lock_owning_organism(self._alias, organism.organism_id)
             with connections[self._alias].cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM public.core_loapplicationgateway WHERE living_organism_id = %s FOR SHARE",
@@ -964,7 +967,6 @@ class OrganismApplicationService:
             if settings.automatic_acceptance is True and care is None:
                 raise S015OperationNotYetImplemented("automatic_acceptance", "S3-IL-CARE-EXEC", "CARE")
             self._pair_lock(actor, organism)
-            _lock_owning_organism(self._alias, organism.organism_id)
             open_application = Application.objects.using(self._alias).filter(
                 applicant=actor, living_organism=organism, decision__isnull=True, withdrawal__isnull=True,
             ).exists()

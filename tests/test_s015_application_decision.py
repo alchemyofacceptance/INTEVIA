@@ -36,6 +36,13 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_concurrency_support import (
+    ORGANISM_LOCK_RELATIONS,
+    backend_pid,
+    cleanup_workers,
+    start_worker,
+    wait_until_locked,
+)
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
@@ -816,9 +823,141 @@ class ApplicationDecisionTests(TransactionTestCase):
         )).exists())
 
     def test_two_decisions_race_to_one(self):
+        """Service-level only: one Coordinator credential, serialised by _lock_actor before any application lock. The database-level two-decision witness is test_rs2_database_level_two_decisions_on_two_connections."""
         application = self.claimed()
         self._race(application, "decide", "decide")
         self.assertEqual(ApplicationDecision.objects.count(), 1)
+
+    def _start_observed_worker(self, operation):
+        worker = start_worker(operation)
+        self._workers.append(worker)
+        return worker
+
+    def _join_observed_worker(self, worker):
+        worker.thread.join(timeout=30)
+        self.assertFalse(worker.thread.is_alive())
+        return worker.result(timeout=10)
+
+    def _register_workers(self):
+        self._workers = []
+        self.addCleanup(cleanup_workers, self._workers)
+
+    def _withdraw_for_race(self, application):
+        token = fresh()
+        command = WithdrawApplicationCommand(
+            credential=self.applicant.credential, application_uuid=application.application_uuid,
+            request_reference=f"race:withdraw:{token}", idempotency_key=f"race:withdraw:{token}",
+            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+        )
+        self.service(_Provider()).withdraw_application(command)
+
+    def test_dw1_withdraw_first_then_decide_waits_on_applicant_identity(self):
+        application = self.claimed()
+        self._register_workers()
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism_uuid])
+                withdrawal = self._start_observed_worker(lambda: self._withdraw_for_race(application))
+                withdrawal_snapshot = wait_until_locked(
+                    cursor, withdrawal.pid(), holder_pid, relations=ORGANISM_LOCK_RELATIONS,
+                )
+                decision = self._start_observed_worker(lambda: self.service(_Provider()).decide_application(
+                    self.command(application, kind="decide", suffix="dw1"),
+                ))
+                decision_snapshot = wait_until_locked(
+                    cursor, decision.pid(), withdrawal.pid(), relations={"core_identity"},
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        self.assertEqual(self._join_observed_worker(withdrawal), "ok")
+        refused = self._join_observed_worker(decision)
+        self.assertIsInstance(refused, S015ApplicationRefused, f"decision wait: {decision_snapshot!r}")
+        self.assertEqual(str(refused), "application already withdrawn", f"withdrawal wait: {withdrawal_snapshot!r}")
+        self.assertEqual(ApplicationWithdrawal.objects.filter(application=application).count(), 1)
+        self.assertFalse(ApplicationDecision.objects.filter(application=application).exists())
+
+    def test_dw2_decide_first_then_withdraw_waits_on_applicant_identity(self):
+        application = self.claimed()
+        self._register_workers()
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism_uuid])
+                decision = self._start_observed_worker(lambda: self.service(_Provider()).decide_application(
+                    self.command(application, kind="decide", suffix="dw2"),
+                ))
+                decision_snapshot = wait_until_locked(
+                    cursor, decision.pid(), holder_pid, relations=ORGANISM_LOCK_RELATIONS,
+                )
+                withdrawal = self._start_observed_worker(lambda: self._withdraw_for_race(application))
+                withdrawal_snapshot = wait_until_locked(
+                    cursor, withdrawal.pid(), decision.pid(), relations={"core_identity"},
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        self.assertEqual(self._join_observed_worker(decision), "ok")
+        refused = self._join_observed_worker(withdrawal)
+        self.assertIsInstance(refused, S015ApplicationRefused, f"withdrawal wait: {withdrawal_snapshot!r}")
+        self.assertEqual(str(refused), "application already decided", f"decision wait: {decision_snapshot!r}")
+        self.assertEqual(ApplicationDecision.objects.filter(application=application).count(), 1)
+        self.assertFalse(ApplicationWithdrawal.objects.filter(application=application).exists())
+
+    def test_rs2_database_level_two_decisions_on_two_connections(self):
+        # S3 terminal exclusion guards decision against withdrawal. Decision against decision is the unique key, by design.
+        application = self.claimed()
+        claim = CSAAssignment.objects.get(application=application)
+        self._register_workers()
+        effects_before = ApplicationDecisionEffect.objects.filter(decision__application=application).count()
+        transitions_before = OrganismMembershipTransition.objects.filter(
+            membership__identity=self.applicant, membership__living_organism_id=self.ids["lo"],
+        ).count()
+        self.assertEqual(effects_before, 0)
+        self.assertEqual(transitions_before, 0)
+        holder_pid = backend_pid(connection)
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                self._direct_decision(cursor, application, claim)
+                cursor.execute("SELECT decision_uuid FROM core_applicationdecision WHERE application_id = %s", [application.pk])
+                first_decision_uuid = cursor.fetchone()[0]
+
+                def insert_duplicate():
+                    with transaction.atomic(), connection.cursor() as worker_cursor:
+                        self._direct_decision(worker_cursor, application, claim)
+
+                worker = self._start_observed_worker(insert_duplicate)
+                worker_pid = worker.pid()
+                self.assertNotEqual(worker_pid, holder_pid)
+                worker_snapshot = wait_until_locked(
+                    cursor, worker_pid, holder_pid, relations={"core_application"},
+                )
+        finally:
+            self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
+        refused = self._join_observed_worker(worker)
+        self.assertIsInstance(refused, IntegrityError)
+        constraint = getattr(getattr(refused.__cause__, "diag", None), "constraint_name", None)
+        self.assertEqual(constraint, "core_applicationdecision_application_id_key", repr(worker_snapshot))
+        self.assertIn("duplicate key", str(refused).lower(), repr(worker_snapshot))
+        self.assertEqual(ApplicationDecision.objects.filter(application=application).count(), 1)
+        first_decision = ApplicationDecision.objects.get(application=application)
+        self.assertEqual(first_decision.decision_uuid, first_decision_uuid)
+        self.assertEqual(first_decision.outcome, "DECLINE")
+        self.assertEqual(
+            ApplicationDecisionEffect.objects.filter(decision__application=application).count(), effects_before,
+        )
+        self.assertEqual(
+            OrganismMembershipTransition.objects.filter(
+                membership__identity=self.applicant, membership__living_organism_id=self.ids["lo"],
+            ).count(),
+            transitions_before,
+        )
+
+    def test_rs2_control_single_direct_decision_is_admitted(self):
+        application = self.claimed()
+        claim = CSAAssignment.objects.get(application=application)
+        with transaction.atomic(), connection.cursor() as cursor:
+            self._direct_decision(cursor, application, claim)
+        self.assertEqual(ApplicationDecision.objects.filter(application=application).count(), 1)
 
     def test_decision_and_withdrawal_race_decision_first(self):
         application = self.claimed()
