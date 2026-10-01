@@ -3,6 +3,7 @@
 import importlib
 import hashlib
 import json
+import threading
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from unittest import skipUnless
@@ -14,7 +15,8 @@ from django.test import TransactionTestCase
 from core.forms import LOApplicationQuestionDraftForm, LOApplicationSettingsDraftForm
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
-    ApplicationLineage, ApplicationLineageEvent, Identity, IdentityTransition,
+    ApplicationLineage, ApplicationLineageEvent, ContextualRoleAssignment,
+    ContextualRoleAssignmentStateEvent, Identity, IdentityTransition,
     LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
     OrganismMembershipTransition,
     LOApplicationQuestionVersion, LOApplicationSettingsVersion, LOGovernanceConfigurationVersion,
@@ -30,12 +32,16 @@ from src.intevia.services.organism_authority import (
     S015Authority, S015OwnApplicantAuthorityRequest, S015OwnApplicantAuthorityResponse,
     S015PostFoundingAuthorityResponse,
 )
-from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
+from src.intevia.services.organism_membership_service import (
+    OrganismMembershipService, OpenMembershipCommand, S015OperationNotYetImplemented,
+)
+from src.intevia.services.organism_role_service import OrganismRoleService, TransitionAssignmentCommand
 from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.s015_concurrency_support import (
     ORGANISM_LOCK_RELATIONS,
     backend_pid,
     cleanup_workers,
+    exact_wait,
     start_worker,
     wait_for_blocker_set,
     wait_until_locked,
@@ -52,6 +58,23 @@ class _CoordinatorProvider:
         if isinstance(request, S015OwnApplicantAuthorityRequest):
             return S015OwnApplicantAuthorityResponse(**asdict(request), authority_reference="s3:test:applicant")
         return S015PostFoundingAuthorityResponse(**asdict(request), authority_reference="s3:test:gateway")
+
+
+class _PausingPostFoundingProvider:
+    """TEST DEVICE (LOI Option B): answers post-founding authority exactly, but first signals `entered` and waits for `release`.
+    It freezes an S1/S2 command INSIDE AUTHORITY - after the command holds the LO row, before its insert trigger enters the register.
+    It bypasses no lock and changes no command semantics. Never used outside these two witnesses."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def evaluate_organism_authority(self, request):
+        self.entered.set()
+        assert self.release.wait(timeout=30)
+        return S015PostFoundingAuthorityResponse(
+            **asdict(request), authority_reference="s3:test:paused",
+        )
 
 
 class _TestFixtureLONameSource:
@@ -226,6 +249,40 @@ class ApplicationGatewayTests(TransactionTestCase):
     def _assert_no_deadlock(self, *outcomes):
         for outcome in outcomes:
             self.assertNotIn("deadlock detected", str(outcome).lower(), repr(outcome))
+
+    def _seed_one_stale_register_row(self):
+        # TEST SETUP: clear stale organism locks, then commit exactly one stale row for this organism.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM public.s015_transaction_register WHERE kind = %s "
+                "AND pg_xact_status(xid) IS DISTINCT FROM %s",
+                ["ORGANISM_LOCK", "in progress"],
+            )
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [self.organism.organism_id],
+            )
+
+    def _race_paused_command_against_submission(self, paused_call, provider, applicant):
+        self._seed_one_stale_register_row()
+        workers = []
+        self.addCleanup(cleanup_workers, workers)
+        self.addCleanup(provider.release.set)
+
+        paused = self._start_worker(workers, paused_call)
+        self.assertTrue(provider.entered.wait(timeout=10))
+        submission = self._start_worker(workers, lambda: self.submit(applicant))
+        with connection.cursor() as cursor:
+            wait_until_locked(
+                cursor, submission.pid(), paused.pid(), relations={"core_livingorganism"},
+            )
+            ew = exact_wait(cursor, submission.pid())
+            self.assertEqual(ew["waiting"]["locktype"], "transactionid")
+            self.assertEqual(ew["holders"], [paused.pid()])
+            self.assertEqual(ew["tuple_relation"], "core_livingorganism")
+        provider.release.set()
+        return self._join_worker(paused), self._join_worker(submission), ew
 
     def _second_coordinator(self):
         # TEST-ONLY second current Coordinator with a distinct Identity and credential.
@@ -1234,3 +1291,90 @@ class ApplicationGatewayTests(TransactionTestCase):
         row = json.loads(row) if isinstance(row, str) else row
         self.assertEqual(l1, digest("s015r1", l1_preimage("core_livingorganismevent", inventory, row)))
         self.assertEqual(parts, digest("s015p1", parts_preimage("core_livingorganismevent", event.event_uuid, [])))
+
+    def test_loi_w1_s2_office_end_and_submission_complete_without_cycle(self):
+        """On the pre-0032 implementation, this interleaving ended in deadlock detected with no application written (Vision Chamber evidence W1, 3/3); it establishes this examined interaction only."""
+        self.open_gateway()
+        second = self._second_coordinator()
+        office = ContextualRoleAssignment.objects.get(membership__identity=second, state="ACTIVE")
+        applicant = self.applicant()
+        provider = _PausingPostFoundingProvider()
+        service = OrganismRoleService(
+            authority=S015Authority(provider=provider, database_alias="default"),
+            clock=lambda: NOW, database_alias="default",
+        )
+        token = fresh()
+        paused_call = lambda: service.transition_assignment(TransitionAssignmentCommand(
+            credential=self.actor.credential,
+            request_reference=f"loi-w1:{token}:request",
+            idempotency_key=f"loi-w1:{token}:idempotency",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+            assignment_uuid=office.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+        ))
+
+        paused_result, submission_result, _ = self._race_paused_command_against_submission(
+            paused_call, provider, applicant,
+        )
+
+        self.assertEqual(paused_result, "ok")
+        self.assertEqual(submission_result, "ok")
+        self._assert_no_deadlock(paused_result, submission_result)
+        office.refresh_from_db()
+        self.assertEqual(office.state, "ENDED")
+        events = ContextualRoleAssignmentStateEvent.objects.filter(assignment=office).order_by("sequence")
+        self.assertEqual(
+            [(event.action, event.resulting_state) for event in events],
+            [("ASSIGN", "ACTIVE"), ("END", "ENDED")],
+        )
+        self.assertEqual(
+            Application.objects.filter(applicant=applicant, living_organism=self.organism).count(),
+            1,
+        )
+
+    def test_loi_w2_s1_open_and_submission_complete_without_cycle(self):
+        """On the pre-0032 implementation, this interleaving ended in deadlock detected with no application written (Vision Chamber evidence W2, 3/3); it establishes this examined interaction only."""
+        self.open_gateway()
+        with transaction.atomic(), connection.cursor() as cursor:
+            target_id = seed_identity(cursor, f"loi-w2-target-{fresh()}")
+        target = Identity.objects.get(pk=target_id)
+        applicant = self.applicant()
+        provider = _PausingPostFoundingProvider()
+        service = OrganismMembershipService(
+            authority=S015Authority(provider=provider, database_alias="default"),
+            clock=lambda: NOW, database_alias="default",
+        )
+        token = fresh()
+        paused_call = lambda: service.open_membership(OpenMembershipCommand(
+            credential=self.actor.credential,
+            request_reference=f"loi-w2:{token}:request",
+            idempotency_key=f"loi-w2:{token}:idempotency",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+            living_organism_id=self.organism.organism_id,
+            member_identity_id=target.identity_id,
+            reason_class="TEST_ONLY_REASON_OPEN",
+        ))
+
+        paused_result, submission_result, _ = self._race_paused_command_against_submission(
+            paused_call, provider, applicant,
+        )
+
+        self.assertEqual(paused_result, "ok")
+        self.assertEqual(submission_result, "ok")
+        self._assert_no_deadlock(paused_result, submission_result)
+        membership = OrganismMembership.objects.get(identity=target, living_organism=self.organism)
+        self.assertEqual(membership.state, "PROPOSED")
+        transitions = OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
+        self.assertEqual(
+            [(event.prior_state, event.resulting_state) for event in transitions],
+            [(None, "PROPOSED")],
+        )
+        self.assertEqual(
+            Application.objects.filter(applicant=applicant, living_organism=self.organism).count(),
+            1,
+        )
