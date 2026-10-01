@@ -224,7 +224,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         )
         return ids, actor, target, service, open_result, transition_result
 
-    def test_open_then_transition_to_active_commits_and_refreshes_cache(self):
+    def test_open_then_transition_to_active_is_refused_without_write(self):
         ids, actor, target = self._setup_organism("admission-refused")
         service = self._service(_ExactProvider())
         open_result = service.open_membership(self._open_command(

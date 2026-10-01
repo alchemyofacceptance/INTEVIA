@@ -12,8 +12,9 @@ from django.test import TransactionTestCase
 
 from core.forms import LOApplicationQuestionDraftForm, LOApplicationSettingsDraftForm
 from core.models import (
-    Application, ApplicationDecision, ApplicationEngagement, ApplicationLineageEvent, Identity,
-    IdentityTransition, LivingOrganism, LivingOrganismEvent, OrganismMembership,
+    Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
+    ApplicationLineage, ApplicationLineageEvent, Identity, IdentityTransition,
+    LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
     OrganismMembershipTransition,
     LOApplicationQuestionVersion, LOApplicationSettingsVersion, LOGovernanceConfigurationVersion,
 )
@@ -248,6 +249,31 @@ class ApplicationGatewayTests(TransactionTestCase):
     def test_automatic_welcome_unavailable_rolls_back_every_row(self):
         self.automatic_gateway()
         care, _ = self.automatic_service()
+        preexisting_applicant = self.applicant()
+        tables = {
+            "core_application": Application,
+            "core_organismmembership": OrganismMembership,
+            "core_organismmembershiptransition": OrganismMembershipTransition,
+            "core_applicationengagement": ApplicationEngagement,
+            "core_applicationdecision": ApplicationDecision,
+            "core_applicationdecisioneffect": ApplicationDecisionEffect,
+            "core_applicationlineage": ApplicationLineage,
+            "core_applicationlineageevent": ApplicationLineageEvent,
+            "core_organismcommandreceipt": OrganismCommandReceipt,
+        }
+        ids_before_preexisting = {
+            table: set(model.objects.values_list("pk", flat=True))
+            for table, model in tables.items()
+        }
+        self.submit(preexisting_applicant)
+        preexisting_ids = {
+            table: set(model.objects.values_list("pk", flat=True)) - ids_before_preexisting[table]
+            for table, model in tables.items()
+        }
+        before_counts = {
+            table: model.objects.count()
+            for table, model in tables.items()
+        }
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
             name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care),
@@ -256,8 +282,17 @@ class ApplicationGatewayTests(TransactionTestCase):
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
             self.submit(applicant)
         self.assertEqual(refused.exception.limit_id, "S3-IL-NOTICE")
+        self.assertEqual(
+            {table: model.objects.count() for table, model in tables.items()},
+            before_counts,
+        )
         self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
         self.assertFalse(OrganismMembership.objects.filter(identity=applicant, living_organism=self.organism).exists())
+        for table, model in tables.items():
+            self.assertTrue(
+                preexisting_ids[table].issubset(set(model.objects.values_list("pk", flat=True))),
+                table,
+            )
 
     def test_automatic_closed_gateway_refuses_without_admission(self):
         self.automatic_gateway()
