@@ -111,6 +111,58 @@ def lock_snapshot(cursor, pid) -> dict:
     }
 
 
+def exact_wait(cursor, waiter_pid) -> dict:
+    waiter_pid = int(waiter_pid)
+    cursor.execute(
+        "SELECT locktype, CASE WHEN relation IS NULL THEN NULL ELSE relation::regclass::text END, "
+        "transactionid, mode FROM pg_locks WHERE pid = %s::int AND NOT granted",
+        [waiter_pid],
+    )
+    waiting_rows = cursor.fetchall()
+    if len(waiting_rows) != 1:
+        raise AssertionError(
+            f"waiter pid {waiter_pid} has {len(waiting_rows)} ungranted locks: {waiting_rows!r}"
+        )
+    locktype, relation, transactionid, mode = waiting_rows[0]
+    waiting = {
+        "locktype": locktype,
+        "relation": relation,
+        "transactionid": transactionid,
+        "mode": mode,
+    }
+    cursor.execute(
+        "SELECT holder.pid FROM pg_locks waiting JOIN pg_locks holder "
+        "ON holder.locktype IS NOT DISTINCT FROM waiting.locktype "
+        "AND holder.database IS NOT DISTINCT FROM waiting.database "
+        "AND holder.relation IS NOT DISTINCT FROM waiting.relation "
+        "AND holder.page IS NOT DISTINCT FROM waiting.page "
+        "AND holder.tuple IS NOT DISTINCT FROM waiting.tuple "
+        "AND holder.transactionid IS NOT DISTINCT FROM waiting.transactionid "
+        "AND holder.classid IS NOT DISTINCT FROM waiting.classid "
+        "AND holder.objid IS NOT DISTINCT FROM waiting.objid "
+        "AND holder.objsubid IS NOT DISTINCT FROM waiting.objsubid "
+        "WHERE waiting.pid = %s::int AND NOT waiting.granted "
+        "AND holder.granted AND holder.pid <> waiting.pid ORDER BY holder.pid",
+        [waiter_pid],
+    )
+    holders = [row[0] for row in cursor.fetchall()]
+    cursor.execute(
+        "SELECT DISTINCT CASE WHEN relation IS NULL THEN NULL ELSE relation::regclass::text END "
+        "FROM pg_locks WHERE pid = %s::int AND locktype = 'tuple' AND granted ORDER BY 1",
+        [waiter_pid],
+    )
+    tuple_relations = [row[0] for row in cursor.fetchall()]
+    if len(tuple_relations) > 1:
+        raise AssertionError(
+            f"waiter pid {waiter_pid} has multiple granted tuple relations: {tuple_relations!r}"
+        )
+    return {
+        "waiting": waiting,
+        "holders": holders,
+        "tuple_relation": tuple_relations[0] if tuple_relations else None,
+    }
+
+
 def wait_until_locked(
     cursor,
     waiter_pid,

@@ -30,7 +30,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0032_s015_register_cleanup_nonblocking"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -363,7 +363,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                                "JOIN pg_namespace n ON n.oid = c.relnamespace "
                                "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"])
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0032_s015_register_cleanup_nonblocking"])
         finally:
             MigrationExecutor(connection).migrate(head)
 

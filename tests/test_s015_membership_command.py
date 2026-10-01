@@ -15,6 +15,7 @@ from django.test import TransactionTestCase
 from core.models import Identity, OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition
 from core.organism_contract import OrganismAction
 from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, found_root, fresh, refresh, seed_identity
+from tests.s015_concurrency_support import cleanup_workers, exact_wait, start_worker, wait_until_locked
 from src.intevia.services.organism_authority import (
     S015Authority,
     S015AuthorityDenied,
@@ -846,3 +847,102 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(OrganismMembership.objects.count(), 2)
         self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
         self.assertEqual(OrganismMembershipTransition.objects.count(), 2)
+
+    def test_loi_x1_s1_departure_and_registered_session_complete_without_cycle(self):
+        """On the pre-0032 implementation this interleaving ended in deadlock detected (Vision Chamber X1)."""
+        ids, actor, target = self._setup_organism(f"loi-x1-{fresh()}")
+        membership = self._fixture_membership(ids, target, "ACTIVE", "loi-x1-active")
+        organism_uuid = ids["organism_uuid"]
+        with connection.cursor() as cursor:  # TEST SETUP: remove fixture residue before seeding one stale row.
+            cursor.execute(
+                "DELETE FROM public.s015_transaction_register WHERE kind = 'ORGANISM_LOCK' "
+                "AND pg_xact_status(xid) IS DISTINCT FROM 'in progress'",
+                params=None,
+            )
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [organism_uuid],
+            )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM public.s015_transaction_register "
+                "WHERE kind = 'ORGANISM_LOCK' AND organism_uuid = %s::uuid "
+                "AND pg_xact_status(xid) IS DISTINCT FROM 'in progress'",
+                [organism_uuid],
+            )
+            self.assertEqual(cursor.fetchone()[0], 1)
+            cursor.execute(
+                "SELECT count(*) FROM public.s015_transaction_register "
+                "WHERE kind = 'ORGANISM_LOCK' AND pg_xact_status(xid) IS DISTINCT FROM 'in progress'",
+                params=None,
+            )
+            self.assertEqual(cursor.fetchone()[0], 1)
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class _PausingProvider:
+            def evaluate_organism_authority(self, request):
+                # TEST DEVICE: freeze only this S1 act inside authority after its LO locks.
+                entered.set()
+                if not release.wait(timeout=30):
+                    raise TimeoutError("S1 authority pause was not released")
+                return S015PostFoundingAuthorityResponse(
+                    **asdict(request),
+                    authority_reference="authority:fixture",
+                )
+
+        workers = []
+        self.addCleanup(cleanup_workers, workers)
+        self.addCleanup(release.set)
+
+        def depart():
+            worker_actor = Identity.objects.get(pk=actor.pk)
+            service = self._service(_PausingProvider())
+            service.transition_membership(
+                self._transition_command(
+                    actor=worker_actor,
+                    membership_uuid=membership.membership_uuid,
+                    resulting_state="ENDED",
+                    request_reference="request:loi-x1:departure",
+                    idempotency_key="idem:loi-x1:departure",
+                    reason_class="TEST_ONLY_REASON_LOI_X1",
+                )
+            )
+
+        s1 = start_worker(depart)
+        workers.append(s1)
+        self.assertTrue(entered.wait(timeout=10))
+
+        def register_organism():
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                    [organism_uuid],
+                )
+
+        registered = start_worker(register_organism)
+        workers.append(registered)
+        with connection.cursor() as cursor:
+            wait_until_locked(
+                cursor,
+                registered.pid(),
+                s1.pid(),
+                relations={"core_livingorganism"},
+                locktype="transactionid",
+            )
+            observation = exact_wait(cursor, registered.pid())
+        self.assertEqual(observation["waiting"]["locktype"], "transactionid")
+        self.assertIn(s1.pid(), observation["holders"])
+        self.assertEqual(observation["tuple_relation"], "core_livingorganism")
+
+        release.set()
+        s1_result = s1.result(timeout=30)
+        registered_result = registered.result(timeout=30)
+        self.assertEqual(s1_result, "ok")
+        self.assertEqual(registered_result, "ok")
+        self.assertNotIn("deadlock detected", str(s1_result).lower())
+        self.assertNotIn("deadlock detected", str(registered_result).lower())
+        membership.refresh_from_db()
+        self.assertEqual(membership.state, "ENDED")

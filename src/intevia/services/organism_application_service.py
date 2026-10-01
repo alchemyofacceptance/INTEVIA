@@ -360,7 +360,8 @@ def _insert_admission_transition(
 
 
 def _lock_owning_organism(database_alias: str, organism_id) -> None:
-    """Lock the organism before application rows; submission first locks its gateway head."""
+    """Take the registered organism lock (s015_lock_organisms). Every S3 path takes it first among its per-LO locks: before the gateway head,
+    the pair lock, the membership helper and application rows."""
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organism_id])
 
