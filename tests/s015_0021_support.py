@@ -129,6 +129,39 @@ def refresh(cur, token, anchor_id, state_at=T0):
     return cur.fetchone()[0]
 
 
+def seed_test_gateway(cur, ids, at=T0):
+    """Test-only version/effect rows with an explicitly labelled fixture name; never a production LO-name source."""
+    cur.execute("INSERT INTO core_loapplicationgateway (living_organism_id) VALUES (%s) RETURNING id", [ids["lo"]])
+    result = {}
+    event_id = ids["events"]["core_livingorganismevent"]
+    for table, action, prefix, values in (
+        ("core_loapplicationsettingsversion", "EFFECT_APPLICATION_SETTINGS", "application-settings-version:",
+         {"applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO"}),
+        ("core_loapplicationquestionversion", "EFFECT_APPLICATION_QUESTION", "application-question-version:",
+         {"question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
+          "answer_format": "LONG_ANSWER", "options": None}),
+    ):
+        version_uuid = str(uuid.uuid4())
+        columns = {"version_uuid": version_uuid, "living_organism_id": ids["lo"],
+                   "actor_id": ids["identity"], "enterer_id": ids["identity"],
+                   "occurred_at": at, "effective_at": at, "received_at": at, **values}
+        cur.execute(f"INSERT INTO {table} ({', '.join(columns)}) "
+                    f"VALUES ({', '.join(['%s'] * len(columns))}) RETURNING id", list(columns.values()))
+        result[table] = cur.fetchone()[0]
+        cur.execute("SELECT sequence, resulting_state FROM core_livingorganismevent WHERE id = %s", [event_id])
+        sequence, state = cur.fetchone()
+        event_id, _ = append_event(
+            cur, "core_livingorganismevent", ids["lo"], sequence + 1, action,
+            state, state, None, ids["basis"], fresh(), pred_id=event_id,
+            eff=at, occ=at, rec=at,
+            extra={"actor_state": "LIVING_ORGANISM", "actor_access_epoch": None,
+                   "enterer_identity_id": ids["identity"], "evidence_reference": prefix + version_uuid},
+        )
+        refresh(cur, "core_livingorganism", ids["lo"], at)
+    result["head_event"] = event_id
+    return result
+
+
 def seed_identity(cur, tag):
     cur.execute("INSERT INTO auth_user (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) "
                 "VALUES ('!unusable', false, %s, '', '', '', false, true, now()) RETURNING id", (f"u21g_{tag}",))

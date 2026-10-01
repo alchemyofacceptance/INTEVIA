@@ -1,10 +1,11 @@
 """S3 round 2a: applicant-only commands on the disposable PostgreSQL route."""
 
 import threading
+import time
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from queue import Queue
-from threading import Barrier
+from threading import Barrier, Event
 from unittest import skipUnless
 from uuid import uuid4
 
@@ -17,7 +18,7 @@ from core.models import (
     OrganismCommandReceipt, OrganismMembership,
 )
 from core.organism_contract import OrganismAction
-from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from src.intevia.services.organism_application_service import (
     OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand,
     WithdrawApplicationCommand,
@@ -54,6 +55,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.tag = f"application-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
+            self.gateway = seed_test_gateway(cursor, self.ids)
             self.applicant_pk = seed_identity(cursor, f"app-{self.tag}")
             cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", (self.ids["lo"],))
             self.organism_uuid = cursor.fetchone()[0]
@@ -91,6 +93,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
             request_reference=request or f"s3:submit:{self.tag}", idempotency_key=key or f"s3:key:{self.tag}",
             occurred_at=effective_at, effective_at=effective_at, received_at=NOW,
             predecessor_reference=predecessor,
+            answer="Test-only applicant answer",
         )
 
     def withdraw(self, application, *, actor=None, request=None, key=None):
@@ -246,6 +249,49 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.assertEqual(sum(not isinstance(result, Exception) for result in observed), 1)
         self.assertEqual(Application.objects.count(), 1)
 
+    def test_submission_waits_for_owning_organism_before_application_insert(self):
+        self.history()
+        started = Event()
+        backend: Queue[int] = Queue()
+        outcomes: Queue[object] = Queue()
+
+        def worker():
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    backend.put(cursor.fetchone()[0])
+                started.set()
+                outcomes.put(self.service(_ApplicantProvider()).submit_application(self.submit()))
+            except Exception as exc:
+                outcomes.put(exc)
+            finally:
+                connection.close()
+
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism_uuid])
+            cursor.execute("SELECT pg_backend_pid()")
+            holder_pid = cursor.fetchone()[0]
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+            self.assertTrue(started.wait(timeout=10))
+            worker_pid = backend.get(timeout=10)
+            deadline = time.monotonic() + 10
+            blocked = False
+            while time.monotonic() < deadline:
+                cursor.execute("SELECT %s = ANY(pg_blocking_pids(%s))", [holder_pid, worker_pid])
+                if cursor.fetchone()[0]:
+                    blocked = True
+                    break
+                Event().wait(timeout=0.01)
+            self.assertTrue(blocked, "submission should wait at the owning-organism lock")
+            self.assertFalse(Application.objects.filter(applicant=self.applicant).exists())
+        thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
+        outcome = outcomes.get_nowait()
+        self.assertNotIsInstance(outcome, Exception)
+        self.assertEqual(Application.objects.filter(applicant=self.applicant).count(), 1)
+
     def test_withdrawal_by_another_actor_fails_at_authority(self):
         _, application = self.submitted()
         with transaction.atomic(), connection.cursor() as cursor:
@@ -285,6 +331,8 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.history()
         previous = Application.objects.create(
             applicant=self.applicant, living_organism_id=self.ids["lo"], actor=self.applicant, enterer=self.applicant,
+            settings_version_id=self.gateway["core_loapplicationsettingsversion"],
+            question_version_id=self.gateway["core_loapplicationquestionversion"], answer="Test-only applicant answer",
             authority_decision_reference="s015d1:" + "a" * 64,
             authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,
@@ -299,6 +347,8 @@ class S015ApplicantCommandTests(TransactionTestCase):
         other = Identity.objects.get(pk=other_pk)
         previous = Application.objects.create(
             applicant=other, living_organism_id=self.ids["lo"], actor=other, enterer=other,
+            settings_version_id=self.gateway["core_loapplicationsettingsversion"],
+            question_version_id=self.gateway["core_loapplicationquestionversion"], answer="Test-only applicant answer",
             authority_decision_reference="s015d1:" + "a" * 64,
             authority_reference="s3:test:fixture", actor_access_epoch=other.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,
@@ -309,9 +359,12 @@ class S015ApplicantCommandTests(TransactionTestCase):
     def test_predecessor_of_another_organism_refused(self):
         self.history()
         with transaction.atomic(), connection.cursor() as cursor:
-            other_lo = found_nonroot(cursor, tag=f"other-lo-{self.tag}")["lo"]
+            other_ids = found_nonroot(cursor, tag=f"other-lo-{self.tag}")
+            other_gateway = seed_test_gateway(cursor, other_ids)
         previous = Application.objects.create(
-            applicant=self.applicant, living_organism_id=other_lo, actor=self.applicant, enterer=self.applicant,
+            applicant=self.applicant, living_organism_id=other_ids["lo"], actor=self.applicant, enterer=self.applicant,
+            settings_version_id=other_gateway["core_loapplicationsettingsversion"],
+            question_version_id=other_gateway["core_loapplicationquestionversion"], answer="Test-only applicant answer",
             authority_decision_reference="s015d1:" + "a" * 64,
             authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
             occurred_at=T0, effective_at=T0, received_at=T0,

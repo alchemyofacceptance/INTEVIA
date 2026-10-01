@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Callable, Protocol
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
@@ -14,8 +14,9 @@ from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
     ApplicationLineage, ApplicationLineageEvent,
     ApplicationWithdrawal, CSAAssignment, CSAAssignmentEnd, ContextualRoleAssignment,
-    Identity, IdentityTransition, LivingOrganism, OrganismCommandReceipt, OrganismMembership,
-    OrganismMembershipTransition,
+    Identity, IdentityTransition, LivingOrganism, LivingOrganismEvent,
+    LOApplicationGateway, LOApplicationSettingsVersion, LOApplicationQuestionVersion,
+    LOGovernanceConfigurationVersion, OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
@@ -54,6 +55,22 @@ class S015ApplicationNotFound(S015ApplicationError):
     pass
 
 
+class LONameSource(Protocol):
+    def name_for(self, living_organism: LivingOrganism) -> str: ...
+
+
+class FormationLONameSource:
+    def name_for(self, living_organism: LivingOrganism) -> str:
+        raise S015OperationNotYetImplemented("lo_name", "S3-IL-LONAME", "FORMATION")
+
+
+def default_application_question(living_organism: LivingOrganism, name_source: LONameSource | None = None) -> dict[str, str]:
+    name = (name_source or FormationLONameSource()).name_for(living_organism)
+    if type(name) is not str or not name.strip():
+        raise S015ApplicationRefused("formation LO name is required")
+    return {"question_text": f"Why do you want to join {name}?", "answer_format": "LONG_ANSWER"}
+
+
 @dataclass(frozen=True, slots=True)
 class SubmitApplicationCommand:
     credential: User
@@ -64,6 +81,34 @@ class SubmitApplicationCommand:
     effective_at: datetime
     received_at: datetime
     predecessor_reference: UUID | None = None
+    answer: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayDraftCommand:
+    credential: User
+    living_organism_id: UUID
+    action: OrganismAction
+    request_reference: str
+    idempotency_key: str
+    occurred_at: datetime
+    effective_at: datetime
+    received_at: datetime
+    fields: dict[str, object]
+    version_uuid: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EffectGatewayVersionCommand:
+    credential: User
+    living_organism_id: UUID
+    action: OrganismAction
+    version_uuid: UUID
+    request_reference: str
+    idempotency_key: str
+    occurred_at: datetime
+    effective_at: datetime
+    received_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +182,81 @@ def applicant_eligible(
         return False
     latest = history.filter(occurred_at__lte=recorded_at).order_by("-occurred_at", "-pk").first()
     return latest is not None and latest.resulting_state == Identity.AccessState.ACTIVE
+
+
+_VERSION_KINDS = {
+    OrganismAction.EFFECT_APPLICATION_SETTINGS: (LOApplicationSettingsVersion, "application-settings-version:"),
+    OrganismAction.EFFECT_APPLICATION_QUESTION: (LOApplicationQuestionVersion, "application-question-version:"),
+    OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: (LOGovernanceConfigurationVersion, "governance-configuration-version:"),
+}
+
+
+def _effective_gateway_version(database_alias: str, organism: LivingOrganism, action: OrganismAction, at: datetime):
+    model, prefix = _VERSION_KINDS[action]
+    references = LivingOrganismEvent.objects.using(database_alias).filter(
+        living_organism=organism, action=action.value,
+        effective_at__lte=at, received_at__lte=at, recorded_at__lte=at,
+    ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid")
+    reference = references.values_list("evidence_reference", flat=True).first()
+    return None if reference is None else model.objects.using(database_alias).get(version_uuid=UUID(reference.removeprefix(prefix)))
+
+
+def _validate_gateway_answer(question: LOApplicationQuestionVersion, answer: str) -> None:
+    if type(answer) is not str:
+        raise S015ApplicationRefused("application answer is invalid")
+    kind = question.answer_format
+    if kind == "SHORT_ANSWER":
+        valid = 0 < len(answer.strip()) <= 255
+    elif kind == "LONG_ANSWER":
+        valid = 0 < len(answer.strip()) <= 4096
+    elif kind == "YES_NO":
+        valid = answer in ("YES", "NO")
+    elif kind == "MULTIPLE_CHOICE":
+        valid = isinstance(question.options, list) and answer in question.options
+    elif kind == "SCALE_COMPLEX":
+        try:
+            scale = int(answer)
+            bounds = [int(option) for option in question.options]
+            valid = str(scale) == answer and len(bounds) >= 2 and min(bounds) <= scale <= max(bounds)
+        except (ValueError, TypeError):
+            valid = False
+    else:
+        valid = False
+    if not valid:
+        raise S015ApplicationRefused("application answer is invalid for the effective question")
+
+
+def gateway_version_status(database_alias: str, version, at: datetime) -> str:
+    """Derive draft/effective/superseded; PROPOSED is reserved for the unbuilt CQ route."""
+    action = next(action for action, (model, _) in _VERSION_KINDS.items() if isinstance(version, model))
+    prefix = _VERSION_KINDS[action][1]
+    reference = prefix + str(version.version_uuid)
+    events = LivingOrganismEvent.objects.using(database_alias).filter(
+        living_organism=version.living_organism, action=action.value,
+        effective_at__lte=at, received_at__lte=at, recorded_at__lte=at,
+    ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid")
+    current = events.values_list("evidence_reference", flat=True).first()
+    if current == reference:
+        return "EFFECTIVE"
+    if events.filter(evidence_reference=reference).exists():
+        return "SUPERSEDED"
+    return "DRAFT"
+
+
+def _gateway_version_complete(version) -> bool:
+    if isinstance(version, LOApplicationSettingsVersion):
+        return (version.applications_open is not None and version.automatic_acceptance is not None
+                and version.processing_responsibility in ("LO", "APPLICATION_CIRCLE"))
+    if isinstance(version, LOApplicationQuestionVersion):
+        options = version.options
+        return (bool(version.question_text.strip()) and
+                version.answer_format in ("SHORT_ANSWER", "LONG_ANSWER", "YES_NO", "MULTIPLE_CHOICE", "SCALE_COMPLEX")
+                and (isinstance(options, list) and 2 <= len(options) <= 7
+                     if version.answer_format in ("MULTIPLE_CHOICE", "SCALE_COMPLEX") else options in (None, [])))
+    return all(getattr(version, field) is not None for field in (
+        "cq_active", "inherit_portal_cq_settings", "require_cq_to_change_lo_settings",
+        "require_cq_to_change_application_question",
+    ))
 
 
 def _result_from_receipt(payload: object) -> ApplicationCommandResult:
@@ -220,12 +340,7 @@ def _insert_admission_transition(
 
 
 def _lock_owning_organism(database_alias: str, organism_id) -> None:
-    """Take the owning organism's lock ahead of the application lock (S3-FU F2-6).
-
-    Lock order for every application act: identities, then the owning organism, then the application, then its lineage.
-    Appending to the application's lineage takes the organism lock through its trigger; taking it here, first, keeps every
-    act in the same order. A second request in the same transaction returns at once.
-    """
+    """Lock the organism before application rows; submission first locks its gateway head."""
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organism_id])
 
@@ -315,6 +430,7 @@ class _CoordinatorContext:
 class OrganismApplicationService:
     def __init__(
         self, *, authority: S015Authority, clock: Callable[[], datetime], database_alias: str = "default",
+        name_source: LONameSource | None = None,
     ) -> None:
         if not isinstance(authority, S015Authority) or authority.database_alias != database_alias:
             raise TypeError("matching S015 authority is required")
@@ -323,6 +439,7 @@ class OrganismApplicationService:
         self._authority = authority
         self._clock = clock
         self._alias = database_alias
+        self._name_source = name_source
 
     def _receipt_or_none(
         self, *, actor: Identity, action: OrganismAction, request_reference: str,
@@ -396,6 +513,173 @@ class OrganismApplicationService:
         ).digest()[:8], "big", signed=True)
         with connections[self._alias].cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+
+    def _gateway_start(self, command, *, create_head: bool):
+        action = command.action
+        if action not in _VERSION_KINDS:
+            raise ValueError("unknown gateway relation")
+        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
+        effective_at = _validate_timestamp(command.effective_at, "effective_at")
+        received_at = _validate_timestamp(command.received_at, "received_at")
+        organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
+        actor = _lock_actor(database_alias=self._alias, credential=command.credential,
+                            unavailable=S015ApplicationAuthorityUnavailable)
+        acquire_organism_command_mutex(database_alias=self._alias, actor_identity_id=actor.identity_id,
+                                       action=action, idempotency_key=idempotency_key)
+        organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
+        membership, role_refs = _lock_actor_membership_context(
+            database_alias=self._alias, actor_identity_id=actor.identity_id,
+            living_organism_id=organism_uuid, unavailable=S015ApplicationAuthorityUnavailable,
+        )
+        target = {"action": action.value, "organism": organism_uuid,
+                  "version": command.version_uuid}
+        fingerprint = _command_payload(
+            domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
+            actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
+            request_reference=request_reference, idempotency_key=idempotency_key,
+            occurred_at=occurred_at, target=target,
+            command={"effective_at": effective_at, "received_at": received_at,
+                     "fields": getattr(command, "fields", None)},
+        )
+        decision = self._authority.qualify(_authority_request(
+            database_alias=self._alias, actor=actor, actor_membership=membership,
+            actor_role_head_refs=role_refs, action=action, request_reference=request_reference,
+            idempotency_key=idempotency_key, received_at=received_at,
+            target_fingerprint=authority_target_fingerprint(target),
+        ))
+        if create_head:
+            LOApplicationGateway.objects.using(self._alias).get_or_create(living_organism=organism)
+        gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
+            living_organism=organism,
+        ).first()
+        if gateway is None:
+            raise S015ApplicationRefused("S3FU gateway closed")
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            gateway_at = cursor.fetchone()[0]
+        configuration = _effective_gateway_version(
+            self._alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, gateway_at,
+        )
+        if configuration is not None and configuration.cq_active is True:
+            if configuration.inherit_portal_cq_settings is True:
+                raise S015OperationNotYetImplemented("gateway_inherited_configuration", "S3-IL-INHERIT", "PORTAL")
+            cq_required = (configuration.require_cq_to_change_application_question if action is OrganismAction.EFFECT_APPLICATION_QUESTION
+                           else configuration.require_cq_to_change_lo_settings)
+            if cq_required is True:
+                raise S015OperationNotYetImplemented("gateway_cq_change", "S3-IL-CQ", "DISCUSSION")
+        office = ContextualRoleAssignment.objects.using(self._alias).select_related("role_definition").filter(
+            membership=membership, role_definition__code="COORDINATOR",
+            role_definition__scope="LIVING_ORGANISM", state="ACTIVE",
+        ).first()
+        if office is None or not OrganismRoleService(
+            authority=self._authority, clock=self._clock, database_alias=self._alias,
+        ).assignment_in_effect(office, effective_at):
+            raise S015ApplicationRefused("effective Coordinator office is required")
+        return (actor, organism, decision, fingerprint, request_reference,
+                idempotency_key, occurred_at, effective_at, received_at, gateway_at)
+
+    def save_gateway_draft(self, command: GatewayDraftCommand):
+        with transaction.atomic(using=self._alias):
+            (actor, organism, _, _, _, _, occurred_at, effective_at, received_at,
+             gateway_at) = self._gateway_start(command, create_head=True)
+            model, _ = _VERSION_KINDS[command.action]
+            allowed = {
+                LOApplicationSettingsVersion: {"applications_open", "automatic_acceptance", "processing_responsibility"},
+                LOApplicationQuestionVersion: {"question_text", "answer_format", "options"},
+                LOGovernanceConfigurationVersion: {"cq_active", "inherit_portal_cq_settings",
+                                                   "require_cq_to_change_lo_settings", "require_cq_to_change_application_question"},
+            }[model]
+            if not isinstance(command.fields, dict) or not command.fields.keys() <= allowed:
+                raise S015ApplicationRefused("invalid gateway draft fields")
+            if command.version_uuid is not None:
+                version = model.objects.using(self._alias).select_for_update().get(
+                    version_uuid=command.version_uuid, living_organism=organism,
+                )
+                if gateway_version_status(self._alias, version, gateway_at) != "DRAFT":
+                    raise S015ApplicationRefused("governed gateway version cannot be edited")
+                for field, value in command.fields.items():
+                    setattr(version, field, value)
+                version.save(using=self._alias, update_fields=list(command.fields))
+            else:
+                predecessor = _effective_gateway_version(self._alias, organism, command.action, gateway_at)
+                fields = dict(command.fields)
+                if model is LOApplicationQuestionVersion and (
+                    "question_text" not in fields or "answer_format" not in fields
+                ):
+                    fields = {**default_application_question(organism, self._name_source), **fields}
+                version = model.objects.using(self._alias).create(
+                    living_organism=organism, actor=actor, enterer=actor, supersedes=predecessor,
+                    occurred_at=occurred_at, effective_at=effective_at, received_at=received_at,
+                    **fields,
+                )
+            return version
+
+    def effect_gateway_version(self, command: EffectGatewayVersionCommand):
+        with transaction.atomic(using=self._alias):
+            (actor, organism, decision, fingerprint, request_reference, idempotency_key,
+             occurred_at, effective_at, received_at, gateway_at) = self._gateway_start(command, create_head=False)
+            model, prefix = _VERSION_KINDS[command.action]
+            version = model.objects.using(self._alias).select_for_update().get(
+                version_uuid=_canonical_uuid(command.version_uuid, "version_uuid"), living_organism=organism,
+            )
+            if gateway_version_status(self._alias, version, gateway_at) != "DRAFT":
+                raise S015ApplicationRefused("gateway version already effective")
+            if not _gateway_version_complete(version):
+                raise S015ApplicationRefused("S3FU gateway effect: version incomplete")
+            if isinstance(version, LOGovernanceConfigurationVersion) and version.cq_active is True:
+                raise S015OperationNotYetImplemented("cq_configuration", "S3-IL-CQ", "DISCUSSION")
+            if isinstance(version, LOApplicationSettingsVersion) and version.processing_responsibility == "APPLICATION_CIRCLE":
+                raise S015OperationNotYetImplemented("circle_application_processing", "S3-IL-CIRCLE", "DISCUSSION")
+            _lock_owning_organism(self._alias, organism.organism_id)
+            organism = LivingOrganism.objects.using(self._alias).select_for_update().get(pk=organism.pk)
+            predecessor = LivingOrganismEvent.objects.using(self._alias).filter(pk=organism.head_event_id).first()
+            if predecessor is None or effective_at < predecessor.effective_at:
+                raise S015ApplicationRefused("gateway effect requires a current LO chain")
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute("SELECT l1_commitment FROM public.core_livingorganismevent WHERE id = %s", [predecessor.pk])
+                predecessor_commitment = cursor.fetchone()[0]
+                event_uuid = uuid4()
+                cursor.execute(
+                    "SELECT public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage(%s, %s::uuid))",
+                    ["core_livingorganismevent", event_uuid],
+                )
+                parts_commitment = cursor.fetchone()[0]
+                temporal_kind, temporal_reference = _resulting_temporal_basis(
+                    payload_fingerprint=fingerprint, effective_at=effective_at, received_at=received_at,
+                )
+                lineage_reference = "s015l1:" + hashlib.sha256(_COMMAND_DOMAIN + canonical_json_bytes({
+                    "event": event_uuid, "organism": organism.organism_id, "fingerprint": fingerprint,
+                })).hexdigest()
+                event_columns = {
+                    "event_uuid": event_uuid, "living_organism_id": organism.pk,
+                    "sequence": predecessor.sequence + 1, "predecessor_id": predecessor.pk,
+                    "predecessor_sequence": predecessor.sequence, "action": command.action.value,
+                    "prior_state": predecessor.resulting_state, "resulting_state": predecessor.resulting_state,
+                    "actor_id": None, "actor_state": "LIVING_ORGANISM", "actor_capacity": "STANDING",
+                    "actor_access_epoch": None, "enterer_identity_id": actor.pk, "entry_mode": "TRANSPORT",
+                    "composing_rule_state": "NA_TRANSPORT", "composing_rule_reference": None,
+                    "composer_state": "NA_TRANSPORT", "composer_identity_id": None,
+                    "effective_until": None, "effective_until_state": "NONE",
+                    "authority_basis_id": organism.founding_authority_basis_id,
+                    "authority_decision_reference": decision.authority_decision_reference,
+                    "evidence_reference": prefix + str(version.version_uuid),
+                    "request_reference": request_reference, "idempotency_key": idempotency_key,
+                    "payload_fingerprint": fingerprint, "lineage_reference": lineage_reference,
+                    "temporal_basis_kind": temporal_kind, "temporal_basis_reference": temporal_reference,
+                    "occurred_at": occurred_at, "effective_at": effective_at, "received_at": received_at,
+                    "predecessor_l1_commitment": predecessor_commitment, "parts_commitment": parts_commitment,
+                }
+                cursor.execute(
+                    f"INSERT INTO public.core_livingorganismevent ({', '.join(event_columns)}) "
+                    f"VALUES ({', '.join(['%s'] * len(event_columns))}) RETURNING id",
+                    list(event_columns.values()),
+                )
+                event_id = cursor.fetchone()[0]
+                cursor.execute("SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                               ["core_livingorganism", organism.pk, effective_at])
+            return LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
 
     def _coordinator_start(
         self, command: ClaimApplicationCommand, action: OrganismAction,
@@ -546,7 +830,7 @@ class OrganismApplicationService:
                 actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
                 request_reference=request_reference, idempotency_key=idempotency_key, occurred_at=occurred_at,
                 target=target, command={"effective_at": effective_at, "received_at": received_at,
-                                        "predecessor": predecessor_uuid},
+                                        "predecessor": predecessor_uuid, "answer": command.answer},
             )
             replay = self._receipt_or_none(
                 actor=actor, action=OrganismAction.SUBMIT_APPLICATION, request_reference=request_reference,
@@ -567,7 +851,26 @@ class OrganismApplicationService:
                     raise S015ApplicationRefused("applicant is already a current member")
                 if membership.state == "ENDED":
                     raise S015OperationNotYetImplemented("rejoin_by_application", "IL-1", "S4")
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM public.core_loapplicationgateway WHERE living_organism_id = %s FOR SHARE",
+                    [organism.pk],
+                )
+                if cursor.fetchone() is None:
+                    raise S015ApplicationRefused("S3FU gateway closed")
+                cursor.execute("SELECT clock_timestamp()")
+                gateway_at = cursor.fetchone()[0]
+            settings = _effective_gateway_version(
+                self._alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS, gateway_at,
+            )
+            question = _effective_gateway_version(
+                self._alias, organism, OrganismAction.EFFECT_APPLICATION_QUESTION, gateway_at,
+            )
+            if settings is None or question is None or settings.applications_open is not True:
+                raise S015ApplicationRefused("S3FU gateway closed")
+            _validate_gateway_answer(question, command.answer)
             self._pair_lock(actor, organism)
+            _lock_owning_organism(self._alias, organism.organism_id)
             open_application = Application.objects.using(self._alias).filter(
                 applicant=actor, living_organism=organism, decision__isnull=True, withdrawal__isnull=True,
             ).exists()
@@ -582,6 +885,7 @@ class OrganismApplicationService:
                     raise S015ApplicationRefused("predecessor is not an eligible withdrawn application")
             application = Application.objects.using(self._alias).create(
                 applicant=actor, living_organism=organism, predecessor_reference=predecessor,
+                settings_version=settings, question_version=question, answer=command.answer,
                 actor=actor, enterer=actor, occurred_at=occurred_at, effective_at=effective_at,
                 received_at=received_at, authority_decision_reference=decision.authority_decision_reference,
                 authority_reference=decision.authority_reference, actor_access_epoch=actor.access_epoch,

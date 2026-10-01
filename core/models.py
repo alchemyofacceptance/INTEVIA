@@ -4693,6 +4693,46 @@ class OrganismCommandReceipt(_S015AppendOnly):
         ]
 
 
+class LOApplicationGateway(models.Model):
+    living_organism = models.OneToOneField(LivingOrganism, on_delete=models.PROTECT, related_name="application_gateway")
+
+
+class _LOGatewayVersion(models.Model):
+    version_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    living_organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        abstract = True
+
+
+class LOApplicationSettingsVersion(_LOGatewayVersion):
+    supersedes = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    applications_open = models.BooleanField(null=True, blank=True)
+    automatic_acceptance = models.BooleanField(null=True, blank=True)
+    processing_responsibility = models.CharField(max_length=18, null=True, blank=True)
+
+
+class LOApplicationQuestionVersion(_LOGatewayVersion):
+    supersedes = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    question_text = models.CharField(max_length=255)
+    answer_format = models.CharField(max_length=18, null=True, blank=True)
+    options = models.JSONField(null=True, blank=True)
+
+
+class LOGovernanceConfigurationVersion(_LOGatewayVersion):
+    supersedes = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    cq_active = models.BooleanField(null=True, blank=True)
+    inherit_portal_cq_settings = models.BooleanField(null=True, blank=True)
+    require_cq_to_change_lo_settings = models.BooleanField(null=True, blank=True)
+    require_cq_to_change_application_question = models.BooleanField(null=True, blank=True)
+
+
 class Application(_S015AppendOnly):
     application_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     applicant = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="organism_applications")
@@ -4703,6 +4743,9 @@ class Application(_S015AppendOnly):
     authority_decision_reference = models.CharField(max_length=71)
     authority_reference = models.CharField(max_length=255)
     actor_access_epoch = models.PositiveBigIntegerField()
+    settings_version = models.ForeignKey(LOApplicationSettingsVersion, on_delete=models.PROTECT, related_name="applications")
+    question_version = models.ForeignKey(LOApplicationQuestionVersion, on_delete=models.PROTECT, related_name="applications")
+    answer = models.TextField()
     occurred_at = models.DateTimeField()
     effective_at = models.DateTimeField()
     received_at = models.DateTimeField()

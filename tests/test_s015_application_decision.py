@@ -35,7 +35,7 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
-from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
@@ -94,10 +94,14 @@ class ApplicationDecisionTests(TransactionTestCase):
         )
 
     def submit(self):
+        if not hasattr(self, "gateway"):
+            with transaction.atomic(), connection.cursor() as cursor:
+                self.gateway = seed_test_gateway(cursor, self.ids)
         return self.service().submit_application(SubmitApplicationCommand(
             credential=self.applicant.credential, living_organism_id=self.organism_uuid,
             request_reference=f"s3:submit:{self.tag}", idempotency_key=f"s3:submit:key:{self.tag}",
             occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            answer="Test-only applicant answer",
         ))
 
     def application(self):
@@ -363,23 +367,25 @@ class ApplicationDecisionTests(TransactionTestCase):
                     effective_at=effective_at, received_at=effective_at,
                 )
 
-        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused"):
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused: no founding record"):
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute("ALTER TABLE public.core_livingorganismevent DISABLE TRIGGER USER")
-                    cursor.execute("DELETE FROM public.core_livingorganismevent WHERE id = %s",
-                                   [self.ids["events"]["core_livingorganismevent"]])
+                    # Test-only construction of a state the guards prevent, inside a rolled-back transaction.
+                    cursor.execute("ALTER TABLE public.core_livingorganism DISABLE TRIGGER USER")
+                    cursor.execute("UPDATE public.core_livingorganism SET founding_authority_basis_id = NULL WHERE id = %s",
+                                   [self.ids["lo"]])
                 repeat_decision(NOW)
         with connection.cursor() as cursor:
             cursor.execute("SELECT count(*) FROM pg_trigger WHERE tgrelid = "
-                           "'public.core_livingorganismevent'::regclass AND NOT tgisinternal AND tgenabled <> 'O'")
+                           "'public.core_livingorganism'::regclass AND NOT tgisinternal AND tgenabled <> 'O'")
             self.assertEqual(cursor.fetchone()[0], 0)
+        application.refresh_from_db()
         dormant_at = NOW + timedelta(minutes=1)
         with transaction.atomic(), connection.cursor() as cursor:
             dormant_id, _ = append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 2, "DORMANT",
+                cursor, "core_livingorganismevent", self.ids["lo"], 4, "DORMANT",
                 "ACTIVE", "DORMANT", self.coordinator.pk, self.ids["basis"], fresh(),
-                pred_id=self.ids["events"]["core_livingorganismevent"],
+                pred_id=self.gateway["head_event"],
                 eff=dormant_at, occ=dormant_at, rec=dormant_at,
             )
             refresh(cursor, "core_livingorganism", self.ids["lo"], dormant_at)
@@ -388,12 +394,14 @@ class ApplicationDecisionTests(TransactionTestCase):
         closed_at = NOW + timedelta(minutes=2)
         with transaction.atomic(), connection.cursor() as cursor:
             append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 3, "CLOSE",
+                cursor, "core_livingorganismevent", self.ids["lo"], 5, "CLOSE",
                 "DORMANT", "CLOSED", self.coordinator.pk, self.ids["basis"], fresh(),
                 pred_id=dormant_id, eff=closed_at, occ=closed_at, rec=closed_at,
             )
             refresh(cursor, "core_livingorganism", self.ids["lo"], closed_at)
-        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused"):
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO admission not permitted"):
+            repeat_decision(closed_at)
+        with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused: dissolved"):
             repeat_decision(closed_at + timedelta(seconds=1))
         self.assertEqual(ApplicationLineageEvent.objects.filter(application_lineage__application=application).count(), 3)
 
@@ -401,10 +409,10 @@ class ApplicationDecisionTests(TransactionTestCase):
         application = self.claimed()
         with transaction.atomic(), connection.cursor() as cursor:
             append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 2, "RESTRICT",
+                cursor, "core_livingorganismevent", self.ids["lo"], 4, "RESTRICT",
                 "ACTIVE", "RESTRICTED_CONTINUITY", self.coordinator.pk,
                 self.ids["basis"], fresh(),
-                pred_id=self.ids["events"]["core_livingorganismevent"],
+                pred_id=self.gateway["head_event"],
                 eff=NOW, occ=NOW, rec=NOW,
             )
             refresh(cursor, "core_livingorganism", self.ids["lo"], NOW)
@@ -628,6 +636,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             predecessor_reference=previous.application_uuid,
             request_reference="s3:n1:reapply", idempotency_key="s3:n1:reapply",
             occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            answer="Test-only applicant answer",
         ))
         self.assertEqual(Application.objects.get(pk=result.application_id).predecessor_reference_id, previous.pk)
 
@@ -647,6 +656,8 @@ class ApplicationDecisionTests(TransactionTestCase):
             if route == "LO_CQ":
                 application = Application.objects.create(
                     applicant=self.applicant, living_organism_id=self.ids["lo"],
+                    settings_version_id=self.gateway["core_loapplicationsettingsversion"],
+                    question_version_id=self.gateway["core_loapplicationquestionversion"], answer="Test-only applicant answer",
                     actor=self.applicant, enterer=self.applicant,
                     authority_decision_reference="s015d1:" + "a" * 64,
                     authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,

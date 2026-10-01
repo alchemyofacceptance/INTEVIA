@@ -10,7 +10,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
-from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.test_s015_0024_commitment_preimages import canonical_value, digest, l1_preimage, parts_preimage
 from verification.isolation.state import REQUIRED_TRIGGER_COUNT
 
@@ -27,7 +27,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0028_s015_application_lineage_chain"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0029_s015_application_gateway"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -101,6 +101,58 @@ class ApplicationLineageSchema(TransactionTestCase):
                     "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
                 )
                 functions_before = cursor.fetchall()
+            MigrationExecutor(connection).migrate(head)
+            with connection.cursor() as cursor:
+                self.assertEqual(snapshot(cursor, event_id, ids["membership"]), before)
+                cursor.execute(
+                    "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                    "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                    "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                    "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+                )
+                self.assertEqual(cursor.fetchall(), functions_before)
+        finally:
+            MigrationExecutor(connection).migrate(head)
+
+    def test_0029_locked_empty_preflight_and_historical_bytes(self):
+        import importlib
+
+        class Rollback(Exception):
+            pass
+
+        head = current_core_leaf(connection)
+        MigrationExecutor(connection).migrate([("core", "0028_s015_application_lineage_chain")])
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                ids = found_nonroot(cursor, tag=f"s3fu-0029-{fresh()}")
+                event_id = ids["events"][EVENT_TABLE]
+            with connection.cursor() as cursor:
+                before = snapshot(cursor, event_id, ids["membership"])
+                cursor.execute(
+                    "SELECT proname, pg_get_functiondef(oid) FROM pg_proc WHERE oid IN ("
+                    "'public.s015_canonical_event_record(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_l1_preimage(regclass,jsonb)'::regprocedure, "
+                    "'public.s015_0022_parts_preimage(text,uuid)'::regprocedure, "
+                    "'public.s015_0022_l2_preimage(bytea,jsonb)'::regprocedure, "
+                    "'public.s015_0022_digest(text,text)'::regprocedure) ORDER BY proname"
+                )
+                functions_before = cursor.fetchall()
+            migration = importlib.import_module("core.migrations.0029_s015_application_gateway")
+            with self.assertRaises(Rollback):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, "
+                        "actor_id, enterer_id, authority_decision_reference, authority_reference, "
+                        "actor_access_epoch, occurred_at, effective_at, received_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (str(uuid.uuid4()), ids["identity"], ids["lo"], ids["identity"], ids["identity"],
+                         "s015d1:" + "a" * 64, "s3:test:preflight", 0, T0, T0, T0),
+                    )
+                    with self.assertRaisesMessage(RuntimeError, "existing applications require authorised backfill"):
+                        migration._preflight(None, type("Editor", (), {"connection": connection})())
+                    raise Rollback()
             MigrationExecutor(connection).migrate(head)
             with connection.cursor() as cursor:
                 self.assertEqual(snapshot(cursor, event_id, ids["membership"]), before)
@@ -258,6 +310,7 @@ class ApplicationSchemaGuards(TransactionTestCase):
         self.tag = f"s3-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
+            self.gateway = seed_test_gateway(cursor, self.ids)
             self.applicant_id = seed_identity(cursor, f"app-{self.tag}")
             membership_uuid = u(f"membership:app:{self.tag}")
             cursor.execute(
@@ -274,10 +327,13 @@ class ApplicationSchemaGuards(TransactionTestCase):
             refresh(cursor, ANCHOR, self.member_id)
             cursor.execute(
                 "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, enterer_id, "
-                "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at, "
+                "settings_version_id, question_version_id, answer) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (u(f"application:{self.tag}"), self.applicant_id, self.ids["lo"], self.applicant_id,
-                 self.applicant_id, "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0),
+                 self.applicant_id, "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0,
+                 self.gateway["core_loapplicationsettingsversion"], self.gateway["core_loapplicationquestionversion"],
+                 "Test-only applicant answer"),
             )
             self.application_id = cursor.fetchone()[0]
 
@@ -351,13 +407,14 @@ class ApplicationSchemaGuards(TransactionTestCase):
             )
             self.assertEqual(snapshot(cursor, event_id, self.member_id)[0][-1], "PARTY")
 
-    def test_c4_other_eleven_chains_reject_lo_token(self):
+    def test_c4_other_ten_chains_reject_lo_token_and_lo_requires_effect(self):
         with transaction.atomic(), connection.cursor() as cursor:
             add_remaining_aggregates(cursor, self.ids, self.tag)
             cursor.execute("SELECT event_table FROM public.s015_anchor_map() "
-                           "WHERE event_table <> %s AND event_table <> 'core_applicationlineageevent'", (EVENT_TABLE,))
+                           "WHERE event_table <> %s AND event_table NOT IN "
+                           "('core_applicationlineageevent', 'core_livingorganismevent')", (EVENT_TABLE,))
             tables = [row[0] for row in cursor.fetchall()]
-        self.assertEqual(len(tables), 11)
+        self.assertEqual(len(tables), 10)
         for table in tables:
             with self.subTest(table=table):
                 with self.assertRaises((DatabaseError, IntegrityError)) as error:
@@ -367,6 +424,39 @@ class ApplicationSchemaGuards(TransactionTestCase):
                             "actor_state": "LIVING_ORGANISM", "actor_capacity": "NA_NO_PARTY",
                         })
                 self.assertIn("actor_state_vocab", str(error.exception))
+        with self.assertRaisesMessage(IntegrityError, "S3FU gateway effect: same-state event without effect action"):
+            with transaction.atomic(), connection.cursor() as cursor:
+                append_event(cursor, "core_livingorganismevent", self.ids["lo"], 4, "RESTRICT", "ACTIVE", "ACTIVE",
+                             None, self.ids["basis"], fresh(), pred_id=self.gateway["head_event"],
+                             extra={"actor_access_epoch": None, "actor_state": "LIVING_ORGANISM",
+                                    "enterer_identity_id": self.ids["identity"]})
+
+    def test_admission_permission_is_limited_to_the_membership_admission(self):
+        class Rollback(Exception):
+            pass
+
+        with self.assertRaises(Rollback):
+            with transaction.atomic(), connection.cursor() as cursor:
+                claim_id, claim_uuid = self.claim(cursor)
+                self.engage(cursor, claim_uuid)
+                decision_id, decision_uuid = self.decide(cursor, claim_id, outcome="ACCEPT")
+                dormant_at = T0 + dt.timedelta(minutes=30)
+                append_event(cursor, "core_livingorganismevent", self.ids["lo"], 4, "DORMANT", "ACTIVE", "DORMANT",
+                             self.ids["identity"], self.ids["basis"], fresh(), pred_id=self.gateway["head_event"],
+                             eff=dormant_at, occ=dormant_at, rec=dormant_at)
+                refresh(cursor, "core_livingorganism", self.ids["lo"], dormant_at)
+                with self.assertRaisesMessage(IntegrityError, "S3FU LO admission not permitted"):
+                    with transaction.atomic():
+                        self.admit(cursor, decision_id, decision_uuid)
+                raise Rollback()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_get_functiondef('public.s3fu_guard_lo_admission_permission()'::regprocedure)")
+            permission = cursor.fetchone()[0]
+            cursor.execute("SELECT pg_get_functiondef('public.s3_guard_lo_actor()'::regprocedure)")
+            actor = cursor.fetchone()[0]
+        self.assertIn("NEW.prior_state IS DISTINCT FROM 'PROPOSED' OR NEW.resulting_state IS DISTINCT FROM 'ACTIVE'", permission)
+        self.assertIn("NEW.prior_state IS DISTINCT FROM 'PROPOSED' OR NEW.resulting_state <> 'ACTIVE'", actor)
+        self.assertIn("S3 malformed LO admission actor", actor)
 
     def test_c5_malformed_actor_and_missing_or_mismatched_decision_refused(self):
         with transaction.atomic(), connection.cursor() as cursor:
@@ -536,10 +626,13 @@ class ApplicationSchemaGuards(TransactionTestCase):
     def test_s6_application_references_are_database_foreign_keys(self):
         self.assert_refused(lambda cursor: cursor.execute(
             "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, enterer_id, "
-            "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "authority_decision_reference, authority_reference, actor_access_epoch, occurred_at, effective_at, received_at, "
+            "settings_version_id, question_version_id, answer) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (str(uuid.uuid4()), -1, self.ids["lo"], self.applicant_id, self.applicant_id,
-             "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0),
+             "s015d1:" + "a" * 64, "s3:test:fixture", 0, T0, T0, T0,
+             self.gateway["core_loapplicationsettingsversion"], self.gateway["core_loapplicationquestionversion"],
+             "Test-only applicant answer"),
         ))
         self.assert_refused(lambda cursor: cursor.execute(
             "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, deciding_party_id, "
