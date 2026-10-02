@@ -36,6 +36,8 @@ POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3 applicant co
 
 
 class _ApplicantProvider:
+    """TEST-ONLY provider substitute; production tests use ProductionApplicationAuthorityProvider."""
+
     def __init__(self, *, denied=False):
         self.denied = denied
         self.requests = []
@@ -55,7 +57,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.tag = f"application-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
-            self.gateway = seed_test_gateway(cursor, self.ids)
+            self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
             self.applicant_pk = seed_identity(cursor, f"app-{self.tag}")
             cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", (self.ids["lo"],))
             self.organism_uuid = cursor.fetchone()[0]
@@ -402,8 +404,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
                 "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, deciding_party_id, "
                 "engagement_reference, settings_basis, actor_id, enterer_id, occurred_at, effective_at, received_at) "
                 "VALUES (%s, 1, 'LO_CSA', %s, %s, %s, %s, %s, %s, %s, %s)",
-                (application.pk, self.ids["lo"], claim_uuid,
-                 "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No",
+                (application.pk, self.ids["lo"], claim_uuid, self.gateway["settings_basis"],
                  self.ids["identity"], self.ids["identity"], NOW, NOW, NOW),
             )
             cursor.execute(

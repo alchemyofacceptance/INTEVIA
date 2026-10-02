@@ -15,12 +15,23 @@ from django.test import TransactionTestCase
 
 from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.test_s015_0024_commitment_preimages import canonical_value, digest, l1_preimage, parts_preimage
+from tests.s015_0034_support import emit_guard_catalogue
 from verification.isolation.state import REQUIRED_TRIGGER_COUNT
 
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3 guardians require PostgreSQL")
 EVENT_TABLE = "core_organismmembershiptransition"
 ANCHOR = "core_organismmembership"
+LEGACY_SETTINGS = "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No"
+
+
+class _SchemaEditor:
+    connection = connection
+
+    @staticmethod
+    def execute(sql, params=None):
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
 
 
 @POSTGRESQL_ONLY
@@ -30,7 +41,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0032_s015_register_cleanup_nonblocking"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0034_s015_authority_decisions"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -74,6 +85,7 @@ class ApplicationLineageSchema(TransactionTestCase):
         gateway = importlib.import_module("core.migrations.0029_s015_application_gateway")
         automatic = importlib.import_module("core.migrations.0030_s015_automatic_application")
         admission = importlib.import_module("core.migrations.0031_s1fu_admission_actor_requirement")
+        authority = importlib.import_module("core.migrations.0033_s015_application_authority")
         declared = {
             name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
             for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
@@ -94,6 +106,9 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s3fu_guard_auto_decision": automatic.AUTO_DECISION_SQL,
             "s3fu_guard_gateway_effect": gateway.EFFECT_SQL,
             "s3fu_guard_gateway_version": gateway.VERSION_GUARD_SQL,
+            "s3_decision_guard_a26": authority._decision_guard_sql(),
+            "s3fu_application_settings_basis_valid": authority.SETTINGS_BASIS_VALID_SQL,
+            "s3fu_guard_application_engagement_basis": authority.ENGAGEMENT_BASIS_GUARD_SQL,
             "s1fu_guard_admission_route": admission.ADMISSION_ROUTE_SQL,
         })
         declared_triggers = {}
@@ -116,9 +131,17 @@ class ApplicationLineageSchema(TransactionTestCase):
             name = f"s3_10_{function}"
             declare(table, name, f"CREATE TRIGGER {name} BEFORE INSERT ON public.{table} "
                     f"FOR EACH ROW EXECUTE FUNCTION public.{function}()")
+        declare("core_applicationengagement", "s3_05_engagement_settings_basis_update",
+                "CREATE TRIGGER s3_05_engagement_settings_basis_update BEFORE UPDATE "
+                "ON public.core_applicationengagement FOR EACH ROW "
+                "EXECUTE FUNCTION public.s3fu_guard_application_engagement_basis()")
+        declare("core_applicationengagement", "s3_12_engagement_settings_basis_insert",
+                "CREATE TRIGGER s3_12_engagement_settings_basis_insert BEFORE INSERT "
+                "ON public.core_applicationengagement FOR EACH ROW "
+                "EXECUTE FUNCTION public.s3fu_guard_application_engagement_basis()")
         for table, name, function, when in (
             ("core_applicationengagement", "s3_10_s3_engagement_guard", "s3_engagement_guard", "<>"),
-            ("core_applicationdecision", "s3_20_s3_decision_guard", "s3_decision_guard", "<>"),
+            ("core_applicationdecision", "s3_20_s3_decision_guard", "s3_decision_guard_a26", "<>"),
             ("core_applicationengagement", "s3_11_auto_engagement", "s3fu_guard_auto_engagement", "="),
             ("core_applicationdecision", "s3_21_auto_decision", "s3fu_guard_auto_decision", "="),
         ):
@@ -178,11 +201,15 @@ class ApplicationLineageSchema(TransactionTestCase):
                 "WHERE n.nspname = 'public' AND proname ~ '^(s3_|s3fu_|s1fu_)'"
             )
             self.assertEqual({row[0] for row in cursor.fetchall()}, set(declared))
+            signatures = {
+                "s3_lock_application": "bigint",
+                "s3fu_application_settings_basis_valid": "text, bigint, timestamp with time zone, timestamp with time zone",
+            }
             for name, sql in declared.items():
                 with self.subTest(function=name, installed_md5=installed[name][0]):
                     self.assertEqual(installed[name][1], sql.split("AS $$", 1)[1].rsplit("$$;", 1)[0])
                     cursor.execute(sql.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
-                    signature = "bigint" if name == "s3_lock_application" else ""
+                    signature = signatures.get(name, "")
                     cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [f"pg_temp.{name}({signature})"])
                     expected_definition = re.sub(
                         r"(?<=FUNCTION )pg_temp(?:_\d+)?\.", "public.", cursor.fetchone()[0], count=1,
@@ -363,7 +390,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                                "JOIN pg_namespace n ON n.oid = c.relnamespace "
                                "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0032_s015_register_cleanup_nonblocking"])
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0034_s015_authority_decisions"])
         finally:
             MigrationExecutor(connection).migrate(head)
 
@@ -509,7 +536,7 @@ class ApplicationSchemaGuards(TransactionTestCase):
         self.tag = f"s3-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
-            self.gateway = seed_test_gateway(cursor, self.ids)
+            self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
             self.applicant_id = seed_identity(cursor, f"app-{self.tag}")
             membership_uuid = u(f"membership:app:{self.tag}")
             cursor.execute(
@@ -553,26 +580,32 @@ class ApplicationSchemaGuards(TransactionTestCase):
         )
         return cursor.fetchone()[0], assignment_uuid
 
-    def engage(self, cursor, claim_uuid, *, ordinal=1, basis=None, route="LO_CSA", settings_basis=None):
+    def engage(
+        self, cursor, claim_uuid, *, ordinal=1, basis=None, route="LO_CSA",
+        settings_basis=None, effective_at=T0,
+    ):
         cursor.execute(
             "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, deciding_party_id, "
             "engagement_reference, settings_basis, basis_reference, actor_id, enterer_id, occurred_at, effective_at, received_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (self.application_id, ordinal, route, self.ids["lo"], claim_uuid,
-             settings_basis or "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No", basis,
-             self.ids["identity"], self.ids["identity"], T0, T0, T0),
+             self.gateway["settings_basis"] if settings_basis is None else settings_basis, basis,
+             self.ids["identity"], self.ids["identity"], T0, effective_at, T0),
         )
 
-    def decide(self, cursor, claim_id, *, outcome="DECLINE", route="LO_CSA", enterer=None):
+    def decide(
+        self, cursor, claim_id, *, outcome="DECLINE", route="LO_CSA", enterer=None,
+        authority_reference=None,
+    ):
         decision_uuid = str(uuid.uuid4())
         cursor.execute(
             "INSERT INTO core_applicationdecision (decision_uuid, application_id, route, deciding_party_id, outcome, "
-            "assignment_reference_id, responsible_coordinator_id, responsible_capacity, qualifying_office_id, "
-            "authority_decision_reference, executor_id, enterer_id, occurred_at, effective_at, received_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, 'COORDINATOR', %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+              "assignment_reference_id, responsible_coordinator_id, responsible_capacity, qualifying_office_id, "
+              "authority_decision_reference, authority_reference, executor_id, enterer_id, occurred_at, effective_at, received_at) "
+              "VALUES (%s, %s, %s, %s, %s, %s, %s, 'COORDINATOR', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (decision_uuid, self.application_id, route, self.ids["lo"], outcome, claim_id,
              enterer or self.ids["identity"], self.ids["assignments"]["COORDINATOR"],
-             "s015d1:" + "a" * 64, self.ids["identity"], enterer or self.ids["identity"],
+               "s015d1:" + "a" * 64, authority_reference, self.ids["identity"], enterer or self.ids["identity"],
              T0 + dt.timedelta(hours=1), T0 + dt.timedelta(hours=1), T0 + dt.timedelta(hours=1)),
         )
         return cursor.fetchone()[0], decision_uuid
@@ -626,7 +659,8 @@ class ApplicationSchemaGuards(TransactionTestCase):
                 self.assertIn("actor_state_vocab", str(error.exception))
         with self.assertRaisesMessage(IntegrityError, "S3FU gateway effect: same-state event without effect action"):
             with transaction.atomic(), connection.cursor() as cursor:
-                append_event(cursor, "core_livingorganismevent", self.ids["lo"], 4, "RESTRICT", "ACTIVE", "ACTIVE",
+                append_event(cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1,
+                             "RESTRICT", "ACTIVE", "ACTIVE",
                              None, self.ids["basis"], fresh(), pred_id=self.gateway["head_event"],
                              extra={"actor_access_epoch": None, "actor_state": "LIVING_ORGANISM",
                                     "enterer_identity_id": self.ids["identity"]})
@@ -641,7 +675,8 @@ class ApplicationSchemaGuards(TransactionTestCase):
                 self.engage(cursor, claim_uuid)
                 decision_id, decision_uuid = self.decide(cursor, claim_id, outcome="ACCEPT")
                 dormant_at = T0 + dt.timedelta(minutes=30)
-                append_event(cursor, "core_livingorganismevent", self.ids["lo"], 4, "DORMANT", "ACTIVE", "DORMANT",
+                append_event(cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1,
+                             "DORMANT", "ACTIVE", "DORMANT",
                              self.ids["identity"], self.ids["basis"], fresh(), pred_id=self.gateway["head_event"],
                              eff=dormant_at, occ=dormant_at, rec=dormant_at)
                 refresh(cursor, "core_livingorganism", self.ids["lo"], dormant_at)
@@ -735,11 +770,89 @@ class ApplicationSchemaGuards(TransactionTestCase):
             decision_id, _ = self.decide(cursor, claim_id)
         self.assertIsInstance(decision_id, int)
 
-    def test_s1_b_g9_rejects_an_incompatible_frozen_basis(self):
+    def test_s1_b_g9_rejects_an_unresolved_settings_basis_at_engagement(self):
         with connection.cursor() as cursor:
             claim_id, claim_uuid = self.claim(cursor)
-            self.engage(cursor, claim_uuid, settings_basis="cq_active=Yes")
-        self.assert_refused(lambda cursor: self.decide(cursor, claim_id))
+        self.assert_refused(lambda cursor: self.engage(cursor, claim_uuid, settings_basis="cq_active=Yes"))
+
+    def test_a26_rejects_new_legacy_basis_and_placeholder_updates(self):
+        with connection.cursor() as cursor:
+            _, claim_uuid = self.claim(cursor)
+        self.assert_refused(lambda cursor: self.engage(cursor, claim_uuid, settings_basis=LEGACY_SETTINGS))
+        with connection.cursor() as cursor:
+            self.engage(cursor, claim_uuid)
+        self.assert_refused(lambda cursor: cursor.execute(
+            "UPDATE public.core_applicationengagement SET settings_basis = %s WHERE application_id = %s",
+            (LEGACY_SETTINGS, self.application_id),
+        ))
+        self.assert_refused(lambda cursor: cursor.execute(
+            "UPDATE public.core_applicationengagement SET engagement_reference = 'changed' WHERE application_id = %s",
+            (self.application_id,),
+        ))
+
+    def test_a26_rejects_wrong_lo_unresolved_and_temporally_invalid_references(self):
+        with transaction.atomic(), connection.cursor() as cursor:
+            _, claim_uuid = self.claim(cursor)
+            other_ids = found_nonroot(cursor, tag=f"a26-other-{fresh()}")
+            other_gateway = seed_test_gateway(cursor, other_ids, include_governance_configuration=True)
+        self.assert_refused(lambda cursor: self.engage(
+            cursor, claim_uuid, settings_basis=other_gateway["settings_basis"],
+        ))
+        unresolved = (
+            f"governance-configuration-version:{uuid.uuid4()};"
+            f"application-settings-version:{uuid.uuid4()}"
+        )
+        self.assert_refused(lambda cursor: self.engage(cursor, claim_uuid, settings_basis=unresolved))
+        self.assert_refused(lambda cursor: self.engage(
+            cursor, claim_uuid, effective_at=T0 - dt.timedelta(days=1),
+        ))
+        with connection.cursor() as cursor:
+            configuration_reference, settings_reference = self.gateway["settings_basis"].split(";")
+            cursor.execute(
+                "SELECT min(recorded_at) FROM public.core_livingorganismevent "
+                "WHERE evidence_reference IN (%s, %s)",
+                (configuration_reference, settings_reference),
+            )
+            earliest_recorded_at = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT public.s3fu_application_settings_basis_valid(%s, %s, %s, %s)",
+                (
+                    self.gateway["settings_basis"], self.ids["lo"], T0,
+                    earliest_recorded_at - dt.timedelta(microseconds=1),
+                ),
+            )
+            self.assertFalse(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT public.s3fu_application_settings_basis_valid(%s, %s, %s, %s)",
+                (self.gateway["settings_basis"], self.ids["lo"], T0, T0),
+            )
+            self.assertFalse(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT public.s3fu_application_settings_basis_valid(%s, %s, %s, clock_timestamp())",
+                (self.gateway["settings_basis"], self.ids["lo"], T0),
+            )
+            self.assertTrue(cursor.fetchone()[0])
+
+    def test_0033_reverse_succeeds_when_no_incompatible_data_exists(self):
+        migration = importlib.import_module("core.migrations.0033_s015_application_authority")
+
+        class Rollback(Exception):
+            pass
+
+        with self.assertRaises(Rollback):
+            with transaction.atomic():
+                migration.reverse(None, _SchemaEditor())
+                emit_guard_catalogue(connection, "AFTER-0033-EMPTY-REVERSAL")
+                raise Rollback()
+
+    def test_0033_reverse_refuses_versioned_engagements(self):
+        migration = importlib.import_module("core.migrations.0033_s015_application_authority")
+        with connection.cursor() as cursor:
+            claim_id, claim_uuid = self.claim(cursor)
+            self.engage(cursor, claim_uuid)
+        with self.assertRaisesMessage(RuntimeError, "non-automatic versioned engagements"):
+            with transaction.atomic():
+                migration.reverse(None, _SchemaEditor())
 
     def test_s2_b_g9_prime_requires_prior_unable_for_reengagement(self):
         with connection.cursor() as cursor:

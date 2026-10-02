@@ -49,6 +49,8 @@ POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3-FU applicati
 
 
 class _Provider:
+    """TEST-ONLY provider substitute for application-read service witnesses."""
+
     def evaluate_organism_authority(self, request):
         fields = asdict(request)
         if isinstance(request, S015OwnApplicantAuthorityRequest):
@@ -65,7 +67,7 @@ class S015ApplicationReadTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             # TEST-ONLY founding and gateway fixtures; these are not operational creation routes.
             self.ids = found_nonroot(cursor, tag=self.tag)
-            seed_test_gateway(cursor, self.ids)
+            seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
         self.coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         self._activate(self.coordinator)
         self.provider = _Provider()

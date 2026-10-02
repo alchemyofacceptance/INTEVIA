@@ -4828,6 +4828,7 @@ class ApplicationDecision(_S015AppendOnly):
     responsible_capacity = models.CharField(max_length=48, null=True, blank=True)
     qualifying_office = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, null=True, blank=True)
     authority_decision_reference = models.CharField(max_length=71)
+    authority_reference = models.CharField(max_length=255, null=True, blank=True)
     executor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="executed_application_decisions")
     enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_application_decisions")
     occurred_at = models.DateTimeField()
@@ -4853,6 +4854,52 @@ class ApplicationWithdrawal(_S015AppendOnly):
             models.CheckConstraint(
                 condition=models.Q(authority_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$"),
                 name="s3fu_withdrawal_decision_shape_ck",
+            ),
+        ]
+
+
+class AuthorityDecision(_S015AppendOnly):
+    decision_reference = models.CharField(max_length=71, unique=True)
+    decision_payload = models.JSONField()
+    decision_payload_bytes = models.BinaryField()
+    request_kind = models.CharField(max_length=32)
+    action = models.CharField(max_length=48)
+    command_subtype = models.CharField(max_length=96)
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="authority_decisions")
+    actor_identity_id = models.UUIDField()
+    actor_access_epoch = models.PositiveBigIntegerField()
+    actor_credential_pk = models.PositiveBigIntegerField(null=True, blank=True)
+    target = models.JSONField()
+    target_bytes = models.BinaryField()
+    target_fingerprint = models.CharField(max_length=64)
+    effective_at = models.DateTimeField()
+    evaluated_at = models.DateTimeField()
+    authority_reference = models.CharField(max_length=255, null=True, blank=True)
+    facts_read = models.JSONField(default=list)
+    outcome = models.CharField(max_length=9)
+    refusal_code = models.CharField(max_length=48, null=True, blank=True)
+    provider_identity = models.CharField(max_length=255)
+    provider_version = models.CharField(max_length=64)
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(decision_reference__regex=r"^s015d1:[0-9a-f]{64}$"),
+                name="s015_authdecision_ref_shape_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(outcome__in=["QUALIFIED", "REFUSED"]),
+                name="s015_authdecision_outcome_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(outcome="QUALIFIED", refusal_code__isnull=True)
+                    | models.Q(outcome="REFUSED", refusal_code__isnull=False)
+                ),
+                name="s015_authdecision_refusal_ck",
             ),
         ]
 

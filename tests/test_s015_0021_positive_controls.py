@@ -155,7 +155,9 @@ class CacheBoundary(_S015PositiveBase):
 
     def test_pos_control_obligation_five_tuple_requalifies(self):
         ids = self.commits(lambda cur: add_remaining_aggregates(cur, found_root(cur), fresh()))
-        known = dt.datetime.now(dt.timezone.utc)
+        with connection.cursor() as cur:
+            cur.execute("SELECT clock_timestamp()")
+            known = cur.fetchone()[0]
         self.commits(lambda cur: cur.execute("SELECT public.s015_refresh_governed_cache('core_governedobligationcase', %s, %s, %s)", (ids["obligation_case"], T0, known)))
         with connection.cursor() as cur:
             cur.execute("SELECT projection, legal_deadline_status, served_from FROM public.s015_effective_state('core_governedobligationcase', %s, %s, %s)", (ids["obligation_case"], T0, known))

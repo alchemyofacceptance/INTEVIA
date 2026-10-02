@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Protocol
@@ -20,7 +21,8 @@ from core.models import (
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
-    QualifiedS015AuthorityDecision, S015Authority, S015OwnApplicantAuthorityRequest, authority_target_fingerprint,
+    QualifiedS015AuthorityDecision, S015Authority, S015AuthorityDenied,
+    S015OwnApplicantAuthorityRequest, authority_target_fingerprint,
     canonical_json_bytes, canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import (
@@ -35,7 +37,6 @@ from src.intevia.services.organism_role_service import OrganismRoleService
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:APPLICATION_COMMAND:v1\x00"
 _PAIR_DOMAIN = b"INTEVIA:S015:OPEN_APPLICATION_PAIR:v1\x00"
-_SETTINGS_BASIS = "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No"
 _DUE_SOURCE = "DEFAULT (no settings store)"
 
 
@@ -49,6 +50,18 @@ class S015ApplicationAuthorityUnavailable(S015ApplicationError):
 
 class S015ApplicationRefused(S015ApplicationError):
     pass
+
+
+@contextmanager
+def _authority_atomic(database_alias: str):
+    refusal = None
+    with transaction.atomic(using=database_alias):
+        try:
+            yield
+        except S015AuthorityDenied as exc:
+            refusal = exc
+    if refusal is not None:
+        raise refusal
 
 
 class S015ApplicationNotFound(S015ApplicationError):
@@ -216,6 +229,28 @@ def _effective_gateway_version(
     ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid")
     reference = references.values_list("evidence_reference", flat=True).first()
     return None if reference is None else model.objects.using(database_alias).get(version_uuid=UUID(reference.removeprefix(prefix)))
+
+
+def _engagement_settings_basis(
+    database_alias: str, organism: LivingOrganism, effective_at: datetime,
+) -> str:
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        known_at = cursor.fetchone()[0]
+    configuration = _effective_gateway_version(
+        database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+        effective_at, known_at,
+    )
+    settings = _effective_gateway_version(
+        database_alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
+        effective_at, known_at,
+    )
+    if configuration is None or settings is None:
+        raise S015ApplicationRefused("effective governance configuration and application settings are required")
+    return (
+        f"governance-configuration-version:{configuration.version_uuid};"
+        f"application-settings-version:{settings.version_uuid}"
+    )
 
 
 def _validate_gateway_answer(question: LOApplicationQuestionVersion, answer: str) -> None:
@@ -468,10 +503,17 @@ class _AdmissionDetails:
 
 class OrganismApplicationService:
     def __init__(
-        self, *, authority: S015Authority, clock: Callable[[], datetime], database_alias: str = "default",
+        self, *, authority: S015Authority | None = None, clock: Callable[[], datetime], database_alias: str = "default",
         name_source: LONameSource | None = None,
         care_executor: CareExecutor | None = None, welcome: DiscussionWelcome | None = None,
     ) -> None:
+        if authority is None:
+            from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+            authority = S015Authority(
+                provider=ProductionApplicationAuthorityProvider(database_alias=database_alias),
+                database_alias=database_alias,
+            )
         if not isinstance(authority, S015Authority) or authority.database_alias != database_alias:
             raise TypeError("matching S015 authority is required")
         if not callable(clock):
@@ -498,9 +540,17 @@ class OrganismApplicationService:
 
     def _authorise(
         self, *, actor: Identity, action: OrganismAction, organism: LivingOrganism,
-        application: Application | None, target: dict[str, object],
+        application: Application | None,
         request_reference: str, idempotency_key: str, received_at: datetime,
+        effective_at: datetime, predecessor_reference: UUID | None = None,
     ):
+        authority_target: dict[str, object] = {
+            "action": action.value,
+            "organism_uuid": organism.organism_id,
+            "applicant_identity_uuid": actor.identity_id,
+        }
+        if application is not None:
+            authority_target["application_uuid"] = application.application_uuid
         return self._authority.qualify(S015OwnApplicantAuthorityRequest(
             database_alias=self._alias,
             actor_pk=actor.pk,
@@ -509,12 +559,16 @@ class OrganismApplicationService:
             actor_access_epoch=actor.access_epoch,
             action=action,
             command_subtype=action.value,
-            target_fingerprint=authority_target_fingerprint(target),
+            target_fingerprint=authority_target_fingerprint(authority_target),
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             evaluated_at=received_at,
             living_organism_pk=organism.pk,
             application_pk=None if application is None else application.pk,
+            effective_at=effective_at,
+            target=authority_target,
+            living_organism_id=organism.organism_id,
+            predecessor_reference=predecessor_reference,
         ))
 
     def _finish(
@@ -614,8 +668,16 @@ class OrganismApplicationService:
             database_alias=self._alias, actor_identity_id=actor.identity_id,
             living_organism_id=organism_uuid, unavailable=S015ApplicationAuthorityUnavailable,
         )
+        gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
+            living_organism=organism,
+        ).first()
         target = {"action": action.value, "organism": organism_uuid,
                   "version": command.version_uuid}
+        authority_target = {
+            "action": action.value,
+            "organism_uuid": organism_uuid,
+            "version_uuid": command.version_uuid,
+        }
         fingerprint = _command_payload(
             domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
             actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
@@ -628,13 +690,16 @@ class OrganismApplicationService:
             database_alias=self._alias, actor=actor, actor_membership=membership,
             actor_role_head_refs=role_refs, action=action, request_reference=request_reference,
             idempotency_key=idempotency_key, received_at=received_at,
-            target_fingerprint=authority_target_fingerprint(target),
+            target_fingerprint=authority_target_fingerprint(authority_target),
+            effective_at=effective_at, target=authority_target,
+            living_organism_id=organism_uuid, version_uuid=command.version_uuid,
+            version_kind="DRAFT" if create_head else "EFFECT",
         ))
-        if create_head:
+        if create_head and gateway is None:
             LOApplicationGateway.objects.using(self._alias).get_or_create(living_organism=organism)
-        gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
-            living_organism=organism,
-        ).first()
+            gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
+                living_organism=organism,
+            ).first()
         if gateway is None:
             raise S015ApplicationRefused("S3FU gateway closed")
         with connections[self._alias].cursor() as cursor:
@@ -662,7 +727,7 @@ class OrganismApplicationService:
                 idempotency_key, occurred_at, effective_at, received_at, gateway_at)
 
     def save_gateway_draft(self, command: GatewayDraftCommand):
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             (actor, organism, _, _, _, _, occurred_at, effective_at, received_at,
              gateway_at) = self._gateway_start(command, create_head=True)
             model, _ = _VERSION_KINDS[command.action]
@@ -698,7 +763,7 @@ class OrganismApplicationService:
             return version
 
     def effect_gateway_version(self, command: EffectGatewayVersionCommand):
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             (actor, organism, decision, fingerprint, request_reference, idempotency_key,
              occurred_at, effective_at, received_at, gateway_at) = self._gateway_start(command, create_head=False)
             model, prefix = _VERSION_KINDS[command.action]
@@ -804,6 +869,11 @@ class OrganismApplicationService:
         )
         target = {"action": action.value, "application": application_uuid,
                   "organism": application.living_organism.organism_id}
+        authority_target = {
+            "action": action.value,
+            "application_uuid": application_uuid,
+            "organism_uuid": application.living_organism.organism_id,
+        }
         fingerprint = _command_payload(
             domain=_COMMAND_DOMAIN, schema="s015-application-v1", action=action,
             actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
@@ -817,14 +887,29 @@ class OrganismApplicationService:
         )
         if replay is not None:
             return replay
+        _lock_owning_organism(self._alias, application.living_organism.organism_id)
+        application = Application.objects.using(self._alias).select_for_update().get(pk=application.pk)
+        assignment_uuid = None
+        if action is OrganismAction.DECIDE_APPLICATION:
+            engagement = ApplicationEngagement.objects.using(self._alias).filter(
+                application=application,
+                effective_at__lte=effective_at,
+                recorded_at__lte=received_at,
+            ).order_by("-engagement_ordinal").first()
+            if engagement is not None and engagement.route == "LO_CSA":
+                try:
+                    assignment_uuid = UUID(engagement.engagement_reference)
+                except ValueError:
+                    assignment_uuid = None
         decision = self._authority.qualify(_authority_request(
             database_alias=self._alias, actor=actor, actor_membership=actor_membership,
             actor_role_head_refs=role_refs, action=action, request_reference=request_reference,
             idempotency_key=idempotency_key, received_at=received_at,
-            target_fingerprint=authority_target_fingerprint(target),
+            target_fingerprint=authority_target_fingerprint(authority_target),
+            effective_at=effective_at, target=authority_target,
+            living_organism_id=application.living_organism.organism_id,
+            assignment_uuid=assignment_uuid, outcome=outcome,
         ))
-        _lock_owning_organism(self._alias, application.living_organism.organism_id)
-        application = Application.objects.using(self._alias).select_for_update().get(pk=application.pk)
         return _CoordinatorContext(
             actor, actor_membership, application, decision, fingerprint, request_reference,
             idempotency_key, occurred_at, effective_at, received_at,
@@ -883,7 +968,7 @@ class OrganismApplicationService:
         )
 
     def submit_application(self, command: SubmitApplicationCommand) -> ApplicationCommandResult:
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -926,10 +1011,19 @@ class OrganismApplicationService:
             )
             if replay is not None:
                 return replay
+            _lock_owning_organism(self._alias, organism.organism_id)
+            self._pair_lock(actor, organism)
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM public.core_loapplicationgateway WHERE living_organism_id = %s FOR SHARE",
+                    [organism.pk],
+                )
+                gateway_exists = cursor.fetchone() is not None
             decision = self._authorise(
                 actor=actor, action=OrganismAction.SUBMIT_APPLICATION, organism=organism, application=None,
-                target=target, request_reference=request_reference, idempotency_key=idempotency_key,
+                request_reference=request_reference, idempotency_key=idempotency_key,
                 received_at=received_at,
+                effective_at=effective_at, predecessor_reference=predecessor_uuid,
             )
             membership = OrganismMembership.objects.using(self._alias).filter(
                 identity=actor, living_organism=organism,
@@ -939,14 +1033,9 @@ class OrganismApplicationService:
                     raise S015ApplicationRefused("applicant is already a current member")
                 if membership.state == "ENDED":
                     raise S015OperationNotYetImplemented("rejoin_by_application", "IL-1", "S4")
-            _lock_owning_organism(self._alias, organism.organism_id)
+            if not gateway_exists:
+                raise S015ApplicationRefused("S3FU gateway closed")
             with connections[self._alias].cursor() as cursor:
-                cursor.execute(
-                    "SELECT id FROM public.core_loapplicationgateway WHERE living_organism_id = %s FOR SHARE",
-                    [organism.pk],
-                )
-                if cursor.fetchone() is None:
-                    raise S015ApplicationRefused("S3FU gateway closed")
                 cursor.execute("SELECT clock_timestamp()")
                 gateway_at = cursor.fetchone()[0]
             settings = _effective_gateway_version(
@@ -967,7 +1056,6 @@ class OrganismApplicationService:
             _validate_gateway_answer(question, command.answer)
             if settings.automatic_acceptance is True and care is None:
                 raise S015OperationNotYetImplemented("automatic_acceptance", "S3-IL-CARE-EXEC", "CARE")
-            self._pair_lock(actor, organism)
             open_application = Application.objects.using(self._alias).filter(
                 applicant=actor, living_organism=organism, decision__isnull=True, withdrawal__isnull=True,
             ).exists()
@@ -1030,7 +1118,7 @@ class OrganismApplicationService:
             )
 
     def withdraw_application(self, command: WithdrawApplicationCommand) -> ApplicationCommandResult:
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -1065,13 +1153,16 @@ class OrganismApplicationService:
             )
             if replay is not None:
                 return replay
+            _lock_owning_organism(self._alias, application.living_organism.organism_id)
+            application = Application.objects.using(self._alias).select_for_update().select_related(
+                "living_organism",
+            ).get(pk=application.pk)
             decision = self._authorise(
                 actor=actor, action=OrganismAction.WITHDRAW_APPLICATION,
                 organism=application.living_organism, application=application,
-                target=target, request_reference=request_reference, idempotency_key=idempotency_key,
-                received_at=received_at,
+                request_reference=request_reference, idempotency_key=idempotency_key,
+                received_at=received_at, effective_at=effective_at,
             )
-            _lock_owning_organism(self._alias, application.living_organism.organism_id)
             if ApplicationDecision.objects.using(self._alias).filter(application=application).exists():
                 raise S015ApplicationRefused("application already decided")
             if ApplicationWithdrawal.objects.using(self._alias).filter(application=application).exists():
@@ -1103,7 +1194,7 @@ class OrganismApplicationService:
             )
 
     def claim_application(self, command: ClaimApplicationCommand) -> ApplicationCommandResult:
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             context = self._coordinator_start(command, OrganismAction.CLAIM_APPLICATION)
             if isinstance(context, ApplicationCommandResult):
                 return context
@@ -1119,10 +1210,13 @@ class OrganismApplicationService:
                 effective_at=context.effective_at, received_at=context.received_at,
             )
             claim.refresh_from_db(using=self._alias)
+            settings_basis = _engagement_settings_basis(
+                self._alias, context.application.living_organism, context.effective_at,
+            )
             ApplicationEngagement.objects.using(self._alias).create(
                 application=context.application, engagement_ordinal=1, route="LO_CSA",
                 deciding_party_id=context.application.living_organism_id,
-                engagement_reference=str(claim.assignment_uuid), settings_basis=_SETTINGS_BASIS,
+                engagement_reference=str(claim.assignment_uuid), settings_basis=settings_basis,
                 actor=context.actor, enterer=context.actor, occurred_at=context.occurred_at,
                 effective_at=context.effective_at, received_at=context.received_at,
             )
@@ -1142,7 +1236,7 @@ class OrganismApplicationService:
             )
 
     def reassign_application(self, command: ReassignApplicationCommand) -> ApplicationCommandResult:
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             context = self._coordinator_start(command, OrganismAction.REASSIGN_APPLICATION)
             if isinstance(context, ApplicationCommandResult):
                 return context
@@ -1154,6 +1248,9 @@ class OrganismApplicationService:
             if engagement is None or engagement.engagement_reference != str(previous.assignment_uuid):
                 raise S015ApplicationRefused("current engagement does not match claim")
             office = self._coordinator_office(context)
+            settings_basis = _engagement_settings_basis(
+                self._alias, context.application.living_organism, context.effective_at,
+            )
             ending = CSAAssignmentEnd.objects.using(self._alias).create(
                 assignment=previous, actor=context.actor, enterer=context.actor,
                 occurred_at=context.occurred_at, effective_at=context.effective_at,
@@ -1172,7 +1269,7 @@ class OrganismApplicationService:
             ApplicationEngagement.objects.using(self._alias).create(
                 application=context.application, engagement_ordinal=engagement.engagement_ordinal + 1,
                 route="LO_CSA", deciding_party_id=context.application.living_organism_id,
-                engagement_reference=str(replacement.assignment_uuid), settings_basis=_SETTINGS_BASIS,
+                engagement_reference=str(replacement.assignment_uuid), settings_basis=settings_basis,
                 basis_reference=str(ending.ending_uuid), actor=context.actor, enterer=context.actor,
                 occurred_at=context.occurred_at, effective_at=context.effective_at,
                 received_at=context.received_at,
@@ -1193,7 +1290,7 @@ class OrganismApplicationService:
             )
 
     def decide_application(self, command: DecideApplicationCommand) -> ApplicationCommandResult:
-        with transaction.atomic(using=self._alias):
+        with _authority_atomic(self._alias):
             outcome = _canonical_key(command.outcome, "outcome", 7)
             if outcome not in {"ACCEPT", "DECLINE"}:
                 raise ValueError("outcome must be ACCEPT or DECLINE")
@@ -1226,6 +1323,7 @@ class OrganismApplicationService:
                 assignment_reference=claim, responsible_coordinator=context.actor,
                 responsible_capacity="COORDINATOR", qualifying_office=office,
                 authority_decision_reference=context.decision.authority_decision_reference,
+                authority_reference=context.decision.authority_reference,
                 executor=context.actor, enterer=context.actor, occurred_at=context.occurred_at,
                 effective_at=context.effective_at, received_at=context.received_at,
             )

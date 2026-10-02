@@ -1,5 +1,6 @@
 """S3 2b PostgreSQL Coordinator route and admission witnesses (Human Governor executes)."""
 
+import importlib
 import json
 import threading
 import time
@@ -18,12 +19,12 @@ from django.test import TransactionTestCase
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
     ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal,
-    CSAAssignment, CSAAssignmentEnd, Identity, IdentityTransition,
+    CSAAssignment, CSAAssignmentEnd, ContextualRoleAssignment, Identity, IdentityTransition,
     OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_service import (
-    ClaimApplicationCommand, DecideApplicationCommand, OrganismApplicationService,
+    _COMMAND_DOMAIN, ClaimApplicationCommand, DecideApplicationCommand, OrganismApplicationService,
     ReassignApplicationCommand, S015ApplicationAuthorityUnavailable,
     S015ApplicationNotFound, S015ApplicationRefused,
     SubmitApplicationCommand, WithdrawApplicationCommand, _append_application_event,
@@ -34,6 +35,7 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityRefusal, S015PostFoundingAuthorityResponse,
 )
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
+from src.intevia.services.organism_command_support import _command_payload
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.s015_concurrency_support import (
@@ -48,10 +50,10 @@ from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
 POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 2b requires PostgreSQL")
-SETTINGS = "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No"
-
-
+LEGACY_SETTINGS = "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No"
 class _Provider:
+    """TEST-ONLY provider substitute; does not establish production permission."""
+
     def __init__(self, denied=False):
         self.denied = denied
         self.requests = []
@@ -103,7 +105,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def submit(self):
         if not hasattr(self, "gateway"):
             with transaction.atomic(), connection.cursor() as cursor:
-                self.gateway = seed_test_gateway(cursor, self.ids)
+                self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
         return self.service().submit_application(SubmitApplicationCommand(
             credential=self.applicant.credential, living_organism_id=self.organism_uuid,
             request_reference=f"s3:submit:{self.tag}", idempotency_key=f"s3:submit:key:{self.tag}",
@@ -157,6 +159,122 @@ class ApplicationDecisionTests(TransactionTestCase):
             refresh(cursor, "core_contextualroleassignment", office_id)
         return Identity.objects.select_related("credential").get(pk=other_pk)
 
+    def test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence(self):
+        head = current_core_leaf(connection)
+        with transaction.atomic(), connection.cursor() as cursor:
+            self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
+        MigrationExecutor(connection).migrate([("core", "0032_s015_register_cleanup_nonblocking")])
+        try:
+            application_uuid = uuid4()
+            claim_uuid = uuid4()
+            decision_reference = "s015d1:" + "a" * 64
+            application_answer = "Test-only applicant answer"
+            submit_request_reference = f"s3:submit:{self.tag}"
+            submit_idempotency_key = f"s3:submit:key:{self.tag}"
+            payload_fingerprint = _command_payload(
+                domain=_COMMAND_DOMAIN,
+                schema="s015-application-v1",
+                action=OrganismAction.SUBMIT_APPLICATION,
+                actor_identity_id=self.applicant.identity_id,
+                actor_access_epoch=self.applicant.access_epoch,
+                request_reference=submit_request_reference,
+                idempotency_key=submit_idempotency_key,
+                occurred_at=NOW,
+                target={
+                    "action": OrganismAction.SUBMIT_APPLICATION.value,
+                    "organism": self.organism_uuid,
+                    "applicant": self.applicant.identity_id,
+                },
+                command={
+                    "effective_at": NOW,
+                    "received_at": NOW,
+                    "predecessor": None,
+                    "answer": application_answer,
+                },
+            )
+            membership = OrganismMembership.objects.get(
+                identity=self.coordinator, living_organism_id=self.ids["lo"],
+            )
+            office = ContextualRoleAssignment.objects.get(
+                membership=membership, role_definition__code="COORDINATOR", state="ACTIVE",
+            )
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO core_application (application_uuid, applicant_id, living_organism_id, actor_id, "
+                        "enterer_id, authority_decision_reference, authority_reference, actor_access_epoch, "
+                        "settings_version_id, question_version_id, answer, occurred_at, effective_at, received_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        [application_uuid, self.applicant.pk, self.ids["lo"], self.applicant.pk, self.applicant.pk,
+                         decision_reference, "s3:test:applicant", self.applicant.access_epoch,
+                         self.gateway["core_loapplicationsettingsversion"],
+                         self.gateway["core_loapplicationquestionversion"], application_answer,
+                         NOW, NOW, NOW],
+                    )
+                    application_id = cursor.fetchone()[0]
+                application = Application.objects.get(pk=application_id)
+                ApplicationLineage.objects.create(application=application)
+                _append_application_event(
+                    database_alias="default",
+                    application=application,
+                    action=OrganismAction.SUBMIT_APPLICATION,
+                    resulting_state="SUBMITTED",
+                    actor=self.applicant,
+                    enterer=self.applicant,
+                    actor_access_epoch=self.applicant.access_epoch,
+                    authority_decision_reference=decision_reference,
+                    evidence_reference=f"application:{application_uuid}",
+                    request_reference=submit_request_reference,
+                    idempotency_key=submit_idempotency_key,
+                    payload_fingerprint=payload_fingerprint,
+                    occurred_at=NOW,
+                    effective_at=NOW,
+                    received_at=NOW,
+                )
+                self.service()._finish(
+                    actor=self.applicant,
+                    action=OrganismAction.SUBMIT_APPLICATION,
+                    request_reference=submit_request_reference,
+                    idempotency_key=submit_idempotency_key,
+                    fingerprint=payload_fingerprint,
+                    application=application,
+                    recorded_at=application.recorded_at,
+                    authority_reference="s3:test:applicant",
+                    authority_decision_reference=decision_reference,
+                )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO core_csaassignment (assignment_uuid, application_id, assignee_membership_id, "
+                    "assignee_office_id, actor_id, enterer_id, completion_due_at, occurred_at, effective_at, received_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [claim_uuid, application_id, membership.pk, office.pk, self.coordinator.pk,
+                     self.coordinator.pk, NOW + timedelta(days=27), NOW, NOW, NOW],
+                )
+                cursor.execute(
+                    "INSERT INTO core_applicationengagement (application_id, engagement_ordinal, route, "
+                    "deciding_party_id, engagement_reference, settings_basis, actor_id, enterer_id, "
+                    "occurred_at, effective_at, received_at) "
+                    "VALUES (%s, 1, 'LO_CSA', %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [application_id, self.ids["lo"], str(claim_uuid), LEGACY_SETTINGS,
+                     self.coordinator.pk, self.coordinator.pk, NOW, NOW, NOW],
+                )
+            MigrationExecutor(connection).migrate(head)
+            application = Application.objects.get(pk=application_id)
+            command = self.command(application, kind="decide", outcome="DECLINE")
+            request_count = len(self.provider.requests)
+            first = self.service().decide_application(command)
+            self.assertEqual(self.service().decide_application(command), first)
+            self.assertEqual(len(self.provider.requests), request_count + 1)
+            decision = ApplicationDecision.objects.get(application=application)
+            self.assertEqual(decision.authority_reference, "s3:test:coordinator")
+            migration = importlib.import_module("core.migrations.0033_s015_application_authority")
+            editor = type("Editor", (), {"connection": connection})()
+            with self.assertRaisesMessage(RuntimeError, "authority evidence would be lost"):
+                with transaction.atomic():
+                    migration.reverse(None, editor)
+        finally:
+            MigrationExecutor(connection).migrate(head)
+
     def claimed(self):
         application = self.application()
         self.service().claim_application(self.command(application))
@@ -173,7 +291,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertEqual((engagement.engagement_ordinal, engagement.route, engagement.deciding_party_id),
                          (1, "LO_CSA", self.ids["lo"]))
         self.assertEqual((engagement.engagement_reference, engagement.settings_basis),
-                         (str(claim.assignment_uuid), SETTINGS))
+                         (str(claim.assignment_uuid), self.gateway["settings_basis"]))
         self.assertEqual((result.completion_due_at, result.completion_due_source),
                          (claim.completion_due_at, "DEFAULT (no settings store)"))
 
@@ -391,7 +509,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         dormant_at = NOW + timedelta(minutes=1)
         with transaction.atomic(), connection.cursor() as cursor:
             dormant_id, _ = append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 4, "DORMANT",
+                cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1, "DORMANT",
                 "ACTIVE", "DORMANT", self.coordinator.pk, self.ids["basis"], fresh(),
                 pred_id=self.gateway["head_event"],
                 eff=dormant_at, occ=dormant_at, rec=dormant_at,
@@ -402,7 +520,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         closed_at = NOW + timedelta(minutes=2)
         with transaction.atomic(), connection.cursor() as cursor:
             append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 5, "CLOSE",
+                cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 2, "CLOSE",
                 "DORMANT", "CLOSED", self.coordinator.pk, self.ids["basis"], fresh(),
                 pred_id=dormant_id, eff=closed_at, occ=closed_at, rec=closed_at,
             )
@@ -417,7 +535,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         application = self.claimed()
         with transaction.atomic(), connection.cursor() as cursor:
             append_event(
-                cursor, "core_livingorganismevent", self.ids["lo"], 4, "RESTRICT",
+                cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1, "RESTRICT",
                 "ACTIVE", "RESTRICTED_CONTINUITY", self.coordinator.pk,
                 self.ids["basis"], fresh(),
                 pred_id=self.gateway["head_event"],
@@ -730,7 +848,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         ApplicationEngagement.objects.create(
             application=application, engagement_ordinal=2, route="LO_CSA",
             deciding_party_id=self.ids["lo"], engagement_reference=str(replacement.assignment_uuid),
-            basis_reference=str(ending.ending_uuid), settings_basis=SETTINGS,
+            basis_reference=str(ending.ending_uuid), settings_basis=self.gateway["settings_basis"],
             actor=other, enterer=other, occurred_at=NOW, effective_at=NOW, received_at=NOW,
         )
         self.assertEqual(service.application_status(application, future, future), "PENDING")
@@ -776,7 +894,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             ApplicationEngagement.objects.create(
                 application=application, engagement_ordinal=1, route=route,
                 deciding_party_id=self.ids["lo"], engagement_reference="s3:fixture",
-                settings_basis=SETTINGS, actor=self.coordinator, enterer=self.coordinator,
+                settings_basis=self.gateway["settings_basis"], actor=self.coordinator, enterer=self.coordinator,
                 occurred_at=NOW, effective_at=NOW, received_at=NOW,
             )
             with self.assertRaises(S015OperationNotYetImplemented) as error:
@@ -1135,7 +1253,7 @@ class ApplicationDecisionTests(TransactionTestCase):
                 "deciding_party_id, engagement_reference, settings_basis, actor_id, enterer_id, "
                 "occurred_at, effective_at, received_at) "
                 "VALUES (%s, 1, 'LO_CSA', %s, %s, %s, %s, %s, %s, %s, %s)",
-                [application_id, self.ids["lo"], str(assignment_uuid), SETTINGS,
+                [application_id, self.ids["lo"], str(assignment_uuid), LEGACY_SETTINGS,
                  self.coordinator.pk, self.coordinator.pk, NOW, NOW, NOW],
             )
         application = Application(pk=application_id, application_uuid=application_uuid)

@@ -402,6 +402,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
         """The reverse restores the previous implementation including its known defect, and restores no operational clearance."""
         cleanup_module = importlib.import_module("core.migrations.0032_s015_register_cleanup_nonblocking")
         head = __import__("s015_0021_support").current_core_leaf(connection)
+        head_name = head[0][1]
         executor = MigrationExecutor(connection)
         try:
             executor.migrate([("core", "0031_s1fu_admission_actor_requirement")])
@@ -419,7 +420,10 @@ class S015RegisterCleanupTests(TransactionTestCase):
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
                 )
-                self.assertEqual(cursor.fetchone()[0], 393)
+                self.assertEqual(
+                    cursor.fetchone()[0],
+                    REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"],
+                )
 
             MigrationExecutor(connection).migrate(head)
             with connection.cursor() as cursor:
@@ -435,7 +439,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
                 )
-                self.assertEqual(cursor.fetchone()[0], 393)
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head_name])
         finally:
             MigrationExecutor(connection).migrate(head)
 

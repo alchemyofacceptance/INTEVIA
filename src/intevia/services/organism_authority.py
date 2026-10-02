@@ -13,7 +13,7 @@ from uuid import UUID
 
 from django.db import connections
 
-from core.models import Application, Identity
+from core.models import Application, AuthorityDecision, Identity
 from core.organism_contract import OrganismAction, qualification_planes
 
 
@@ -34,11 +34,38 @@ class S015AuthorityMalformed(S015AuthorityError):
 
 
 class S015AuthorityDenied(S015AuthorityError):
-    pass
+    def __init__(
+        self,
+        message: str = "organism authority denied",
+        *,
+        refusal_code: "S015AuthorityRefusalCode | None" = None,
+        disclosed_refusal_code: "S015AuthorityRefusalCode | None" = None,
+        authority_decision_reference: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.refusal_code = refusal_code
+        self.disclosed_refusal_code = disclosed_refusal_code
+        self.authority_decision_reference = authority_decision_reference
 
 
 class S015AuthorityRefusalCode(str, Enum):
     DENIED = "DENIED"
+    E_IDENTITY_INACTIVE = "E_IDENTITY_INACTIVE"
+    E_NOT_APPLICANT = "E_NOT_APPLICANT"
+    E_NOT_EFFECTIVE_COORDINATOR = "E_NOT_EFFECTIVE_COORDINATOR"
+    E_NOT_ASSIGNEE = "E_NOT_ASSIGNEE"
+    E_NOT_REGISTERED = "E_NOT_REGISTERED"
+    C_GATEWAY_NOT_OPEN = "C_GATEWAY_NOT_OPEN"
+    C_ROUTE_IS_CQ = "C_ROUTE_IS_CQ"
+    C_CONFIGURATION_NOT_ESTABLISHED = "C_CONFIGURATION_NOT_ESTABLISHED"
+    C_CHANGE_SELF_AUTHORISING = "C_CHANGE_SELF_AUTHORISING"
+    C_TERMINAL_ROW_STANDS = "C_TERMINAL_ROW_STANDS"
+    C_APPLICATION_OPEN = "C_APPLICATION_OPEN"
+    C_LO_PAUSED = "C_LO_PAUSED"
+    C_LO_CLOSED = "C_LO_CLOSED"
+    C_LO_NO_CAPACITY = "C_LO_NO_CAPACITY"
+    UNRECOGNISED_ACTION = "UNRECOGNISED_ACTION"
+    UNRECOGNISED_ROUTE = "UNRECOGNISED_ROUTE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +96,13 @@ class S015PostFoundingAuthorityRequest:
     evaluated_at: datetime
     active_membership_head_reference: str
     contextual_role_head_references: tuple[str, ...]
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    assignment_uuid: UUID | None = None
+    outcome: str | None = None
+    version_uuid: UUID | None = None
+    version_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +120,10 @@ class S015OwnApplicantAuthorityRequest:
     evaluated_at: datetime
     living_organism_pk: int
     application_pk: int | None
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    predecessor_reference: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +156,13 @@ class S015PostFoundingAuthorityResponse:
     active_membership_head_reference: str
     contextual_role_head_references: tuple[str, ...]
     authority_reference: str
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    assignment_uuid: UUID | None = None
+    outcome: str | None = None
+    version_uuid: UUID | None = None
+    version_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +181,10 @@ class S015OwnApplicantAuthorityResponse:
     living_organism_pk: int
     application_pk: int | None
     authority_reference: str
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    predecessor_reference: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +217,15 @@ class S015PostFoundingAuthorityRefusal:
     active_membership_head_reference: str
     contextual_role_head_references: tuple[str, ...]
     refusal_code: S015AuthorityRefusalCode
+    disclosed_refusal_code: S015AuthorityRefusalCode | None = None
+    authority_reference: str | None = None
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    assignment_uuid: UUID | None = None
+    outcome: str | None = None
+    version_uuid: UUID | None = None
+    version_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +244,12 @@ class S015OwnApplicantAuthorityRefusal:
     living_organism_pk: int
     application_pk: int | None
     refusal_code: S015AuthorityRefusalCode
+    disclosed_refusal_code: S015AuthorityRefusalCode | None = None
+    authority_reference: str | None = None
+    effective_at: datetime | None = None
+    target: dict[str, object] | None = None
+    living_organism_id: UUID | None = None
+    predecessor_reference: UUID | None = None
 
 
 S015AuthorityRequest = S015PreFoundingAuthorityRequest | S015PostFoundingAuthorityRequest | S015OwnApplicantAuthorityRequest
@@ -307,6 +371,16 @@ def _validate_request(request: S015AuthorityRequest) -> None:
     _canonical_reference(request.request_reference, "request_reference", 128)
     _canonical_reference(request.idempotency_key, "idempotency_key", 120)
     canonical_timestamp(request.evaluated_at)
+    if type(request) is not S015PreFoundingAuthorityRequest:
+        if request.effective_at is not None:
+            canonical_timestamp(request.effective_at)
+        if request.target is not None:
+            if type(request.target) is not dict:
+                raise S015AuthorityMalformed("plain target must be an object")
+            if authority_target_fingerprint(request.target) != request.target_fingerprint:
+                raise S015AuthorityMalformed("plain target fingerprint mismatch")
+        if request.living_organism_id is not None and type(request.living_organism_id) is not UUID:
+            raise S015AuthorityMalformed("living_organism_id is invalid")
     if type(request) is S015PostFoundingAuthorityRequest:
         _canonical_reference(
             request.active_membership_head_reference,
@@ -317,6 +391,14 @@ def _validate_request(request: S015AuthorityRequest) -> None:
             raise S015AuthorityMalformed("contextual role heads must be a tuple")
         for reference in request.contextual_role_head_references:
             _canonical_reference(reference, "contextual_role_head_reference", 255)
+        for field_name in ("assignment_uuid", "version_uuid"):
+            value = getattr(request, field_name)
+            if value is not None and type(value) is not UUID:
+                raise S015AuthorityMalformed(f"{field_name} is invalid")
+        if request.outcome is not None and request.outcome not in {"ACCEPT", "DECLINE"}:
+            raise S015AuthorityMalformed("outcome is invalid")
+        if request.version_kind is not None:
+            _canonical_reference(request.version_kind, "version_kind", 48)
     if type(request) is S015OwnApplicantAuthorityRequest:
         if request.action not in {OrganismAction.SUBMIT_APPLICATION, OrganismAction.WITHDRAW_APPLICATION}:
             raise S015AuthorityMalformed("own-applicant action is invalid")
@@ -327,6 +409,8 @@ def _validate_request(request: S015AuthorityRequest) -> None:
         if request.action is OrganismAction.SUBMIT_APPLICATION:
             if request.application_pk is not None:
                 raise S015AuthorityMalformed("submission cannot name an application")
+            if request.predecessor_reference is not None and type(request.predecessor_reference) is not UUID:
+                raise S015AuthorityMalformed("predecessor_reference is invalid")
         elif type(request.application_pk) is not int or request.application_pk < 1:
             raise S015AuthorityMalformed("withdrawal requires an application")
 
@@ -337,6 +421,165 @@ def _response_types(request: S015AuthorityRequest) -> tuple[type[object], type[o
     if type(request) is S015OwnApplicantAuthorityRequest:
         return S015OwnApplicantAuthorityResponse, S015OwnApplicantAuthorityRefusal
     return S015PostFoundingAuthorityResponse, S015PostFoundingAuthorityRefusal
+
+
+_APPLICATION_ACTIONS = frozenset({
+    OrganismAction.SUBMIT_APPLICATION,
+    OrganismAction.WITHDRAW_APPLICATION,
+    OrganismAction.CLAIM_APPLICATION,
+    OrganismAction.REASSIGN_APPLICATION,
+    OrganismAction.DECIDE_APPLICATION,
+    OrganismAction.EFFECT_APPLICATION_SETTINGS,
+    OrganismAction.EFFECT_APPLICATION_QUESTION,
+    OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+})
+
+
+def _refusal_result(
+    request: S015AuthorityRequest,
+    refusal_code: S015AuthorityRefusalCode,
+    disclosed_refusal_code: S015AuthorityRefusalCode,
+) -> S015AuthorityResult:
+    refusal_type = _response_types(request)[1]
+    fields = asdict(request)
+    fields["refusal_code"] = refusal_code
+    fields["disclosed_refusal_code"] = disclosed_refusal_code
+    fields["authority_reference"] = "s015a1:" + canonical_json_bytes({"x": refusal_code.value}).decode("utf-8")
+    return refusal_type(**fields)
+
+
+def _facts_read(request: S015AuthorityRequest, authority_reference: str | None) -> list[dict[str, object]]:
+    effective_at = getattr(request, "effective_at", None) or request.evaluated_at
+    eligible_at = {
+        "effective_at": canonical_timestamp(effective_at),
+        "evaluated_at": canonical_timestamp(request.evaluated_at),
+    }
+    facts: list[dict[str, object]] = [{
+        "relation": "core_identity",
+        "reference": str(request.actor_identity_id),
+        "eligible_at": eligible_at,
+    }]
+    living_organism_id = getattr(request, "living_organism_id", None)
+    if living_organism_id is not None:
+        facts.append({
+            "relation": "core_livingorganism",
+            "reference": str(living_organism_id),
+            "eligible_at": eligible_at,
+        })
+    if authority_reference is None or not authority_reference.startswith("s015a1:"):
+        return facts
+    try:
+        content = json.loads(authority_reference[len("s015a1:"):])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise S015AuthorityMalformed("structured authority reference is invalid") from exc
+    if type(content) is not dict:
+        raise S015AuthorityMalformed("structured authority reference must be an object")
+
+    prefix = {
+        "b": ("s3_il_birthing_fact_source", None),
+        "c": ("core_logovernanceconfigurationversion", "governance-configuration-version:"),
+        "m": ("core_organismmembershiptransition", None),
+        "o": ("core_contextualroleassignmentstateevent", None),
+        "p": ("core_application", None),
+        "e": ("core_applicationengagement", None),
+        "q": ("core_loapplicationquestionversion", "application-question-version:"),
+        "r": ("core_identitytransition", "identity-transition:"),
+        "s": ("core_loapplicationsettingsversion", "application-settings-version:"),
+        "v": (_version_relation(request.action), _version_reference_prefix(request.action)),
+        "a": (_assignment_or_application_relation(request.action), None),
+    }
+    for key, value in content.items():
+        if key in {"k", "t", "x"}:
+            continue
+        if value in {None, "-"}:
+            continue
+        if key not in prefix:
+            raise S015AuthorityMalformed("structured authority reference has an unknown fact key")
+        relation, reference_prefix = prefix[key]
+        reference = str(value)
+        if reference_prefix is not None and not reference.startswith(reference_prefix):
+            reference = reference_prefix + reference
+        facts.append({"relation": relation, "reference": reference, "eligible_at": eligible_at})
+    return facts
+
+
+def _version_relation(action: OrganismAction) -> str:
+    return {
+        OrganismAction.EFFECT_APPLICATION_SETTINGS: "core_loapplicationsettingsversion",
+        OrganismAction.EFFECT_APPLICATION_QUESTION: "core_loapplicationquestionversion",
+        OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "core_logovernanceconfigurationversion",
+    }.get(action, "")
+
+
+def _version_reference_prefix(action: OrganismAction) -> str:
+    return {
+        OrganismAction.EFFECT_APPLICATION_SETTINGS: "application-settings-version:",
+        OrganismAction.EFFECT_APPLICATION_QUESTION: "application-question-version:",
+        OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "governance-configuration-version:",
+    }.get(action, "")
+
+
+def _assignment_or_application_relation(action: OrganismAction) -> str:
+    return "core_csaassignment" if action in {
+        OrganismAction.CLAIM_APPLICATION,
+        OrganismAction.REASSIGN_APPLICATION,
+        OrganismAction.DECIDE_APPLICATION,
+    } else "core_application"
+
+
+def _record_application_decision(
+    *,
+    provider: S015AuthorityProvider,
+    request: S015AuthorityRequest,
+    response: S015AuthorityResult,
+    decision_reference: str,
+    outcome: str,
+    refusal_code: S015AuthorityRefusalCode | None,
+) -> None:
+    response_bytes = canonical_json_bytes(asdict(response))
+    response_payload = json.loads(response_bytes.decode("utf-8"))
+    target_bytes = canonical_json_bytes(getattr(request, "target", None) or {})
+    target_payload = json.loads(target_bytes.decode("utf-8"))
+    authority_reference = getattr(response, "authority_reference", None)
+    facts_read = _facts_read(request, authority_reference)
+    provider_identity = getattr(provider, "provider_identity", None)
+    if type(provider_identity) is not str:
+        provider_identity = f"{type(provider).__module__}.{type(provider).__qualname__}"
+    provider_version = getattr(provider, "provider_version", "UNSPECIFIED")
+    if type(provider_version) is not str:
+        raise S015AuthorityMalformed("provider_version is invalid")
+    effective_at = getattr(request, "effective_at", None) or request.evaluated_at
+    credential_pk = getattr(request, "actor_credential_pk", None)
+    record, created = AuthorityDecision.objects.using(request.database_alias).get_or_create(
+        decision_reference=decision_reference,
+        defaults={
+            "decision_payload": response_payload,
+            "decision_payload_bytes": response_bytes,
+            "request_kind": type(request).__name__,
+            "action": request.action.value,
+            "command_subtype": request.command_subtype,
+            "actor_id": request.actor_pk,
+            "actor_identity_id": request.actor_identity_id,
+            "actor_access_epoch": request.actor_access_epoch,
+            "actor_credential_pk": credential_pk,
+            "target": target_payload,
+            "target_bytes": target_bytes,
+            "target_fingerprint": request.target_fingerprint,
+            "effective_at": effective_at,
+            "evaluated_at": request.evaluated_at,
+            "authority_reference": authority_reference,
+            "facts_read": facts_read,
+            "outcome": outcome,
+            "refusal_code": None if refusal_code is None else refusal_code.value,
+            "provider_identity": provider_identity,
+            "provider_version": provider_version,
+            "request_reference": request.request_reference,
+            "idempotency_key": request.idempotency_key,
+            "recorded_at": None,
+        },
+    )
+    if not created and record.decision_payload_bytes != response_bytes:
+        raise S015AuthorityMalformed("authority decision reference collision")
 
 
 class S015Authority:
@@ -360,6 +603,7 @@ class S015Authority:
             raise S015AuthorityMalformed("database alias mismatch")
         if not connections[self.database_alias].in_atomic_block:
             raise S015AuthorityMalformed("outer atomic transaction required")
+        preflight_refusal = None
         if type(request) is S015OwnApplicantAuthorityRequest:
             if not Identity.objects.using(self.database_alias).filter(
                 pk=request.actor_pk,
@@ -369,17 +613,28 @@ class S015Authority:
                 access_state=Identity.AccessState.ACTIVE,
                 credential__is_active=True,
             ).exists():
-                raise S015AuthorityDenied("applicant identity does not match actor")
+                preflight_refusal = _refusal_result(
+                    request,
+                    S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+                    S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+                )
             if request.application_pk is not None and not Application.objects.using(self.database_alias).filter(
                 pk=request.application_pk,
                 applicant_id=request.actor_pk,
                 living_organism_id=request.living_organism_pk,
             ).exists():
-                raise S015AuthorityDenied("application is not the actor's")
-        try:
-            result = self.provider.evaluate_organism_authority(request)
-        except Exception as exc:
-            raise S015AuthorityUnavailable("organism authority unavailable") from exc
+                preflight_refusal = _refusal_result(
+                    request,
+                    S015AuthorityRefusalCode.E_NOT_APPLICANT,
+                    S015AuthorityRefusalCode.DENIED,
+                )
+        if preflight_refusal is not None:
+            result = preflight_refusal
+        else:
+            try:
+                result = self.provider.evaluate_organism_authority(request)
+            except Exception as exc:
+                raise S015AuthorityUnavailable("organism authority unavailable") from exc
         if inspect.isawaitable(result):
             if inspect.iscoroutine(result):
                 result.close()
@@ -393,7 +648,30 @@ class S015Authority:
         if type(result) is refusal_type:
             if type(result.refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("refusal code is invalid")
-            raise S015AuthorityDenied("organism authority denied")
+            decision_payload = asdict(result)
+            decision_reference = "s015d1:" + hashlib.sha256(
+                _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
+            ).hexdigest()
+            if request.action in _APPLICATION_ACTIONS:
+                _record_application_decision(
+                    provider=self.provider,
+                    request=request,
+                    response=result,
+                    decision_reference=decision_reference,
+                    outcome="REFUSED",
+                    refusal_code=result.refusal_code,
+                )
+            disclosed_refusal_code = (
+                result.disclosed_refusal_code or result.refusal_code
+            )
+            if type(disclosed_refusal_code) is not S015AuthorityRefusalCode:
+                raise S015AuthorityMalformed("disclosed refusal code is invalid")
+            raise S015AuthorityDenied(
+                "organism authority denied",
+                refusal_code=result.refusal_code,
+                disclosed_refusal_code=disclosed_refusal_code,
+                authority_decision_reference=decision_reference,
+            )
         authority_reference = _canonical_reference(
             result.authority_reference, "authority_reference", 255
         )
@@ -401,6 +679,15 @@ class S015Authority:
         decision_reference = "s015d1:" + hashlib.sha256(
             _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
         ).hexdigest()
+        if request.action in _APPLICATION_ACTIONS:
+            _record_application_decision(
+                provider=self.provider,
+                request=request,
+                response=result,
+                decision_reference=decision_reference,
+                outcome="QUALIFIED",
+                refusal_code=None,
+            )
         post_founding = type(request) is S015PostFoundingAuthorityRequest
         return QualifiedS015AuthorityDecision(
             database_alias=result.database_alias,

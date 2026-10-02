@@ -54,6 +54,8 @@ POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 gateway requires Po
 
 
 class _CoordinatorProvider:
+    """TEST-ONLY permissive provider for service and lock witnesses."""
+
     def evaluate_organism_authority(self, request):
         if isinstance(request, S015OwnApplicantAuthorityRequest):
             return S015OwnApplicantAuthorityResponse(**asdict(request), authority_reference="s3:test:applicant")
@@ -749,6 +751,30 @@ class ApplicationGatewayTests(TransactionTestCase):
         with self.assertRaisesMessage(RuntimeError, "LO_AUTOMATIC rows require forward correction"):
             migration.reverse(None, type("Editor", (), {"connection": connection})())
         self.assertTrue(ApplicationDecision.objects.filter(route="LO_AUTOMATIC").exists())
+
+    def test_0033_reverse_allows_automatic_settings_references(self):
+        self.automatic_gateway()
+        self.automatic_service()
+        self.submit(self.applicant())
+        migration = importlib.import_module("core.migrations.0033_s015_application_authority")
+
+        class Rollback(Exception):
+            pass
+
+        class Editor:
+            def __init__(self):
+                self.connection = globals()["connection"]
+
+            @staticmethod
+            def execute(sql, params=None):
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+
+        self.assertTrue(ApplicationEngagement.objects.filter(route="LO_AUTOMATIC").exists())
+        with self.assertRaises(Rollback):
+            with transaction.atomic():
+                migration.reverse(None, Editor())
+                raise Rollback()
 
     def test_automatic_composed_admission_direct_sql_refusals(self):
         self.automatic_gateway()

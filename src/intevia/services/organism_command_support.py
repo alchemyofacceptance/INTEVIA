@@ -247,6 +247,13 @@ def _authority_request(
     idempotency_key: str,
     received_at: datetime,
     target_fingerprint: str,
+    effective_at: datetime | None = None,
+    target: dict[str, object] | None = None,
+    living_organism_id: UUID | None = None,
+    assignment_uuid: UUID | None = None,
+    outcome: str | None = None,
+    version_uuid: UUID | None = None,
+    version_kind: str | None = None,
 ) -> S015PostFoundingAuthorityRequest:
     return S015PostFoundingAuthorityRequest(
         database_alias=database_alias,
@@ -261,6 +268,13 @@ def _authority_request(
         evaluated_at=received_at,
         active_membership_head_reference=actor_membership.head_transition.lineage_reference,
         contextual_role_head_references=actor_role_head_refs,
+        effective_at=effective_at,
+        target=target,
+        living_organism_id=living_organism_id,
+        assignment_uuid=assignment_uuid,
+        outcome=outcome,
+        version_uuid=version_uuid,
+        version_kind=version_kind,
     )
 
 

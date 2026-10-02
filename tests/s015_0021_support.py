@@ -129,18 +129,27 @@ def refresh(cur, token, anchor_id, state_at=T0):
     return cur.fetchone()[0]
 
 
-def seed_test_gateway(cur, ids, at=T0):
+def seed_test_gateway(cur, ids, at=T0, *, include_governance_configuration=False):
     """Test-only version/effect rows with an explicitly labelled fixture name; never a production LO-name source."""
     cur.execute("INSERT INTO core_loapplicationgateway (living_organism_id) VALUES (%s) RETURNING id", [ids["lo"]])
     result = {}
     event_id = ids["events"]["core_livingorganismevent"]
-    for table, action, prefix, values in (
+    version_specs = [
         ("core_loapplicationsettingsversion", "EFFECT_APPLICATION_SETTINGS", "application-settings-version:",
          {"applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO"}),
         ("core_loapplicationquestionversion", "EFFECT_APPLICATION_QUESTION", "application-question-version:",
          {"question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
           "answer_format": "LONG_ANSWER", "options": None}),
-    ):
+    ]
+    if include_governance_configuration:
+        version_specs.insert(1, (
+            "core_logovernanceconfigurationversion", "EFFECT_GOVERNANCE_CONFIGURATION",
+            "governance-configuration-version:",
+            {"cq_active": False, "inherit_portal_cq_settings": False,
+             "require_cq_to_change_lo_settings": False, "require_cq_to_change_application_question": False},
+        ))
+    version_uuids = {}
+    for table, action, prefix, values in version_specs:
         version_uuid = str(uuid.uuid4())
         columns = {"version_uuid": version_uuid, "living_organism_id": ids["lo"],
                    "actor_id": ids["identity"], "enterer_id": ids["identity"],
@@ -148,6 +157,7 @@ def seed_test_gateway(cur, ids, at=T0):
         cur.execute(f"INSERT INTO {table} ({', '.join(columns)}) "
                     f"VALUES ({', '.join(['%s'] * len(columns))}) RETURNING id", list(columns.values()))
         result[table] = cur.fetchone()[0]
+        version_uuids[table] = version_uuid
         cur.execute("SELECT sequence, resulting_state FROM core_livingorganismevent WHERE id = %s", [event_id])
         sequence, state = cur.fetchone()
         event_id, _ = append_event(
@@ -158,6 +168,13 @@ def seed_test_gateway(cur, ids, at=T0):
                    "enterer_identity_id": ids["identity"], "evidence_reference": prefix + version_uuid},
         )
         refresh(cur, "core_livingorganism", ids["lo"], at)
+    if include_governance_configuration:
+        result["settings_basis"] = (
+            f"governance-configuration-version:{version_uuids['core_logovernanceconfigurationversion']};"
+            f"application-settings-version:{version_uuids['core_loapplicationsettingsversion']}"
+        )
+        cur.execute("SELECT sequence FROM core_livingorganismevent WHERE id = %s", [event_id])
+        result["head_sequence"] = cur.fetchone()[0]
     result["head_event"] = event_id
     return result
 
