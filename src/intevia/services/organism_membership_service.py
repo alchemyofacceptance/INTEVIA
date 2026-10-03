@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -10,6 +11,7 @@ from django.db import connections, transaction
 
 from core.models import (
     AuthorityBasis,
+    ContextualRoleAssignment,
     Identity,
     LivingOrganism,
     OrganismCommandReceipt,
@@ -19,7 +21,6 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision,
-    S015AuthorityDenied,
     S015AuthorityMalformed,
     S015AuthorityUnavailable,
     authority_target_fingerprint,
@@ -27,6 +28,7 @@ from src.intevia.services.organism_authority import (
     canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import (
+    ReplayViewer,
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
@@ -40,7 +42,9 @@ from src.intevia.services.organism_command_support import (
     _OrganismCommandService,
     _resulting_temporal_basis,
     _validate_timestamp,
+    WithheldField,
     acquire_organism_command_mutex,
+    authority_atomic,
     command_mutex_key,
 )
 
@@ -123,22 +127,125 @@ class TransitionMembershipCommand:
 
 @dataclass(frozen=True, slots=True)
 class MembershipCommandResult:
-    membership_uuid: UUID
-    membership_id: int
-    resulting_state: str
-    transition_id: int
-    transition_sequence: int
+    membership_uuid: UUID | WithheldField
+    resulting_state: str | WithheldField
+    transition_sequence: int | WithheldField
     lineage_reference: str
     temporal_basis_kind: str | None
     temporal_basis_reference: str | None
-    current_state_effective_at: datetime
-    state_known_at: datetime
-    state_source_event_set_fingerprint: str
-    authority_reference: str
+    current_state_effective_at: datetime | WithheldField
+    state_known_at: datetime | WithheldField
+    state_source_event_set_fingerprint: str | WithheldField
+    authority_reference: str | WithheldField
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
         return _result_payload(self)
+
+    @classmethod
+    def replay_field_audiences(cls, result: "MembershipCommandResult") -> dict[str, str]:
+        fields = {
+            "resulting_state": "SUBJECT",
+            "transition_sequence": "SUBJECT",
+            "current_state_effective_at": "SUBJECT",
+            "state_known_at": "SUBJECT",
+            "state_source_event_set_fingerprint": "SUBJECT",
+        }
+        if result.transition_sequence == 1:
+            fields["membership_uuid"] = "SUBJECT"
+        return fields
+
+
+_OWN_MEMBERSHIP_STATES = frozenset({"ACTIVE", "PROBATIONARY", "RESTRICTED", "SUSPENDED"})
+
+
+@dataclass(frozen=True, slots=True)
+class OwnMembershipView:
+    organism_id: UUID
+    state: str
+    current_state_effective_at: datetime = field(
+        metadata={"label": "the beginning of the current state"},
+    )
+    offices: tuple[tuple[str, str], ...]
+
+
+class OrganismMembershipReader:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], datetime] | None = None,
+        database_alias: str = "default",
+    ) -> None:
+        if clock is not None and not callable(clock):
+            raise TypeError("clock must be callable")
+        if type(database_alias) is not str or not database_alias:
+            raise ValueError("database_alias is required")
+        self._clock = clock
+        self._alias = database_alias
+
+    def list_own_memberships(self, reader: Identity) -> list[OwnMembershipView]:
+        reader_identity_id = self._reader_identity_id(reader)
+        now = self._now()
+        memberships = OrganismMembership.objects.using(self._alias).filter(
+            identity__identity_id=reader_identity_id,
+            state__in=_OWN_MEMBERSHIP_STATES,
+            current_state_effective_at__lte=now,
+            state_known_at__lte=now,
+        ).select_related("living_organism").order_by("living_organism__organism_id")
+        return [self._view(membership, now) for membership in memberships]
+
+    def read_own_membership(
+        self,
+        reader: Identity,
+        membership_uuid: UUID,
+    ) -> OwnMembershipView:
+        reader_identity_id = self._reader_identity_id(reader)
+        membership_uuid = _canonical_uuid(membership_uuid, "membership_uuid")
+        now = self._now()
+        membership = OrganismMembership.objects.using(self._alias).filter(
+            membership_uuid=membership_uuid,
+            identity__identity_id=reader_identity_id,
+            state__in=_OWN_MEMBERSHIP_STATES,
+            current_state_effective_at__lte=now,
+            state_known_at__lte=now,
+        ).select_related("living_organism").first()
+        if membership is None:
+            raise S015MembershipNotFound("membership not found")
+        return self._view(membership, now)
+
+    @staticmethod
+    def _reader_identity_id(reader: Identity) -> UUID:
+        if not isinstance(reader, Identity) or type(reader.identity_id) is not UUID:
+            raise TypeError("reader must be an Identity")
+        return reader.identity_id
+
+    def _now(self) -> datetime:
+        if self._clock is not None:
+            return _validate_timestamp(self._clock(), "clock")
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            return cursor.fetchone()[0]
+
+    def _view(self, membership: OrganismMembership, now: datetime) -> OwnMembershipView:
+        from src.intevia.services.organism_role_service import assignment_in_effect
+
+        offices = ContextualRoleAssignment.objects.using(self._alias).filter(
+            membership=membership,
+            state="ACTIVE",
+        ).select_related("role_definition").order_by(
+            "role_definition__code", "role_definition__scope", "pk",
+        )
+        office_roles = tuple(
+            (office.role_definition.code, office.role_definition.scope)
+            for office in offices
+            if assignment_in_effect(office, now, database_alias=self._alias)
+        )
+        return OwnMembershipView(
+            organism_id=membership.living_organism.organism_id,
+            state=membership.state,
+            current_state_effective_at=membership.current_state_effective_at,
+            offices=office_roles,
+        )
 
 
 def _insert_membership_transition_row(
@@ -303,9 +410,7 @@ def _expected_replay_result(
     try:
         return MembershipCommandResult(
             membership_uuid=UUID(payload["membership_uuid"]),
-            membership_id=int(payload["membership_id"]),
             resulting_state=str(payload["resulting_state"]),
-            transition_id=int(payload["transition_id"]),
             transition_sequence=int(payload["transition_sequence"]),
             lineage_reference=str(payload["lineage_reference"]),
             temporal_basis_kind=payload.get("temporal_basis_kind"),
@@ -326,14 +431,12 @@ def _result_payload(result: MembershipCommandResult) -> dict[str, object]:
         "authority_reference": result.authority_reference,
         "current_state_effective_at": canonical_timestamp(result.current_state_effective_at),
         "lineage_reference": result.lineage_reference,
-        "membership_id": result.membership_id,
         "membership_uuid": str(result.membership_uuid),
         "resulting_state": result.resulting_state,
         "state_known_at": canonical_timestamp(result.state_known_at),
         "state_source_event_set_fingerprint": result.state_source_event_set_fingerprint,
         "temporal_basis_kind": result.temporal_basis_kind,
         "temporal_basis_reference": result.temporal_basis_reference,
-        "transition_id": result.transition_id,
         "transition_sequence": result.transition_sequence,
     }
 
@@ -347,9 +450,7 @@ def _result_from_membership(
 ) -> MembershipCommandResult:
     return MembershipCommandResult(
         membership_uuid=membership.membership_uuid,
-        membership_id=membership.pk,
         resulting_state=transition.resulting_state,
-        transition_id=transition.pk,
         transition_sequence=transition.sequence,
         lineage_reference=transition.lineage_reference,
         temporal_basis_kind=transition.temporal_basis_kind,
@@ -491,25 +592,10 @@ class OrganismMembershipService(_OrganismCommandService):
         try:
             organism = (
                 LivingOrganism.objects.using(self._alias)
-                .select_for_update()
                 .get(organism_id=living_organism_id)
             )
         except LivingOrganism.DoesNotExist as exc:
             raise S015MembershipNotFound("living organism not found") from exc
-        try:
-            target_identity = (
-                Identity.objects.using(self._alias)
-                .select_for_update()
-                .get(identity_id=member_identity_id)
-            )
-        except Identity.DoesNotExist as exc:
-            raise S015MembershipNotFound("target identity not found") from exc
-        actor_membership, actor_role_refs = _lock_actor_membership_context(
-            database_alias=self._alias,
-            actor_identity_id=actor.identity_id,
-            living_organism_id=living_organism_id,
-            unavailable=S015MembershipAuthorityUnavailable,
-        )
 
         target_fingerprint = _target_fingerprint_open(
             member_identity_id=member_identity_id,
@@ -544,9 +630,30 @@ class OrganismMembershipService(_OrganismCommandService):
             request_reference=request_reference,
             payload_fingerprint=command_fingerprint,
             idempotency_key=idempotency_key,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+
+        organism = (
+            LivingOrganism.objects.using(self._alias)
+            .select_for_update()
+            .get(pk=organism.pk)
+        )
+        try:
+            target_identity = (
+                Identity.objects.using(self._alias)
+                .select_for_update()
+                .get(identity_id=member_identity_id)
+            )
+        except Identity.DoesNotExist as exc:
+            raise S015MembershipNotFound("target identity not found") from exc
+        actor_membership, actor_role_refs = _lock_actor_membership_context(
+            database_alias=self._alias,
+            actor_identity_id=actor.identity_id,
+            living_organism_id=living_organism_id,
+            unavailable=S015MembershipAuthorityUnavailable,
+        )
 
         decision = self._evaluate_authority(
             actor=actor,
@@ -678,7 +785,7 @@ class OrganismMembershipService(_OrganismCommandService):
         self,
         command: TransitionMembershipCommand,
     ) -> MembershipCommandResult:
-        with transaction.atomic(using=self._alias):
+        with authority_atomic(self._alias):
             return self._execute_transition(command)
 
     def _execute_transition(
@@ -709,18 +816,11 @@ class OrganismMembershipService(_OrganismCommandService):
         try:
             membership = (
                 OrganismMembership.objects.using(self._alias)
-                .select_for_update()
                 .select_related("identity", "living_organism")
                 .get(membership_uuid=membership_uuid)
             )
         except OrganismMembership.DoesNotExist as exc:
             raise S015MembershipNotFound("membership not found") from exc
-        actor_membership, actor_role_refs = _lock_actor_membership_context(
-            database_alias=self._alias,
-            actor_identity_id=actor.identity_id,
-            living_organism_id=membership.living_organism.organism_id,
-            unavailable=S015MembershipAuthorityUnavailable,
-        )
 
         target_fingerprint = _target_fingerprint_transition(
             membership_uuid=membership_uuid,
@@ -755,9 +855,26 @@ class OrganismMembershipService(_OrganismCommandService):
             request_reference=request_reference,
             payload_fingerprint=command_fingerprint,
             idempotency_key=idempotency_key,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+
+        membership = (
+            OrganismMembership.objects.using(self._alias)
+            .select_for_update()
+            .select_related("identity", "living_organism")
+            .get(pk=membership.pk)
+        )
+        actor_membership, actor_role_refs = _lock_actor_membership_context(
+            database_alias=self._alias,
+            actor_identity_id=actor.identity_id,
+            living_organism_id=membership.living_organism.organism_id,
+            unavailable=S015MembershipAuthorityUnavailable,
+            allow_probationary=(
+                target_state == "ENDED" and membership.identity.identity_id == actor.identity_id
+            ),
+        )
 
         decision = self._evaluate_authority(
             actor=actor,
@@ -767,6 +884,16 @@ class OrganismMembershipService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             target_fingerprint=target_fingerprint,
             received_at=received_at,
+            effective_at=effective_at,
+            target={
+                "action": _ACTION.value,
+                "living_organism_id": str(membership.living_organism.organism_id),
+                "membership_uuid": str(membership_uuid),
+                "reason_class": reason_class,
+                "resulting_state": target_state,
+                "schema": _TARGET_SCHEMA,
+            },
+            living_organism_id=membership.living_organism.organism_id,
         )
 
         current_state = _canonical_key(membership.state, "membership.state", 19)

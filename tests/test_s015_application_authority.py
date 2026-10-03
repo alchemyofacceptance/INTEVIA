@@ -39,6 +39,7 @@ from core.models import (
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
     OrganismMembership,
+    OrganismCommandReceipt,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_authority import (
@@ -46,6 +47,8 @@ from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
 )
 from src.intevia.services.organism_application_service import (
+    ApplicationCommandResult,
+    _COMMAND_DOMAIN,
     S015ApplicationAuthorityUnavailable,
     ClaimApplicationCommand,
     DecideApplicationCommand,
@@ -66,6 +69,7 @@ from src.intevia.services.organism_authority import (
     authority_target_fingerprint,
     canonical_json_bytes,
 )
+from src.intevia.services.organism_command_support import ReplayViewer, WithheldField, _command_payload
 from tests.s015_0034_support import emit_guard_catalogue
 from tests.s015_0021_support import (
     T0,
@@ -552,7 +556,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "decided-withdrawal")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         self._capture_database_now()
         service.claim_application(ClaimApplicationCommand(
@@ -610,7 +614,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         ), "other-withdraw")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         actor = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         target = {
             "action": OrganismAction.WITHDRAW_APPLICATION.value,
@@ -1044,7 +1048,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         result = self._submit(service, "applicant-claim")
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         request_reference = f"aa-r1:applicant-claim:{self.tag}"
         decisions_before = AuthorityDecision.objects.count()
         with self.assertRaisesMessage(
@@ -1066,7 +1070,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_unrecognised_action_is_refused_by_production_provider(self):
         actor = Identity.objects.get(pk=self.ids["identity"])
-        action = OrganismAction.TRANSITION_MEMBERSHIP
+        action = OrganismAction.RECORD_GOVERNED_DETERMINATION
         target = {
             "action": action.value,
             "organism_uuid": self.organism_uuid,
@@ -1078,6 +1082,26 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 actor, action, target, suffix="unrecognised-action",
             ))
         self.assertEqual(refusal.refusal_code, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+
+        membership_action = OrganismAction.TRANSITION_MEMBERSHIP
+        membership_target = {
+            "action": membership_action.value,
+            "living_organism_id": str(self.organism_uuid),
+            "membership_uuid": str(uuid4()),
+            "resulting_state": "PROBATIONARY",
+        }
+        with transaction.atomic():
+            membership_refusal = provider.evaluate_organism_authority(self._post_request(
+                actor, membership_action, membership_target, suffix="membership-not-implemented",
+            ))
+        self.assertEqual(
+            membership_refusal.refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(
+            membership_refusal.disclosed_refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+        )
 
     def test_disclosure_is_member_specific_and_responses_are_deterministic(self):
         member = Identity.objects.get(pk=self.ids["identity"])
@@ -1188,7 +1212,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         target = {
             "action": OrganismAction.CLAIM_APPLICATION.value,
             "organism_uuid": self.organism_uuid,
-            "application_uuid": Application.objects.get(pk=application.application_id).application_uuid,
+            "application_uuid": application.application_uuid,
         }
         provider = ProductionApplicationAuthorityProvider()
         with transaction.atomic():
@@ -1240,7 +1264,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         ), "cq-route")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         configuration = LOGovernanceConfigurationVersion.objects.filter(
             living_organism_id=self.ids["lo"],
         ).order_by("-pk").first()
@@ -1283,7 +1307,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "reassign")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         first_coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         second_coordinator = self._add_second_coordinator("reassign")
         self._capture_database_now()
@@ -1311,7 +1335,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(not_assignee.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_ASSIGNEE)
         self._capture_database_now()
         later = self.now + timedelta(minutes=1)
-        reassigned = service.reassign_application(ReassignApplicationCommand(
+        reassign_command = ReassignApplicationCommand(
             credential=second_coordinator.credential,
             application_uuid=application.application_uuid,
             request_reference=f"aa-r1:reassign:{self.tag}",
@@ -1319,8 +1343,30 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             occurred_at=self.now,
             effective_at=later,
             received_at=self.now,
-        ))
+        )
+        reassigned = service.reassign_application(reassign_command)
         self.assertEqual(reassigned.action, OrganismAction.REASSIGN_APPLICATION)
+        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R3.0")
+        self.assertEqual(reassigned.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        replacement = CSAAssignment.objects.get(application=application, replaces__isnull=False)
+        original_claim = CSAAssignment.objects.get(application=application, replaces__isnull=True)
+        first_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
+        second_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=2)
+        reassign_record = AuthorityDecision.objects.get(
+            decision_reference=reassigned.authority_decision_reference,
+        )
+        reassign_reference = reassign_record.authority_reference
+        reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
+        self.assertEqual(reassign_record.provider_version, "R3.0")
+        self.assertEqual(reassign_facts["a"], str(original_claim.pk))
+        self.assertEqual(reassign_facts["e"], str(first_engagement.pk))
+        reassign_fact_refs = {(fact["relation"], fact["reference"]) for fact in reassign_record.facts_read}
+        self.assertIn(("core_csaassignment", str(original_claim.pk)), reassign_fact_refs)
+        self.assertIn(("core_applicationengagement", str(first_engagement.pk)), reassign_fact_refs)
+        self.assertEqual(service.reassign_application(reassign_command).authority_reference,
+                         WithheldField("authority_reference", "SUBJECT"))
+        reassign_record.refresh_from_db()
+        self.assertEqual(reassign_record.authority_reference.encode("utf-8"), reassign_reference.encode("utf-8"))
         self._capture_database_now()
         with self.assertRaises(S015AuthorityDenied) as former_assignee:
             self._capture_database_now()
@@ -1335,6 +1381,32 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 outcome="DECLINE",
             ))
         self.assertEqual(former_assignee.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_ASSIGNEE)
+        self._capture_database_now()
+        decide_command = DecideApplicationCommand(
+            credential=second_coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:decide-after-reassign:{self.tag}",
+            idempotency_key=f"aa-r1:decide-after-reassign:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=later + timedelta(minutes=2),
+            received_at=self.now,
+            outcome="DECLINE",
+        )
+        decided = service.decide_application(decide_command)
+        self.assertEqual(decided.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        decide_record = AuthorityDecision.objects.get(decision_reference=decided.authority_decision_reference)
+        decide_reference = decide_record.authority_reference
+        decide_facts = json.loads(decide_reference[len("s015a1:"):])
+        self.assertEqual(decide_record.provider_version, "R3.0")
+        self.assertEqual(decide_facts["a"], str(replacement.pk))
+        self.assertEqual(decide_facts["e"], str(second_engagement.pk))
+        decide_fact_refs = {(fact["relation"], fact["reference"]) for fact in decide_record.facts_read}
+        self.assertIn(("core_csaassignment", str(replacement.pk)), decide_fact_refs)
+        self.assertIn(("core_applicationengagement", str(second_engagement.pk)), decide_fact_refs)
+        self.assertEqual(service.decide_application(decide_command).authority_reference,
+                         WithheldField("authority_reference", "SUBJECT"))
+        decide_record.refresh_from_db()
+        self.assertEqual(decide_record.authority_reference.encode("utf-8"), decide_reference.encode("utf-8"))
 
     def test_reassign_without_a_claim_is_refused(self):
         service = self._service(
@@ -1342,7 +1414,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "reassign-without-claim")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         with self.assertRaises(S015AuthorityDenied) as denied:
             self._capture_database_now()
@@ -1363,7 +1435,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         result = self._submit(service, "fixture-positive")
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         record = AuthorityDecision.objects.get(
             decision_reference=result.authority_decision_reference,
         )
@@ -1402,7 +1474,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             "core_loapplicationsettingsversion",
         } <= claim_relations)
         self._capture_database_now()
-        decision = service.decide_application(DecideApplicationCommand(
+        decide_command = DecideApplicationCommand(
             credential=coordinator.credential,
             application_uuid=application.application_uuid,
             request_reference=f"aa-r1:decide:{self.tag}",
@@ -1411,9 +1483,12 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             effective_at=self.now,
             received_at=self.now,
             outcome="DECLINE",
-        ))
+        )
+        decision = service.decide_application(decide_command)
         decision_record = AuthorityDecision.objects.get(decision_reference=decision.authority_decision_reference)
         self.assertEqual(decision_record.outcome, "QUALIFIED")
+        self.assertEqual(decision_record.provider_version, "R3.0")
+        self.assertEqual(decision.authority_reference, WithheldField("authority_reference", "SUBJECT"))
         self.assertLessEqual(len(decision_record.authority_reference), 255)
         self.assertTrue(any(fact["relation"] == "core_applicationengagement" for fact in decision_record.facts_read))
         assignment_fact = next(
@@ -1424,6 +1499,100 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             assignment_fact["reference"],
             str(CSAAssignment.objects.get(application=application).pk),
         )
+        claim = CSAAssignment.objects.get(application=application)
+        engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
+        decision_facts = json.loads(decision_record.authority_reference[len("s015a1:"):])
+        self.assertEqual(decision_facts["a"], str(claim.pk))
+        self.assertEqual(decision_facts["e"], str(engagement.pk))
+        stored_reference = decision_record.authority_reference
+        self.assertEqual(
+            service.decide_application(decide_command).authority_reference,
+            WithheldField("authority_reference", "SUBJECT"),
+        )
+        decision_record.refresh_from_db()
+        self.assertEqual(decision_record.authority_reference.encode("utf-8"), stored_reference.encode("utf-8"))
+
+    def test_pre_r3_decide_receipt_reference_is_withheld_without_rewriting(self):
+        service = self._service(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+            registration_source=TestFixtureGovernedRegistrationFactSource(),
+        )
+        submission = self._submit(service, "legacy-decide-replay")
+        application = Application.objects.get(application_uuid=submission.application_uuid)
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        self._capture_database_now()
+        service.claim_application(ClaimApplicationCommand(
+            credential=coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:legacy-claim:{self.tag}",
+            idempotency_key=f"aa-r1:legacy-claim:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+        ))
+        claim = CSAAssignment.objects.get(application=application)
+        engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
+        action = OrganismAction.DECIDE_APPLICATION
+        request_reference = f"aa-r1:legacy-decide:{self.tag}"
+        idempotency_key = f"aa-r1:legacy-decide:key:{self.tag}"
+        command = DecideApplicationCommand(
+            credential=coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+            outcome="DECLINE",
+        )
+        fingerprint = _command_payload(
+            domain=_COMMAND_DOMAIN,
+            schema="s015-application-v1",
+            action=action,
+            actor_identity_id=coordinator.identity_id,
+            actor_access_epoch=coordinator.access_epoch,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            occurred_at=self.now,
+            target={
+                "action": action.value,
+                "application": application.application_uuid,
+                "organism": self.organism_uuid,
+            },
+            command={"effective_at": self.now, "received_at": self.now, "outcome": "DECLINE"},
+        )
+        historical_reference = "s015a1:" + canonical_json_bytes({
+            "a": str(claim.pk),
+            "e": str(engagement.pk),
+        }).decode("utf-8")
+        historical_decision_reference = "s015d1:" + hashlib.sha256(
+            (self.tag + ":legacy-decision").encode("utf-8"),
+        ).hexdigest()
+        historical_lineage_reference = "s015l1:" + hashlib.sha256(
+            (self.tag + ":legacy-lineage").encode("utf-8"),
+        ).hexdigest()
+        receipt = OrganismCommandReceipt.objects.create(
+            actor=coordinator,
+            action=action.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=fingerprint,
+            authority_decision_reference=historical_decision_reference,
+            lineage_reference=historical_lineage_reference,
+            result_payload=ApplicationCommandResult(
+                application_uuid=application.application_uuid,
+                action=action,
+                recorded_at=self.now,
+                lineage_reference=historical_lineage_reference,
+                authority_reference=historical_reference,
+                authority_decision_reference=historical_decision_reference,
+            ).receipt_payload(),
+        )
+        stored_reference = receipt.result_payload["authority_reference"]
+        replay = service.decide_application(command)
+        self.assertEqual(replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.result_payload["authority_reference"].encode("utf-8"), stored_reference.encode("utf-8"))
 
     def test_production_provider_withdraws_only_the_applicants_own_application(self):
         service = self._service(
@@ -1431,7 +1600,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             registration_source=TestFixtureGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "withdraw")
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         self._capture_database_now()
         withdrawal = service.withdraw_application(WithdrawApplicationCommand(
             credential=self.applicant.credential,

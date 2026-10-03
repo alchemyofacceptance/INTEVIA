@@ -26,10 +26,14 @@ from src.intevia.services.organism_authority import (
     canonical_json_bytes, canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import (
+    ReplayResultType,
+    ReplayViewer,
     S015CommandReplayMismatch, _canonical_key, _canonical_uuid, _command_payload,
     _empty_anchor_fingerprint, _lock_actor, _lock_actor_membership_context,
-    _resulting_temporal_basis, _validate_timestamp, _authority_request,
+    _read_actor_active_membership, _resulting_temporal_basis, _validate_timestamp, _authority_request,
     acquire_organism_command_mutex,
+    serve_replay,
+    WithheldField,
 )
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from src.intevia.services.organism_role_service import OrganismRoleService
@@ -174,20 +178,18 @@ class DecideApplicationCommand(ClaimApplicationCommand):
 @dataclass(frozen=True, slots=True)
 class ApplicationCommandResult:
     application_uuid: UUID
-    application_id: int
     action: OrganismAction
     recorded_at: datetime
     lineage_reference: str
-    authority_reference: str
+    authority_reference: str | WithheldField
     authority_decision_reference: str
-    record_uuid: UUID | None = None
+    record_uuid: UUID | None | WithheldField = None
     completion_due_at: datetime | None = None
     completion_due_source: str | None = None
 
     def receipt_payload(self) -> dict[str, object]:
         return {
             "application_uuid": str(self.application_uuid),
-            "application_id": self.application_id,
             "action": self.action.value,
             "recorded_at": canonical_timestamp(self.recorded_at),
             "lineage_reference": self.lineage_reference,
@@ -197,6 +199,55 @@ class ApplicationCommandResult:
             "completion_due_at": None if self.completion_due_at is None else canonical_timestamp(self.completion_due_at),
             "completion_due_source": self.completion_due_source,
         }
+
+    @classmethod
+    def replay_field_audiences(cls, result: "ApplicationCommandResult") -> dict[str, tuple[str, ...]]:
+        if result.action is OrganismAction.DECIDE_APPLICATION:
+            return {"record_uuid": ("PROCESSING", "APPLICANT")}
+        return {}
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayEffectCommandResult:
+    version_uuid: UUID
+    action: OrganismAction
+    effective_at: datetime
+    lineage_reference: str
+    authority_reference: str | WithheldField
+    authority_decision_reference: str
+    event_uuid: UUID | WithheldField
+    event_sequence: int | WithheldField
+
+    def receipt_payload(self) -> dict[str, object]:
+        return {
+            "action": self.action.value,
+            "authority_decision_reference": self.authority_decision_reference,
+            "authority_reference": self.authority_reference,
+            "effective_at": canonical_timestamp(self.effective_at),
+            "event_sequence": self.event_sequence,
+            "event_uuid": str(self.event_uuid),
+            "lineage_reference": self.lineage_reference,
+            "version_uuid": str(self.version_uuid),
+        }
+
+    @classmethod
+    def replay_field_audiences(cls, result: "GatewayEffectCommandResult") -> dict[str, str]:
+        return {"event_uuid": "PROCESSING", "event_sequence": "PROCESSING"}
+
+
+def _gateway_result_from_receipt(payload: object) -> GatewayEffectCommandResult:
+    if type(payload) is not dict:
+        raise S015ApplicationError("gateway receipt payload is malformed")
+    return GatewayEffectCommandResult(
+        version_uuid=UUID(payload["version_uuid"]),
+        action=OrganismAction(payload["action"]),
+        effective_at=datetime.fromisoformat(payload["effective_at"].replace("Z", "+00:00")),
+        lineage_reference=payload["lineage_reference"],
+        authority_reference=payload["authority_reference"],
+        authority_decision_reference=payload["authority_decision_reference"],
+        event_uuid=UUID(payload["event_uuid"]),
+        event_sequence=int(payload["event_sequence"]),
+    )
 
 
 def applicant_eligible(
@@ -316,7 +367,6 @@ def _result_from_receipt(payload: object) -> ApplicationCommandResult:
         raise S015ApplicationError("application receipt payload is malformed")
     return ApplicationCommandResult(
         application_uuid=UUID(payload["application_uuid"]),
-        application_id=int(payload["application_id"]),
         action=OrganismAction(payload["action"]),
         recorded_at=datetime.fromisoformat(payload["recorded_at"].replace("Z", "+00:00")),
         lineage_reference=payload["lineage_reference"],
@@ -527,8 +577,9 @@ class OrganismApplicationService:
 
     def _receipt_or_none(
         self, *, actor: Identity, action: OrganismAction, request_reference: str,
-        idempotency_key: str, fingerprint: str,
-    ) -> ApplicationCommandResult | None:
+        idempotency_key: str, fingerprint: str, viewer: ReplayViewer,
+        result_class: type = ApplicationCommandResult,
+    ) -> ApplicationCommandResult | GatewayEffectCommandResult | None:
         receipt = OrganismCommandReceipt.objects.using(self._alias).select_for_update().filter(
             actor=actor, action=action.value, idempotency_key=idempotency_key,
         ).first()
@@ -536,7 +587,16 @@ class OrganismApplicationService:
             return None
         if receipt.request_reference != request_reference or receipt.payload_fingerprint != fingerprint:
             raise S015CommandReplayMismatch("completed receipt does not match request")
-        return _result_from_receipt(receipt.result_payload)
+        result = (
+            _gateway_result_from_receipt(receipt.result_payload)
+            if result_class is GatewayEffectCommandResult
+            else _result_from_receipt(receipt.result_payload)
+        )
+        return serve_replay(
+            result,
+            viewer=viewer,
+            result_type=ReplayResultType(result_class, self._alias),
+        )
 
     def _authorise(
         self, *, actor: Identity, action: OrganismAction, organism: LivingOrganism,
@@ -586,7 +646,6 @@ class OrganismApplicationService:
         ).hexdigest()
         result = ApplicationCommandResult(
             application_uuid=application.application_uuid,
-            application_id=application.pk,
             action=action,
             recorded_at=recorded_at,
             lineage_reference=lineage_reference,
@@ -601,7 +660,11 @@ class OrganismApplicationService:
             authority_decision_reference=authority_decision_reference,
             lineage_reference=lineage_reference, result_payload=result.receipt_payload(),
         )
-        return result
+        return serve_replay(
+            result,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
+            result_type=ReplayResultType(ApplicationCommandResult, self._alias),
+        )
 
     def _pair_lock(self, actor: Identity, organism: LivingOrganism) -> None:
         key = int.from_bytes(hashlib.sha256(
@@ -663,6 +726,39 @@ class OrganismApplicationService:
         acquire_organism_command_mutex(database_alias=self._alias, actor_identity_id=actor.identity_id,
                                        action=action, idempotency_key=idempotency_key)
         organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
+        target = {"action": action.value, "organism": organism_uuid,
+                  "version": command.version_uuid}
+        authority_target = {
+            "action": action.value,
+            "organism_uuid": organism_uuid,
+            "version_uuid": command.version_uuid,
+        }
+        if not create_head:
+            fingerprint = _command_payload(
+                domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
+                actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
+                request_reference=request_reference, idempotency_key=idempotency_key,
+                occurred_at=occurred_at, target=target,
+                command={"effective_at": effective_at, "received_at": received_at,
+                         "fields": getattr(command, "fields", None)},
+            )
+            replay = self._receipt_or_none(
+                actor=actor,
+                action=action,
+                request_reference=request_reference,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
+                result_class=GatewayEffectCommandResult,
+            )
+            if replay is not None:
+                return replay
+            _read_actor_active_membership(
+                database_alias=self._alias,
+                actor_identity_pk=actor.pk,
+                living_organism_pk=organism.pk,
+                unavailable=S015ApplicationAuthorityUnavailable,
+            )
         _lock_owning_organism(self._alias, organism.organism_id)
         membership, role_refs = _lock_actor_membership_context(
             database_alias=self._alias, actor_identity_id=actor.identity_id,
@@ -671,21 +767,15 @@ class OrganismApplicationService:
         gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
             living_organism=organism,
         ).first()
-        target = {"action": action.value, "organism": organism_uuid,
-                  "version": command.version_uuid}
-        authority_target = {
-            "action": action.value,
-            "organism_uuid": organism_uuid,
-            "version_uuid": command.version_uuid,
-        }
-        fingerprint = _command_payload(
-            domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
-            actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
-            request_reference=request_reference, idempotency_key=idempotency_key,
-            occurred_at=occurred_at, target=target,
-            command={"effective_at": effective_at, "received_at": received_at,
-                     "fields": getattr(command, "fields", None)},
-        )
+        if create_head:
+            fingerprint = _command_payload(
+                domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
+                actor_identity_id=actor.identity_id, actor_access_epoch=actor.access_epoch,
+                request_reference=request_reference, idempotency_key=idempotency_key,
+                occurred_at=occurred_at, target=target,
+                command={"effective_at": effective_at, "received_at": received_at,
+                         "fields": getattr(command, "fields", None)},
+            )
         decision = self._authority.qualify(_authority_request(
             database_alias=self._alias, actor=actor, actor_membership=membership,
             actor_role_head_refs=role_refs, action=action, request_reference=request_reference,
@@ -766,8 +856,11 @@ class OrganismApplicationService:
 
     def effect_gateway_version(self, command: EffectGatewayVersionCommand):
         with _authority_atomic(self._alias):
+            start = self._gateway_start(command, create_head=False)
+            if isinstance(start, GatewayEffectCommandResult):
+                return start
             (actor, organism, decision, fingerprint, request_reference, idempotency_key,
-             occurred_at, effective_at, received_at, gateway_at) = self._gateway_start(command, create_head=False)
+             occurred_at, effective_at, received_at, gateway_at) = start
             model, prefix = _VERSION_KINDS[command.action]
             version = model.objects.using(self._alias).select_for_update().get(
                 version_uuid=_canonical_uuid(command.version_uuid, "version_uuid"), living_organism=organism,
@@ -827,7 +920,32 @@ class OrganismApplicationService:
                 event_id = cursor.fetchone()[0]
                 cursor.execute("SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
                                ["core_livingorganism", organism.pk, effective_at])
-            return LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
+            event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
+            result = GatewayEffectCommandResult(
+                version_uuid=version.version_uuid,
+                action=command.action,
+                effective_at=effective_at,
+                lineage_reference=event.lineage_reference,
+                authority_reference=decision.authority_reference,
+                authority_decision_reference=decision.authority_decision_reference,
+                event_uuid=event.event_uuid,
+                event_sequence=event.sequence,
+            )
+            OrganismCommandReceipt.objects.using(self._alias).create(
+                actor=actor,
+                action=command.action.value,
+                idempotency_key=idempotency_key,
+                request_reference=request_reference,
+                payload_fingerprint=fingerprint,
+                authority_decision_reference=decision.authority_decision_reference,
+                lineage_reference=event.lineage_reference,
+                result_payload=result.receipt_payload(),
+            )
+            return serve_replay(
+                result,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
+                result_type=ReplayResultType(GatewayEffectCommandResult, self._alias),
+            )
 
     def _coordinator_start(
         self, command: ClaimApplicationCommand, action: OrganismAction,
@@ -853,22 +971,6 @@ class OrganismApplicationService:
             )
         except Application.DoesNotExist as exc:
             raise S015ApplicationNotFound("application not found") from exc
-        if action is OrganismAction.DECIDE_APPLICATION:
-            # Lock order for every application act (S3-FU F2-6): identities first -- the actor, then for a decision the
-            # applicant's key share (an ACCEPT's membership rows take it through their foreign keys, and the withdrawal holds
-            # the applicant FOR UPDATE as its actor lock) -- then the owning organism, then the application, then its lineage.
-            # The key share is taken here, before the actor-context lock, so no decision holds an organism-level lock while it
-            # waits for the applicant.
-            with connections[self._alias].cursor() as cursor:
-                cursor.execute(
-                    "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
-                )
-        _lock_owning_organism(self._alias, application.living_organism.organism_id)
-        actor_membership, role_refs = _lock_actor_membership_context(
-            database_alias=self._alias, actor_identity_id=actor.identity_id,
-            living_organism_id=application.living_organism.organism_id,
-            unavailable=S015ApplicationAuthorityUnavailable,
-        )
         target = {"action": action.value, "application": application_uuid,
                   "organism": application.living_organism.organism_id}
         authority_target = {
@@ -886,10 +988,27 @@ class OrganismApplicationService:
         replay = self._receipt_or_none(
             actor=actor, action=action, request_reference=request_reference,
             idempotency_key=idempotency_key, fingerprint=fingerprint,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+        _read_actor_active_membership(
+            database_alias=self._alias,
+            actor_identity_pk=actor.pk,
+            living_organism_pk=application.living_organism_id,
+            unavailable=S015ApplicationAuthorityUnavailable,
+        )
+        if action is OrganismAction.DECIDE_APPLICATION:
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
+                )
         _lock_owning_organism(self._alias, application.living_organism.organism_id)
+        actor_membership, role_refs = _lock_actor_membership_context(
+            database_alias=self._alias, actor_identity_id=actor.identity_id,
+            living_organism_id=application.living_organism.organism_id,
+            unavailable=S015ApplicationAuthorityUnavailable,
+        )
         application = Application.objects.using(self._alias).select_for_update().get(pk=application.pk)
         assignment_uuid = None
         if action is OrganismAction.DECIDE_APPLICATION:
@@ -992,12 +1111,6 @@ class OrganismApplicationService:
                 organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
             except LivingOrganism.DoesNotExist as exc:
                 raise S015ApplicationNotFound("living organism not found") from exc
-            care = None
-            if self._care_executor is not None:
-                candidate = self._care_executor.identity_for(organism)
-                care = Identity.objects.using(self._alias).select_for_update().get(pk=candidate.pk)
-                if care.pk == actor.pk or care.access_state != Identity.AccessState.ACTIVE:
-                    raise S015ApplicationAuthorityUnavailable("distinct active CARE executor identity required")
             target = {"action": OrganismAction.SUBMIT_APPLICATION.value, "organism": organism_uuid,
                       "applicant": actor.identity_id}
             fingerprint = _command_payload(
@@ -1010,9 +1123,16 @@ class OrganismApplicationService:
             replay = self._receipt_or_none(
                 actor=actor, action=OrganismAction.SUBMIT_APPLICATION, request_reference=request_reference,
                 idempotency_key=idempotency_key, fingerprint=fingerprint,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             )
             if replay is not None:
                 return replay
+            care = None
+            if self._care_executor is not None:
+                candidate = self._care_executor.identity_for(organism)
+                care = Identity.objects.using(self._alias).select_for_update().get(pk=candidate.pk)
+                if care.pk == actor.pk or care.access_state != Identity.AccessState.ACTIVE:
+                    raise S015ApplicationAuthorityUnavailable("distinct active CARE executor identity required")
             _lock_owning_organism(self._alias, organism.organism_id)
             self._pair_lock(actor, organism)
             with connections[self._alias].cursor() as cursor:
@@ -1152,6 +1272,7 @@ class OrganismApplicationService:
             replay = self._receipt_or_none(
                 actor=actor, action=OrganismAction.WITHDRAW_APPLICATION, request_reference=request_reference,
                 idempotency_key=idempotency_key, fingerprint=fingerprint,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             )
             if replay is not None:
                 return replay

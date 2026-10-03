@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from queue import Queue
 from threading import Barrier, Event
 from unittest import skipUnless
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
@@ -108,7 +108,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
     def submitted(self):
         self.history()
         result = self.service().submit_application(self.submit())
-        return result, Application.objects.get(pk=result.application_id)
+        return result, Application.objects.get(application_uuid=result.application_uuid)
 
     def test_pending_and_withdrawn_applications_leave_chain(self):
         submission, application = self.submitted()
@@ -158,7 +158,9 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.assertEqual((application.applicant_id, application.actor_id, application.enterer_id),
                          (self.applicant.pk,) * 3)
         self.assertEqual(result.recorded_at, application.recorded_at)
-        self.assertEqual(OrganismCommandReceipt.objects.get(actor=self.applicant).result_payload["application_id"], application.pk)
+        payload = OrganismCommandReceipt.objects.get(actor=self.applicant).result_payload
+        self.assertNotIn("application_id", payload)
+        self.assertEqual(payload["application_uuid"], str(application.application_uuid))
         self.assertIsNone(self.provider.requests[0].application_pk)
 
     def test_denial_precedes_missing_provision_and_membership_state(self):
@@ -187,7 +189,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
             clock=lambda: T0 + timedelta(minutes=30),
         )
         result = service.submit_application(self.submit())
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         self.assertEqual(result.recorded_at, application.recorded_at)
         self.assertEqual(application.applicant_id, self.applicant.pk)
 
@@ -213,13 +215,16 @@ class S015ApplicantCommandTests(TransactionTestCase):
     def test_proposed_member_may_apply(self):
         self.history()
         self.membership("PROPOSED")
-        self.assertIsInstance(self.service().submit_application(self.submit()).application_id, int)
+        self.assertIsInstance(self.service().submit_application(self.submit()).application_uuid, UUID)
 
     def test_one_open_application_refuses_sequential_submission(self):
         first, _ = self.submitted()
         with self.assertRaises(S015ApplicationRefused):
             self.service().submit_application(self.submit(request="s3:submit:again", key="s3:key:again"))
-        self.assertEqual(list(Application.objects.values_list("pk", flat=True)), [first.application_id])
+        self.assertEqual(
+            list(Application.objects.values_list("application_uuid", flat=True)),
+            [first.application_uuid],
+        )
 
     def test_one_open_application_serialises_two_connections(self):
         self.history()
@@ -327,7 +332,10 @@ class S015ApplicantCommandTests(TransactionTestCase):
         result = self.service().submit_application(self.submit(
             predecessor=previous.application_uuid, request="s3:reapply", key="s3:reapply",
         ))
-        self.assertEqual(Application.objects.get(pk=result.application_id).predecessor_reference_id, previous.pk)
+        self.assertEqual(
+            Application.objects.get(application_uuid=result.application_uuid).predecessor_reference_id,
+            previous.pk,
+        )
 
     def test_predecessor_not_withdrawn_refused(self):
         self.history()

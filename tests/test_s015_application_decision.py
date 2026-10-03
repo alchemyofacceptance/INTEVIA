@@ -114,7 +114,8 @@ class ApplicationDecisionTests(TransactionTestCase):
         ))
 
     def application(self):
-        return Application.objects.get(pk=self.submit().application_id)
+        submission = self.submit()
+        return Application.objects.get(application_uuid=submission.application_uuid)
 
     def command(self, application, *, actor=None, kind="claim", outcome="ACCEPT", suffix="first"):
         fields = dict(
@@ -424,7 +425,7 @@ class ApplicationDecisionTests(TransactionTestCase):
 
     def test_application_chain_replays_five_acts_and_independent_commitments(self):
         submission = self.submit()
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         claim = self.service().claim_application(self.command(application))
         replacement = self.service().reassign_application(self.command(application, kind="reassign"))
         decided = self.service().decide_application(self.command(application, kind="decide"))
@@ -750,7 +751,7 @@ class ApplicationDecisionTests(TransactionTestCase):
 
     def test_admission_lineage_reaches_both_authorities(self):
         submission = self.submit()
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         self.service().claim_application(self.command(application))
         decision_result = self.service().decide_application(self.command(application, kind="decide"))
         decision = ApplicationDecision.objects.get(application=application)
@@ -788,7 +789,7 @@ class ApplicationDecisionTests(TransactionTestCase):
 
     def test_proposal_retains_submission_epoch_after_applicant_epoch_changes(self):
         submission = self.submit()
-        application = Application.objects.get(pk=submission.application_id)
+        application = Application.objects.get(application_uuid=submission.application_uuid)
         submission_epoch = application.actor_access_epoch
         Identity.objects.filter(pk=self.applicant.pk).update(access_epoch=submission_epoch + 1)
         self.assertEqual(Identity.objects.get(pk=self.applicant.pk).access_epoch, submission_epoch + 1)
@@ -920,7 +921,10 @@ class ApplicationDecisionTests(TransactionTestCase):
             occurred_at=NOW, effective_at=NOW, received_at=NOW,
             answer="Test-only applicant answer",
         ))
-        self.assertEqual(Application.objects.get(pk=result.application_id).predecessor_reference_id, previous.pk)
+        self.assertEqual(
+            Application.objects.get(application_uuid=result.application_uuid).predecessor_reference_id,
+            previous.pk,
+        )
 
     def test_cq_and_circle_routes_report_limits(self):
         application = self.application()

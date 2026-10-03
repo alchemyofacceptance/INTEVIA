@@ -11,10 +11,20 @@ from unittest import skipUnless
 
 from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.test import TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 
-from core.models import Identity, OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition
+from core.models import (
+    AuthorityDecision,
+    ContextualRoleAssignment,
+    Identity,
+    IdentityTransition,
+    OrganismCommandReceipt,
+    OrganismMembership,
+    OrganismMembershipTransition,
+    ProvisioningReconciliationAttempt,
+)
 from core.organism_contract import OrganismAction
-from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, found_root, fresh, refresh, seed_identity
+from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, found_nonroot, found_root, fresh, refresh, seed_identity
 from tests.s015_concurrency_support import cleanup_workers, exact_wait, start_worker, wait_until_locked
 from src.intevia.services.organism_authority import (
     S015Authority,
@@ -26,23 +36,38 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityRequest,
     S015PostFoundingAuthorityResponse,
 )
+from src.intevia.services.organism_command_support import ReplayViewer, WithheldField
 from src.intevia.services.organism_membership_service import (
     MembershipCommandResult,
+    OrganismMembershipReader,
     OpenMembershipCommand,
     OrganismMembershipService,
     S015CommandAtomicityRequired,
     S015CommandReplayMismatch,
     S015MembershipEdgeRefused,
     S015MembershipExists,
+    S015MembershipNotFound,
     S015MembershipStateUnused,
     S015OperationNotYetImplemented,
     TransitionMembershipCommand,
     acquire_organism_command_mutex,
 )
+from src.intevia.services.identity_service import (
+    CredentialService,
+    IdentityLifecycleService,
+    OriginatingMembershipProvisioningService,
+)
+from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "membership command slice is PostgreSQL-only")
+
+
+def _membership_for_result(result):
+    if isinstance(result.membership_uuid, UUID):
+        return OrganismMembership.objects.get(membership_uuid=result.membership_uuid)
+    return OrganismMembershipTransition.objects.get(lineage_reference=result.lineage_reference).membership
 
 
 class _ExactProvider:
@@ -122,6 +147,22 @@ class S015MembershipCommandTests(TransactionTestCase):
             database_alias="default",
         )
 
+    def _database_now(self):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            return cursor.fetchone()[0]
+
+    def _print_authority_refusal(self, label, caught):
+        reference = caught.authority_decision_reference
+        stored = None
+        if reference is not None:
+            stored = AuthorityDecision.objects.filter(
+                decision_reference=reference,
+            ).values("refusal_code", "facts_read").first()
+        print(f"{label}.exception.refusal_code={caught.refusal_code!r}", flush=True)
+        print(f"{label}.decision_reference={reference!r}", flush=True)
+        print(f"{label}.stored_refusal={stored!r}", flush=True)
+
     def _setup_organism(self, label: str = "membership"):
         with transaction.atomic():
             with connection.cursor() as cur:
@@ -154,7 +195,16 @@ class S015MembershipCommandTests(TransactionTestCase):
             refresh(cur, "core_organismmembership", membership_id, at)
         return OrganismMembership.objects.get(pk=membership_id)
 
-    def _assign_office(self, *, ids, membership, role_definition_id, tag):
+    def _assign_office(
+        self,
+        *,
+        ids,
+        membership,
+        role_definition_id,
+        tag,
+        effective_until_state="NONE",
+        effective_until=None,
+    ):
         from core.models import OrganismRoleDefinition
         from src.intevia.services.organism_role_service import (
             OrganismRoleService,
@@ -188,8 +238,8 @@ class S015MembershipCommandTests(TransactionTestCase):
             received_at=proposal_received_at,
             membership_uuid=membership.membership_uuid,
             role_definition_uuid=role.role_uuid,
-            effective_until_state="NONE",
-            effective_until=None,
+            effective_until_state=effective_until_state,
+            effective_until=effective_until,
         ))
         assigned_at = NOW
         assignment_received_at = database_now()
@@ -203,10 +253,90 @@ class S015MembershipCommandTests(TransactionTestCase):
             assignment_uuid=proposal.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
-            effective_until_state="NONE",
-            effective_until=None,
+            effective_until_state=effective_until_state,
+            effective_until=effective_until,
         ))
-        return proposal.assignment_id
+        return ContextualRoleAssignment.objects.get(assignment_uuid=proposal.assignment_uuid).pk
+
+    def _reader_identity(self, label):
+        fulfilment_reference = f"evidence:reader-membership-fulfilled:{label}:{fresh()}"
+        identity, request = CredentialService.provision(
+            username=f"reader-{fresh()}",
+            password="governed-test-password",
+            display_name=f"Reader {label}",
+            human_classification="HUMAN DEVELOPMENT IDENTITY",
+            authority_reference=f"TEST_ONLY:reader:{label}:provision",
+            evidence_reference=f"TEST_ONLY:reader:{label}:provision-evidence",
+            correlation_id=uuid4(),
+            technical_executor="TEST_ONLY",
+        )
+        OriginatingMembershipProvisioningService.reconcile(
+            request_id=request.pk,
+            state=ProvisioningReconciliationAttempt.State.FULFILLED,
+            authority_reference=f"TEST_ONLY:reader:{label}:fulfilment",
+            evidence_reference=fulfilment_reference,
+            correlation_id=uuid4(),
+        )
+        IdentityLifecycleService.activate(
+            identity_id=identity.identity_id,
+            fulfilment_evidence_reference=fulfilment_reference,
+            requesting_actor=identity,
+            authority_reference=f"TEST_ONLY:reader:{label}:activate",
+            technical_executor="TEST_ONLY",
+            correlation_id=uuid4(),
+        )
+        identity.refresh_from_db()
+        return identity, fulfilment_reference
+
+    def _reader_membership_fixture(self, reader, state, label):
+        with transaction.atomic(), connection.cursor() as cursor:
+            ids = found_nonroot(cursor, f"reader-{label}-{fresh()}")
+        membership = self._fixture_membership(ids, reader, state, f"reader-{label}", at=NOW)
+        return ids, membership
+
+    def _transition_reader_membership_fixture(self, ids, membership, resulting_state, label):
+        previous = OrganismMembershipTransition.objects.filter(
+            membership=membership,
+        ).order_by("-sequence").first()
+        self.assertIsNotNone(previous)
+        effective_at = NOW + timedelta(hours=1)
+        with transaction.atomic(), connection.cursor() as cursor:
+            transition_id, _ = append_event(
+                cursor,
+                "core_organismmembershiptransition",
+                membership.pk,
+                previous.sequence + 1,
+                "TRANSITION_MEMBERSHIP",
+                membership.state,
+                resulting_state,
+                membership.identity_id,
+                ids["basis"],
+                label,
+                pred_id=previous.pk,
+                eff=effective_at,
+                occ=effective_at,
+                rec=self._database_now(),
+                extra={"reason_class": "TEST_ONLY_READER_FIXTURE"},
+            )
+            refresh(cursor, "core_organismmembership", membership.pk, effective_at)
+        membership.refresh_from_db()
+        return effective_at
+
+    def _assert_reader_does_not_lock_living_organism(self, operation):
+        with transaction.atomic():
+            operation()
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT locktype, mode FROM pg_locks "
+                    "WHERE pid = pg_backend_pid() "
+                    "AND relation = 'public.core_livingorganism'::regclass AND granted"
+                )
+                locks = cursor.fetchall()
+        self.assertIn(("relation", "AccessShareLock"), locks)
+        self.assertFalse(any(
+            locktype == "tuple" or (locktype == "relation" and mode != "AccessShareLock")
+            for locktype, mode in locks
+        ))
 
     def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=NOW, effective_at=NOW, received_at=NOW):
         return OpenMembershipCommand(
@@ -247,7 +377,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class=reason_open,
             )
         )
-        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        membership = _membership_for_result(open_result)
         with transaction.atomic(), connection.cursor() as cur:
             cur.execute(
                 "SELECT id, sequence FROM core_organismmembershiptransition "
@@ -284,12 +414,12 @@ class S015MembershipCommandTests(TransactionTestCase):
             request_reference="request:admission:open", idempotency_key="idem:admission:open",
             reason_class="TEST_ONLY_REASON_OPEN",
         ))
-        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
-        self.assertEqual(open_result.resulting_state, "PROPOSED")
+        membership = _membership_for_result(open_result)
+        self.assertEqual(open_result.resulting_state, WithheldField("resulting_state", "SUBJECT"))
         before = (OrganismMembershipTransition.objects.count(), OrganismCommandReceipt.objects.count())
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
             service.transition_membership(self._transition_command(
-                actor=actor, membership_uuid=open_result.membership_uuid, resulting_state="ACTIVE",
+                actor=actor, membership_uuid=membership.membership_uuid, resulting_state="ACTIVE",
                 request_reference="request:admission:active", idempotency_key="idem:admission:active",
                 reason_class="TEST_ONLY_REASON_ACTIVE",
             ))
@@ -309,7 +439,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         before = (OrganismMembershipTransition.objects.count(), OrganismCommandReceipt.objects.count())
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
             service.transition_membership(self._transition_command(
-                actor=actor, membership_uuid=opened.membership_uuid, resulting_state="PROBATIONARY",
+                actor=actor, membership_uuid=_membership_for_result(opened).membership_uuid, resulting_state="PROBATIONARY",
                 request_reference="request:probation:proposed", idempotency_key="idem:probation:proposed",
                 reason_class="TEST_ONLY_REASON_PROBATION",
             ))
@@ -322,7 +452,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         before = (OrganismMembershipTransition.objects.count(), OrganismCommandReceipt.objects.count())
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
             service.transition_membership(self._transition_command(
-                actor=actor, membership_uuid=probationary.membership_uuid, resulting_state="ACTIVE",
+                actor=actor, membership_uuid=_membership_for_result(probationary).membership_uuid, resulting_state="ACTIVE",
                 request_reference="request:probation:active", idempotency_key="idem:probation:active",
                 reason_class="TEST_ONLY_REASON_ACTIVE",
             ))
@@ -344,7 +474,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_OPEN",
             )
         )
-        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        membership = _membership_for_result(open_result)
         with connection.cursor() as cur:
             cur.execute(
                 "SELECT id, sequence FROM core_organismmembershiptransition "
@@ -427,9 +557,144 @@ class S015MembershipCommandTests(TransactionTestCase):
         transitions = list(
             OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
         )
-        self.assertEqual(leave_result.resulting_state, "ENDED")
+        self.assertEqual(leave_result.resulting_state, WithheldField("resulting_state", "SUBJECT"))
         self.assertEqual(membership.state, "ENDED")
         self.assertEqual([transition.resulting_state for transition in transitions], ["PROBATIONARY", "ENDED"])
+
+    def test_production_provider_records_own_active_and_probationary_departures(self):
+        ids, _, active_member = self._setup_organism("production-leave")
+        with transaction.atomic(), connection.cursor() as cur:
+            probationary_pk = seed_identity(cur, "production-leave-probationary")
+        probationary_member = Identity.objects.get(pk=probationary_pk)
+
+        for state, member in (
+            ("ACTIVE", active_member),
+            ("PROBATIONARY", probationary_member),
+        ):
+            with self.subTest(state=state):
+                membership = self._fixture_membership(ids, member, state, f"production-leave-{state.lower()}-prior")
+                service = self._service(ProductionApplicationAuthorityProvider(database_alias="default"))
+                try:
+                    result = service.transition_membership(
+                        self._transition_command(
+                            actor=member,
+                            membership_uuid=membership.membership_uuid,
+                            resulting_state="ENDED",
+                            request_reference=f"request:production-leave:{state.lower()}",
+                            idempotency_key=f"idem:production-leave:{state.lower()}",
+                            reason_class="TEST_ONLY_REASON_LEAVE",
+                            received_at=self._database_now(),
+                        )
+                    )
+                except S015AuthorityDenied as caught:
+                    self._print_authority_refusal(f"W-A1-{state}", caught)
+                    raise
+
+                transition = OrganismMembershipTransition.objects.get(lineage_reference=result.lineage_reference)
+                self.assertEqual(result.resulting_state, "ENDED")
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT actor_state, actor_capacity, actor_id, enterer_identity_id "
+                        "FROM core_organismmembershiptransition WHERE id = %s",
+                        [transition.pk],
+                    )
+                    actor_state, actor_capacity, actor_id, enterer_identity_id = cursor.fetchone()
+                self.assertEqual((actor_state, actor_capacity), ("PARTY", "STANDING"))
+                self.assertEqual(actor_id, member.pk)
+                self.assertEqual(enterer_identity_id, member.pk)
+                decision = AuthorityDecision.objects.get(
+                    decision_reference=result.authority_decision_reference,
+                )
+                self.assertEqual(decision.outcome, "QUALIFIED")
+
+    def test_production_provider_limits_other_membership_transitions(self):
+        ids, actor, target = self._setup_organism("production-membership-limits")
+        membership = self._fixture_membership(ids, target, "ACTIVE", "production-membership-limits-prior")
+        service = self._service(ProductionApplicationAuthorityProvider(database_alias="default"))
+
+        with self.assertRaises(S015AuthorityDenied) as unsupported:
+            service.transition_membership(
+                self._transition_command(
+                    actor=target,
+                    membership_uuid=membership.membership_uuid,
+                    resulting_state="PROBATIONARY",
+                    request_reference="request:production-membership-limits:unsupported",
+                    idempotency_key="idem:production-membership-limits:unsupported",
+                    reason_class="TEST_ONLY_REASON_LIMIT",
+                )
+            )
+        self.assertEqual(
+            unsupported.exception.refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+        )
+        self.assertIn("not yet implemented", str(unsupported.exception))
+        unsupported_decision = AuthorityDecision.objects.get(
+            decision_reference=unsupported.exception.authority_decision_reference,
+        )
+        self.assertEqual(unsupported_decision.outcome, "REFUSED")
+        self.assertEqual(
+            unsupported_decision.refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED.value,
+        )
+
+        with self.assertRaises(S015AuthorityDenied) as non_subject:
+            service.transition_membership(
+                self._transition_command(
+                    actor=actor,
+                    membership_uuid=membership.membership_uuid,
+                    resulting_state="ENDED",
+                    request_reference="request:production-membership-limits:non-subject",
+                    idempotency_key="idem:production-membership-limits:non-subject",
+                    reason_class="TEST_ONLY_REASON_LEAVE",
+                )
+            )
+        self.assertEqual(non_subject.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
+
+        founder_membership = OrganismMembership.objects.get(identity=actor, living_organism_id=ids["lo"])
+        with self.assertRaises(S015AuthorityDenied) as office_holder:
+            service.transition_membership(
+                self._transition_command(
+                    actor=actor,
+                    membership_uuid=founder_membership.membership_uuid,
+                    resulting_state="ENDED",
+                    request_reference="request:production-membership-limits:office-holder",
+                    idempotency_key="idem:production-membership-limits:office-holder",
+                    reason_class="TEST_ONLY_REASON_LEAVE",
+                    received_at=self._database_now(),
+                )
+            )
+        self.assertEqual(
+            office_holder.exception.refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(
+            office_holder.exception.disclosed_refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
+        )
+        self.assertIn("not yet implemented", str(office_holder.exception))
+        decision = AuthorityDecision.objects.get(
+            decision_reference=office_holder.exception.authority_decision_reference,
+        )
+        self.assertEqual(decision.outcome, "REFUSED")
+        self.assertEqual(
+            decision.refusal_code,
+            S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED.value,
+        )
+        self.assertEqual(set(decision.decision_payload), set(unsupported_decision.decision_payload))
+        self.assertEqual(set(decision.target), set(unsupported_decision.target))
+        for fact in decision.facts_read:
+            self.assertEqual(set(fact), {"relation", "reference", "eligible_at"})
+        self.assertTrue(any(
+            fact["relation"] == "core_contextualroleassignmentstateevent"
+            for fact in decision.facts_read
+        ))
+        founder_membership.refresh_from_db()
+        self.assertEqual(founder_membership.state, "ACTIVE")
+        self.assertFalse(OrganismMembershipTransition.objects.filter(
+            membership=founder_membership,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            resulting_state="ENDED",
+        ).exists())
 
     def test_leaving_keeps_history_intact(self):
         ids, actor, target = self._setup_organism("leave")
@@ -449,7 +714,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         transitions = list(
             OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
         )
-        self.assertEqual(leave_result.resulting_state, "ENDED")
+        self.assertEqual(leave_result.resulting_state, WithheldField("resulting_state", "SUBJECT"))
         self.assertEqual(membership.state, "ENDED")
         self.assertEqual([transition.resulting_state for transition in transitions], ["ACTIVE", "ENDED"])
         self.assertEqual(OrganismMembership.objects.count(), 2)
@@ -485,7 +750,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             service.transition_membership(
                 self._transition_command(
                     actor=actor,
-                    membership_uuid=open_result.membership_uuid,
+                    membership_uuid=_membership_for_result(open_result).membership_uuid,
                     resulting_state="PROPOSED",
                     request_reference="request:rejoin:next-period",
                     idempotency_key="idem:rejoin:next-period",
@@ -505,7 +770,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             service.transition_membership(
                 self._transition_command(
                     actor=actor,
-                    membership_uuid=open_result.membership_uuid,
+                    membership_uuid=_membership_for_result(open_result).membership_uuid,
                     resulting_state="PROPOSED",
                     request_reference="request:rejoin-token:next-period",
                     idempotency_key="idem:rejoin-token:next-period",
@@ -514,6 +779,398 @@ class S015MembershipCommandTests(TransactionTestCase):
             )
         self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
+
+    def test_reader_returns_only_own_cached_states_and_effective_offices(self):
+        self._setup_organism("own-membership-reader")
+        reader, fulfilment_reference = self._reader_identity("own-membership-reader")
+        fixtures = {}
+        for label, state in (
+            ("active", "ACTIVE"),
+            ("probationary", "PROBATIONARY"),
+            ("restricted", "RESTRICTED"),
+            ("suspended", "ACTIVE"),
+            ("proposed", "PROPOSED"),
+            ("ended", "ACTIVE"),
+            ("privacy-transformed", "ACTIVE"),
+        ):
+            fixtures[label] = self._reader_membership_fixture(reader, state, label)
+
+        active_ids, active_membership = fixtures["active"]
+        term_end = NOW + timedelta(days=30)
+        self._assign_office(
+            ids=active_ids,
+            membership=active_membership,
+            role_definition_id=active_ids["roles"]["COORDINATOR"],
+            tag="own-membership-reader-fixed-term",
+            effective_until_state="FIXED",
+            effective_until=term_end,
+        )
+        suspended_effective_at = self._transition_reader_membership_fixture(
+            *fixtures["suspended"], "SUSPENDED", "own-membership-reader-suspended",
+        )
+        self._transition_reader_membership_fixture(
+            *fixtures["ended"], "ENDED", "own-membership-reader-ended",
+        )
+        self._transition_reader_membership_fixture(
+            *fixtures["privacy-transformed"],
+            "PRIVACY_TRANSFORMED",
+            "own-membership-reader-privacy-transformed",
+        )
+
+        membership_reader = OrganismMembershipReader(clock=self._database_now)
+        first_view = membership_reader.list_own_memberships(reader)
+        initial_identity_id = reader.identity_id
+        initial_access_epoch = reader.access_epoch
+        for action, evidence, reason in (
+            (
+                IdentityTransition.Action.RESTRICT,
+                "TEST_ONLY:reader:restrict",
+                IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            ),
+            (
+                IdentityTransition.Action.DEACTIVATE,
+                "TEST_ONLY:reader:deactivate",
+                IdentityTransition.ReasonCategory.SECURITY,
+            ),
+            (
+                IdentityTransition.Action.REACTIVATE,
+                fulfilment_reference,
+                IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            ),
+        ):
+            IdentityLifecycleService.change_access(
+                identity_id=reader.identity_id,
+                action=action,
+                requesting_actor=reader,
+                authority_reference=f"TEST_ONLY:reader:{action}",
+                technical_executor="TEST_ONLY",
+                evidence_reference=evidence,
+                reason_category=reason,
+                correlation_id=uuid4(),
+            )
+            reader.refresh_from_db()
+
+        self.assertEqual(reader.identity_id, initial_identity_id)
+        self.assertGreater(reader.access_epoch, initial_access_epoch)
+        views = membership_reader.list_own_memberships(reader)
+        self.assertEqual(views, first_view)
+        self.assertEqual(len(views), 4)
+        expected_states = {
+            fixtures[label][1].living_organism.organism_id: state
+            for label, state in (
+                ("active", "ACTIVE"),
+                ("probationary", "PROBATIONARY"),
+                ("restricted", "RESTRICTED"),
+                ("suspended", "SUSPENDED"),
+            )
+        }
+        self.assertEqual({view.organism_id: view.state for view in views}, expected_states)
+        self.assertEqual(
+            next(view for view in views if view.state == "SUSPENDED").current_state_effective_at,
+            suspended_effective_at,
+        )
+        for view in views:
+            self.assertEqual(
+                set(asdict(view)),
+                {"organism_id", "state", "current_state_effective_at", "offices"},
+            )
+            self.assertTrue(all(len(office) == 2 for office in view.offices))
+            self.assertEqual(
+                type(view).__dataclass_fields__["current_state_effective_at"].metadata["label"],
+                "the beginning of the current state",
+            )
+        active_view = next(
+            view for view in views
+            if view.organism_id == active_membership.living_organism.organism_id
+        )
+        self.assertEqual(active_view.offices, (("COORDINATOR", "LIVING_ORGANISM"),))
+        expired_reader = OrganismMembershipReader(clock=lambda: term_end)
+        expired_active = next(
+            view for view in expired_reader.list_own_memberships(reader)
+            if view.organism_id == active_view.organism_id
+        )
+        self.assertEqual(expired_active.offices, ())
+        self.assertEqual(
+            membership_reader.read_own_membership(reader, active_membership.membership_uuid),
+            active_view,
+        )
+        self._assert_reader_does_not_lock_living_organism(
+            lambda: membership_reader.list_own_memberships(reader),
+        )
+        self._assert_reader_does_not_lock_living_organism(
+            lambda: membership_reader.read_own_membership(reader, active_membership.membership_uuid),
+        )
+
+    def test_read_own_membership_refuses_absent_foreign_and_ended_with_same_code(self):
+        ids, _, other_identity = self._setup_organism("own-membership-reader-refusals")
+        reader, _ = self._reader_identity("own-membership-reader-refusals")
+        own_membership = self._fixture_membership(
+            ids, reader, "ACTIVE", "own-membership-reader-refusals-own",
+        )
+        other_membership = self._fixture_membership(
+            ids, other_identity, "ACTIVE", "own-membership-reader-refusals-other",
+        )
+        ended_ids, ended_membership = self._reader_membership_fixture(
+            reader, "ACTIVE", "own-membership-reader-refusals-ended",
+        )
+        self._transition_reader_membership_fixture(
+            ended_ids, ended_membership, "ENDED", "own-membership-reader-refusals-end",
+        )
+        membership_reader = OrganismMembershipReader(clock=self._database_now)
+        self.assertEqual(
+            membership_reader.read_own_membership(reader, own_membership.membership_uuid).state,
+            "ACTIVE",
+        )
+        failures = []
+        for membership_uuid in (uuid4(), other_membership.membership_uuid, ended_membership.membership_uuid):
+            with self.assertRaises(S015MembershipNotFound) as refused:
+                membership_reader.read_own_membership(reader, membership_uuid)
+            failures.append((type(refused.exception), str(refused.exception)))
+        self.assertEqual(failures, [failures[0]] * 3)
+        self.assertEqual(failures[0][1], "membership not found")
+
+    def test_membership_receipt_replay_keeps_unresolved_authority_decision_reference(self):
+        ids, actor, _ = self._setup_organism("membership-receipt-reference")
+        membership = OrganismMembership.objects.get(pk=ids["membership"])
+        service = self._service(_ExactProvider())
+        request_reference = "request:membership-receipt-reference"
+        idempotency_key = "idem:membership-receipt-reference"
+        payload_fingerprint = "a" * 64
+        decision_reference = "s015d1:" + uuid4().hex + uuid4().hex
+        lineage_reference = "s015l1:" + uuid4().hex + uuid4().hex
+        result = MembershipCommandResult(
+            membership_uuid=membership.membership_uuid,
+            resulting_state=membership.state,
+            transition_sequence=1,
+            lineage_reference=lineage_reference,
+            temporal_basis_kind=None,
+            temporal_basis_reference=None,
+            current_state_effective_at=membership.current_state_effective_at,
+            state_known_at=membership.state_known_at,
+            state_source_event_set_fingerprint=membership.state_source_event_set_fingerprint,
+            authority_reference="s015a1:fixture",
+            authority_decision_reference=decision_reference,
+        )
+        OrganismCommandReceipt.objects.create(
+            actor=actor,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=payload_fingerprint,
+            authority_decision_reference=decision_reference,
+            lineage_reference=lineage_reference,
+            result_payload=result.receipt_payload(),
+        )
+        self.assertFalse(AuthorityDecision.objects.filter(decision_reference=decision_reference).exists())
+        with transaction.atomic(), CaptureQueriesContext(connection) as captured:
+            replay = service._attempt_replay(
+                actor=actor,
+                request_reference=request_reference,
+                payload_fingerprint=payload_fingerprint,
+                idempotency_key=idempotency_key,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, NOW),
+            )
+        self.assertEqual(replay.authority_decision_reference, decision_reference)
+        self.assertFalse(AuthorityDecision.objects.filter(decision_reference=decision_reference).exists())
+        self.assertFalse(any(
+            "core_authoritydecision" in query["sql"].lower()
+            for query in captured.captured_queries
+        ))
+
+    def test_reader_returns_only_own_cached_states_and_effective_offices(self):
+        self._setup_organism("own-membership-reader")
+        reader, fulfilment_reference = self._reader_identity("own-membership-reader")
+        fixtures = {}
+        for label, state in (
+            ("active", "ACTIVE"),
+            ("probationary", "PROBATIONARY"),
+            ("restricted", "RESTRICTED"),
+            ("suspended", "ACTIVE"),
+            ("proposed", "PROPOSED"),
+            ("ended", "ACTIVE"),
+            ("privacy-transformed", "ACTIVE"),
+        ):
+            fixtures[label] = self._reader_membership_fixture(reader, state, label)
+
+        active_ids, active_membership = fixtures["active"]
+        term_end = self._database_now() + timedelta(days=30)
+        self._assign_office(
+            ids=active_ids,
+            membership=active_membership,
+            role_definition_id=active_ids["roles"]["COORDINATOR"],
+            tag="own-membership-reader-fixed-term",
+            effective_until_state="FIXED",
+            effective_until=term_end,
+        )
+        suspended_effective_at = self._transition_reader_membership_fixture(
+            *fixtures["suspended"], "SUSPENDED", "own-membership-reader-suspended",
+        )
+        self._transition_reader_membership_fixture(
+            *fixtures["ended"], "ENDED", "own-membership-reader-ended",
+        )
+        self._transition_reader_membership_fixture(
+            *fixtures["privacy-transformed"],
+            "PRIVACY_TRANSFORMED",
+            "own-membership-reader-privacy-transformed",
+        )
+
+        membership_reader = OrganismMembershipReader(clock=self._database_now)
+        first_view = membership_reader.list_own_memberships(reader)
+        initial_identity_id = reader.identity_id
+        initial_access_epoch = reader.access_epoch
+        for action, evidence, reason in (
+            (
+                IdentityTransition.Action.RESTRICT,
+                "TEST_ONLY:reader:restrict",
+                IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            ),
+            (
+                IdentityTransition.Action.DEACTIVATE,
+                "TEST_ONLY:reader:deactivate",
+                IdentityTransition.ReasonCategory.SECURITY,
+            ),
+            (
+                IdentityTransition.Action.REACTIVATE,
+                fulfilment_reference,
+                IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            ),
+        ):
+            IdentityLifecycleService.change_access(
+                identity_id=reader.identity_id,
+                action=action,
+                requesting_actor=reader,
+                authority_reference=f"TEST_ONLY:reader:{action}",
+                technical_executor="TEST_ONLY",
+                evidence_reference=evidence,
+                reason_category=reason,
+                correlation_id=uuid4(),
+            )
+            reader.refresh_from_db()
+
+        self.assertEqual(reader.identity_id, initial_identity_id)
+        self.assertGreater(reader.access_epoch, initial_access_epoch)
+        views = membership_reader.list_own_memberships(reader)
+        self.assertEqual(views, first_view)
+        self.assertEqual(len(views), 4)
+        expected_states = {
+            fixtures[label][1].living_organism.organism_id: state
+            for label, state in (
+                ("active", "ACTIVE"),
+                ("probationary", "PROBATIONARY"),
+                ("restricted", "RESTRICTED"),
+                ("suspended", "SUSPENDED"),
+            )
+        }
+        self.assertEqual({view.organism_id: view.state for view in views}, expected_states)
+        suspended_view = next(view for view in views if view.state == "SUSPENDED")
+        self.assertEqual(suspended_view.current_state_effective_at, suspended_effective_at)
+        for view in views:
+            self.assertEqual(
+                set(asdict(view)),
+                {"organism_id", "state", "current_state_effective_at", "offices"},
+            )
+            self.assertTrue(all(len(office) == 2 for office in view.offices))
+            self.assertEqual(
+                type(view).__dataclass_fields__["current_state_effective_at"].metadata["label"],
+                "the beginning of the current state",
+            )
+        active_view = next(
+            view for view in views
+            if view.organism_id == active_membership.living_organism.organism_id
+        )
+        self.assertEqual(active_view.offices, (("COORDINATOR", "LIVING_ORGANISM"),))
+        expired_reader = OrganismMembershipReader(clock=lambda: term_end)
+        expired_active = next(
+            view for view in expired_reader.list_own_memberships(reader)
+            if view.organism_id == active_view.organism_id
+        )
+        self.assertEqual(expired_active.offices, ())
+        self.assertEqual(
+            membership_reader.read_own_membership(reader, active_membership.membership_uuid),
+            active_view,
+        )
+        self._assert_reader_does_not_lock_living_organism(
+            lambda: membership_reader.list_own_memberships(reader),
+        )
+        self._assert_reader_does_not_lock_living_organism(
+            lambda: membership_reader.read_own_membership(reader, active_membership.membership_uuid),
+        )
+
+    def test_read_own_membership_refuses_absent_foreign_and_ended_with_same_code(self):
+        ids, _, other_identity = self._setup_organism("own-membership-reader-refusals")
+        reader, _ = self._reader_identity("own-membership-reader-refusals")
+        own_membership = self._fixture_membership(
+            ids, reader, "ACTIVE", "own-membership-reader-refusals-own",
+        )
+        other_membership = self._fixture_membership(
+            ids, other_identity, "ACTIVE", "own-membership-reader-refusals-other",
+        )
+        ended_ids, ended_membership = self._reader_membership_fixture(
+            reader, "ACTIVE", "own-membership-reader-refusals-ended",
+        )
+        self._transition_reader_membership_fixture(
+            ended_ids, ended_membership, "ENDED", "own-membership-reader-refusals-end",
+        )
+        membership_reader = OrganismMembershipReader(clock=self._database_now)
+        self.assertEqual(
+            membership_reader.read_own_membership(reader, own_membership.membership_uuid).state,
+            "ACTIVE",
+        )
+        failures = []
+        for membership_uuid in (uuid4(), other_membership.membership_uuid, ended_membership.membership_uuid):
+            with self.assertRaises(S015MembershipNotFound) as refused:
+                membership_reader.read_own_membership(reader, membership_uuid)
+            failures.append((type(refused.exception), str(refused.exception)))
+        self.assertEqual(failures, [failures[0]] * 3)
+        self.assertEqual(failures[0][1], "membership not found")
+
+    def test_membership_receipt_replay_keeps_unresolved_authority_decision_reference(self):
+        ids, actor, _ = self._setup_organism("membership-receipt-reference")
+        membership = OrganismMembership.objects.get(pk=ids["membership"])
+        service = self._service(_ExactProvider())
+        request_reference = "request:membership-receipt-reference"
+        idempotency_key = "idem:membership-receipt-reference"
+        payload_fingerprint = "a" * 64
+        decision_reference = "s015d1:" + uuid4().hex + uuid4().hex
+        lineage_reference = "s015l1:" + uuid4().hex + uuid4().hex
+        result = MembershipCommandResult(
+            membership_uuid=membership.membership_uuid,
+            resulting_state=membership.state,
+            transition_sequence=1,
+            lineage_reference=lineage_reference,
+            temporal_basis_kind=None,
+            temporal_basis_reference=None,
+            current_state_effective_at=membership.current_state_effective_at,
+            state_known_at=membership.state_known_at,
+            state_source_event_set_fingerprint=membership.state_source_event_set_fingerprint,
+            authority_reference="s015a1:fixture",
+            authority_decision_reference=decision_reference,
+        )
+        OrganismCommandReceipt.objects.create(
+            actor=actor,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=payload_fingerprint,
+            authority_decision_reference=decision_reference,
+            lineage_reference=lineage_reference,
+            result_payload=result.receipt_payload(),
+        )
+        self.assertFalse(AuthorityDecision.objects.filter(decision_reference=decision_reference).exists())
+        with transaction.atomic(), CaptureQueriesContext(connection) as captured:
+            replay = service._attempt_replay(
+                actor=actor,
+                request_reference=request_reference,
+                payload_fingerprint=payload_fingerprint,
+                idempotency_key=idempotency_key,
+                viewer=ReplayViewer(actor.pk, actor.identity_id, NOW),
+            )
+        self.assertEqual(replay.authority_decision_reference, decision_reference)
+        self.assertFalse(AuthorityDecision.objects.filter(decision_reference=decision_reference).exists())
+        self.assertFalse(any(
+            "core_authoritydecision" in query["sql"].lower()
+            for query in captured.captured_queries
+        ))
 
     def test_unused_states_are_refused(self):
         ids, actor, target = self._setup_organism("unused")
@@ -534,7 +1191,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     service.transition_membership(
                         self._transition_command(
                             actor=actor,
-                            membership_uuid=open_result.membership_uuid,
+                            membership_uuid=_membership_for_result(open_result).membership_uuid,
                             resulting_state=state,
                             request_reference=f"request:unused:{state.lower()}",
                             idempotency_key=f"idem:unused:{state.lower()}",
@@ -711,7 +1368,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             denied_service.transition_membership(
                 self._transition_command(
                     actor=actor,
-                    membership_uuid=open_result.membership_uuid,
+                    membership_uuid=_membership_for_result(open_result).membership_uuid,
                     resulting_state="PROPOSED",
                     request_reference="request:authority-order:invalid-edge",
                     idempotency_key="idem:authority-order:invalid-edge",

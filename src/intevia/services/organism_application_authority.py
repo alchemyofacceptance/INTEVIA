@@ -108,6 +108,7 @@ _POST_ACTIONS = {
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
+    OrganismAction.TRANSITION_MEMBERSHIP,
 }
 
 
@@ -204,7 +205,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R2.0"
+    provider_version = "R3.0"
 
     def __init__(
         self,
@@ -235,11 +236,20 @@ class ProductionApplicationAuthorityProvider:
 
         if request.command_subtype != request.action.value:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if request.action is OrganismAction.TRANSITION_MEMBERSHIP and (
+            request.target is None or request.target.get("resulting_state") != "ENDED"
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+                S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+            )
         target_organism_matches = False
         if request.target is not None and request.living_organism_id is not None:
             if request.action in {
                 OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
                 OrganismAction.RECORD_OFFICE_CONSENT,
+                OrganismAction.TRANSITION_MEMBERSHIP,
             }:
                 target_organism_matches = (
                     request.target.get("living_organism_id") == str(request.living_organism_id)
@@ -281,6 +291,12 @@ class ProductionApplicationAuthorityProvider:
                             raise ValueError
                     except (KeyError, TypeError, ValueError):
                         return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.TRANSITION_MEMBERSHIP:
+                try:
+                    if str(UUID(request.target["membership_uuid"])) != request.target["membership_uuid"]:
+                        raise ValueError
+                except (KeyError, TypeError, ValueError):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action in _VERSION_SPECS:
                 if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -318,11 +334,76 @@ class ProductionApplicationAuthorityProvider:
             return self._submit(request, organism)
         if request.action is OrganismAction.WITHDRAW_APPLICATION:
             return self._withdraw(request, organism)
+        if request.action is OrganismAction.TRANSITION_MEMBERSHIP:
+            return self._qualify_membership_departure(request, organism)
         if request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
             return self._qualify_role_proposal(request, organism)
         if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
             return self._qualify_office_consent(request, organism)
         return self._coordinator_act(request, organism)
+
+    def _qualify_membership_departure(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        try:
+            membership_uuid = UUID(request.target["membership_uuid"])
+        except (KeyError, TypeError, ValueError):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        membership = OrganismMembership.objects.using(self.database_alias).filter(
+            membership_uuid=membership_uuid,
+            living_organism=organism,
+        ).select_related("identity").first()
+        if membership is None or membership.identity.identity_id != request.actor_identity_id:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        current_state = _fold_state(
+            self.database_alias,
+            "core_organismmembership",
+            membership.pk,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        if current_state not in {"ACTIVE", "PROBATIONARY"}:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
+            )
+        if not self._locked_heads_match(request, membership):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        active_office = ContextualRoleAssignment.objects.using(self.database_alias).filter(
+            membership=membership,
+            state="ACTIVE",
+            head_state_event__isnull=False,
+        ).select_related("head_state_event").order_by("pk").first()
+        if active_office is not None:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
+                S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
+                facts={"o": str(active_office.head_state_event.event_uuid)},
+            )
+        if not self._lo_capacity(organism, request):
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        lo_state = self._lo_state(organism, request)
+        if lo_state == "DORMANT":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
+        if lo_state == "CLOSED":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
+        if lo_state != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        head = _latest_transition(
+            self.database_alias,
+            OrganismMembershipTransition,
+            "membership_id",
+            membership.pk,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        return self._qualified(request, {
+            "k": "MEMBERSHIP_DEPARTURE",
+            "m": "-" if head is None else str(head.event_uuid),
+        })
 
     def _qualify_role_proposal(
         self,

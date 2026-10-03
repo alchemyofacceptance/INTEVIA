@@ -59,6 +59,43 @@ class HistoryRow:
     recorded_at: datetime
 
 
+def _present_application_audiences(
+    *, application: Application | None, reader: Identity, organism_pk: int,
+    at: datetime, database_alias: str,
+) -> tuple[bool, bool, bool]:
+    latest_state = (
+        IdentityTransition.objects.using(database_alias)
+        .filter(identity_id=reader.pk, occurred_at__lte=at)
+        .order_by("-occurred_at", "-pk")
+        .values_list("resulting_state", flat=True)
+        .first()
+    )
+    if latest_state != Identity.AccessState.ACTIVE:
+        return False, False, False
+    if application is not None:
+        applicant_identity_id = Identity.objects.using(database_alias).filter(
+            pk=application.applicant_id,
+        ).values_list("identity_id", flat=True).first()
+        if applicant_identity_id == reader.identity_id:
+            return True, True, False
+
+    offices = ContextualRoleAssignment.objects.using(database_alias).filter(
+        membership__identity__identity_id=reader.identity_id,
+        membership__living_organism_id=organism_pk,
+        membership__state="ACTIVE",
+        role_definition__code="COORDINATOR",
+        role_definition__scope="LIVING_ORGANISM",
+        state="ACTIVE",
+    )
+    from src.intevia.services.organism_role_service import _head_assign_term
+
+    for office in offices:
+        term = _head_assign_term(database_alias=database_alias, assignment_id=office.pk)
+        if term is None or term[0] != "FIXED" or term[1] is None or at < term[1]:
+            return True, False, True
+    return True, False, False
+
+
 class OrganismApplicationReader:
     def __init__(self, *, authority, clock, database_alias: str = "default"):
         self._authority = authority
@@ -133,36 +170,16 @@ class OrganismApplicationReader:
         )
 
     def _authorise_read(self, application: Application, reader: Identity, at: datetime) -> None:
-        latest_state = (
-            IdentityTransition.objects.using(self._alias)
-            .filter(identity_id=reader.pk, occurred_at__lte=at)
-            .order_by("-occurred_at", "-pk")
-            .values_list("resulting_state", flat=True)
-            .first()
-        )
-        if latest_state != Identity.AccessState.ACTIVE:
-            raise S015ApplicationRefused("S3FU read refused: reader not active")
-        if reader.pk == application.applicant_id:
-            return
-
-        offices = (
-            ContextualRoleAssignment.objects.using(self._alias)
-            .select_related("role_definition")
-            .filter(
-                membership__identity_id=reader.pk,
-                membership__living_organism_id=application.living_organism_id,
-                membership__state="ACTIVE",
-                role_definition__code="COORDINATOR",
-                role_definition__scope="LIVING_ORGANISM",
-                state="ACTIVE",
-            )
-        )
-        role_service = OrganismRoleService(
-            authority=self._authority,
-            clock=self._clock,
+        identity_active, applicant, processing = _present_application_audiences(
+            application=application,
+            reader=reader,
+            organism_pk=application.living_organism_id,
+            at=at,
             database_alias=self._alias,
         )
-        if any(role_service.assignment_in_effect(office, at) for office in offices):
+        if not identity_active:
+            raise S015ApplicationRefused("S3FU read refused: reader not active")
+        if applicant or processing:
             return
         raise S015ApplicationRefused("S3FU read refused: not in the application's audience")
 

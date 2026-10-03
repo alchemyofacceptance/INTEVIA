@@ -95,6 +95,7 @@ from core.models import (
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_command_support import (
+    ReplayViewer,
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
@@ -106,9 +107,11 @@ from src.intevia.services.organism_command_support import (
     _founding_provenance_assignment_id,
     _lock_actor,
     _lock_actor_membership_context,
+    _read_actor_active_membership,
     _OrganismCommandService,
     _resulting_temporal_basis,
     _validate_timestamp,
+    WithheldField,
     authority_atomic,
     acquire_organism_command_mutex,
     authority_target_fingerprint,
@@ -207,27 +210,25 @@ class TransitionAssignmentCommand:
 @dataclass(frozen=True, slots=True)
 class AssignmentCommandResult:
     assignment_uuid: UUID
-    assignment_id: int
-    resulting_state: str
-    event_id: int
-    event_sequence: int
+    resulting_state: str | WithheldField
+    event_uuid: UUID | WithheldField
+    event_sequence: int | WithheldField
     event_action: str
     lineage_reference: str
     temporal_basis_kind: str | None
     temporal_basis_reference: str | None
-    effective_until: datetime | None
-    effective_until_state: str
-    suspension_tolls_term: str | None
-    suspension_tolls_term_source: str | None
-    current_state_effective_at: datetime
-    state_known_at: datetime
-    state_source_event_set_fingerprint: str
-    authority_reference: str
+    effective_until: datetime | None | WithheldField
+    effective_until_state: str | WithheldField
+    suspension_tolls_term: str | None | WithheldField
+    suspension_tolls_term_source: str | None | WithheldField
+    current_state_effective_at: datetime | WithheldField
+    state_known_at: datetime | WithheldField
+    state_source_event_set_fingerprint: str | WithheldField
+    authority_reference: str | WithheldField
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
         return {
-            "assignment_id": self.assignment_id,
             "assignment_uuid": str(self.assignment_uuid),
             "authority_decision_reference": self.authority_decision_reference,
             "authority_reference": self.authority_reference,
@@ -237,7 +238,7 @@ class AssignmentCommandResult:
             ),
             "effective_until_state": self.effective_until_state,
             "event_action": self.event_action,
-            "event_id": self.event_id,
+            "event_uuid": str(self.event_uuid),
             "event_sequence": self.event_sequence,
             "lineage_reference": self.lineage_reference,
             "resulting_state": self.resulting_state,
@@ -250,16 +251,44 @@ class AssignmentCommandResult:
         }
 
     @classmethod
-    def from_receipt_payload(cls, payload: object) -> "AssignmentCommandResult":
+    def replay_field_audiences(cls, result: "AssignmentCommandResult") -> dict[str, str]:
+        audiences = {
+            "resulting_state": "SUBJECT",
+            "event_sequence": "SUBJECT",
+            "current_state_effective_at": "SUBJECT",
+            "state_known_at": "SUBJECT",
+            "state_source_event_set_fingerprint": "SUBJECT",
+            "suspension_tolls_term": "SUBJECT",
+            "suspension_tolls_term_source": "SUBJECT",
+        }
+        if result.event_action != "PROPOSE":
+            audiences["event_uuid"] = "SUBJECT"
+        if result.event_action in {"END", "REASSIGN"}:
+            audiences["effective_until"] = "SUBJECT"
+            audiences["effective_until_state"] = "SUBJECT"
+        return audiences
+
+    @classmethod
+    def from_receipt_payload(
+        cls, payload: object, *, database_alias: str = "default",
+    ) -> "AssignmentCommandResult":
         if type(payload) is not dict:
             raise S015CommandReplayMismatch("completed receipt does not match request")
         try:
             effective_until_raw = payload["effective_until"]
+            event_uuid_raw = payload.get("event_uuid")
+            if event_uuid_raw is None:
+                event_uuid_raw = ContextualRoleAssignmentStateEvent.objects.using(database_alias).filter(
+                    assignment__assignment_uuid=UUID(payload["assignment_uuid"]),
+                    sequence=int(payload["event_sequence"]),
+                    action=str(payload["event_action"]),
+                ).values_list("event_uuid", flat=True).first()
+            if event_uuid_raw is None:
+                raise ValueError("event uuid is unavailable")
             return cls(
                 assignment_uuid=UUID(payload["assignment_uuid"]),
-                assignment_id=int(payload["assignment_id"]),
                 resulting_state=str(payload["resulting_state"]),
-                event_id=int(payload["event_id"]),
+                event_uuid=UUID(event_uuid_raw),
                 event_sequence=int(payload["event_sequence"]),
                 event_action=str(payload["event_action"]),
                 lineage_reference=str(payload["lineage_reference"]),
@@ -521,13 +550,29 @@ def _head_assign_term(
     return str(row[0]), row[1]
 
 
+def assignment_in_effect(
+    assignment: ContextualRoleAssignment,
+    at: datetime,
+    *,
+    database_alias: str = "default",
+) -> bool:
+    """Return the cached state subject to the recorded fixed-term expiry rule."""
+    if type(assignment) is not ContextualRoleAssignment:
+        raise TypeError("assignment must be a ContextualRoleAssignment")
+    moment = _validate_timestamp(at, "at")
+    term = _head_assign_term(database_alias=database_alias, assignment_id=assignment.pk)
+    if term is not None and term[0] == "FIXED" and term[1] is not None and moment >= term[1]:
+        return False
+    return assignment.state == "ACTIVE"
+
+
 class OrganismRoleService(_OrganismCommandService):
     _action = _ACTION
     _not_found = S015AssignmentNotFound
     _authority_unavailable = S015AssignmentAuthorityUnavailable
 
     def _replay_result(self, payload: object) -> AssignmentCommandResult:
-        return AssignmentCommandResult.from_receipt_payload(payload)
+        return AssignmentCommandResult.from_receipt_payload(payload, database_alias=self._alias)
 
     def _command_fingerprint(
         self,
@@ -564,13 +609,7 @@ class OrganismRoleService(_OrganismCommandService):
         """A read, not a record: False when the appointment's term is FIXED and `at` is at or
         after `effective_until` (no tolling under the default), otherwise the cached state's
         reading. The recorded state stays ACTIVE until an ending is recorded (IL-5 is unbuilt)."""
-        if type(assignment) is not ContextualRoleAssignment:
-            raise TypeError("assignment must be a ContextualRoleAssignment")
-        moment = _validate_timestamp(at, "at")
-        term = _head_assign_term(database_alias=self._alias, assignment_id=assignment.pk)
-        if term is not None and term[0] == "FIXED" and term[1] is not None and moment >= term[1]:
-            return False
-        return assignment.state == "ACTIVE"
+        return assignment_in_effect(assignment, at, database_alias=self._alias)
 
     def open_nominations(
         self,
@@ -636,19 +675,12 @@ class OrganismRoleService(_OrganismCommandService):
         try:
             membership = (
                 OrganismMembership.objects.using(self._alias)
-                .select_for_update()
                 .select_related("identity", "living_organism")
                 .get(membership_uuid=membership_uuid)
             )
         except OrganismMembership.DoesNotExist as exc:
             raise S015AssignmentNotFound("membership not found") from exc
         organism = membership.living_organism
-        actor_membership, actor_role_refs = _lock_actor_membership_context(
-            database_alias=self._alias,
-            actor_identity_id=actor.identity_id,
-            living_organism_id=organism.organism_id,
-            unavailable=S015AssignmentAuthorityUnavailable,
-        )
 
         target = {
             "action": _ACTION.value,
@@ -690,9 +722,30 @@ class OrganismRoleService(_OrganismCommandService):
             request_reference=request_reference,
             payload_fingerprint=command_fingerprint,
             idempotency_key=idempotency_key,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+
+        _read_actor_active_membership(
+            database_alias=self._alias,
+            actor_identity_pk=actor.pk,
+            living_organism_pk=membership.living_organism_id,
+            unavailable=S015AssignmentAuthorityUnavailable,
+        )
+        membership = (
+            OrganismMembership.objects.using(self._alias)
+            .select_for_update()
+            .select_related("identity", "living_organism")
+            .get(pk=membership.pk)
+        )
+        organism = membership.living_organism
+        actor_membership, actor_role_refs = _lock_actor_membership_context(
+            database_alias=self._alias,
+            actor_identity_id=actor.identity_id,
+            living_organism_id=organism.organism_id,
+            unavailable=S015AssignmentAuthorityUnavailable,
+        )
 
         decision = self._evaluate_authority(
             actor=actor,
@@ -841,31 +894,12 @@ class OrganismRoleService(_OrganismCommandService):
         try:
             assignment = (
                 ContextualRoleAssignment.objects.using(self._alias)
-                .select_related("membership__living_organism", "role_definition")
+                .select_related("membership__living_organism", "membership__identity", "role_definition")
                 .get(assignment_uuid=assignment_uuid)
             )
         except ContextualRoleAssignment.DoesNotExist as exc:
             raise S015AssignmentNotFound("assignment not found") from exc
-        if event_action == "ASSIGN":
-            organism = (
-                LivingOrganism.objects.using(self._alias)
-                .select_for_update()
-                .get(pk=assignment.membership.living_organism_id)
-            )
-        else:
-            assignment = (
-                ContextualRoleAssignment.objects.using(self._alias)
-                .select_for_update()
-                .select_related("membership__living_organism", "role_definition")
-                .get(pk=assignment.pk)
-            )
-            organism = assignment.membership.living_organism
-        actor_membership, actor_role_refs = _lock_actor_membership_context(
-            database_alias=self._alias,
-            actor_identity_id=actor.identity_id,
-            living_organism_id=organism.organism_id,
-            unavailable=S015AssignmentAuthorityUnavailable,
-        )
+        organism = assignment.membership.living_organism
 
         # the appointed term is bound into ASSIGN's target fingerprint, so the qualified
         # decision names the exact appointment content
@@ -914,9 +948,41 @@ class OrganismRoleService(_OrganismCommandService):
             request_reference=request_reference,
             payload_fingerprint=command_fingerprint,
             idempotency_key=idempotency_key,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+
+        if (
+            event_action in {"ASSIGN", "REASSIGN"}
+            or (event_action == "END" and assignment.membership.identity.identity_id != actor.identity_id)
+        ):
+            _read_actor_active_membership(
+                database_alias=self._alias,
+                actor_identity_pk=actor.pk,
+                living_organism_pk=assignment.membership.living_organism_id,
+                unavailable=S015AssignmentAuthorityUnavailable,
+            )
+        if event_action == "ASSIGN":
+            organism = (
+                LivingOrganism.objects.using(self._alias)
+                .select_for_update()
+                .get(pk=assignment.membership.living_organism_id)
+            )
+        else:
+            assignment = (
+                ContextualRoleAssignment.objects.using(self._alias)
+                .select_for_update()
+                .select_related("membership__living_organism", "membership__identity", "role_definition")
+                .get(pk=assignment.pk)
+            )
+            organism = assignment.membership.living_organism
+        actor_membership, actor_role_refs = _lock_actor_membership_context(
+            database_alias=self._alias,
+            actor_identity_id=actor.identity_id,
+            living_organism_id=organism.organism_id,
+            unavailable=S015AssignmentAuthorityUnavailable,
+        )
 
         decision = self._evaluate_authority(
             actor=actor,
@@ -1181,9 +1247,8 @@ class OrganismRoleService(_OrganismCommandService):
         event.refresh_from_db(using=self._alias)
         return AssignmentCommandResult(
             assignment_uuid=assignment.assignment_uuid,
-            assignment_id=assignment.pk,
             resulting_state=event.resulting_state,
-            event_id=event.pk,
+            event_uuid=event.event_uuid,
             event_sequence=event.sequence,
             event_action=event.action,
             lineage_reference=event.lineage_reference,
@@ -1219,5 +1284,6 @@ __all__ = [
     "S015OperationNotYetImplemented",
     "TransitionAssignmentCommand",
     "acquire_organism_command_mutex",
+    "assignment_in_effect",
     "command_mutex_key",
 ]

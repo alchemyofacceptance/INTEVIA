@@ -126,7 +126,7 @@ class S015ApplicationReadTests(TransactionTestCase):
             predecessor_reference=None if predecessor is None else predecessor.application_uuid,
             answer="Test-only applicant answer",
         ))
-        return applicant, Application.objects.get(pk=result.application_id)
+        return applicant, Application.objects.get(application_uuid=result.application_uuid)
 
     def _organism_uuid(self):
         with connection.cursor() as cursor:

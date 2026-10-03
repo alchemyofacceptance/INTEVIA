@@ -67,6 +67,8 @@ class S015AuthorityRefusalCode(str, Enum):
     C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED = "C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED"
     E_NOMINATION_POLICY_NOT_ENTITLED = "E_NOMINATION_POLICY_NOT_ENTITLED"
     C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN = "C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN"
+    C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED = "C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED"
+    C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED = "C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED"
     UNRECOGNISED_ACTION = "UNRECOGNISED_ACTION"
     UNRECOGNISED_ROUTE = "UNRECOGNISED_ROUTE"
 
@@ -437,7 +439,14 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
+    OrganismAction.TRANSITION_MEMBERSHIP,
 })
+
+
+def _should_record_application_decision(request: S015AuthorityRequest) -> bool:
+    return request.action in _APPLICATION_ACTIONS and (
+        request.action is not OrganismAction.TRANSITION_MEMBERSHIP or request.target is not None
+    )
 
 
 def _refusal_result(
@@ -621,9 +630,7 @@ def _record_application_decision(
         raise S015AuthorityMalformed("provider_version is invalid")
     effective_at = getattr(request, "effective_at", None) or request.evaluated_at
     credential_pk = getattr(request, "actor_credential_pk", None)
-    record, created = AuthorityDecision.objects.using(request.database_alias).get_or_create(
-        decision_reference=decision_reference,
-        defaults={
+    defaults = {
             "decision_payload": response_payload,
             "decision_payload_bytes": response_bytes,
             "request_kind": type(request).__name__,
@@ -647,7 +654,10 @@ def _record_application_decision(
             "request_reference": request.request_reference,
             "idempotency_key": request.idempotency_key,
             "recorded_at": None,
-        },
+        }
+    record, created = AuthorityDecision.objects.using(request.database_alias).get_or_create(
+        decision_reference=decision_reference,
+        defaults=defaults,
     )
     if not created and record.decision_payload_bytes != response_bytes:
         raise S015AuthorityMalformed("authority decision reference collision")
@@ -723,7 +733,7 @@ class S015Authority:
             decision_reference = "s015d1:" + hashlib.sha256(
                 _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
             ).hexdigest()
-            if request.action in _APPLICATION_ACTIONS:
+            if _should_record_application_decision(request):
                 _record_application_decision(
                     provider=self.provider,
                     request=request,
@@ -737,11 +747,14 @@ class S015Authority:
             )
             if type(disclosed_refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("disclosed refusal code is invalid")
-            message = (
-                "the required recovery route is not yet implemented"
-                if disclosed_refusal_code is S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED
-                else "organism authority denied"
-            )
+            if disclosed_refusal_code is S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED:
+                message = "the required recovery route is not yet implemented"
+            elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED:
+                message = "membership transition is not yet implemented"
+            elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED:
+                message = "leaving while holding an office is not yet implemented (IL-2)"
+            else:
+                message = "organism authority denied"
             raise S015AuthorityDenied(
                 message,
                 refusal_code=result.refusal_code,
@@ -755,7 +768,7 @@ class S015Authority:
         decision_reference = "s015d1:" + hashlib.sha256(
             _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
         ).hexdigest()
-        if request.action in _APPLICATION_ACTIONS:
+        if _should_record_application_decision(request):
             _record_application_decision(
                 provider=self.provider,
                 request=request,

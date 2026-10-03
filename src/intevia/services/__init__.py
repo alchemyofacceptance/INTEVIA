@@ -13,6 +13,8 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_membership_service import (
 	QualifiedOrganismCommandReplay,
+	OrganismMembershipReader,
+	OwnMembershipView,
 	S015CommandAtomicityRequired,
 	S015CommandMutexUnavailable,
 	S015CommandReplayMismatch,
@@ -20,11 +22,14 @@ from src.intevia.services.organism_membership_service import (
 	command_mutex_key,
 	qualify_completed_replay,
 )
+from src.intevia.services.organism_command_support import WithheldField, withheld_fields
 
 
 __all__ = [
 	"QualifiedS015AuthorityDecision",
 	"QualifiedOrganismCommandReplay",
+	"OrganismMembershipReader",
+	"OwnMembershipView",
 	"S015Authority",
 	"S015AuthorityDenied",
 	"S015AuthorityMalformed",
@@ -32,6 +37,7 @@ __all__ = [
 	"S015CommandAtomicityRequired",
 	"S015CommandMutexUnavailable",
 	"S015CommandReplayMismatch",
+	"WithheldField",
 	"S015PostFoundingAuthorityRequest",
 	"S015PostFoundingAuthorityResponse",
 	"S015PreFoundingAuthorityRequest",
@@ -39,4 +45,5 @@ __all__ = [
 	"acquire_organism_command_mutex",
 	"command_mutex_key",
 	"qualify_completed_replay",
+	"withheld_fields",
 ]

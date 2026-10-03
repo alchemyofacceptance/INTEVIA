@@ -32,6 +32,7 @@ from src.intevia.services.organism_authority import (
     S015Authority, S015OwnApplicantAuthorityRequest, S015OwnApplicantAuthorityResponse,
     S015PostFoundingAuthorityResponse,
 )
+from src.intevia.services.organism_command_support import S015CommandReplayMismatch, WithheldField, withheld_fields
 from src.intevia.services.organism_membership_service import (
     OrganismMembershipService, OpenMembershipCommand, S015OperationNotYetImplemented,
 )
@@ -116,6 +117,20 @@ class ApplicationGatewayTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
         self.actor = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        provision = IdentityTransition.objects.create(
+            identity=self.actor, action=IdentityTransition.Action.PROVISION,
+            prior_state=None, resulting_state="pending", authority_reference="s3:test:provision",
+            technical_executor="S3_TEST", evidence_reference="s3:test:history",
+            reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
+            correlation_id=uuid4(), occurred_at=T0,
+        )
+        IdentityTransition.objects.create(
+            identity=self.actor, action=IdentityTransition.Action.ACTIVATE,
+            prior_state="pending", resulting_state="active", authority_reference="s3:test:activate",
+            technical_executor="S3_TEST", evidence_reference="s3:test:history",
+            reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1), previous_transition=provision,
+        )
         self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=_CoordinatorProvider()),
@@ -561,7 +576,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         care, welcome = self.automatic_service()
         applicant = self.applicant()
         result = self.submit(applicant)
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         decision = ApplicationDecision.objects.get(application=application)
         engagement = ApplicationEngagement.objects.get(application=application)
         admission = OrganismMembershipTransition.objects.get(
@@ -707,9 +722,10 @@ class ApplicationGatewayTests(TransactionTestCase):
             seed_test_gateway(cursor, self.ids)
         applicant = self.applicant()
         result = self.submit(applicant)
-        self.assertFalse(ApplicationDecision.objects.filter(application_id=result.application_id).exists())
+        application = Application.objects.get(application_uuid=result.application_uuid)
+        self.assertFalse(ApplicationDecision.objects.filter(application=application).exists())
         self.assertEqual(ApplicationLineageEvent.objects.filter(
-            application_lineage__application_id=result.application_id,
+            application_lineage__application=application,
         ).count(), 1)
 
     def test_automatic_route_vocabulary_and_off_version_sql_refusal(self):
@@ -720,7 +736,8 @@ class ApplicationGatewayTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             seeded = seed_test_gateway(cursor, self.ids)
         applicant = self.applicant()
-        application = Application.objects.get(pk=self.submit(applicant).application_id)
+        application_result = self.submit(applicant)
+        application = Application.objects.get(application_uuid=application_result.application_uuid)
         off = LOApplicationSettingsVersion.objects.get(pk=seeded["core_loapplicationsettingsversion"])
         rule = f"application-settings-version:{off.version_uuid}"
         with self.assertRaisesMessage(IntegrityError, "S3FU automatic engagement refused"):
@@ -768,7 +785,7 @@ class ApplicationGatewayTests(TransactionTestCase):
 
         self.service._automatic_accept = change_then_accept
         result = self.submit(applicant)
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         self.assertEqual(application.settings_version_id, setting.pk)
         self.assertEqual(ApplicationDecision.objects.get(application=application).route, "LO_AUTOMATIC")
         self.assertEqual(ApplicationEngagement.objects.get(application=application).settings_basis,
@@ -883,7 +900,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                 # Test-only incomplete automatic act; the outer transaction is always rolled back.
                 self.service._automatic_accept = lambda *args: None
                 result = self.submit(applicant)
-                application = Application.objects.get(pk=result.application_id)
+                application = Application.objects.get(application_uuid=result.application_uuid)
                 rule = f"application-settings-version:{application.settings_version.version_uuid}"
                 ApplicationEngagement.objects.create(
                     application=application, engagement_ordinal=1, route="LO_AUTOMATIC",
@@ -948,7 +965,13 @@ class ApplicationGatewayTests(TransactionTestCase):
         first = self.draft(action, {})
         self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "DRAFT")
         before = self.organism.state
-        first_event = self.effect(first, action)
+        first_effect = self.effect(first, action)
+        self.assertEqual(first_effect.version_uuid, first.version_uuid)
+        self.assertEqual(first_effect.action, action)
+        self.assertEqual(first_effect.lineage_reference, LivingOrganismEvent.objects.get(
+            event_uuid=first_effect.event_uuid,
+        ).lineage_reference)
+        first_event = LivingOrganismEvent.objects.get(event_uuid=first_effect.event_uuid)
         self.assertEqual(first_event.evidence_reference, f"application-question-version:{first.version_uuid}")
         self.assertEqual(first_event.prior_state, first_event.resulting_state)
         self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "EFFECTIVE")
@@ -956,7 +979,8 @@ class ApplicationGatewayTests(TransactionTestCase):
             "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
         })
         self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
-        application = Application.objects.get(pk=self.submit(self.applicant()).application_id)
+        application_result = self.submit(self.applicant())
+        application = Application.objects.get(application_uuid=application_result.application_uuid)
         with self.assertRaisesMessage(IntegrityError, "effective and immutable"):
             with transaction.atomic():
                 LOApplicationQuestionVersion.objects.filter(pk=first.pk).update(question_text="silent rename")
@@ -974,6 +998,83 @@ class ApplicationGatewayTests(TransactionTestCase):
         application.refresh_from_db()
         self.assertEqual(application.question_version_id, first.pk)
         self.assertEqual(application.question_version.question_text, first.question_text)
+
+    def test_effect_receipt_replays_without_second_event_and_rejects_mismatch(self):
+        action = OrganismAction.EFFECT_APPLICATION_SETTINGS
+        version = self.draft(action, {
+            "applications_open": True,
+            "automatic_acceptance": False,
+            "processing_responsibility": "LO",
+        })
+        first = self.effect(version, action, "receipt-replay")
+        receipt = OrganismCommandReceipt.objects.get(
+            actor=self.actor,
+            action=action.value,
+            idempotency_key="s3:effect:receipt-replay",
+        )
+        self.assertNotIn("event_id", receipt.result_payload)
+        self.assertEqual(receipt.result_payload["event_uuid"], str(first.event_uuid))
+        event_count = LivingOrganismEvent.objects.filter(living_organism=self.organism).count()
+
+        replay = self.effect(version, action, "receipt-replay")
+        self.assertEqual(replay, first)
+        self.assertEqual(
+            LivingOrganismEvent.objects.filter(living_organism=self.organism).count(),
+            event_count,
+        )
+        self.assertFalse(hasattr(first, "event_id"))
+        self.assertEqual(withheld_fields(first), ())
+        self.assertIsInstance(first.event_uuid, UUID)
+
+        office = ContextualRoleAssignment.objects.get(
+            membership__identity=self.actor,
+            membership__living_organism=self.organism,
+            role_definition__code="COORDINATOR",
+            role_definition__scope="LIVING_ORGANISM",
+            state="ACTIVE",
+        )
+        OrganismRoleService(
+            authority=S015Authority(provider=_CoordinatorProvider()),
+            clock=lambda: NOW,
+        ).transition_assignment(TransitionAssignmentCommand(
+            credential=self.actor.credential,
+            request_reference="s3:effect:receipt-replay:end-office",
+            idempotency_key="s3:effect:receipt-replay:end-office",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+            assignment_uuid=office.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+        ))
+
+        mismatch = EffectGatewayVersionCommand(
+            credential=self.actor.credential,
+            living_organism_id=self.organism.organism_id,
+            action=action,
+            version_uuid=version.version_uuid,
+            request_reference="s3:effect:receipt-replay",
+            idempotency_key="s3:effect:receipt-replay",
+            occurred_at=NOW,
+            effective_at=NOW + timedelta(minutes=1),
+            received_at=NOW,
+        )
+        with self.assertRaises(S015CommandReplayMismatch):
+            self.service.effect_gateway_version(mismatch)
+        self.assertEqual(
+            LivingOrganismEvent.objects.filter(living_organism=self.organism).count(),
+            event_count,
+        )
+        lost_standing_replay = self.effect(version, action, "receipt-replay")
+        self.assertEqual(lost_standing_replay.event_uuid, WithheldField("event_uuid", "PROCESSING"))
+        self.assertEqual(lost_standing_replay.event_sequence, WithheldField("event_sequence", "PROCESSING"))
+        self.assertEqual(
+            set(withheld_fields(lost_standing_replay)),
+            {
+                WithheldField("event_uuid", "PROCESSING"),
+                WithheldField("event_sequence", "PROCESSING"),
+            },
+        )
 
     def test_incomplete_version_and_unresolved_placeholder_are_separate_refusals(self):
         version = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {})
@@ -1212,7 +1313,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             gateway = seed_test_gateway(cursor, self.ids)
         result = self.submit(applicant)
-        application = Application.objects.get(pk=result.application_id)
+        application = Application.objects.get(application_uuid=result.application_uuid)
         self.assertEqual((application.settings_version_id, application.question_version_id, application.answer), (
             gateway["core_loapplicationsettingsversion"], gateway["core_loapplicationquestionversion"],
             "A test-only applicant answer",
@@ -1262,7 +1363,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                 with self.assertRaisesMessage(S015ApplicationRefused, "answer is invalid"):
                     self.submit(applicant, bad)
                 result = self.submit(applicant, good)
-                application = Application.objects.get(pk=result.application_id)
+                application = Application.objects.get(application_uuid=result.application_uuid)
                 self.assertEqual((application.question_version_id, application.answer), (question.pk, good))
 
     def test_non_coordinator_cannot_change_gateway(self):
@@ -1343,7 +1444,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             inventory = [{"column": name, "pg_type": {"character varying": "varchar",
                          "timestamp with time zone": "timestamptz"}.get(kind, kind)} for name, kind in cursor.fetchall()]
             cursor.execute("SELECT to_jsonb(t), l1_commitment, parts_commitment FROM core_livingorganismevent t "
-                           "WHERE id = %s", [event.pk])
+                           "WHERE event_uuid = %s", [event.event_uuid])
             row, l1, parts = cursor.fetchone()
         row = json.loads(row) if isinstance(row, str) else row
         self.assertEqual(l1, digest("s015r1", l1_preimage("core_livingorganismevent", inventory, row)))

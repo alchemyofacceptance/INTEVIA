@@ -20,6 +20,7 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import S015Authority
 from src.intevia.services.organism_command_support import (
+    ReplayViewer,
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
@@ -31,6 +32,7 @@ from src.intevia.services.organism_command_support import (
     _lock_actor,
     _lock_actor_membership_context,
     _validate_timestamp,
+    WithheldField,
     authority_atomic,
     acquire_organism_command_mutex,
     authority_target_fingerprint,
@@ -81,7 +83,7 @@ class OfficeConsentCommandResult:
     ordinal: int
     recorded_at: datetime
     lineage_reference: str
-    authority_reference: str
+    authority_reference: str | WithheldField
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
@@ -96,6 +98,10 @@ class OfficeConsentCommandResult:
             "proposal_event_uuid": str(self.proposal_event_uuid),
             "recorded_at": canonical_timestamp(self.recorded_at),
         }
+
+    @classmethod
+    def replay_field_audiences(cls, result: "OfficeConsentCommandResult") -> dict[str, str]:
+        return {}
 
 
 class OfficeAppointmentConsentService(_OrganismCommandService):
@@ -142,17 +148,7 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         except ContextualRoleAssignment.DoesNotExist as exc:
             raise S015OfficeConsentNotFound("office nomination not found") from exc
 
-        organism = (
-            LivingOrganism.objects.using(self._alias)
-            .select_for_update()
-            .get(pk=nomination.membership.living_organism_id)
-        )
-        actor_membership, actor_role_refs = _lock_actor_membership_context(
-            database_alias=self._alias,
-            actor_identity_id=actor.identity_id,
-            living_organism_id=organism.organism_id,
-            unavailable=S015OfficeConsentAuthorityUnavailable,
-        )
+        organism = nomination.membership.living_organism
         try:
             proposal = ContextualRoleAssignmentStateEvent.objects.using(self._alias).get(
                 event_uuid=proposal_event_uuid,
@@ -197,9 +193,22 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
             request_reference=request_reference,
             payload_fingerprint=command_fingerprint,
             idempotency_key=idempotency_key,
+            viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
         )
         if replay is not None:
             return replay
+
+        organism = (
+            LivingOrganism.objects.using(self._alias)
+            .select_for_update()
+            .get(pk=nomination.membership.living_organism_id)
+        )
+        actor_membership, actor_role_refs = _lock_actor_membership_context(
+            database_alias=self._alias,
+            actor_identity_id=actor.identity_id,
+            living_organism_id=organism.organism_id,
+            unavailable=S015OfficeConsentAuthorityUnavailable,
+        )
 
         decision = self._evaluate_authority(
             actor=actor,

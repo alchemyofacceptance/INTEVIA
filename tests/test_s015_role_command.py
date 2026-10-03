@@ -16,7 +16,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from queue import Queue
 from threading import Barrier
-from uuid import UUID
+from uuid import UUID, uuid4
 from unittest import skipUnless
 
 from django.db import IntegrityError, close_old_connections, connection, transaction
@@ -46,10 +46,16 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityResponse,
 )
 from src.intevia.services.organism_command_support import (
+    ReplayResultType,
+    ReplayViewer,
     S015CommandReplayMismatch,
+    WithheldField,
     _authority_request,
     authority_target_fingerprint,
+    serve_replay,
+    withheld_fields,
 )
+from src.intevia.services.organism_office_consent_service import OfficeConsentCommandResult
 from src.intevia.services.organism_membership_service import (
     S015OperationNotYetImplemented,
 )
@@ -68,6 +74,54 @@ from src.intevia.services.organism_role_service import (
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "role command slice is PostgreSQL-only")
+
+
+def _event_for_result(result):
+    return ContextualRoleAssignmentStateEvent.objects.get(
+        assignment__assignment_uuid=result.assignment_uuid,
+        lineage_reference=result.lineage_reference,
+    )
+
+
+def _assignment_for_result(result):
+    return ContextualRoleAssignment.objects.get(assignment_uuid=result.assignment_uuid)
+
+
+def _event_id_for_result(result):
+    return _event_for_result(result).pk
+
+
+def _subject_marker(field):
+    return WithheldField(field=field, audience="SUBJECT")
+
+
+class S015HistoricalAuthorityReferenceReplayTests(SimpleTestCase):
+    def test_pk_valued_history_is_withheld_and_uuid_history_is_unchanged(self):
+        base = {
+            "assignment_uuid": uuid4(),
+            "proposal_event_uuid": uuid4(),
+            "consent_uuid": uuid4(),
+            "action": "CONSENT",
+            "ordinal": 1,
+            "recorded_at": T0,
+            "lineage_reference": "lineage:historical-reference",
+            "authority_decision_reference": "decision:historical-reference",
+        }
+        viewer = ReplayViewer(identity_pk=1, identity_id=uuid4(), now=T0)
+        result_type = ReplayResultType(OfficeConsentCommandResult, "default")
+
+        legacy_reference = 's015a1:{"a":17,"e":"application:3"}'
+        legacy = OfficeConsentCommandResult(**base, authority_reference=legacy_reference)
+        served_legacy = serve_replay(legacy, viewer=viewer, result_type=result_type)
+        self.assertEqual(served_legacy.authority_reference, _subject_marker("authority_reference"))
+
+        uuid_reference = (
+            's015a1:{"a":"550e8400-e29b-41d4-a716-446655440000",'
+            '"e":"550e8400-e29b-41d4-a716-446655440000:3"}'
+        )
+        current = OfficeConsentCommandResult(**base, authority_reference=uuid_reference)
+        served_current = serve_replay(current, viewer=viewer, result_type=result_type)
+        self.assertEqual(served_current.authority_reference, uuid_reference)
 
 
 class _ExactProvider:
@@ -595,7 +649,7 @@ class S015RoleCommandTests(TransactionTestCase):
         decision = AuthorityDecision.objects.get(
             decision_reference=result.authority_decision_reference,
         )
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=result.event_id)
+        event = _event_for_result(result)
         self.assertEqual(decision.action, OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value)
         self.assertEqual(decision.target["event_action"], "PROPOSE")
         self.assertEqual(decision.target["living_organism_id"], str(ids["organism_uuid"]))
@@ -640,7 +694,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 received_at=at,
             )
         )
-        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=proposal.event_id)
+        proposal_event = _event_for_result(proposal)
         with connection.cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
             consent_at = cursor.fetchone()[0]
@@ -717,7 +771,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 received_at=proposal_at,
             )
         )
-        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=proposal_result.event_id)
+        proposal_event = _event_for_result(proposal_result)
         with connection.cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
             consent_at = cursor.fetchone()[0]
@@ -751,7 +805,7 @@ class S015RoleCommandTests(TransactionTestCase):
             action="CONSENT",
         ))
         self.assertEqual(
-            ContextualRoleAssignment.objects.get(pk=proposal_result.assignment_id).state,
+            _assignment_for_result(proposal_result).state,
             "PROPOSED",
         )
         with connection.cursor() as cursor:
@@ -774,7 +828,7 @@ class S015RoleCommandTests(TransactionTestCase):
         decision = AuthorityDecision.objects.get(
             decision_reference=assigned.authority_decision_reference,
         )
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=assigned.event_id)
+        event = _event_for_result(assigned)
         facts = json.loads(decision.authority_reference[len("s015a1:"):])
         fact_references = {(fact["relation"], fact["reference"]) for fact in decision.facts_read}
         with connection.cursor() as cursor:
@@ -824,7 +878,7 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_at=proposal_at,
             received_at=proposal_at,
         ))
-        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=proposal.event_id)
+        proposal_event = _event_for_result(proposal)
         assign_at = database_now()
         assigned = self._service(provider).transition_assignment(self._transition_command(
             actor=founder,
@@ -848,7 +902,7 @@ class S015RoleCommandTests(TransactionTestCase):
             ("core_contextualroleassignmentstateevent", str(proposal_event.event_uuid)),
             fact_references,
         )
-        self.assertFalse(OfficeAppointmentConsent.objects.filter(assignment_id=proposal.assignment_id).exists())
+        self.assertFalse(OfficeAppointmentConsent.objects.filter(assignment=_assignment_for_result(proposal)).exists())
 
         with self.assertRaises(S015AuthorityDenied) as late_withdrawal:
             OfficeAppointmentConsentService(
@@ -867,7 +921,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 action="WITHDRAW",
             ))
         self.assertIs(late_withdrawal.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
-        self.assertFalse(OfficeAppointmentConsent.objects.filter(assignment_id=proposal.assignment_id).exists())
+        self.assertFalse(OfficeAppointmentConsent.objects.filter(assignment=_assignment_for_result(proposal)).exists())
 
     def test_self_proposal_withdrawal_blocks_assignment(self):
         from core.models import AuthorityDecision
@@ -896,7 +950,7 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_at=proposal_at,
             received_at=proposal_at,
         ))
-        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=proposal.event_id)
+        proposal_event = _event_for_result(proposal)
         role_service = self._service(provider)
         self.assertEqual(
             [row.assignment_uuid for row in role_service.open_nominations(
@@ -956,7 +1010,7 @@ class S015RoleCommandTests(TransactionTestCase):
         )
         self.assertEqual(
             list(ContextualRoleAssignmentStateEvent.objects.filter(
-                assignment_id=proposal.assignment_id,
+                assignment=_assignment_for_result(proposal),
             ).order_by("sequence").values_list("resulting_state", flat=True)),
             ["PROPOSED"],
         )
@@ -967,7 +1021,7 @@ class S015RoleCommandTests(TransactionTestCase):
         ids, founder, nominee, service, proposal, assigned = self._propose_then_assign(
             label="consent-append-only",
         )
-        consent = OfficeAppointmentConsent.objects.get(assignment_id=proposal.assignment_id)
+        consent = OfficeAppointmentConsent.objects.get(assignment=_assignment_for_result(proposal))
         self.assertLessEqual(consent.effective_at, consent.occurred_at)
         self.assertLessEqual(consent.occurred_at, consent.received_at)
         self.assertLessEqual(consent.received_at, consent.recorded_at)
@@ -1019,7 +1073,7 @@ class S015RoleCommandTests(TransactionTestCase):
                         received_at=proposal_at,
                     )
                 )
-                proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=proposal.event_id)
+                proposal_event = _event_for_result(proposal)
                 consent_service = OfficeAppointmentConsentService(
                     authority=S015Authority(provider=provider, database_alias="default"),
                     clock=lambda: proposal_at,
@@ -1087,13 +1141,13 @@ class S015RoleCommandTests(TransactionTestCase):
                 )
                 expected_actions = ["DECLINE"] if terminal_action == "DECLINE" else ["CONSENT", "WITHDRAW"]
                 self.assertEqual(
-                    list(OfficeAppointmentConsent.objects.filter(assignment_id=proposal.assignment_id)
+                    list(OfficeAppointmentConsent.objects.filter(assignment=_assignment_for_result(proposal))
                          .values_list("action", flat=True)),
                     expected_actions,
                 )
                 self.assertEqual(
                     list(ContextualRoleAssignmentStateEvent.objects.filter(
-                        assignment_id=proposal.assignment_id,
+                        assignment=_assignment_for_result(proposal),
                     ).order_by("sequence").values_list("resulting_state", flat=True)),
                     ["PROPOSED"],
                 )
@@ -1329,7 +1383,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 received_at=at,
             )
         )
-        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(pk=propose_result.event_id)
+        proposal_event = _event_for_result(propose_result)
         with connection.cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
             consent_at = cursor.fetchone()[0]
@@ -1380,7 +1434,7 @@ class S015RoleCommandTests(TransactionTestCase):
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
             effective_until_state="FIXED", effective_until=until,
         )
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        assignment = _assignment_for_result(assign_result)
         events = list(
             ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment).order_by("sequence")
         )
@@ -1388,10 +1442,12 @@ class S015RoleCommandTests(TransactionTestCase):
             OrganismCommandReceipt.objects.filter(actor=founder, action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value)
         )
 
-        self.assertEqual(propose_result.resulting_state, "PROPOSED")
-        self.assertEqual(assign_result.resulting_state, "ACTIVE")
+        self.assertEqual(propose_result.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(assign_result.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(assign_result.event_uuid, _subject_marker("event_uuid"))
+        self.assertEqual(assign_result.event_sequence, _subject_marker("event_sequence"))
         self.assertEqual(assignment.state, "ACTIVE")
-        self.assertEqual(assignment.head_state_event_id, assign_result.event_id)
+        self.assertEqual(assignment.head_state_event_id, _event_id_for_result(assign_result))
         self.assertEqual([event.sequence for event in events], [1, 2])
         self.assertEqual([event.action for event in events], ["PROPOSE", "ASSIGN"])
         self.assertIsNone(events[0].predecessor_id)
@@ -1442,7 +1498,7 @@ class S015RoleCommandTests(TransactionTestCase):
             cursor.execute(
                 "SELECT action, actor_state, actor_id, actor_access_epoch, actor_capacity, enterer_identity_id "
                 "FROM public.core_contextualroleassignmentstateevent WHERE id = ANY(%s) ORDER BY sequence",
-                [[proposal.event_id, appointment.event_id]],
+                [[_event_id_for_result(proposal), _event_id_for_result(appointment)]],
             )
             events = cursor.fetchall()
         self.assertEqual(events, [
@@ -1510,8 +1566,8 @@ class S015RoleCommandTests(TransactionTestCase):
                 effective_until_state="NONE",
             )
         )
-        self.assertEqual(fixed.resulting_state, "PROPOSED")
-        self.assertEqual(open_ended.resulting_state, "PROPOSED")
+        self.assertEqual(fixed.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(open_ended.resulting_state, _subject_marker("resulting_state"))
         self.assertIsNone(open_ended.effective_until)
         after_proposals = self._counts()
 
@@ -1542,9 +1598,9 @@ class S015RoleCommandTests(TransactionTestCase):
                 )
             )
         self.assertEqual(self._counts(), after_proposals)
-        self.assertEqual(ContextualRoleAssignment.objects.get(pk=fixed.assignment_id).state, "PROPOSED")
+        self.assertEqual(_assignment_for_result(fixed).state, "PROPOSED")
         self.assertEqual(
-            ContextualRoleAssignmentStateEvent.objects.filter(assignment_id=fixed.assignment_id).count(), 1,
+            ContextualRoleAssignmentStateEvent.objects.filter(assignment=_assignment_for_result(fixed)).count(), 1,
         )
 
     # R3 — the no-tolling value in the ASSIGN payload and the receipt; a changed term under the
@@ -1587,8 +1643,8 @@ class S015RoleCommandTests(TransactionTestCase):
             received_at=assign_at,
         )
         assign_result = service.transition_assignment(assign_command)
-        self.assertEqual(assign_result.suspension_tolls_term, "NO")
-        self.assertEqual(assign_result.suspension_tolls_term_source, "DEFAULT (no settings store)")
+        self.assertEqual(assign_result.suspension_tolls_term, _subject_marker("suspension_tolls_term"))
+        self.assertEqual(assign_result.suspension_tolls_term_source, _subject_marker("suspension_tolls_term_source"))
         self.assertEqual(assign_result.effective_until_state, "FIXED")
         self.assertEqual(assign_result.effective_until, until)
         receipt = OrganismCommandReceipt.objects.get(
@@ -1599,12 +1655,12 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(receipt.result_payload["suspension_tolls_term"], "NO")
         self.assertEqual(receipt.result_payload["suspension_tolls_term_source"], "DEFAULT (no settings store)")
         self.assertEqual(receipt.result_payload["effective_until_state"], "FIXED")
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=assign_result.event_id)
+        event = _event_for_result(assign_result)
         self.assertEqual(event.payload_fingerprint, receipt.payload_fingerprint)
         with connection.cursor() as cur:
             cur.execute(
                 "SELECT effective_until_state, effective_until FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
-                (assign_result.event_id,),
+                (_event_id_for_result(assign_result),),
             )
             self.assertEqual(cur.fetchone(), ("FIXED", until))
 
@@ -1642,9 +1698,10 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:end:end",
             )
         )
-        self.assertEqual(end_result.resulting_state, "ENDED")
-        self.assertEqual(end_result.event_sequence, 3)
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        self.assertEqual(end_result.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(end_result.event_sequence, _subject_marker("event_sequence"))
+        self.assertEqual(end_result.event_uuid, _subject_marker("event_uuid"))
+        assignment = _assignment_for_result(assign_result)
         events = list(
             ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment).order_by("sequence")
         )
@@ -1666,9 +1723,11 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:reassign:end",
             )
         )
-        self.assertEqual(reassign_result.resulting_state, "ENDED")
+        self.assertEqual(reassign_result.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(reassign_result.effective_until, _subject_marker("effective_until"))
+        self.assertEqual(reassign_result.effective_until_state, _subject_marker("effective_until_state"))
         self.assertEqual(reassign_result.event_action, "REASSIGN")
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        assignment = _assignment_for_result(assign_result)
         self.assertEqual(assignment.state, "ENDED")
         # a fresh appointment is a new anchor (U21g-6): no uniqueness constraint blocks it
         membership = OrganismMembership.objects.get(identity=member, living_organism_id=ids["lo"])
@@ -1681,8 +1740,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:reassign:fresh",
             )
         )
-        self.assertEqual(fresh_result.resulting_state, "PROPOSED")
-        self.assertNotEqual(fresh_result.assignment_id, assign_result.assignment_id)
+        self.assertEqual(fresh_result.resulting_state, _subject_marker("resulting_state"))
         self.assertNotEqual(fresh_result.assignment_uuid, assign_result.assignment_uuid)
 
     # R6 — edges outside the decided set, including PROPOSED -> ENDED and every PROBATIONARY edge,
@@ -1915,7 +1973,7 @@ class S015RoleCommandTests(TransactionTestCase):
                     received_at=NOW,
                 )
             )
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        assignment = _assignment_for_result(assign_result)
         self.assertEqual(assignment.state, "ACTIVE")
         self.assertEqual(self._counts(), before)
 
@@ -1987,7 +2045,7 @@ class S015RoleCommandTests(TransactionTestCase):
             )
         )
 
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=result.event_id)
+        event = _event_for_result(result)
         decision = AuthorityDecision.objects.get(
             decision_reference=result.authority_decision_reference,
         )
@@ -2106,7 +2164,7 @@ class S015RoleCommandTests(TransactionTestCase):
             request_reference="request:production-reassign:permitted",
             idempotency_key="idem:production-reassign:permitted",
         ))
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=result.event_id)
+        event = _event_for_result(result)
         self.assertEqual(event.action, "REASSIGN")
         self.assertEqual(event.prior_state, "ACTIVE")
         self.assertEqual(event.resulting_state, "ENDED")
@@ -2139,7 +2197,7 @@ class S015RoleCommandTests(TransactionTestCase):
             request_reference="request:production-other-end:permitted",
             idempotency_key="idem:production-other-end:permitted",
         ))
-        event = ContextualRoleAssignmentStateEvent.objects.get(pk=result.event_id)
+        event = _event_for_result(result)
         self.assertEqual(event.action, "END")
         self.assertEqual(event.prior_state, "ACTIVE")
         self.assertEqual(event.resulting_state, "ENDED")
@@ -2302,7 +2360,7 @@ class S015RoleCommandTests(TransactionTestCase):
         )
         self.assertEqual(
             list(ContextualRoleAssignmentStateEvent.objects.filter(
-                assignment_id=pending.assignment_id,
+                assignment=_assignment_for_result(pending),
             ).order_by("sequence").values_list("action", flat=True)),
             ["PROPOSE"],
         )
@@ -2391,8 +2449,8 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:founder-later:end",
             )
         )
-        self.assertEqual(end_result.resulting_state, "ENDED")
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        self.assertEqual(end_result.resulting_state, _subject_marker("resulting_state"))
+        assignment = _assignment_for_result(assign_result)
         self.assertEqual(assignment.state, "ENDED")
         # the founding assignment itself is untouched
         founding = ContextualRoleAssignment.objects.get(assignment_uuid=ids["founding_assignment_uuid"])
@@ -2414,6 +2472,18 @@ class S015RoleCommandTests(TransactionTestCase):
         second = service.propose_assignment(propose_command)
         self.assertIsInstance(first, AssignmentCommandResult)
         self.assertEqual(first, second)
+        self.assertIsInstance(first.event_uuid, UUID)
+        self.assertEqual(first.resulting_state, _subject_marker("resulting_state"))
+        self.assertFalse(hasattr(first, "assignment_id"))
+        self.assertFalse(hasattr(first, "event_id"))
+        proposal_receipt = OrganismCommandReceipt.objects.get(
+            actor=founder,
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key="idem:replay:propose",
+        )
+        self.assertNotIn("assignment_id", proposal_receipt.result_payload)
+        self.assertNotIn("event_id", proposal_receipt.result_payload)
+        self.assertIn("event_uuid", proposal_receipt.result_payload)
         self.assertEqual(ContextualRoleAssignment.objects.count(), 2)
         self._record_test_consent(
             provider=service._authority.provider,
@@ -2434,9 +2504,22 @@ class S015RoleCommandTests(TransactionTestCase):
         first_assign = service.transition_assignment(assign_command)
         second_assign = service.transition_assignment(assign_command)
         self.assertEqual(first_assign, second_assign)
+        expected_withheld = {
+            _subject_marker("resulting_state"),
+            _subject_marker("event_uuid"),
+            _subject_marker("event_sequence"),
+            _subject_marker("current_state_effective_at"),
+            _subject_marker("state_known_at"),
+            _subject_marker("state_source_event_set_fingerprint"),
+            _subject_marker("suspension_tolls_term"),
+            _subject_marker("suspension_tolls_term_source"),
+        }
+        self.assertEqual(set(withheld_fields(first_assign)), expected_withheld)
+        self.assertEqual(first_assign.resulting_state, _subject_marker("resulting_state"))
+        self.assertEqual(first_assign.event_uuid, _subject_marker("event_uuid"))
         self.assertEqual(OrganismCommandReceipt.objects.count(), 3)
         self.assertEqual(
-            ContextualRoleAssignmentStateEvent.objects.filter(assignment_id=first.assignment_id).count(),
+            ContextualRoleAssignmentStateEvent.objects.filter(assignment=_assignment_for_result(first)).count(),
             2,
         )
 
@@ -2577,7 +2660,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 )
             )
             proposal_event = ContextualRoleAssignmentStateEvent.objects.get(
-                pk=proposal_result.event_id,
+                pk=_event_id_for_result(proposal_result),
             )
             self._record_test_consent(
                 provider=provider,
@@ -2794,7 +2877,7 @@ class S015RoleCommandTests(TransactionTestCase):
             self.assertEqual(served_from, "CACHE_REQUALIFIED")
             self.assertEqual(fingerprint, assignment.state_source_event_set_fingerprint)
 
-        fold_check(propose_result.assignment_id, "PROPOSED", 1)
+        fold_check(_assignment_for_result(propose_result).pk, "PROPOSED", 1)
         assign_result = service.transition_assignment(
             self._transition_command(
                 actor=founder,
@@ -2806,7 +2889,7 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:cache:assign",
             )
         )
-        fold_check(assign_result.assignment_id, "ACTIVE", 2)
+        fold_check(_assignment_for_result(assign_result).pk, "ACTIVE", 2)
 
     # R15 — assignment_in_effect: in effect before effective_until, not at or after it; the recorded
     # state stays ACTIVE; a NONE term stays in effect.
@@ -2815,7 +2898,7 @@ class S015RoleCommandTests(TransactionTestCase):
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
             label="in-effect", effective_until_state="FIXED", effective_until=until,
         )
-        assignment = ContextualRoleAssignment.objects.get(pk=assign_result.assignment_id)
+        assignment = _assignment_for_result(assign_result)
         self.assertTrue(service.assignment_in_effect(assignment, NOW))
         self.assertFalse(service.assignment_in_effect(assignment, until))
         self.assertFalse(service.assignment_in_effect(assignment, until + timedelta(hours=1)))
@@ -2823,7 +2906,7 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(assignment.state, "ACTIVE")
 
         ids2, founder2, member2, service2, propose2, assign2 = self._propose_then_assign(label="in-effect-open")
-        open_assignment = ContextualRoleAssignment.objects.get(pk=assign2.assignment_id)
+        open_assignment = _assignment_for_result(assign2)
         self.assertTrue(service2.assignment_in_effect(open_assignment, NOW + timedelta(days=365)))
 
     # R17 — a denied authority asking for an undecided edge or a limit gets the authority error,

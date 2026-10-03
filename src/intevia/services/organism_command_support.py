@@ -14,18 +14,26 @@ module (the Reviewer's F1; commission PKT-B S2 §2).
 from __future__ import annotations
 
 import hashlib
+import json
 import unicodedata
 from contextlib import contextmanager
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Literal
 from uuid import UUID
 
 from django.contrib.auth.models import User
 from django.db import connections, transaction
 
 from core.models import (
+    Application,
     ContextualRoleAssignment,
     Identity,
+    IdentityTransition,
+    LOApplicationQuestionVersion,
+    LOApplicationSettingsVersion,
+    LOGovernanceConfigurationVersion,
+    LivingOrganism,
     OrganismCommandReceipt,
     OrganismMembership,
 )
@@ -58,6 +66,158 @@ class S015CommandMutexUnavailable(S015CommandSubstrateError):
 
 class S015CommandReplayMismatch(S015CommandSubstrateError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class WithheldField:
+    field: str
+    audience: Literal["APPLICANT", "PROCESSING", "SUBJECT"]
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayViewer:
+    identity_pk: int
+    identity_id: UUID
+    now: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayResultType:
+    result_class: type
+    database_alias: str
+
+
+def withheld_fields(result: object) -> tuple[WithheldField, ...]:
+    if not is_dataclass(result) or isinstance(result, type):
+        raise TypeError("result must be a dataclass instance")
+    return tuple(
+        value
+        for result_field in fields(result)
+        if isinstance((value := getattr(result, result_field.name)), WithheldField)
+    )
+
+
+def _result_organism_pk(result: object, database_alias: str) -> int | None:
+    if hasattr(result, "application_uuid"):
+        return Application.objects.using(database_alias).filter(
+            application_uuid=result.application_uuid
+        ).values_list("living_organism_id", flat=True).first()
+    if hasattr(result, "membership_uuid"):
+        return OrganismMembership.objects.using(database_alias).filter(
+            membership_uuid=result.membership_uuid
+        ).values_list("living_organism_id", flat=True).first()
+    if hasattr(result, "assignment_uuid"):
+        return ContextualRoleAssignment.objects.using(database_alias).filter(
+            assignment_uuid=result.assignment_uuid
+        ).values_list("membership__living_organism_id", flat=True).first()
+    if hasattr(result, "version_uuid"):
+        for model in (
+            LOApplicationSettingsVersion,
+            LOApplicationQuestionVersion,
+            LOGovernanceConfigurationVersion,
+        ):
+            organism_pk = model.objects.using(database_alias).filter(
+                version_uuid=result.version_uuid
+            ).values_list("living_organism_id", flat=True).first()
+            if organism_pk is not None:
+                return organism_pk
+    return None
+
+
+def _subject_identity_id(result: object, database_alias: str):
+    if hasattr(result, "membership_uuid"):
+        return OrganismMembership.objects.using(database_alias).filter(
+            membership_uuid=result.membership_uuid
+        ).values_list("identity__identity_id", flat=True).first()
+    if hasattr(result, "assignment_uuid"):
+        return ContextualRoleAssignment.objects.using(database_alias).filter(
+            assignment_uuid=result.assignment_uuid
+        ).values_list("membership__identity__identity_id", flat=True).first()
+    return None
+
+
+def _viewer_has_audience(
+    result: object,
+    audience: Literal["APPLICANT", "PROCESSING", "SUBJECT"],
+    viewer: ReplayViewer,
+    database_alias: str,
+) -> bool:
+    if audience == "SUBJECT":
+        return _subject_identity_id(result, database_alias) == viewer.identity_id
+
+    organism_pk = _result_organism_pk(result, database_alias)
+    if organism_pk is None:
+        return False
+    application = None
+    if hasattr(result, "application_uuid"):
+        application = Application.objects.using(database_alias).filter(
+            application_uuid=result.application_uuid,
+        ).first()
+    reader = Identity.objects.using(database_alias).filter(
+        pk=viewer.identity_pk,
+        identity_id=viewer.identity_id,
+    ).first()
+    if reader is None:
+        return False
+    from src.intevia.services.organism_application_reads import _present_application_audiences
+
+    identity_active, applicant, processing = _present_application_audiences(
+        application=application,
+        reader=reader,
+        organism_pk=organism_pk,
+        at=viewer.now,
+        database_alias=database_alias,
+    )
+    if not identity_active:
+        return False
+    return applicant if audience == "APPLICANT" else processing
+
+
+def _has_pk_valued_reference(reference: object) -> bool:
+    if type(reference) is not str or not reference.startswith("s015a1:"):
+        return False
+    try:
+        facts = json.loads(reference[len("s015a1:"):])
+    except (TypeError, ValueError):
+        return False
+    if type(facts) is not dict:
+        return False
+
+    def is_pk(value: object) -> bool:
+        return type(value) is int or (type(value) is str and value.isdecimal())
+
+    if is_pk(facts.get("a")):
+        return True
+    event = facts.get("e")
+    return is_pk(event) or (
+        type(event) is str and ":" in event and is_pk(event.split(":", 1)[0])
+    )
+
+
+def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
+    if not isinstance(viewer, ReplayViewer):
+        raise TypeError("viewer must be a ReplayViewer")
+    if not isinstance(result_type, ReplayResultType):
+        raise TypeError("result_type must be a ReplayResultType")
+    if not is_dataclass(payload) or isinstance(payload, type) or type(payload) is not result_type.result_class:
+        raise TypeError("payload must match result_type")
+    if type(viewer.identity_pk) is not int or type(viewer.identity_id) is not UUID:
+        raise TypeError("viewer identity is invalid")
+    _validate_timestamp(viewer.now, "viewer.now")
+    classifications = result_type.result_class.replay_field_audiences(payload)
+    replacements = {}
+    for field_name, audiences in classifications.items():
+        if type(audiences) is str:
+            audiences = (audiences,)
+        if not any(
+            _viewer_has_audience(payload, audience, viewer, result_type.database_alias)
+            for audience in audiences
+        ):
+            replacements[field_name] = WithheldField(field_name, audiences[0])
+    authority_reference = getattr(payload, "authority_reference", None)
+    if _has_pk_valued_reference(authority_reference):
+        replacements["authority_reference"] = WithheldField("authority_reference", "SUBJECT")
+    return replace(payload, **replacements) if replacements else payload
 
 
 @contextmanager
@@ -222,6 +382,7 @@ def _lock_actor_membership_context(
     actor_identity_id: UUID,
     living_organism_id: UUID,
     unavailable: type[Exception],
+    allow_probationary: bool = False,
 ) -> tuple[OrganismMembership, tuple[str, ...]]:
     try:
         membership = (
@@ -233,7 +394,8 @@ def _lock_actor_membership_context(
         raise unavailable(
             "actor active membership is required"
         ) from exc
-    if membership.state != "ACTIVE" or membership.head_transition_id is None:
+    allowed_states = {"ACTIVE", "PROBATIONARY"} if allow_probationary else {"ACTIVE"}
+    if membership.state not in allowed_states or membership.head_transition_id is None:
         raise unavailable(
             "actor active membership is required"
         )
@@ -248,6 +410,22 @@ def _lock_actor_membership_context(
         )
     )
     return membership, role_refs
+
+
+def _read_actor_active_membership(
+    *,
+    database_alias: str,
+    actor_identity_pk: int,
+    living_organism_pk: int,
+    unavailable: type[Exception],
+) -> OrganismMembership:
+    membership = OrganismMembership.objects.using(database_alias).filter(
+        identity_id=actor_identity_pk,
+        living_organism_id=living_organism_pk,
+    ).first()
+    if membership is None or membership.state != "ACTIVE":
+        raise unavailable("actor active membership is required")
+    return membership
 
 
 def _authority_request(
@@ -403,7 +581,13 @@ class _OrganismCommandService:
             lineage_reference=result.lineage_reference,
             result_payload=result.receipt_payload(),
         )
-        return self._replay_result(receipt.result_payload)
+        replay_result = self._replay_result(receipt.result_payload)
+        viewer = ReplayViewer(actor.pk, actor.identity_id, self._clock())
+        return serve_replay(
+            replay_result,
+            viewer=viewer,
+            result_type=ReplayResultType(type(replay_result), self._alias),
+        )
 
     def _attempt_replay(
         self,
@@ -412,6 +596,7 @@ class _OrganismCommandService:
         request_reference: str,
         payload_fingerprint: str,
         idempotency_key: str,
+        viewer: ReplayViewer,
     ):
         receipt = self._lock_existing_receipt(
             actor=actor,
@@ -421,7 +606,12 @@ class _OrganismCommandService:
         )
         if receipt is None:
             return None
-        return self._replay_result(receipt.result_payload)
+        replay_result = self._replay_result(receipt.result_payload)
+        return serve_replay(
+            replay_result,
+            viewer=viewer,
+            result_type=ReplayResultType(type(replay_result), self._alias),
+        )
 
 
 def _founding_provenance_assignment_id(
@@ -502,6 +692,7 @@ __all__ = [
     "_founding_provenance_assignment_id",
     "_lock_actor",
     "_lock_actor_membership_context",
+    "_read_actor_active_membership",
     "_resulting_temporal_basis",
     "_validate_timestamp",
     "acquire_organism_command_mutex",
