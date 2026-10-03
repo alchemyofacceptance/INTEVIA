@@ -4,13 +4,40 @@ param(
     [switch]$Clone
 )
 
+$environmentNames = @(
+    "INTEVIA_DATABASE_ENGINE",
+    "INTEVIA_S015_TEST_ROUTE",
+    "DJANGO_SETTINGS_MODULE",
+    "INTEVIA_POSTGRES_TEST_DB",
+    "VERIFICATION_RUN_NONCE",
+    "VERIFICATION_DB_RECEIPT",
+    "VERIFICATION_ISOLATION_JSON",
+    "VERIFICATION_EXPECTED_CORE_HEAD",
+    "VERIFICATION_STEP",
+    "VERIFICATION_TEMPLATE_MODE",
+    "VERIFICATION_TEMPLATE_STORE",
+    "VERIFICATION_TEMPLATE_CLEANUP",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED"
+) + @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" } | ForEach-Object { $_.Name })
+$environmentBefore = @(Get-ChildItem Env:)
+$environmentState = @{}
+foreach ($name in $environmentNames | Sort-Object -Unique) {
+    $existing = $environmentBefore | Where-Object { $_.Name -ieq $name } | Select-Object -First 1
+    $environmentState[$name] = [PSCustomObject]@{
+        Name = if ($null -ne $existing) { $existing.Name } else { $name }
+        Present = $null -ne $existing
+        Value = if ($null -ne $existing) { [string]$existing.Value } else { $null }
+    }
+}
+
 $ErrorActionPreference = "Stop"
 $failure = $null
 $runDirectory = $null
 $runNonce = $null
 $teardownCount = 0
 $expectedBranch = "pktb/tt1-template-clones"
-$expectedBaseline = "cf290f29ed24cef01402d5124002a4a2ca24bb16"
+$expectedBaseline = "4fee6699d3e59febec60dfc2d6ef11338e21a16d"
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
 $expectedCoreHead = "0040_s2b_role_actor_nullable_state"
 $pythonSuite = @(
@@ -80,17 +107,18 @@ function Invoke-PythonAndCapture {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
-    $output = @(& python @Arguments 2>&1)
-    $status = $LASTEXITCODE
-    foreach ($item in $output) {
-        $line = [string]$item
+    & python @Arguments 2>&1 | ForEach-Object {
+        $line = [string]$_
         $password = [Environment]::GetEnvironmentVariable("INTEVIA_POSTGRES_PASSWORD")
         if (-not [string]::IsNullOrEmpty($password)) { $line = $line.Replace($password, "[REDACTED]") }
         Add-Content -LiteralPath $LogPath -Value $line -Encoding utf8
         Write-Host $line
-        if ($line -match "Destroying test database for alias") { $script:teardownCount++ }
+        if ($line -match "Destroying test database for alias") {
+            $script:teardownCount = $script:teardownCount + 1
+        }
     }
-    return $status
+    $status = $LASTEXITCODE
+    return [int]$status
 }
 
 function Get-NextVerificationRunNumber {
@@ -248,6 +276,17 @@ catch {
     $password = [Environment]::GetEnvironmentVariable("INTEVIA_POSTGRES_PASSWORD")
     if (-not [string]::IsNullOrEmpty($password)) { $failure = $failure.Replace($password, "[REDACTED]") }
     Write-Output "FAILURE=$failure"
+}
+finally {
+    foreach ($name in $environmentState.Keys) {
+        $saved = $environmentState[$name]
+        if ($saved.Present) {
+            Set-Item -LiteralPath ("Env:{0}" -f $saved.Name) -Value $saved.Value
+        }
+        else {
+            Remove-Item -LiteralPath ("Env:{0}" -f $saved.Name) -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 if ($null -eq $failure) {
