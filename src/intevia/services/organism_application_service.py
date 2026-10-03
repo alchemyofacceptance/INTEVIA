@@ -735,7 +735,9 @@ class OrganismApplicationService:
                 LOApplicationSettingsVersion: {"applications_open", "automatic_acceptance", "processing_responsibility"},
                 LOApplicationQuestionVersion: {"question_text", "answer_format", "options"},
                 LOGovernanceConfigurationVersion: {"cq_active", "inherit_portal_cq_settings",
-                                                   "require_cq_to_change_lo_settings", "require_cq_to_change_application_question"},
+                                                   "require_cq_to_change_lo_settings", "require_cq_to_change_application_question",
+                                                   "coordinator_nomination_policy", "role_suspension_enabled",
+                                                   "suspension_tolls_term"},
             }[model]
             if not isinstance(command.fields, dict) or not command.fields.keys() <= allowed:
                 raise S015ApplicationRefused("invalid gateway draft fields")

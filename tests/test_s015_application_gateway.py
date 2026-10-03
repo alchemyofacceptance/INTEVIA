@@ -7,7 +7,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from unittest import skipUnless
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
@@ -35,7 +35,9 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_membership_service import (
     OrganismMembershipService, OpenMembershipCommand, S015OperationNotYetImplemented,
 )
-from src.intevia.services.organism_role_service import OrganismRoleService, TransitionAssignmentCommand
+from src.intevia.services.organism_role_service import (
+    OrganismRoleService, ProposeAssignmentCommand, TransitionAssignmentCommand,
+)
 from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
 from tests.s015_concurrency_support import (
     ORGANISM_LOCK_RELATIONS,
@@ -303,20 +305,49 @@ class ApplicationGatewayTests(TransactionTestCase):
                          "ACTIVE", other_pk, self.ids["basis"], f"gateway-second:{self.tag}",
                          extra={"reason_class": "TEST"})
             refresh(cursor, "core_organismmembership", member_id)
-            office_uuid = u(f"gateway-office2:{self.tag}")
-            cursor.execute(
-                "INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, "
-                "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
-                "membership_id, role_definition_id) VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) "
-                "RETURNING id",
-                [office_uuid, T0, T0, empty_fp(cursor, "core_contextualroleassignment", office_uuid),
-                 member_id, self.ids["roles"]["COORDINATOR"]],
-            )
-            office_id = cursor.fetchone()[0]
-            append_event(cursor, "core_contextualroleassignmentstateevent", office_id, 1, "ASSIGN", None,
-                         "ACTIVE", other_pk, self.ids["basis"], f"gateway-office2:{self.tag}")
-            refresh(cursor, "core_contextualroleassignment", office_id)
-        return Identity.objects.select_related("credential").get(pk=other_pk)
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        other = Identity.objects.select_related("credential").get(pk=other_pk)
+        role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
+        role_service = OrganismRoleService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: datetime.now(timezone.utc),
+        )
+
+        proposal_at = self._database_now()
+        proposal = role_service.propose_assignment(ProposeAssignmentCommand(
+            credential=other.credential,
+            request_reference=f"gateway:office2:propose:{self.tag}",
+            idempotency_key=f"gateway:office2:propose:key:{self.tag}",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=proposal_at,
+            membership_uuid=UUID(str(member_uuid)),
+            role_definition_uuid=role.role_uuid,
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        assignment_at = self._database_now()
+        role_service.transition_assignment(TransitionAssignmentCommand(
+            credential=self.actor.credential,
+            request_reference=f"gateway:office2:assign:{self.tag}",
+            idempotency_key=f"gateway:office2:assign:key:{self.tag}",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=assignment_at,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        return other
+
+    def _database_now(self):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            return cursor.fetchone()[0]
 
     def _assert_latest_settings_effect(self, version):
         with connection.cursor() as cursor:
@@ -1336,7 +1367,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             idempotency_key=f"loi-w1:{token}:idempotency",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
+            received_at=self._database_now(),
             assignment_uuid=office.assignment_uuid,
             action="END",
             resulting_state="ENDED",
@@ -1354,7 +1385,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         events = ContextualRoleAssignmentStateEvent.objects.filter(assignment=office).order_by("sequence")
         self.assertEqual(
             [(event.action, event.resulting_state) for event in events],
-            [("ASSIGN", "ACTIVE"), ("END", "ENDED")],
+            [("PROPOSE", "PROPOSED"), ("ASSIGN", "ACTIVE"), ("END", "ENDED")],
         )
         self.assertEqual(
             Application.objects.filter(applicant=applicant, living_organism=self.organism).count(),

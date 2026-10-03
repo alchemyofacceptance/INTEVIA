@@ -207,7 +207,15 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
     def _complete_founding(self, *, label):
         with transaction.atomic():
             with connection.cursor() as cur:
-                ids = add_remaining_aggregates(cur, found_nonroot(cur, label), f"{label}-aggregates")
+                ids = found_nonroot(cur, label, codes=["GUARDIAN_FIXTURE"])
+                cur.execute(
+                    "INSERT INTO core_organismroledefinition "
+                    "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                    "VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 1, TRUE, now(), %s)",
+                    (str(uuid4()), ids["lo"]),
+                )
+                # Founding requires the Coordinator definition; these anchor witnesses do not require its office event.
+                ids = add_remaining_aggregates(cur, ids, f"{label}-aggregates")
                 role_uuid = str(uuid4())
                 cur.execute(
                     "INSERT INTO core_organismroledefinition "

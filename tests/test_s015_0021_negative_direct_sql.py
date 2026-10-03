@@ -401,17 +401,28 @@ class Structure(_S015NegativeBase):
                     (au, T0, T0, empty_fp(cur, "core_contextualroleassignment", au), membership, role, circle))
         return cur.fetchone()[0]
 
+    def _non_coordinator_role(self, cur, organism_id):
+        cur.execute(
+            "INSERT INTO core_organismroledefinition "
+            "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+            "VALUES (%s, %s, 'LIVING_ORGANISM', 1, TRUE, now(), %s) RETURNING id",
+            (str(uuid.uuid4()), f"STRUCTURAL_TEST_{fresh()}", organism_id),
+        )
+        return cur.fetchone()[0]
+
     def test_neg_membership_and_role_in_different_organisms(self):
         a, b = self._two()
         def attempt(cur):
-            aid = self._assignment(cur, a["membership"], b["roles"]["COORDINATOR"])
+            role_id = self._non_coordinator_role(cur, b["lo"])
+            aid = self._assignment(cur, a["membership"], role_id)
             append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
         self.refuses(attempt, contains="assignment structure")
 
     def test_neg_scope_circle_mismatch(self):
         a = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
         def attempt(cur):
-            aid = self._assignment(cur, a["membership"], a["roles"]["COORDINATOR"], circle=a["circle"])  # LIVING_ORGANISM scope with a circle
+            role_id = self._non_coordinator_role(cur, a["lo"])
+            aid = self._assignment(cur, a["membership"], role_id, circle=a["circle"])
             append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
         self.refuses(attempt, contains="role scope")
 

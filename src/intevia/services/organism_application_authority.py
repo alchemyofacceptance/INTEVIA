@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -25,6 +25,8 @@ from core.models import (
     LOGovernanceConfigurationVersion,
     OrganismMembership,
     OrganismMembershipTransition,
+    OrganismRoleDefinition,
+    OfficeAppointmentConsent,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
@@ -54,6 +56,12 @@ class GovernedRegistrationFactSource(Protocol):
     ) -> str | None: ...
 
 
+class CoordinatorNominationEntitlementFactSource(Protocol):
+    def reference_at(
+        self, living_organism_id: UUID, effective_at: datetime, evaluated_at: datetime,
+    ) -> str | None: ...
+
+
 class ProductionBirthingFactSource:
     """S3-IL-BIRTH: no governed Birthing representation is installed in this release."""
 
@@ -65,6 +73,13 @@ class ProductionGovernedRegistrationFactSource:
     """S3-IL-REG: identity rows and PROVISION transitions are not governed registration."""
 
     def reference_at(self, _identity_id: UUID, _effective_at: datetime, _evaluated_at: datetime) -> None:
+        return None
+
+
+class ProductionCoordinatorNominationEntitlementFactSource:
+    """No subscription-entitlement source is installed in this release."""
+
+    def reference_at(self, _living_organism_id: UUID, _effective_at: datetime, _evaluated_at: datetime) -> None:
         return None
 
 
@@ -91,6 +106,8 @@ _POST_ACTIONS = {
     OrganismAction.EFFECT_APPLICATION_SETTINGS,
     OrganismAction.EFFECT_APPLICATION_QUESTION,
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+    OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+    OrganismAction.RECORD_OFFICE_CONSENT,
 }
 
 
@@ -176,9 +193,10 @@ def _assignment_term_in_effect(
             [assignment_id, effective_at, evaluated_at, evaluated_at],
         )
         term = cursor.fetchone()
+    if term is None:
+        return False
     return not (
-        term is not None
-        and term[0] == "FIXED"
+        term[0] == "FIXED"
         and term[1] is not None
         and effective_at >= term[1]
     )
@@ -186,7 +204,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R1.0"
+    provider_version = "R2.0"
 
     def __init__(
         self,
@@ -194,12 +212,16 @@ class ProductionApplicationAuthorityProvider:
         database_alias: str = "default",
         birthing_source: BirthingFactSource | None = None,
         registration_source: GovernedRegistrationFactSource | None = None,
+        nomination_entitlement_source: CoordinatorNominationEntitlementFactSource | None = None,
     ) -> None:
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
         self.birthing_source = birthing_source or ProductionBirthingFactSource()
         self.registration_source = registration_source or ProductionGovernedRegistrationFactSource()
+        self.nomination_entitlement_source = (
+            nomination_entitlement_source or ProductionCoordinatorNominationEntitlementFactSource()
+        )
 
     def evaluate_organism_authority(self, request: S015AuthorityRequest) -> S015AuthorityResult:
         if type(request) is S015OwnApplicantAuthorityRequest:
@@ -213,12 +235,25 @@ class ProductionApplicationAuthorityProvider:
 
         if request.command_subtype != request.action.value:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        target_organism_matches = False
+        if request.target is not None and request.living_organism_id is not None:
+            if request.action in {
+                OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+                OrganismAction.RECORD_OFFICE_CONSENT,
+            }:
+                target_organism_matches = (
+                    request.target.get("living_organism_id") == str(request.living_organism_id)
+                )
+            else:
+                target_organism_matches = (
+                    request.target.get("organism_uuid") == request.living_organism_id
+                )
         if (
             request.effective_at is None
             or request.target is None
             or request.living_organism_id is None
             or request.target.get("action") != request.action.value
-            or request.target.get("organism_uuid") != request.living_organism_id
+            or not target_organism_matches
             or authority_target_fingerprint(request.target) != request.target_fingerprint
         ):
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -231,7 +266,22 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.DENIED,
             )
         if type(request) is S015PostFoundingAuthorityRequest:
-            if request.action in _VERSION_SPECS:
+            if request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
+                if (
+                    request.target.get("living_organism_id") != str(request.living_organism_id)
+                    or request.target.get("event_action") not in {"PROPOSE", "ASSIGN", "END", "REASSIGN"}
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.RECORD_OFFICE_CONSENT:
+                if request.target.get("event_action") not in {"CONSENT", "DECLINE", "WITHDRAW"}:
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                for key in ("assignment_uuid", "membership_uuid", "proposal_event_uuid"):
+                    try:
+                        if str(UUID(request.target[key])) != request.target[key]:
+                            raise ValueError
+                    except (KeyError, TypeError, ValueError):
+                        return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action in _VERSION_SPECS:
                 if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif type(request.target.get("application_uuid")) is not UUID:
@@ -268,7 +318,360 @@ class ProductionApplicationAuthorityProvider:
             return self._submit(request, organism)
         if request.action is OrganismAction.WITHDRAW_APPLICATION:
             return self._withdraw(request, organism)
+        if request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
+            return self._qualify_role_proposal(request, organism)
+        if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
+            return self._qualify_office_consent(request, organism)
         return self._coordinator_act(request, organism)
+
+    def _qualify_role_proposal(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        event_action = request.target.get("event_action")
+        if event_action in {"ASSIGN", "END", "REASSIGN"}:
+            return self._qualify_role_transition(request, organism)
+        if event_action != "PROPOSE":
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if not self._lo_capacity(organism, request):
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        lo_state = self._lo_state(organism, request)
+        if lo_state == "DORMANT":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
+        if lo_state == "CLOSED":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
+        if lo_state != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        if self._eligible_coordinator_count(organism, request) == 0:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
+            )
+
+        try:
+            membership_uuid = UUID(request.target["membership_uuid"])
+            role_uuid = UUID(request.target["role_definition_uuid"])
+        except (KeyError, TypeError, ValueError):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        nominee = OrganismMembership.objects.using(self.database_alias).filter(
+            membership_uuid=membership_uuid,
+            living_organism=organism,
+        ).first()
+        role = OrganismRoleDefinition.objects.using(self.database_alias).filter(
+            role_uuid=role_uuid,
+            living_organism=organism,
+            active=True,
+            scope="LIVING_ORGANISM",
+            code="COORDINATOR",
+        ).first()
+        if nominee is None or role is None or _fold_state(
+            self.database_alias, "core_organismmembership", nominee.pk,
+            request.effective_at, request.evaluated_at,
+        ) != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+
+        proposer = OrganismMembership.objects.using(self.database_alias).filter(
+            identity_id=request.actor_pk,
+            living_organism=organism,
+        ).first()
+        if proposer is None or not self._locked_heads_match(request, proposer) or _fold_state(
+            self.database_alias, "core_organismmembership", proposer.pk,
+            request.effective_at, request.evaluated_at,
+        ) != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+
+        configuration = _effective_version(
+            self.database_alias,
+            organism,
+            OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        selected_policy = "C" if configuration is None else (
+            configuration.coordinator_nomination_policy or "C"
+        )
+        if selected_policy not in {"A", "B", "C"}:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        entitlement_reference = self.nomination_entitlement_source.reference_at(
+            organism.organism_id, request.effective_at, request.evaluated_at,
+        )
+        policy = selected_policy
+        if selected_policy in {"A", "B"} and (type(entitlement_reference) is not str or not entitlement_reference):
+            policy = "C"
+
+        proposer_is_nominee = proposer.pk == nominee.pk
+        proposal_route = "SELF_PROPOSAL" if proposer_is_nominee else "MEMBER_NOMINATION"
+        office = None
+        requires_coordinator = policy == "B" or (policy == "C" and not proposer_is_nominee)
+        if requires_coordinator:
+            office = self._effective_coordinator_office(request, proposer)
+            if office is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+            proposal_route = "EFFECTIVE_COORDINATOR"
+        elif policy == "A" and not proposer_is_nominee:
+            proposal_route = "MEMBER_NOMINATION"
+
+        proposer_head = _latest_transition(
+            self.database_alias, OrganismMembershipTransition, "membership_id", proposer.pk,
+            request.effective_at, request.evaluated_at,
+        )
+        nominee_head = _latest_transition(
+            self.database_alias, OrganismMembershipTransition, "membership_id", nominee.pk,
+            request.effective_at, request.evaluated_at,
+        )
+        office_head = None if office is None else _latest_transition(
+            self.database_alias, ContextualRoleAssignmentStateEvent, "assignment_id", office.pk,
+            request.effective_at, request.evaluated_at,
+        )
+        facts = {
+            "m": "-" if proposer_head is None else str(proposer_head.event_uuid),
+            "n": "-" if nominee_head is None else str(nominee_head.event_uuid),
+            "t": proposal_route,
+                "k": policy,
+            "i": entitlement_reference,
+        }
+        if office_head is not None:
+            facts["o"] = str(office_head.event_uuid)
+        if configuration is not None and configuration.coordinator_nomination_policy is not None:
+            facts["c"] = str(configuration.version_uuid)
+        else:
+                facts["d"] = "C"
+        return self._qualified(request, facts)
+
+    def _qualify_role_transition(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        if not self._lo_capacity(organism, request):
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        lo_state = self._lo_state(organism, request)
+        if lo_state == "DORMANT":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
+        if lo_state == "CLOSED":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
+        if lo_state != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        try:
+            assignment_uuid = UUID(request.target["assignment_uuid"])
+        except (KeyError, TypeError, ValueError):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        event_action = request.target.get("event_action")
+        assignment = ContextualRoleAssignment.objects.using(self.database_alias).filter(
+            assignment_uuid=assignment_uuid,
+            membership__living_organism=organism,
+            role_definition__living_organism=organism,
+            role_definition__scope="LIVING_ORGANISM",
+            role_definition__code="COORDINATOR",
+            role_definition__active=True,
+        ).select_related("membership", "role_definition").first()
+        if assignment is None:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        proposal = ContextualRoleAssignmentStateEvent.objects.using(self.database_alias).filter(
+            assignment=assignment,
+            sequence=1,
+            action="PROPOSE",
+            resulting_state="PROPOSED",
+            effective_at__lte=request.effective_at,
+            received_at__lte=request.evaluated_at,
+            recorded_at__lte=request.evaluated_at,
+        ).first()
+        nominee = assignment.membership
+        if event_action == "ASSIGN" and proposal is None:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if _fold_state(
+            self.database_alias, "core_organismmembership", nominee.pk,
+            request.effective_at, request.evaluated_at,
+        ) != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        expected_state = "PROPOSED" if event_action == "ASSIGN" else "ACTIVE"
+        if event_action not in {"ASSIGN", "END", "REASSIGN"} or _fold_state(
+            self.database_alias, "core_contextualroleassignment", assignment.pk,
+            request.effective_at, request.evaluated_at,
+        ) != expected_state:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if event_action == "ASSIGN" and self._eligible_coordinator_count(organism, request) == 0:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
+            )
+
+        actor_membership = OrganismMembership.objects.using(self.database_alias).filter(
+            identity_id=request.actor_pk,
+            living_organism=organism,
+        ).first()
+        if actor_membership is None or not self._locked_heads_match(request, actor_membership) or _fold_state(
+            self.database_alias, "core_organismmembership", actor_membership.pk,
+            request.effective_at, request.evaluated_at,
+        ) != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+
+        holder_act = actor_membership.pk == nominee.pk
+        route = "OFFICE_HOLDER" if holder_act else "EFFECTIVE_COORDINATOR"
+        if event_action != "END" or not holder_act:
+            office = self._effective_coordinator_office(request, actor_membership)
+            if office is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+        else:
+            office = None
+        configuration = _effective_version(
+            self.database_alias,
+            organism,
+            OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        if configuration is not None and configuration.cq_active is True:
+            return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
+
+        facts: dict[str, object] = {
+            "a": str(assignment.assignment_uuid),
+            "g": str(assignment.role_definition.role_uuid),
+            "k": event_action,
+        }
+        if office is not None and office.head_state_event_id is not None:
+            facts["o"] = str(office.head_state_event.event_uuid)
+        if event_action == "ASSIGN":
+            facts["p"] = str(proposal.event_uuid)
+            self_proposal = proposal.actor_id == nominee.identity_id
+            consent_rows = list(OfficeAppointmentConsent.objects.using(self.database_alias).filter(
+                assignment=assignment,
+                proposal_event=proposal,
+                nominee_membership=nominee,
+                effective_at__lte=request.effective_at,
+                recorded_at__lte=request.evaluated_at,
+            ).order_by("ordinal"))
+            if self_proposal:
+                withdrawn = any(row.action == "WITHDRAW" for row in consent_rows)
+                if withdrawn:
+                    facts["u"] = "c:" + str(consent_rows[-1].consent_uuid)
+                    facts.pop("g", None)
+                    return self._refuse(
+                        request,
+                        S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
+                        facts=facts,
+                    )
+                facts["u"] = "e:" + str(proposal.event_uuid)
+            else:
+                latest_consent = consent_rows[-1] if consent_rows else None
+                if latest_consent is None or latest_consent.action != "CONSENT":
+                    if latest_consent is not None:
+                        facts["u"] = "c:" + str(latest_consent.consent_uuid)
+                    facts.pop("g", None)
+                    return self._refuse(
+                        request,
+                        S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
+                        facts=facts,
+                    )
+                facts["u"] = "c:" + str(latest_consent.consent_uuid)
+        return self._qualified(request, facts)
+
+    def _qualify_office_consent(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        if not self._lo_capacity(organism, request):
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        lo_state = self._lo_state(organism, request)
+        if lo_state == "DORMANT":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
+        if lo_state == "CLOSED":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
+        if lo_state != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+        try:
+            assignment_uuid = UUID(request.target["assignment_uuid"])
+            membership_uuid = UUID(request.target["membership_uuid"])
+            proposal_event_uuid = UUID(request.target["proposal_event_uuid"])
+        except (KeyError, TypeError, ValueError):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        assignment = ContextualRoleAssignment.objects.using(self.database_alias).filter(
+            assignment_uuid=assignment_uuid,
+            membership__living_organism=organism,
+            role_definition__living_organism=organism,
+            role_definition__scope="LIVING_ORGANISM",
+            role_definition__code="COORDINATOR",
+            role_definition__active=True,
+        ).select_related("membership", "role_definition").first()
+        nominee = OrganismMembership.objects.using(self.database_alias).filter(
+            membership_uuid=membership_uuid,
+            living_organism=organism,
+        ).first()
+        proposal = ContextualRoleAssignmentStateEvent.objects.using(self.database_alias).filter(
+            event_uuid=proposal_event_uuid,
+            assignment=assignment,
+            sequence=1,
+            action="PROPOSE",
+            resulting_state="PROPOSED",
+            effective_at__lte=request.effective_at,
+            received_at__lte=request.evaluated_at,
+            recorded_at__lte=request.evaluated_at,
+        ).first() if assignment is not None else None
+        if (
+            assignment is None
+            or nominee is None
+            or assignment.membership_id != nominee.pk
+            or proposal is None
+            or _fold_state(
+                self.database_alias, "core_organismmembership", nominee.pk,
+                request.effective_at, request.evaluated_at,
+            ) != "ACTIVE"
+            or nominee.identity_id != request.actor_pk
+        ):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        event_action = request.target["event_action"]
+        prior_rows = list(OfficeAppointmentConsent.objects.using(self.database_alias).filter(
+            assignment=assignment,
+            proposal_event=proposal,
+            nominee_membership=nominee,
+            effective_at__lte=request.effective_at,
+            recorded_at__lte=request.evaluated_at,
+        ).order_by("ordinal"))
+        prior_action = prior_rows[-1].action if prior_rows else None
+        decision_facts: dict[str, object] = {
+            "a": str(assignment.assignment_uuid),
+            "p": str(proposal.event_uuid),
+        }
+        if prior_rows:
+            decision_facts["w"] = str(prior_rows[-1].consent_uuid)
+        appointment_event = ContextualRoleAssignmentStateEvent.objects.using(self.database_alias).filter(
+            assignment=assignment,
+            action="ASSIGN",
+            effective_at__lte=request.effective_at,
+            recorded_at__lte=request.evaluated_at,
+        ).order_by("sequence").first()
+        if appointment_event is not None:
+            decision_facts["o"] = str(appointment_event.event_uuid)
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.DENIED,
+                facts=decision_facts,
+            )
+        self_proposal = proposal.actor_id == nominee.identity_id
+        if self_proposal:
+            permitted = event_action == "WITHDRAW" and prior_action is None
+        elif prior_action is None:
+            permitted = event_action in {"CONSENT", "DECLINE"}
+        else:
+            permitted = prior_action == "CONSENT" and event_action == "WITHDRAW"
+        if not permitted:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
+                facts=decision_facts,
+            )
+        role = assignment.role_definition
+        qualified_facts: dict[str, object] = {
+            **decision_facts,
+            "g": str(role.role_uuid),
+            "k": event_action,
+            "u": str(nominee.membership_uuid),
+        }
+        if prior_rows:
+            qualified_facts["w"] = str(prior_rows[-1].consent_uuid)
+        return self._qualified(request, qualified_facts)
 
     def _identity_active(self, request: S015AuthorityRequest) -> bool:
         identity = Identity.objects.using(self.database_alias).filter(
@@ -288,6 +691,8 @@ class ProductionApplicationAuthorityProvider:
         request: S015AuthorityRequest,
         code: S015AuthorityRefusalCode,
         disclosed: S015AuthorityRefusalCode | None = None,
+        *,
+        facts: dict[str, object] | None = None,
     ) -> S015AuthorityResult:
         if disclosed is None:
             if code in {
@@ -309,7 +714,10 @@ class ProductionApplicationAuthorityProvider:
         fields = asdict(request)
         fields["refusal_code"] = code
         fields["disclosed_refusal_code"] = disclosed
-        fields["authority_reference"] = "s015a1:" + canonical_json_bytes({"x": code.value}).decode("utf-8")
+        authority_facts = {"x": code.value}
+        if facts:
+            authority_facts.update(facts)
+        fields["authority_reference"] = "s015a1:" + canonical_json_bytes(authority_facts).decode("utf-8")
         if type(request) is S015OwnApplicantAuthorityRequest:
             return S015OwnApplicantAuthorityRefusal(**fields)
         return S015PostFoundingAuthorityRefusal(**fields)
@@ -357,7 +765,11 @@ class ProductionApplicationAuthorityProvider:
             organism.organism_id, effective_at, evaluated_at,
         )
         if type(birthing_reference) is not str or not birthing_reference:
-            return self._refuse(request, S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN)
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN,
+                facts={"b": None},
+            )
         if self._lo_state(organism, request) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN)
         configuration = _effective_version(
@@ -557,7 +969,17 @@ class ProductionApplicationAuthorityProvider:
         ).exists()
         if not founding:
             return False
-        return self._lo_state(organism, request) != "CLOSED"
+        if self._lo_state(organism, request) != "CLOSED":
+            return True
+        # A closure at the act's exact effective time retains capacity for that coordinate.
+        state_before_act = _fold_state(
+            self.database_alias,
+            "core_livingorganism",
+            organism.pk,
+            request.effective_at - timedelta(microseconds=1),
+            request.evaluated_at,
+        )
+        return state_before_act != "CLOSED"
 
     def _locked_heads_match(
         self,
@@ -805,7 +1227,7 @@ class ProductionApplicationAuthorityProvider:
             self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
             request.effective_at, request.evaluated_at,
         )
-        settings = _effective_version(
+        settings = None if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION else _effective_version(
             self.database_alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
             request.effective_at, request.evaluated_at,
         )
@@ -843,6 +1265,7 @@ class ProductionApplicationAuthorityProvider:
             if configuration.cq_active is True and cq_required is True:
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
             route_basis = "CQ_INACTIVE" if configuration.cq_active is not True else "CHANGE_FLAG_NO"
+        nomination_entitlement_reference = None
         if request.version_uuid is not None:
             model, prefix = _VERSION_SPECS[request.action]
             candidate = model.objects.using(self.database_alias).filter(
@@ -869,11 +1292,35 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             if request.version_kind == "EFFECT" and not self._version_complete(candidate):
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+            if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
+                policy = candidate.coordinator_nomination_policy or "C"
+                if policy not in {"A", "B", "C"}:
+                    return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+                if policy in {"A", "B"}:
+                    reference = self.nomination_entitlement_source.reference_at(
+                        organism.organism_id, request.effective_at, request.evaluated_at,
+                    )
+                    if type(reference) is not str or not reference:
+                        refusal_facts = self._coordinator_facts(
+                            request, membership, office, configuration, settings,
+                        )
+                        refusal_facts.pop("s", None)
+                        refusal_facts.update({"i": None, "v": str(candidate.version_uuid)})
+                        return self._refuse(
+                            request,
+                            S015AuthorityRefusalCode.E_NOMINATION_POLICY_NOT_ENTITLED,
+                            facts=refusal_facts,
+                        )
+                    nomination_entitlement_reference = reference
         facts = self._coordinator_facts(request, membership, office, configuration, settings)
+        if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
+            facts.pop("s", None)
         facts.update({
             "t": route_basis,
             "v": "-" if request.version_uuid is None else str(request.version_uuid),
         })
+        if nomination_entitlement_reference is not None:
+            facts["i"] = nomination_entitlement_reference
         return self._qualified(request, facts)
 
     def _coordinator_facts(

@@ -64,6 +64,9 @@ class S015AuthorityRefusalCode(str, Enum):
     C_LO_PAUSED = "C_LO_PAUSED"
     C_LO_CLOSED = "C_LO_CLOSED"
     C_LO_NO_CAPACITY = "C_LO_NO_CAPACITY"
+    C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED = "C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED"
+    E_NOMINATION_POLICY_NOT_ENTITLED = "E_NOMINATION_POLICY_NOT_ENTITLED"
+    C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN = "C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN"
     UNRECOGNISED_ACTION = "UNRECOGNISED_ACTION"
     UNRECOGNISED_ROUTE = "UNRECOGNISED_ROUTE"
 
@@ -432,6 +435,8 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.EFFECT_APPLICATION_SETTINGS,
     OrganismAction.EFFECT_APPLICATION_QUESTION,
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+    OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+    OrganismAction.RECORD_OFFICE_CONSENT,
 })
 
 
@@ -474,11 +479,28 @@ def _facts_read(request: S015AuthorityRequest, authority_reference: str | None) 
         raise S015AuthorityMalformed("structured authority reference is invalid") from exc
     if type(content) is not dict:
         raise S015AuthorityMalformed("structured authority reference must be an object")
+    if (
+        request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE
+        and (request.target or {}).get("event_action") == "PROPOSE"
+        and content.get("k") in {"A", "B", "C"}
+        and "g" not in content
+    ):
+        role_uuid = (request.target or {}).get("role_definition_uuid")
+        if role_uuid is not None:
+            facts.append({
+                "relation": "core_organismroledefinition",
+                "reference": str(role_uuid),
+                "eligible_at": eligible_at,
+            })
 
     prefix = {
         "b": ("s3_il_birthing_fact_source", None),
         "c": ("core_logovernanceconfigurationversion", "governance-configuration-version:"),
+        "d": ("s2b_coordinator_nomination_policy_default", None),
+        "g": ("core_organismroledefinition", None),
+        "i": ("s2b_coordinator_nomination_entitlement", None),
         "m": ("core_organismmembershiptransition", None),
+        "n": ("core_organismmembershiptransition", None),
         "o": ("core_contextualroleassignmentstateevent", None),
         "p": ("core_application", None),
         "e": ("core_applicationengagement", None),
@@ -488,16 +510,65 @@ def _facts_read(request: S015AuthorityRequest, authority_reference: str | None) 
         "v": (_version_relation(request.action), _version_reference_prefix(request.action)),
         "a": (_assignment_or_application_relation(request.action), None),
     }
+    if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
+        prefix.update({
+            "a": ("core_contextualroleassignment", None),
+            "g": ("core_organismroledefinition", None),
+            "p": ("core_contextualroleassignmentstateevent", None),
+            "u": ("core_organismmembership", None),
+        })
+    elif request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
+        prefix.update({
+            "a": ("core_contextualroleassignment", None),
+            "g": ("core_organismroledefinition", None),
+            "p": ("core_contextualroleassignmentstateevent", None),
+        })
     for key, value in content.items():
+        if key == "k" and request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE and (
+            request.target or {}
+        ).get("event_action") == "PROPOSE":
+            facts.append({
+                "relation": "s2b_coordinator_nomination_policy",
+                "reference": str(value),
+                "eligible_at": eligible_at,
+            })
+            continue
         if key in {"k", "t", "x"}:
             continue
-        if value in {None, "-"}:
+        if key == "u" and request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
+            if type(value) is not str:
+                raise S015AuthorityMalformed("structured consent reference is invalid")
+            if value.startswith("c:"):
+                facts.append({
+                    "relation": "core_officeappointmentconsent",
+                    "reference": value[2:],
+                    "eligible_at": eligible_at,
+                })
+                continue
+            if value.startswith("e:"):
+                facts.append({
+                    "relation": "core_contextualroleassignmentstateevent",
+                    "reference": value[2:],
+                    "eligible_at": eligible_at,
+                })
+                continue
+            raise S015AuthorityMalformed("structured consent reference is invalid")
+        if key == "w" and request.action is OrganismAction.RECORD_OFFICE_CONSENT:
+            if type(value) is not str:
+                raise S015AuthorityMalformed("prior consent reference is invalid")
+            facts.append({
+                "relation": "core_officeappointmentconsent",
+                "reference": value,
+                "eligible_at": eligible_at,
+            })
             continue
         if key not in prefix:
             raise S015AuthorityMalformed("structured authority reference has an unknown fact key")
+        if value == "-":
+            continue
         relation, reference_prefix = prefix[key]
-        reference = str(value)
-        if reference_prefix is not None and not reference.startswith(reference_prefix):
+        reference = None if value is None else str(value)
+        if reference is not None and reference_prefix is not None and not reference.startswith(reference_prefix):
             reference = reference_prefix + reference
         facts.append({"relation": relation, "reference": reference, "eligible_at": eligible_at})
     return facts
@@ -666,8 +737,13 @@ class S015Authority:
             )
             if type(disclosed_refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("disclosed refusal code is invalid")
+            message = (
+                "the required recovery route is not yet implemented"
+                if disclosed_refusal_code is S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED
+                else "organism authority denied"
+            )
             raise S015AuthorityDenied(
-                "organism authority denied",
+                message,
                 refusal_code=result.refusal_code,
                 disclosed_refusal_code=disclosed_refusal_code,
                 authority_decision_reference=decision_reference,

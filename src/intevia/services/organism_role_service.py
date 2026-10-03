@@ -75,6 +75,7 @@ src/intevia/services/organism_membership_service.py and is untouched (the Review
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -87,6 +88,8 @@ from core.models import (
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
     Identity,
+    LivingOrganism,
+    OfficeAppointmentConsent,
     OrganismMembership,
     OrganismRoleDefinition,
 )
@@ -106,6 +109,7 @@ from src.intevia.services.organism_command_support import (
     _OrganismCommandService,
     _resulting_temporal_basis,
     _validate_timestamp,
+    authority_atomic,
     acquire_organism_command_mutex,
     authority_target_fingerprint,
     canonical_json_bytes,
@@ -549,11 +553,11 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
     def propose_assignment(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
-        with transaction.atomic(using=self._alias):
+        with authority_atomic(self._alias):
             return self._execute_propose(command)
 
     def transition_assignment(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
-        with transaction.atomic(using=self._alias):
+        with authority_atomic(self._alias):
             return self._execute_transition(command)
 
     def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime) -> bool:
@@ -567,6 +571,41 @@ class OrganismRoleService(_OrganismCommandService):
         if term is not None and term[0] == "FIXED" and term[1] is not None and moment >= term[1]:
             return False
         return assignment.state == "ACTIVE"
+
+    def open_nominations(
+        self,
+        living_organism_uuid: UUID,
+        *,
+        effective_at: datetime,
+        known_at: datetime,
+    ) -> list[ContextualRoleAssignment]:
+        """Return PROPOSED offices not closed by a terminal nominee act at these coordinates."""
+        organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
+        effective_moment = _validate_timestamp(effective_at, "effective_at")
+        known_moment = _validate_timestamp(known_at, "known_at")
+        try:
+            organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
+        except LivingOrganism.DoesNotExist:
+            return []
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT a.id FROM public.core_contextualroleassignment a "
+                "JOIN public.core_organismmembership m ON m.id = a.membership_id "
+                "CROSS JOIN LATERAL public.s015_effective_state("
+                "'core_contextualroleassignment', a.id, %s, %s) folded "
+                "WHERE m.living_organism_id = %s AND folded.projection = 'PROPOSED' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM public.core_officeappointmentconsent c "
+                "WHERE c.assignment_id = a.id AND c.action IN ('DECLINE', 'WITHDRAW') "
+                "AND c.effective_at <= %s AND c.recorded_at <= %s) "
+                "ORDER BY a.id",
+                [effective_moment, known_moment, organism.pk, effective_moment, known_moment],
+            )
+            assignment_ids = [row[0] for row in cursor.fetchall()]
+        assignments = ContextualRoleAssignment.objects.using(self._alias).filter(
+            pk__in=assignment_ids,
+        ).select_related("membership", "role_definition").order_by("id")
+        return list(assignments)
 
     def _execute_propose(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
@@ -614,6 +653,7 @@ class OrganismRoleService(_OrganismCommandService):
         target = {
             "action": _ACTION.value,
             "circle": None,
+            "event_action": "PROPOSE",
             "effective_until": None if effective_until is None else canonical_timestamp(effective_until),
             "effective_until_state": effective_until_state,
             "living_organism_id": str(organism.organism_id),
@@ -662,6 +702,9 @@ class OrganismRoleService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             target_fingerprint=target_fingerprint,
             received_at=received_at,
+            effective_at=effective_at,
+            target=target,
+            living_organism_id=organism.organism_id,
         )
 
         basis_id = organism.founding_authority_basis_id
@@ -798,13 +841,25 @@ class OrganismRoleService(_OrganismCommandService):
         try:
             assignment = (
                 ContextualRoleAssignment.objects.using(self._alias)
-                .select_for_update()
                 .select_related("membership__living_organism", "role_definition")
                 .get(assignment_uuid=assignment_uuid)
             )
         except ContextualRoleAssignment.DoesNotExist as exc:
             raise S015AssignmentNotFound("assignment not found") from exc
-        organism = assignment.membership.living_organism
+        if event_action == "ASSIGN":
+            organism = (
+                LivingOrganism.objects.using(self._alias)
+                .select_for_update()
+                .get(pk=assignment.membership.living_organism_id)
+            )
+        else:
+            assignment = (
+                ContextualRoleAssignment.objects.using(self._alias)
+                .select_for_update()
+                .select_related("membership__living_organism", "role_definition")
+                .get(pk=assignment.pk)
+            )
+            organism = assignment.membership.living_organism
         actor_membership, actor_role_refs = _lock_actor_membership_context(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
@@ -871,7 +926,25 @@ class OrganismRoleService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             target_fingerprint=target_fingerprint,
             received_at=received_at,
+            effective_at=effective_at,
+            target=target,
+            living_organism_id=organism.organism_id,
+            assignment_uuid=assignment_uuid,
         )
+
+        if event_action == "ASSIGN":
+            assignment = (
+                ContextualRoleAssignment.objects.using(self._alias)
+                .select_for_update()
+                .select_related("membership", "role_definition")
+                .get(pk=assignment.pk)
+            )
+            self._verify_assign_consent(
+                assignment=assignment,
+                effective_at=effective_at,
+                evaluated_at=received_at,
+                authority_reference=decision.authority_reference,
+            )
 
         # Every refusal that reads the target's state sits after authority (the d6af911 order).
         # IL-6 and IL-8 bind every act on an office, not only its proposal (the Reviewer's S2 F2):
@@ -963,6 +1036,51 @@ class OrganismRoleService(_OrganismCommandService):
             result=result,
         )
 
+    def _verify_assign_consent(
+        self,
+        *,
+        assignment: ContextualRoleAssignment,
+        effective_at: datetime,
+        evaluated_at: datetime,
+        authority_reference: str,
+    ) -> None:
+        proposal = ContextualRoleAssignmentStateEvent.objects.using(self._alias).filter(
+            assignment=assignment,
+            sequence=1,
+            action="PROPOSE",
+        ).first()
+        if proposal is None:
+            raise S015AssignmentNotFound("office nomination proposal not found")
+        if proposal.actor_id == assignment.membership.identity_id:
+            withdrawn = OfficeAppointmentConsent.objects.using(self._alias).filter(
+                assignment=assignment,
+                proposal_event=proposal,
+                action="WITHDRAW",
+                effective_at__lte=effective_at,
+                recorded_at__lte=evaluated_at,
+            ).exists()
+            expected_reference = None if withdrawn else "e:" + str(proposal.event_uuid)
+        else:
+            rows = list(OfficeAppointmentConsent.objects.using(self._alias).filter(
+                assignment=assignment,
+                proposal_event=proposal,
+                nominee_membership=assignment.membership,
+                effective_at__lte=effective_at,
+                recorded_at__lte=evaluated_at,
+            ).order_by("ordinal"))
+            latest = rows[-1] if rows else None
+            expected_reference = (
+                "c:" + str(latest.consent_uuid)
+                if latest is not None and latest.action == "CONSENT"
+                else None
+            )
+        try:
+            facts = json.loads(authority_reference[len("s015a1:"):])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise S015AssignmentEdgeRefused("ASSIGN authority did not name its consent fact") from exc
+        if expected_reference is None or facts.get("u") != expected_reference:
+            raise S015AssignmentEdgeRefused("ASSIGN consent is absent or withdrawn")
+
     def _write_event(
         self,
         *,
@@ -989,6 +1107,7 @@ class OrganismRoleService(_OrganismCommandService):
             effective_at=effective_at,
             received_at=received_at,
         )
+        living_organism_act = event_action in {"ASSIGN", "END", "REASSIGN"}
         lineage_reference = f"s015l1:{hashlib.sha256(_LINEAGE_SCHEMA.encode('utf-8') + canonical_json_bytes({
             'action': _ACTION.value,
             'actor_access_epoch': actor.access_epoch,
@@ -1011,8 +1130,8 @@ class OrganismRoleService(_OrganismCommandService):
             predecessor_id=predecessor.pk if predecessor is not None else None,
             predecessor_sequence=predecessor.sequence if predecessor is not None else None,
             action=event_action,
-            actor_id=actor.pk,
-            actor_state="PARTY",
+            actor_id=None if living_organism_act else actor.pk,
+            actor_state="LIVING_ORGANISM" if living_organism_act else "PARTY",
             actor_capacity="STANDING",
             enterer_identity_id=actor.pk,
             entry_mode="TRANSPORT",
@@ -1024,7 +1143,7 @@ class OrganismRoleService(_OrganismCommandService):
             effective_until_state=effective_until_state,
             l1_commitment=None,
             l2_commitment=None,
-            actor_access_epoch=actor.access_epoch,
+            actor_access_epoch=None if living_organism_act else actor.access_epoch,
             authority_basis_id=basis_id,
             authority_decision_reference=decision.authority_decision_reference,
             evidence_reference=decision.authority_reference,

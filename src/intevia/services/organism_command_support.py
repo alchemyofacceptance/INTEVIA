@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable
 from uuid import UUID
 
 from django.contrib.auth.models import User
-from django.db import connections
+from django.db import connections, transaction
 
 from core.models import (
     ContextualRoleAssignment,
@@ -32,6 +33,7 @@ from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision,
     S015Authority,
+    S015AuthorityDenied,
     S015PostFoundingAuthorityRequest,
     authority_target_fingerprint,
     canonical_json_bytes,
@@ -56,6 +58,18 @@ class S015CommandMutexUnavailable(S015CommandSubstrateError):
 
 class S015CommandReplayMismatch(S015CommandSubstrateError):
     pass
+
+
+@contextmanager
+def authority_atomic(database_alias: str):
+    refusal = None
+    with transaction.atomic(using=database_alias):
+        try:
+            yield
+        except S015AuthorityDenied as exc:
+            refusal = exc
+    if refusal is not None:
+        raise refusal
 
 
 def _canonical_key(value: object, name: str, maximum: int) -> str:
@@ -348,6 +362,10 @@ class _OrganismCommandService:
         idempotency_key: str,
         target_fingerprint: str,
         received_at: datetime,
+        effective_at: datetime | None = None,
+        target: dict[str, object] | None = None,
+        living_organism_id: UUID | None = None,
+        assignment_uuid: UUID | None = None,
     ) -> QualifiedS015AuthorityDecision:
         request = _authority_request(
             database_alias=self._alias,
@@ -359,6 +377,10 @@ class _OrganismCommandService:
             idempotency_key=idempotency_key,
             received_at=received_at,
             target_fingerprint=target_fingerprint,
+            effective_at=effective_at,
+            target=target,
+            living_organism_id=living_organism_id,
+            assignment_uuid=assignment_uuid,
         )
         return self._authority.qualify(request)
 

@@ -44,6 +44,12 @@ from django.db import connection
 #         0032: 393 - replaces one function body; adds or removes no triggers [D]
 #         0033: 395 - two engagement-basis triggers added; decision trigger is rebound in place [D]
 #         0034: 398 - one decision insert, one update/delete, and one truncate guard added [D]
+#         0035: 398 - widens the role-chain actor-state CHECK and changes its capacity-state CHECK; adds or removes no triggers [D]
+#         0036: 401 - adds role capacity and attribution guards plus the membership proposed-end actor guard [D]
+#         0037: 405 - adds consent insert, append-only update/delete, truncate, and ASSIGN-consent guards [D]
+#         0038: 405 - adds the nullable Coordinator nomination-policy field; no triggers added [D]
+#         0039: 405 - adds two nullable role-suspension settings; no triggers added [D]
+#         0040: 405 - state-only; columns relaxed by 0022
 # REQ-G1  the twelve required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -76,7 +82,13 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0031_s1fu_admission_actor_requirement": 393,
                           "0032_s015_register_cleanup_nonblocking": 393,
                           "0033_s015_application_authority": 395,
-                          "0034_s015_authority_decisions": 398}
+                          "0034_s015_authority_decisions": 398,
+                          "0035_s015_role_chain_actor_capacity": 398,
+                          "0036_s2b_role_attribution_guards": 401,
+                          "0037_s2b_office_appointment_consent": 405,
+                          "0038_s2b_coordinator_nomination_policy": 405,
+                          "0039_s2b_role_suspension_settings": 405,
+                          "0040_s2b_role_actor_nullable_state": 405}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 

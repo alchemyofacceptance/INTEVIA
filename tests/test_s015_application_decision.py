@@ -145,19 +145,53 @@ class ApplicationDecisionTests(TransactionTestCase):
                          "ACTIVE", other_pk, self.ids["basis"], f"second:{self.tag}",
                          extra={"reason_class": "TEST"})
             refresh(cursor, "core_organismmembership", member_id)
-            office_uuid = u(f"office:coordinator2:{self.tag}")
-            cursor.execute(
-                "INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, "
-                "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
-                "membership_id, role_definition_id) VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                [office_uuid, T0, T0, empty_fp(cursor, "core_contextualroleassignment", office_uuid),
-                 member_id, self.ids["roles"]["COORDINATOR"]],
-            )
-            office_id = cursor.fetchone()[0]
-            append_event(cursor, "core_contextualroleassignmentstateevent", office_id, 1,
-                         "ASSIGN", None, "ACTIVE", other_pk, self.ids["basis"], f"office2:{self.tag}")
-            refresh(cursor, "core_contextualroleassignment", office_id)
-        return Identity.objects.select_related("credential").get(pk=other_pk)
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService,
+            ProposeAssignmentCommand,
+            TransitionAssignmentCommand,
+        )
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+        from core.models import OrganismRoleDefinition
+
+        other = Identity.objects.select_related("credential").get(pk=other_pk)
+        role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
+        role_service = OrganismRoleService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: datetime.now(timezone.utc),
+        )
+        def database_now():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT clock_timestamp()")
+                return cursor.fetchone()[0]
+
+        proposal_received_at = database_now()
+        proposal = role_service.propose_assignment(ProposeAssignmentCommand(
+            credential=other.credential,
+            request_reference=f"s3:office2:propose:{self.tag}",
+            idempotency_key=f"s3:office2:propose:key:{self.tag}",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=proposal_received_at,
+            membership_uuid=UUID(member_uuid),
+            role_definition_uuid=role.role_uuid,
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        assignment_received_at = database_now()
+        role_service.transition_assignment(TransitionAssignmentCommand(
+            credential=self.coordinator.credential,
+            request_reference=f"s3:office2:assign:{self.tag}",
+            idempotency_key=f"s3:office2:assign:key:{self.tag}",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=assignment_received_at,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        return other
 
     def test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence(self):
         head = current_core_leaf(connection)

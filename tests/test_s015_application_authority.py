@@ -42,6 +42,7 @@ from core.models import (
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_authority import (
+    _assignment_term_in_effect,
     ProductionApplicationAuthorityProvider,
 )
 from src.intevia.services.organism_application_service import (
@@ -117,6 +118,18 @@ class TestFixtureGovernedRegistrationFactSource:
         return None if fixture is None else f"identity-transition:{fixture.pk}"
 
 
+class TestFixtureCoordinatorNominationEntitlementFactSource:
+    """TEST FIXTURE ONLY: supplies a labelled subscription entitlement reference."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+
+    def reference_at(self, living_organism_id, effective_at, evaluated_at):
+        if not self.enabled or type(effective_at) is not datetime or type(evaluated_at) is not datetime:
+            return None
+        return living_organism_id.hex
+
+
 @POSTGRES_ONLY
 class ProductionApplicationAuthorityTests(TransactionTestCase):
     def setUp(self):
@@ -163,11 +176,12 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             cursor.execute("SELECT clock_timestamp()")
             self.now = cursor.fetchone()[0]
 
-    def _service(self, *, birthing_source=None, registration_source=None):
+    def _service(self, *, birthing_source=None, registration_source=None, nomination_entitlement_source=None):
         self._capture_database_now()
         provider = ProductionApplicationAuthorityProvider(
             birthing_source=birthing_source,
             registration_source=registration_source,
+            nomination_entitlement_source=nomination_entitlement_source,
         )
         return OrganismApplicationService(
             authority=S015Authority(provider=provider),
@@ -246,6 +260,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
 
     def _add_second_coordinator(self, suffix, *, include_office=True):
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService,
+            ProposeAssignmentCommand,
+            TransitionAssignmentCommand,
+        )
+
         with transaction.atomic(), connection.cursor() as cursor:
             identity_pk = seed_identity(cursor, f"coordinator-{suffix}-{self.tag}")
             membership_uuid = uuid4()
@@ -264,25 +285,47 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 extra={"reason_class": "TEST_FIXTURE"},
             )
             refresh(cursor, "core_organismmembership", membership_pk)
-            if include_office:
-                assignment_uuid = uuid4()
-                cursor.execute(
-                    "INSERT INTO core_contextualroleassignment "
-                    "(assignment_uuid, state, created_at, current_state_effective_at, state_known_at, "
-                    "state_source_event_set_fingerprint, membership_id, role_definition_id) "
-                    "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                    [assignment_uuid, T0, T0,
-                     empty_fp(cursor, "core_contextualroleassignment", assignment_uuid),
-                     membership_pk, self.ids["roles"]["COORDINATOR"]],
-                )
-                assignment_pk = cursor.fetchone()[0]
-                append_event(
-                    cursor, "core_contextualroleassignmentstateevent", assignment_pk, 1, "ASSIGN", None,
-                    "ACTIVE", identity_pk, self.ids["basis"], f"{self.tag}:{suffix}:office",
-                )
-                refresh(cursor, "core_contextualroleassignment", assignment_pk)
+        identity = Identity.objects.select_related("credential").get(pk=identity_pk)
+        if include_office:
+            founder = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+            role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
+            service = OrganismRoleService(
+                authority=S015Authority(
+                    provider=ProductionApplicationAuthorityProvider(),
+                ),
+                clock=lambda: self.now,
+            )
             self._capture_database_now()
-        return Identity.objects.select_related("credential").get(pk=identity_pk)
+            proposal_at = self.now
+            proposal = service.propose_assignment(ProposeAssignmentCommand(
+                credential=identity.credential,
+                request_reference=f"aa-r2:{suffix}:self-propose:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:self-propose:key:{self.tag}",
+                occurred_at=proposal_at,
+                effective_at=proposal_at,
+                received_at=proposal_at,
+                membership_uuid=membership_uuid,
+                role_definition_uuid=role.role_uuid,
+                effective_until_state="NONE",
+                effective_until=None,
+            ))
+            self._capture_database_now()
+            assign_at = self.now
+            service.transition_assignment(TransitionAssignmentCommand(
+                credential=founder.credential,
+                request_reference=f"aa-r2:{suffix}:assign:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:assign:key:{self.tag}",
+                occurred_at=assign_at,
+                effective_at=assign_at,
+                received_at=assign_at,
+                assignment_uuid=proposal.assignment_uuid,
+                action="ASSIGN",
+                resulting_state="ACTIVE",
+                effective_until_state="NONE",
+                effective_until=None,
+            ))
+            self._capture_database_now()
+        return identity
 
     def _add_fixture_access_history(self, identity, suffix):
         provision = IdentityTransition.objects.create(
@@ -390,6 +433,11 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             "recorded_at": None,
         }
 
+    def test_missing_assignment_event_is_not_in_effect(self):
+        self.assertFalse(_assignment_term_in_effect(
+            "default", 2**63 - 1, self.now, self.now,
+        ))
+
     def test_production_sources_fail_closed_without_governed_birthing(self):
         service = self._service(registration_source=TestFixtureGovernedRegistrationFactSource())
         before = self._public_row_counts()
@@ -407,6 +455,11 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             decision_reference=denied.exception.authority_decision_reference,
         )
         self.assertEqual((record.outcome, record.refusal_code), ("REFUSED", "C_GATEWAY_NOT_OPEN"))
+        birthing_fact = next(
+            fact for fact in record.facts_read
+            if fact["relation"] == "s3_il_birthing_fact_source"
+        )
+        self.assertIsNone(birthing_fact["reference"])
 
     def test_production_registration_source_fails_closed(self):
         service = self._service(birthing_source=TestFixtureBirthingFactSource(self.organism_uuid))
@@ -642,6 +695,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "inherit_portal_cq_settings": False,
                 "require_cq_to_change_lo_settings": False,
                 "require_cq_to_change_application_question": False,
+                "role_suspension_enabled": True,
+                "suspension_tolls_term": "YES",
             }),
         )
         for index, (action, fields) in enumerate(actions):
@@ -670,6 +725,12 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 received_at=self.now,
             ))
             self.assertEqual(event.action, action.value)
+            if action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
+                configuration = LOGovernanceConfigurationVersion.objects.get(
+                    version_uuid=draft.version_uuid,
+                )
+                self.assertIs(configuration.role_suspension_enabled, True)
+                self.assertEqual(configuration.suspension_tolls_term, "YES")
             with self.assertRaises(S015AuthorityDenied) as denied:
                 self._capture_database_now()
                 service.effect_gateway_version(EffectGatewayVersionCommand(
@@ -684,6 +745,298 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                     received_at=self.now,
                 ))
             self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
+
+    def test_a_nomination_policy_requires_subscription_entitlement(self):
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        service = self._service()
+        fields = {
+            "cq_active": False,
+            "inherit_portal_cq_settings": False,
+            "require_cq_to_change_lo_settings": False,
+            "require_cq_to_change_application_question": False,
+            "coordinator_nomination_policy": "A",
+        }
+        self._capture_database_now()
+        draft = service.save_gateway_draft(GatewayDraftCommand(
+            credential=coordinator.credential,
+            living_organism_id=self.organism_uuid,
+            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            request_reference=f"aa-r2:policy-draft:{self.tag}",
+            idempotency_key=f"aa-r2:policy-draft:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+            fields=fields,
+        ))
+        with self.assertRaises(S015AuthorityDenied) as denied:
+            self._capture_database_now()
+            service.effect_gateway_version(EffectGatewayVersionCommand(
+                credential=coordinator.credential,
+                living_organism_id=self.organism_uuid,
+                action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                version_uuid=draft.version_uuid,
+                request_reference=f"aa-r2:policy-effect-denied:{self.tag}",
+                idempotency_key=f"aa-r2:policy-effect-denied:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+            ))
+        self.assertEqual(
+            denied.exception.refusal_code,
+            S015AuthorityRefusalCode.E_NOMINATION_POLICY_NOT_ENTITLED,
+        )
+        refusal = AuthorityDecision.objects.get(
+            decision_reference=denied.exception.authority_decision_reference,
+        )
+        fact_references = {(fact["relation"], fact["reference"]) for fact in refusal.facts_read}
+        self.assertIn(
+            ("core_logovernanceconfigurationversion", f"governance-configuration-version:{draft.version_uuid}"),
+            fact_references,
+        )
+        self.assertIn(("s2b_coordinator_nomination_entitlement", None), fact_references)
+
+        entitled_service = self._service(
+            nomination_entitlement_source=TestFixtureCoordinatorNominationEntitlementFactSource(),
+        )
+        self._capture_database_now()
+        effected = entitled_service.effect_gateway_version(EffectGatewayVersionCommand(
+            credential=coordinator.credential,
+            living_organism_id=self.organism_uuid,
+            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            version_uuid=draft.version_uuid,
+            request_reference=f"aa-r2:policy-effect-entitled:{self.tag}",
+            idempotency_key=f"aa-r2:policy-effect-entitled:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+        ))
+        self.assertEqual(effected.action, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION.value)
+
+    def test_null_nomination_policy_uses_named_default_c(self):
+        from core.models import ContextualRoleAssignmentStateEvent, LivingOrganismEvent
+
+        configuration = LOGovernanceConfigurationVersion.objects.get(
+            living_organism_id=self.ids["lo"],
+        )
+        self.assertIsNone(configuration.coordinator_nomination_policy)
+        configuration_effect = LivingOrganismEvent.objects.get(
+            living_organism_id=self.ids["lo"],
+            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION.value,
+            evidence_reference=f"governance-configuration-version:{configuration.version_uuid}",
+        )
+        self.assertLessEqual(configuration_effect.effective_at, self.now)
+
+        member = self._add_second_coordinator("null-policy-default-c")
+        assignment = ContextualRoleAssignment.objects.get(
+            membership__identity=member,
+            role_definition__code="COORDINATOR",
+            role_definition__living_organism_id=self.ids["lo"],
+        )
+        proposal = ContextualRoleAssignmentStateEvent.objects.get(
+            assignment=assignment,
+            sequence=1,
+            action="PROPOSE",
+        )
+        decision = AuthorityDecision.objects.get(
+            decision_reference=proposal.authority_decision_reference,
+        )
+        facts = {(fact["relation"], fact["reference"]) for fact in decision.facts_read}
+        self.assertIn(("s2b_coordinator_nomination_policy", "C"), facts)
+        self.assertIn(("s2b_coordinator_nomination_policy_default", "C"), facts)
+        self.assertIn(("s2b_coordinator_nomination_entitlement", None), facts)
+
+    def test_nomination_policy_a_and_b_apply_their_proposer_rules(self):
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services.organism_authority import S015PostFoundingAuthorityResponse
+
+        entitlement_source = TestFixtureCoordinatorNominationEntitlementFactSource()
+        provider = ProductionApplicationAuthorityProvider(
+            nomination_entitlement_source=entitlement_source,
+        )
+        service = OrganismApplicationService(
+            authority=S015Authority(provider=provider),
+            clock=lambda: self.now,
+        )
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+
+        def effect_policy(policy, suffix):
+            self._capture_database_now()
+            draft = service.save_gateway_draft(GatewayDraftCommand(
+                credential=coordinator.credential,
+                living_organism_id=self.organism_uuid,
+                action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                request_reference=f"aa-r2:{suffix}:draft:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:draft:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+                fields={
+                    "cq_active": False,
+                    "inherit_portal_cq_settings": False,
+                    "require_cq_to_change_lo_settings": False,
+                    "require_cq_to_change_application_question": False,
+                    "coordinator_nomination_policy": policy,
+                },
+            ))
+            self._capture_database_now()
+            service.effect_gateway_version(EffectGatewayVersionCommand(
+                credential=coordinator.credential,
+                living_organism_id=self.organism_uuid,
+                action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                version_uuid=draft.version_uuid,
+                request_reference=f"aa-r2:{suffix}:effect:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:effect:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+            ))
+            return draft
+
+        proposer = self._add_second_coordinator("policy-member", include_office=False)
+        nominee = self._add_second_coordinator("policy-nominee", include_office=False)
+        role = OrganismRoleDefinition.objects.get(
+            living_organism_id=self.ids["lo"],
+            code="COORDINATOR",
+            scope="LIVING_ORGANISM",
+            active=True,
+        )
+
+        def proposal_request(actor, membership, suffix):
+            membership_row = OrganismMembership.objects.get(
+                identity=membership,
+                living_organism_id=self.ids["lo"],
+            )
+            target = {
+                "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+                "event_action": "PROPOSE",
+                "living_organism_id": str(self.organism_uuid),
+                "membership_uuid": str(membership_row.membership_uuid),
+                "resulting_state": "PROPOSED",
+                "role_definition_uuid": str(role.role_uuid),
+                "schema": "intevia.s015.organism-role-target.v1",
+            }
+            return self._post_request(
+                actor, OrganismAction.TRANSITION_CONTEXTUAL_ROLE, target, suffix=suffix,
+            )
+
+        effect_policy("A", "policy-a")
+        admitted_a = provider.evaluate_organism_authority(
+            proposal_request(proposer, nominee, "policy-a-member-to-member"),
+        )
+        self.assertIsInstance(admitted_a, S015PostFoundingAuthorityResponse)
+
+        effect_policy("B", "policy-b")
+        refused_b_self = provider.evaluate_organism_authority(
+            proposal_request(proposer, proposer, "policy-b-member-self"),
+        )
+        self.assertEqual(
+            refused_b_self.refusal_code,
+            S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR,
+        )
+        admitted_b = provider.evaluate_organism_authority(
+            proposal_request(coordinator, nominee, "policy-b-coordinator-to-member"),
+        )
+        self.assertIsInstance(admitted_b, S015PostFoundingAuthorityResponse)
+
+    def test_nomination_policy_lapse_and_renewal_use_latest_valid_selection(self):
+        import json
+
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services.organism_authority import S015PostFoundingAuthorityResponse
+
+        entitlement_source = TestFixtureCoordinatorNominationEntitlementFactSource()
+        provider = ProductionApplicationAuthorityProvider(
+            nomination_entitlement_source=entitlement_source,
+        )
+        service = OrganismApplicationService(
+            authority=S015Authority(provider=provider),
+            clock=lambda: self.now,
+        )
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        proposer = self._add_second_coordinator("policy-lapse-member", include_office=False)
+        nominee = self._add_second_coordinator("policy-lapse-nominee", include_office=False)
+        proposer_membership = OrganismMembership.objects.get(
+            identity=proposer, living_organism_id=self.ids["lo"],
+        )
+        nominee_membership = OrganismMembership.objects.get(
+            identity=nominee, living_organism_id=self.ids["lo"],
+        )
+        role = OrganismRoleDefinition.objects.get(
+            living_organism_id=self.ids["lo"],
+            code="COORDINATOR",
+            scope="LIVING_ORGANISM",
+            active=True,
+        )
+
+        def effect_policy(policy, suffix):
+            self._capture_database_now()
+            draft = service.save_gateway_draft(GatewayDraftCommand(
+                credential=coordinator.credential,
+                living_organism_id=self.organism_uuid,
+                action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                request_reference=f"aa-r2:{suffix}:draft:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:draft:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+                fields={
+                    "cq_active": False,
+                    "inherit_portal_cq_settings": False,
+                    "require_cq_to_change_lo_settings": False,
+                    "require_cq_to_change_application_question": False,
+                    "coordinator_nomination_policy": policy,
+                },
+            ))
+            self._capture_database_now()
+            service.effect_gateway_version(EffectGatewayVersionCommand(
+                credential=coordinator.credential,
+                living_organism_id=self.organism_uuid,
+                action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                version_uuid=draft.version_uuid,
+                request_reference=f"aa-r2:{suffix}:effect:{self.tag}",
+                idempotency_key=f"aa-r2:{suffix}:effect:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+            ))
+
+        def proposal_result(nominee_membership_row, suffix):
+            target = {
+                "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+                "event_action": "PROPOSE",
+                "living_organism_id": str(self.organism_uuid),
+                "membership_uuid": str(nominee_membership_row.membership_uuid),
+                "resulting_state": "PROPOSED",
+                "role_definition_uuid": str(role.role_uuid),
+                "schema": "intevia.s015.organism-role-target.v1",
+            }
+            return provider.evaluate_organism_authority(self._post_request(
+                proposer, OrganismAction.TRANSITION_CONTEXTUAL_ROLE, target, suffix=suffix,
+            ))
+
+        def effective_policy(result):
+            return json.loads(result.authority_reference[len("s015a1:"):])["k"]
+
+        effect_policy("A", "policy-lapse-a")
+        self.assertIsInstance(proposal_result(nominee_membership, "policy-a-active"), S015PostFoundingAuthorityResponse)
+
+        entitlement_source.enabled = False
+        lapsed_other = proposal_result(nominee_membership, "policy-a-lapsed-other")
+        self.assertEqual(lapsed_other.refusal_code, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+        lapsed_self = proposal_result(proposer_membership, "policy-a-lapsed-self")
+        self.assertIsInstance(lapsed_self, S015PostFoundingAuthorityResponse)
+        self.assertEqual(effective_policy(lapsed_self), "C")
+
+        entitlement_source.enabled = True
+        renewed_a = proposal_result(nominee_membership, "policy-a-renewed")
+        self.assertIsInstance(renewed_a, S015PostFoundingAuthorityResponse)
+        self.assertEqual(effective_policy(renewed_a), "A")
+
+        entitlement_source.enabled = False
+        effect_policy("C", "policy-lapse-change-to-c")
+        entitlement_source.enabled = True
+        renewed_c = proposal_result(nominee_membership, "policy-c-renewed")
+        self.assertEqual(renewed_c.refusal_code, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
 
     def test_applicant_cannot_claim_own_application(self):
         service = self._service(
@@ -757,6 +1110,57 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         with transaction.atomic():
             second = provider.evaluate_organism_authority(request)
         self.assertEqual(canonical_json_bytes(asdict(first)), canonical_json_bytes(asdict(second)))
+
+    def test_k2_recovery_refusal_is_member_specific(self):
+        from core.models import OrganismRoleDefinition
+
+        member = self._add_second_coordinator("k2-disclosure-member", include_office=False)
+        founder = Identity.objects.get(pk=self.ids["identity"])
+        self._end_fixture_membership(founder, "k2-disclosure-founder-ended", self.now)
+        membership = OrganismMembership.objects.get(
+            identity=member,
+            living_organism_id=self.ids["lo"],
+        )
+        role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
+        target = {
+            "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            "event_action": "PROPOSE",
+            "living_organism_id": str(self.organism_uuid),
+            "membership_uuid": str(membership.membership_uuid),
+            "resulting_state": "PROPOSED",
+            "role_definition_uuid": str(role.role_uuid),
+            "schema": "intevia.s015.organism-role-target.v1",
+        }
+        provider = ProductionApplicationAuthorityProvider()
+        member_refusal = provider.evaluate_organism_authority(self._post_request(
+            member,
+            OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+            target,
+            suffix="k2-disclosure-member",
+        ))
+        outsider_refusal = provider.evaluate_organism_authority(self._post_request(
+            self.applicant,
+            OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+            target,
+            suffix="k2-disclosure-outsider",
+        ))
+
+        self.assertEqual(
+            member_refusal.refusal_code,
+            S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(
+            member_refusal.disclosed_refusal_code,
+            S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(
+            outsider_refusal.refusal_code,
+            S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
+        )
+        self.assertEqual(
+            outsider_refusal.disclosed_refusal_code,
+            S015AuthorityRefusalCode.DENIED,
+        )
 
     def test_current_member_cannot_submit_an_application(self):
         member = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
@@ -1051,7 +1455,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
             )
-            self.assertEqual(cursor.fetchone()[0], 398)
+            self.assertEqual(cursor.fetchone()[0], 405)
             cursor.execute(
                 "SELECT trigger.tgname, trigger.tgenabled, function.proname, "
                 "pg_get_functiondef(function.oid) "

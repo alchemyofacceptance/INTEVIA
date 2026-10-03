@@ -12,6 +12,7 @@ from django.test.utils import CaptureQueriesContext
 from core.models import (
     Application,
     ApplicationLineageEvent,
+    ContextualRoleAssignment,
     Identity,
     IdentityTransition,
     OrganismCommandReceipt,
@@ -212,33 +213,34 @@ class S015ApplicationReadTests(TransactionTestCase):
         return identity
 
     def _end_coordinator_office(self):
-        # TEST-ONLY ended-assignment construction using the landed S2 event and cache format.
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService, TransitionAssignmentCommand,
+        )
+
         office_id = self.ids["assignments"]["COORDINATOR"]
-        with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, sequence FROM public.core_contextualroleassignmentstateevent "
-                "WHERE assignment_id = %s ORDER BY sequence DESC LIMIT 1",
-                [office_id],
-            )
-            predecessor_id, sequence = cursor.fetchone()
-            event_at = T0 + timedelta(days=1)
-            append_event(
-                cursor,
-                "core_contextualroleassignmentstateevent",
-                office_id,
-                sequence + 1,
-                "END",
-                "ACTIVE",
-                "ENDED",
-                self.coordinator.pk,
-                self.ids["basis"],
-                f"read-office-end:{self.tag}:{fresh()}",
-                pred_id=predecessor_id,
-                eff=event_at,
-                occ=event_at,
-                rec=event_at,
-            )
-            refresh(cursor, "core_contextualroleassignment", office_id, event_at)
+        office = ContextualRoleAssignment.objects.get(pk=office_id)
+
+        def database_now():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT clock_timestamp()")
+                return cursor.fetchone()[0]
+
+        service = OrganismRoleService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: datetime.now(timezone.utc),
+        )
+        service.transition_assignment(TransitionAssignmentCommand(
+            credential=self.coordinator.credential,
+            request_reference=f"read-office-end:{self.tag}:{fresh()}",
+            idempotency_key=f"read-office-end:key:{self.tag}:{fresh()}",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=database_now(),
+            assignment_uuid=office.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+        ))
 
     def _deactivate(self, identity):
         # TEST-ONLY identity transition used to witness the inactive-reader refusal.

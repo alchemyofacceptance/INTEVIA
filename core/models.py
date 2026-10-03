@@ -4726,11 +4726,29 @@ class LOApplicationQuestionVersion(_LOGatewayVersion):
 
 
 class LOGovernanceConfigurationVersion(_LOGatewayVersion):
+    class NominationPolicy(models.TextChoices):
+        MEMBER_NOMINATIONS = "A", "Member nominations"
+        COORDINATOR_NOMINATIONS = "B", "Coordinator nominations"
+        VOLUNTEERING_AND_RECRUITMENT = "C", "Volunteering and recruitment"
+
     supersedes = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
     cq_active = models.BooleanField(null=True, blank=True)
     inherit_portal_cq_settings = models.BooleanField(null=True, blank=True)
     require_cq_to_change_lo_settings = models.BooleanField(null=True, blank=True)
     require_cq_to_change_application_question = models.BooleanField(null=True, blank=True)
+    coordinator_nomination_policy = models.CharField(
+        max_length=1,
+        choices=NominationPolicy.choices,
+        null=True,
+        blank=True,
+    )
+    role_suspension_enabled = models.BooleanField(null=True, blank=True)
+    suspension_tolls_term = models.CharField(
+        max_length=3,
+        choices=[("YES", "Yes"), ("NO", "No")],
+        null=True,
+        blank=True,
+    )
 
 
 class Application(_S015AppendOnly):
@@ -4900,6 +4918,73 @@ class AuthorityDecision(_S015AppendOnly):
                     | models.Q(outcome="REFUSED", refusal_code__isnull=False)
                 ),
                 name="s015_authdecision_refusal_ck",
+            ),
+        ]
+
+
+class OfficeAppointmentConsent(_S015AppendOnly):
+    class Action(models.TextChoices):
+        CONSENT = "CONSENT", "CONSENT"
+        DECLINE = "DECLINE", "DECLINE"
+        WITHDRAW = "WITHDRAW", "WITHDRAW"
+
+    consent_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    assignment = models.ForeignKey(
+        ContextualRoleAssignment,
+        on_delete=models.PROTECT,
+        related_name="appointment_consents",
+    )
+    proposal_event = models.ForeignKey(
+        "ContextualRoleAssignmentStateEvent",
+        on_delete=models.PROTECT,
+        related_name="appointment_consents",
+    )
+    nominee_membership = models.ForeignKey(
+        OrganismMembership,
+        on_delete=models.PROTECT,
+        related_name="office_appointment_consents",
+    )
+    action = models.CharField(max_length=8, choices=Action.choices)
+    ordinal = models.PositiveIntegerField()
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="office_appointment_consents")
+    actor_state = models.CharField(max_length=15, default="PARTY", editable=False)
+    actor_capacity = models.CharField(max_length=16, default="STANDING", editable=False)
+    actor_access_epoch = models.PositiveBigIntegerField()
+    enterer = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="entered_office_appointment_consents")
+    authority_decision_reference = models.CharField(max_length=71)
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120)
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("assignment", "ordinal"), name="s2b_office_consent_ordinal_uniq"),
+            models.UniqueConstraint(fields=("assignment", "idempotency_key"), name="s2b_office_consent_idem_uniq"),
+            models.CheckConstraint(
+                condition=models.Q(action__in=["CONSENT", "DECLINE", "WITHDRAW"]),
+                name="s2b_office_consent_action_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(actor_state="PARTY", actor_capacity="STANDING"),
+                name="s2b_office_consent_actor_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(authority_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$"),
+                name="s2b_office_consent_decision_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(occurred_at__lte=models.F("received_at")),
+                name="s2b_office_consent_occurred_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(recorded_at__isnull=True)
+                    | models.Q(received_at__lte=models.F("recorded_at"))
+                ),
+                name="s2b_office_consent_recorded_ck",
             ),
         ]
 
@@ -5079,6 +5164,8 @@ class OrganismMembershipTransition(_S015ChainEvent):
 
 
 class ContextualRoleAssignmentStateEvent(_S015ChainEvent):
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
     assignment = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, related_name="+")
     prior_state = models.CharField(max_length=19, null=True, blank=True, help_text=S015_PRIOR_STATE_HELP)
     resulting_state = models.CharField(max_length=19)

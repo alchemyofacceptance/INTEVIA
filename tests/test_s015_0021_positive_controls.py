@@ -373,7 +373,34 @@ class LockOrder(_S015PositiveBase):
             with self.subTest(table=event_table):
                 ids = self.commits(lambda cur: add_remaining_aggregates(cur, found_nonroot(cur), fresh()))
                 def append_and_check(cur):
-                    append_second_event(cur, ids, event_table, fresh())
+                    if event_table == "core_contextualroleassignmentstateevent":
+                        from core.models import ContextualRoleAssignment, Identity
+                        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+                        from src.intevia.services.organism_authority import S015Authority
+                        from src.intevia.services.organism_role_service import OrganismRoleService, TransitionAssignmentCommand
+
+                        assignment = ContextualRoleAssignment.objects.get(pk=ids["assignments"]["COORDINATOR"])
+                        actor = Identity.objects.select_related("credential").get(pk=ids["identity"])
+                        with connection.cursor() as clock_cursor:
+                            clock_cursor.execute("SELECT clock_timestamp()")
+                            command_time = clock_cursor.fetchone()[0]
+                        service = OrganismRoleService(
+                            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+                            clock=lambda: dt.datetime.now(dt.timezone.utc),
+                        )
+                        service.transition_assignment(TransitionAssignmentCommand(
+                            credential=actor.credential,
+                            request_reference=f"lock-control:{fresh()}:request",
+                            idempotency_key=f"lock-control:{fresh()}:idempotency",
+                            occurred_at=command_time,
+                            effective_at=command_time,
+                            received_at=command_time,
+                            assignment_uuid=assignment.assignment_uuid,
+                            action="END",
+                            resulting_state="ENDED",
+                        ))
+                    else:
+                        append_second_event(cur, ids, event_table, fresh())
                     cur.execute(
                         "SELECT count(*) FROM public.s015_transaction_register "
                         "WHERE xid = pg_current_xact_id() AND kind = 'ORGANISM_LOCK'",

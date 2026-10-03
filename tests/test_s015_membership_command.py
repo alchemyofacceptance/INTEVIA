@@ -47,9 +47,32 @@ POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "membership comm
 
 class _ExactProvider:
     def evaluate_organism_authority(self, request: S015PostFoundingAuthorityRequest):
+        authority_reference = "authority:fixture"
+        if (
+            request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE
+            and request.target.get("event_action") == "ASSIGN"
+        ):
+            from core.models import ContextualRoleAssignment, ContextualRoleAssignmentStateEvent
+            from src.intevia.services.organism_authority import canonical_json_bytes
+
+            assignment = ContextualRoleAssignment.objects.select_related(
+                "membership", "role_definition",
+            ).get(assignment_uuid=request.target["assignment_uuid"])
+            proposal = ContextualRoleAssignmentStateEvent.objects.get(
+                assignment=assignment,
+                sequence=1,
+                action="PROPOSE",
+            )
+            authority_reference = "s015a1:" + canonical_json_bytes({
+                "a": str(assignment.assignment_uuid),
+                "g": str(assignment.role_definition.role_uuid),
+                "k": "ASSIGN",
+                "p": str(proposal.event_uuid),
+                "u": "e:" + str(proposal.event_uuid),
+            }).decode("utf-8")
         return S015PostFoundingAuthorityResponse(
             **asdict(request),
-            authority_reference="authority:fixture",
+            authority_reference=authority_reference,
         )
 
 
@@ -132,47 +155,58 @@ class S015MembershipCommandTests(TransactionTestCase):
         return OrganismMembership.objects.get(pk=membership_id)
 
     def _assign_office(self, *, ids, membership, role_definition_id, tag):
-        assignment_uuid = uuid4()
-        with transaction.atomic():
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO core_contextualroleassignment (
-                        assignment_uuid,
-                        state,
-                        created_at,
-                        current_state_effective_at,
-                        state_known_at,
-                        state_source_event_set_fingerprint,
-                        membership_id,
-                        role_definition_id
-                    ) VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id
-                    """,
-                    (
-                        assignment_uuid,
-                        "ACTIVE",
-                        T0,
-                        T0,
-                        empty_fp(cur, "core_contextualroleassignment", assignment_uuid),
-                        membership.pk,
-                        role_definition_id,
-                    ),
-                )
-                assignment_id = cur.fetchone()[0]
-                append_event(
-                    cur,
-                    "core_contextualroleassignmentstateevent",
-                    assignment_id,
-                    1,
-                    "ASSIGN",
-                    None,
-                    "ACTIVE",
-                    ids["identity"],
-                    ids["basis"],
-                    tag,
-                )
-                refresh(cur, "core_contextualroleassignment", assignment_id)
-        return assignment_id
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService,
+            ProposeAssignmentCommand,
+            TransitionAssignmentCommand,
+        )
+
+        proposer = Identity.objects.select_related("credential").get(pk=membership.identity_id)
+        keying_actor = Identity.objects.select_related("credential").get(pk=ids["identity"])
+        role = OrganismRoleDefinition.objects.get(pk=role_definition_id)
+
+        def database_now():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT clock_timestamp()")
+                return cursor.fetchone()[0]
+
+        service = OrganismRoleService(
+            authority=S015Authority(provider=_ExactProvider(), database_alias="default"),
+            clock=lambda: NOW,
+            database_alias="default",
+        )
+        # TEST-ONLY authority fixture supplies the office state needed by membership witnesses; it is not production permission.
+        proposed_at = NOW
+        proposal_received_at = database_now()
+        proposal = service.propose_assignment(ProposeAssignmentCommand(
+            credential=proposer.credential,
+            request_reference=f"{tag}:propose:{fresh()}",
+            idempotency_key=f"{tag}:propose-key:{fresh()}",
+            occurred_at=proposed_at,
+            effective_at=proposed_at,
+            received_at=proposal_received_at,
+            membership_uuid=membership.membership_uuid,
+            role_definition_uuid=role.role_uuid,
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        assigned_at = NOW
+        assignment_received_at = database_now()
+        service.transition_assignment(TransitionAssignmentCommand(
+            credential=keying_actor.credential,
+            request_reference=f"{tag}:assign:{fresh()}",
+            idempotency_key=f"{tag}:assign-key:{fresh()}",
+            occurred_at=assigned_at,
+            effective_at=assigned_at,
+            received_at=assignment_received_at,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        return proposal.assignment_id
 
     def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=NOW, effective_at=NOW, received_at=NOW):
         return OpenMembershipCommand(
@@ -213,16 +247,33 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class=reason_open,
             )
         )
-        transition_result = service.transition_membership(
-            self._transition_command(
-                actor=actor,
-                membership_uuid=open_result.membership_uuid,
-                resulting_state=target_state,
-                request_reference=f"request:{organism_label}:transition",
-                idempotency_key=f"idem:{organism_label}:transition",
-                reason_class=reason_transition,
+        membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        with transaction.atomic(), connection.cursor() as cur:
+            cur.execute(
+                "SELECT id, sequence FROM core_organismmembershiptransition "
+                "WHERE membership_id = %s ORDER BY sequence DESC LIMIT 1",
+                [membership.pk],
             )
-        )
+            predecessor_id, sequence = cur.fetchone()
+            transition_id, _ = append_event(
+                cur,
+                "core_organismmembershiptransition",
+                membership.pk,
+                sequence + 1,
+                "LEAVE",
+                "PROPOSED",
+                target_state,
+                target.pk,
+                ids["basis"],
+                f"{organism_label}:member-leave",
+                pred_id=predecessor_id,
+                eff=NOW,
+                occ=NOW,
+                rec=NOW,
+                extra={"reason_class": reason_transition},
+            )
+            refresh(cur, "core_organismmembership", membership.pk, NOW)
+        transition_result = OrganismMembershipTransition.objects.get(pk=transition_id)
         return ids, actor, target, service, open_result, transition_result
 
     def test_open_then_transition_to_active_is_refused_without_write(self):
@@ -293,17 +344,64 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_OPEN",
             )
         )
-        leave_result = service.transition_membership(
-            self._transition_command(
-                actor=actor,
-                membership_uuid=open_result.membership_uuid,
-                resulting_state="ENDED",
-                request_reference="request:leave-proposed:end",
-                idempotency_key="idem:leave-proposed:end",
-                reason_class="TEST_ONLY_REASON_LEAVE",
-            )
-        )
         membership = OrganismMembership.objects.get(membership_uuid=open_result.membership_uuid)
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT id, sequence FROM core_organismmembershiptransition "
+                "WHERE membership_id = %s ORDER BY sequence DESC LIMIT 1",
+                [membership.pk],
+            )
+            predecessor_id, sequence = cur.fetchone()
+        before_refusal = (
+            OrganismMembershipTransition.objects.count(),
+            OrganismCommandReceipt.objects.count(),
+        )
+        with self.assertRaisesRegex(IntegrityError, "PARTY actor must be the proposed member"):
+            with transaction.atomic(), connection.cursor() as cur:
+                append_event(
+                    cur,
+                    "core_organismmembershiptransition",
+                    membership.pk,
+                    sequence + 1,
+                    "LEAVE",
+                    "PROPOSED",
+                    "ENDED",
+                    actor.pk,
+                    ids["basis"],
+                    "leave-proposed:proposer-end",
+                    pred_id=predecessor_id,
+                    eff=NOW,
+                    occ=NOW,
+                    rec=NOW,
+                    extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
+                )
+        membership.refresh_from_db()
+        self.assertEqual(membership.state, "PROPOSED")
+        self.assertEqual(
+            (OrganismMembershipTransition.objects.count(), OrganismCommandReceipt.objects.count()),
+            before_refusal,
+        )
+        with transaction.atomic(), connection.cursor() as cur:
+            transition_id, _ = append_event(
+                cur,
+                "core_organismmembershiptransition",
+                membership.pk,
+                sequence + 1,
+                "LEAVE",
+                "PROPOSED",
+                "ENDED",
+                target.pk,
+                ids["basis"],
+                "leave-proposed:member-end",
+                pred_id=predecessor_id,
+                eff=NOW,
+                occ=NOW,
+                rec=NOW,
+                extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
+            )
+            refresh(cur, "core_organismmembership", membership.pk, NOW)
+        leave_result = OrganismMembershipTransition.objects.get(pk=transition_id)
+        membership.refresh_from_db()
         transitions = list(
             OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
         )

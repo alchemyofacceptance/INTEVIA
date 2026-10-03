@@ -41,7 +41,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0034_s015_authority_decisions"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0040_s2b_role_actor_nullable_state"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -390,7 +390,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                                "JOIN pg_namespace n ON n.oid = c.relnamespace "
                                "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0034_s015_authority_decisions"])
+                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head[0][1]])
         finally:
             MigrationExecutor(connection).migrate(head)
 
@@ -640,14 +640,16 @@ class ApplicationSchemaGuards(TransactionTestCase):
             )
             self.assertEqual(snapshot(cursor, event_id, self.member_id)[0][-1], "PARTY")
 
-    def test_c4_other_ten_chains_reject_lo_token_and_lo_requires_effect(self):
+    def test_c4_other_nine_chains_reject_lo_token_and_lo_requires_effect(self):
         with transaction.atomic(), connection.cursor() as cursor:
             add_remaining_aggregates(cursor, self.ids, self.tag)
             cursor.execute("SELECT event_table FROM public.s015_anchor_map() "
                            "WHERE event_table <> %s AND event_table NOT IN "
-                           "('core_applicationlineageevent', 'core_livingorganismevent')", (EVENT_TABLE,))
+                           "('core_applicationlineageevent', 'core_livingorganismevent', "
+                           "'core_contextualroleassignmentstateevent')", (EVENT_TABLE,))
             tables = [row[0] for row in cursor.fetchall()]
-        self.assertEqual(len(tables), 10)
+        # The former ten-chain witness included Coordinator, where LO attribution is now governed by S2B; retain the nine other vocabulary checks.
+        self.assertEqual(len(tables), 9)
         for table in tables:
             with self.subTest(table=table):
                 with self.assertRaises((DatabaseError, IntegrityError)) as error:

@@ -53,8 +53,8 @@ class S015AuthorityContractTests(TestCase):
             evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
 
-    def test_matrix_has_34_complete_noninheriting_rows(self):
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 34)
+    def test_matrix_has_35_complete_noninheriting_rows(self):
+        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 35)
         self.assertTrue(all(len(row) == 4 for row in QUALIFICATION_PLANE_MATRIX.values()))
         ordinary = QUALIFICATION_PLANE_MATRIX[OrganismAction.SUBMIT_APPLICATION.value]
         for action in (
@@ -64,6 +64,10 @@ class S015AuthorityContractTests(TestCase):
         ):
             with self.subTest(action=action):
                 self.assertEqual(QUALIFICATION_PLANE_MATRIX[action.value], ordinary)
+        self.assertEqual(
+            QUALIFICATION_PLANE_MATRIX[OrganismAction.RECORD_OFFICE_CONSENT.value],
+            ordinary,
+        )
         genesis = QUALIFICATION_PLANE_MATRIX[
             "REGISTER_AUTHORITY_PRINCIPAL/GENESIS_BOOTSTRAP"
         ]
