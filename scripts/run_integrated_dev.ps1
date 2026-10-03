@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet("fresh", "clone")][string]$Mode,
-    [Parameter(Mandatory = $true)][ValidateRange(1, 9)][int]$AttemptNumber,
+    [Parameter(Mandatory = $true)][ValidateRange(1, 4)][int]$AttemptNumber,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string[]]$Labels,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
     [switch]$CleanupTemplate,
     [switch]$FullSuiteParity
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $fullSuiteParityLabels = @(
     "tests.test_s015_application_authority",
@@ -136,19 +139,19 @@ try {
         throw "template cleanup is only valid for a clone-mode run"
     }
 
-    $branch = (git branch --show-current).Trim()
-    $head = (git rev-parse HEAD).Trim()
-    $headParentsText = (& git show -s --format=%P $head).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "integrated base lookup failed"
-    }
-    $headParents = @($headParentsText -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($branch -ne "pktb/int-r3-tt1" -or $headParents.Count -ne 2 -or
-        -not $headParents[0].StartsWith("a9dadb5e", [System.StringComparison]::OrdinalIgnoreCase) -or
-        -not $headParents[1].StartsWith("76291565", [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "development runner requires the integrated merge candidate"
-    }
+    $authorizedState = Get-IntegratedState -StateFile $StateFile -StateSha256 $StateSha256
+    $routes = Get-IntegratedEvidenceRoutes -AuthorizedState $authorizedState -HomeDirectory $HOME
+    Write-Output "STATE_FILE=$($authorizedState.StateFile)"
+    Write-Output "STATE_ID=$($authorizedState.StateId)"
+    Write-Output "STATE_SHA256=$($authorizedState.StateSha256)"
+    Write-Output "SOURCE_KIND=$($authorizedState.SourceKind)"
+    Write-Output "HEAD=$($authorizedState.Head)"
+    Write-Output "EVIDENCE_ROOT=$($authorizedState.EvidenceRoot)"
+    Write-Output "DATABASE_TAG=$($authorizedState.DatabaseTag)"
+    Write-Output "ME_DEV_ROOT=$($routes.DevelopmentRoot)"
+    Write-Output "ME_DATABASE=$($routes.DevelopmentDatabasePrefix)$AttemptNumber"
 
+    $missingCredentials = [System.Collections.Generic.List[string]]::new()
     foreach ($name in @(
         "INTEVIA_DATABASE_ENGINE",
         "INTEVIA_POSTGRES_DB",
@@ -159,35 +162,44 @@ try {
         $present = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))
         Write-Output ("CREDENTIAL_{0}={1}" -f $name, $(if ($present) { "set" } else { "UNSET" }))
         if (-not $present) {
-            throw "$name is required; no attempt folder was created"
+            $missingCredentials.Add($name)
         }
+    }
+    if ($missingCredentials.Count -gt 0) {
+        throw ("Required credentials are UNSET; no attempt folder was created: " + ($missingCredentials -join ","))
     }
     if ($env:INTEVIA_POSTGRES_DB -in @("intevia", "intevia_dev")) {
         throw "protected administrative database is refused"
     }
 
-    $stageRoot = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING") "PKTB_INT1\ME_DEV"
+    $stageRoot = $routes.DevelopmentRoot
     $runDirectory = Join-Path $stageRoot ("attempt_{0}" -f $AttemptNumber)
     if (Test-Path -LiteralPath $runDirectory) {
         throw "development attempt directory already exists; refusing reuse"
     }
-    $attemptDatabase = "test_intevia_living_organism_int1_me_$AttemptNumber"
+    $attemptDatabase = "$($routes.DevelopmentDatabasePrefix)$AttemptNumber"
     if ($attemptDatabase.Length -gt 63 -or $attemptDatabase -in @("intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB)) {
         throw "protected or overlength test database name refused"
     }
 
     $templateStore = Join-Path $stageRoot "integrated-template-store"
-    if ($Mode -eq "clone" -and $AttemptNumber -eq 4 -and
-        (Test-Path -LiteralPath $templateStore) -and
-        @(Get-ChildItem -LiteralPath $templateStore -Force).Count -gt 0) {
-        throw "first planned INT-1 clone attempt requires a new integrated template store"
-    }
 
     New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
     $runNonce = [guid]::NewGuid().ToString("N")
     $receiptPath = Join-Path $runDirectory "database-receipts.jsonl"
     $isolationPath = Join-Path $runDirectory "isolation.jsonl"
     $logPath = Join-Path $runDirectory "integrated-development.log"
+    $runHeader = @(
+        "STATE_FILE=$($authorizedState.StateFile)"
+        "STATE_ID=$($authorizedState.StateId)"
+        "STATE_SHA256=$($authorizedState.StateSha256)"
+        "SOURCE_KIND=$($authorizedState.SourceKind)"
+        "HEAD=$($authorizedState.Head)"
+    )
+    foreach ($line in $runHeader) {
+        Write-Output $line
+        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
+    }
     $effectiveTemplateStore = if ($Mode -eq "fresh") {
         Join-Path $runDirectory "tooling-template-store"
     }

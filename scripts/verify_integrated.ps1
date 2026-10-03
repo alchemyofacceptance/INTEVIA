@@ -1,11 +1,12 @@
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256
+)
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
-$expectedBranch = "pktb/int-r3-tt1"
-$expectedR3Parent = "a9dadb5e"
-$expectedTt1Parent = "76291565"
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
 $expectedCoreHead = "0040_s2b_role_actor_nullable_state"
 $environmentNames = @(
@@ -49,6 +50,9 @@ $script:teardownLines = 0
 $sourceKind = $null
 $head = $null
 $mergeCommit = $null
+$stateId = $null
+$stateFilePath = $null
+$stateHash = $null
 $bindingHash = $null
 $scriptHash = $null
 $runDirectory = $null
@@ -105,67 +109,26 @@ function Get-Sha256Bytes {
     }
 }
 
-function Get-IntegratedMergeCommit {
-    $history = @(& git rev-list --all --parents)
-    if ($LASTEXITCODE -ne 0) {
-        throw "merge-commit discovery failed"
-    }
-
-    $matches = @()
-    foreach ($line in $history) {
-        $fields = @($line -split "\s+")
-        if ($fields.Count -eq 3 -and
-            $fields[1].StartsWith($expectedR3Parent, [System.StringComparison]::OrdinalIgnoreCase) -and
-            $fields[2].StartsWith($expectedTt1Parent, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $matches += $fields[0]
-        }
-    }
-    if ($matches.Count -ne 1) {
-        throw "expected one merge commit with the commissioned parent pair; found $($matches.Count)"
-    }
-    return [string]$matches[0]
-}
-
-function Assert-AuthorizedChangePaths {
-    param([Parameter(Mandatory = $true)][string[]]$Paths)
-
-    $authorized = @(
-        "scripts/run_integrated_dev.ps1",
-        "scripts/verify_integrated.ps1",
-        "tests/test_verify_integrated.ps1"
-    )
-    $normalized = @($Paths | ForEach-Object { $_.Replace("\", "/") } | Sort-Object -Unique)
-    if ($normalized.Count -ne $authorized.Count -or
-        @($normalized | Where-Object { $_ -notin $authorized }).Count -ne 0) {
-        throw "source changes are outside the three authorized INT-1 files"
-    }
-}
-
 function Get-SourceBinding {
-    param([Parameter(Mandatory = $true)][string]$IntegratedMerge)
+    param(
+        [Parameter(Mandatory = $true)][string]$AuthorizedStateFile,
+        [Parameter(Mandatory = $true)][string]$AuthorizedStateSha256
+    )
 
-    $currentBranch = (& git branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $currentBranch -ne $expectedBranch) {
-        throw "source branch is not the commissioned integration branch"
-    }
-    $currentHead = (& git rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "HEAD lookup failed"
-    }
-    $parentsText = (& git show -s --format=%P $currentHead).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "HEAD parent lookup failed"
-    }
-    $parents = @($parentsText -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $authorizedState = Get-IntegratedState -StateFile $AuthorizedStateFile -StateSha256 $AuthorizedStateSha256
+    $currentHead = $authorizedState.Head
+    $integratedMerge = $authorizedState.MergeCommit
+    $diffHash = $null
+    $tree = $null
+    $parent = $null
 
-    if ($currentHead -eq $IntegratedMerge) {
-        $trackedPaths = @(& git diff --name-only $IntegratedMerge)
-        if ($LASTEXITCODE -ne 0) {
-            throw "candidate changed-path inventory failed"
+    if ($authorizedState.SourceKind -eq "CANDIDATE") {
+        if ($authorizedState.ChangedPaths.Count -eq 0) {
+            throw "verifier candidate must contain at least one authorized change"
         }
         $diffPath = [System.IO.Path]::GetTempFileName()
         try {
-            & git diff --binary $IntegratedMerge "--output=$diffPath"
+            & git diff --binary $authorizedState.BaseCommit "--output=$diffPath"
             if ($LASTEXITCODE -ne 0) {
                 throw "candidate diff calculation failed"
             }
@@ -181,64 +144,48 @@ function Get-SourceBinding {
         if ($LASTEXITCODE -ne 0) {
             throw "candidate untracked-file inventory failed"
         }
-        Assert-AuthorizedChangePaths -Paths (@($trackedPaths) + @($untracked))
         $rows = @()
         foreach ($path in $untracked) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-                throw "candidate untracked path is not a regular file: $path"
-            }
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             $rows += "$hash`:$path"
         }
         $rows = @($rows | Sort-Object)
-        if ($diffHash -eq "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" -and
-            $rows.Count -eq 0) {
-            throw "candidate source contains no uncommitted INT-1 bytes"
-        }
-        $parts = @("baseline=$IntegratedMerge", "diff=$diffHash") + $rows
+        $parts = @(
+            "state_sha256=$($authorizedState.StateSha256)",
+            "baseline=$($authorizedState.BaseCommit)",
+            "diff=$diffHash"
+        ) + $rows
         $binding = Get-Sha256Bytes -Bytes ([System.Text.UTF8Encoding]::new($false).GetBytes(($parts -join "`n")))
-        return [PSCustomObject]@{
-            SourceKind = "CANDIDATE"
-            Head = $currentHead
-            MergeCommit = $IntegratedMerge
-            Binding = $binding
-            DiffHash = $diffHash
-            Tree = $null
-            Parent = $null
-        }
     }
-
-    if ($parents.Count -eq 1 -and $parents[0] -eq $IntegratedMerge) {
-        $committedPaths = @(& git diff-tree --no-commit-id --name-only --no-renames -r $currentHead)
-        if ($LASTEXITCODE -ne 0) {
-            throw "committed changed-path inventory failed"
-        }
-        Assert-AuthorizedChangePaths -Paths $committedPaths
-        $status = @(& git status --porcelain --untracked-files=all)
-        if ($LASTEXITCODE -ne 0) {
-            throw "committed source worktree check failed"
-        }
-        if ($status.Count -ne 0) {
-            throw "committed source worktree is not clean"
-        }
+    else {
         $tree = (& git rev-parse "${currentHead}^{tree}").Trim()
         if ($LASTEXITCODE -ne 0) {
             throw "committed source tree lookup failed"
         }
-        $parts = @("commit=$currentHead", "tree=$tree", "parent=$IntegratedMerge")
+        $parent = $authorizedState.BaseCommit
+        $parts = @(
+            "state_sha256=$($authorizedState.StateSha256)",
+            "commit=$currentHead",
+            "tree=$tree",
+            "parent=$parent"
+        )
         $binding = Get-Sha256Bytes -Bytes ([System.Text.UTF8Encoding]::new($false).GetBytes(($parts -join "`n")))
-        return [PSCustomObject]@{
-            SourceKind = "COMMITTED"
-            Head = $currentHead
-            MergeCommit = $IntegratedMerge
-            Binding = $binding
-            DiffHash = $null
-            Tree = $tree
-            Parent = $IntegratedMerge
-        }
     }
 
-    throw "HEAD is neither the integrated candidate nor its clean single-parent commit"
+    return [PSCustomObject]@{
+        SourceKind = $authorizedState.SourceKind
+        Head = $currentHead
+        MergeCommit = $integratedMerge
+        Binding = $binding
+        DiffHash = $diffHash
+        Tree = $tree
+        Parent = $parent
+        StateId = $authorizedState.StateId
+        StateFile = $authorizedState.StateFile
+        StateSha256 = $authorizedState.StateSha256
+        EvidenceRoot = $authorizedState.EvidenceRoot
+        DatabaseTag = $authorizedState.DatabaseTag
+    }
 }
 
 function Get-NextVerificationRunNumber {
@@ -313,21 +260,26 @@ try {
         throw "PowerShell syntax preflight failed: $($parseErrors[0].Message)"
     }
 
-    $branch = (git branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne $expectedBranch) {
-        throw "branch mismatch"
-    }
-    $mergeCommit = Get-IntegratedMergeCommit
-    $initialBinding = Get-SourceBinding -IntegratedMerge $mergeCommit
+    $initialBinding = Get-SourceBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
     $sourceKind = $initialBinding.SourceKind
     $head = $initialBinding.Head
+    $mergeCommit = $initialBinding.MergeCommit
+    $stateId = $initialBinding.StateId
+    $stateFilePath = $initialBinding.StateFile
+    $stateHash = $initialBinding.StateSha256
     $bindingHash = $initialBinding.Binding
+    $routes = Get-IntegratedEvidenceRoutes -AuthorizedState $initialBinding -HomeDirectory $HOME
     $scriptHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Output "STATE_FILE=$stateFilePath"
+    Write-Output "STATE_ID=$stateId"
+    Write-Output "STATE_SHA256=$stateHash"
     Write-Output "SOURCE_KIND=$sourceKind"
     Write-Output "HEAD=$head"
     Write-Output "MERGE_COMMIT=$mergeCommit"
     Write-Output "BINDING_SHA256=$bindingHash"
     Write-Output "SCRIPT_SHA256=$scriptHash"
+    Write-Output "EVIDENCE_ROOT=$($initialBinding.EvidenceRoot)"
+    Write-Output "DATABASE_TAG=$($initialBinding.DatabaseTag)"
 
     $inheritedVerification = @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" })
     if ($inheritedVerification.Count -gt 0) {
@@ -349,14 +301,16 @@ try {
         }
     }
 
-    $verificationRoot = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING") "PKTB_INT1\VERIFICATION_OF_RECORD"
+    $verificationRoot = $routes.VerificationRoot
     New-Item -ItemType Directory -Path $verificationRoot -Force | Out-Null
     $runNumber = Get-NextVerificationRunNumber -VerificationRoot $verificationRoot
     $runDirectory = Join-Path $verificationRoot ("run_{0}" -f $runNumber)
     if (Test-Path -LiteralPath $runDirectory) {
         throw "verification run directory already exists; refusing reuse"
     }
-    $testDatabase = "test_intevia_living_organism_int1_vr_$runNumber"
+    $testDatabase = "$($routes.VerificationDatabasePrefix)$runNumber"
+    Write-Output "VERIFICATION_ROOT=$verificationRoot"
+    Write-Output "VERIFICATION_DATABASE=$testDatabase"
     if ($testDatabase.Length -gt 63 -or $testDatabase -in @("intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB)) {
         throw "protected or overlength test database name refused"
     }
@@ -365,6 +319,17 @@ try {
     $receiptPath = Join-Path $runDirectory "database-receipts.jsonl"
     $isolationPath = Join-Path $runDirectory "isolation.jsonl"
     $logPath = Join-Path $runDirectory "integrated-fresh-suite.log"
+    foreach ($line in @(
+        "STATE_FILE=$stateFilePath"
+        "STATE_ID=$stateId"
+        "STATE_SHA256=$stateHash"
+        "SOURCE_KIND=$sourceKind"
+        "HEAD=$head"
+        "MERGE_COMMIT=$mergeCommit"
+        "BINDING_SHA256=$bindingHash"
+    )) {
+        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
+    }
     Write-Output "RUN_DIRECTORY=$runDirectory"
 
     $env:INTEVIA_DATABASE_ENGINE = "postgresql"
@@ -556,10 +521,12 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
     }
 
     try {
-        $finalBinding = Get-SourceBinding -IntegratedMerge $mergeCommit
+        $finalBinding = Get-SourceBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
         if ($null -eq $initialBinding -or $finalBinding.SourceKind -ne $initialBinding.SourceKind -or
             $finalBinding.Head -ne $initialBinding.Head -or
             $finalBinding.MergeCommit -ne $initialBinding.MergeCommit -or
+            $finalBinding.StateId -ne $initialBinding.StateId -or
+            $finalBinding.StateSha256 -ne $initialBinding.StateSha256 -or
             $finalBinding.Binding -ne $bindingHash) {
             Add-Failure "reviewed source binding changed during verification"
         }
@@ -589,6 +556,8 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
     $verdictDocument = [ordered]@{
         verdict = $verdict
         source_kind = $sourceKind
+        state_id = $stateId
+        state_sha256 = $stateHash
         head = $head
         merge_commit = $mergeCommit
         binding_sha256 = $bindingHash

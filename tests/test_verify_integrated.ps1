@@ -7,7 +7,11 @@ $verifierPath = Join-Path $repoRoot "scripts\verify_integrated.ps1"
 $developmentRunnerPath = Join-Path $repoRoot "scripts\run_integrated_dev.ps1"
 $originalLocation = Get-Location
 $originalHome = $HOME
-$temporaryHome = Join-Path $env:TEMP ("int1-verifier-harness-" + [guid]::NewGuid().ToString("N"))
+$temporaryHome = Join-Path $env:TEMP ("int2-verifier-harness-" + [guid]::NewGuid().ToString("N"))
+$stateFile = Join-Path $temporaryHome "INT2_TEST_STATE.json"
+$testEvidenceRoot = "PKTB_TEST"
+$testDatabaseTag = "test"
+$stateSha256 = $null
 $originalEnvironment = $null
 $scenarioEnvironment = $null
 $originalLastExitCode = $global:LASTEXITCODE
@@ -171,7 +175,8 @@ function Invoke-HarnessScenario {
     $previousScenario = $env:INT1_HARNESS_SCENARIO
     $env:INT1_HARNESS_SCENARIO = $Scenario
     $before = Get-EnvironmentSnapshot
-    $output = @(& $verifierPath)
+    $output = @(& $verifierPath -StateFile $stateFile -StateSha256 $stateSha256 *>&1 |
+        ForEach-Object { [string]$_ })
     $status = $global:LASTEXITCODE
     $after = Get-EnvironmentSnapshot
     $environmentRestored = Test-EnvironmentSnapshot -Expected $before -Actual $after
@@ -186,15 +191,21 @@ function Invoke-HarnessScenario {
     $verdictLines = @($output | Where-Object { $_ -eq "VERDICT: $ExpectedVerdict" })
     Assert-Harness -Condition ($verdictLines.Count -eq 1) -Message "$RunName did not produce exactly one expected VERDICT line"
     $runDirectory = Join-Path (Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING") `
-        "PKTB_INT1\VERIFICATION_OF_RECORD") $RunName
+        (Join-Path $testEvidenceRoot "VERIFICATION_OF_RECORD")) $RunName
     $verdictPath = Join-Path $runDirectory "VERDICT.json"
     Assert-Harness -Condition (Test-Path -LiteralPath $verdictPath -PathType Leaf) `
         -Message "$RunName did not produce VERDICT.json"
     $document = Get-Content -LiteralPath $verdictPath -Raw | ConvertFrom-Json
     Assert-Harness -Condition ($document.verdict -eq $ExpectedVerdict) `
         -Message "$RunName VERDICT.json did not contain $ExpectedVerdict"
+    Assert-Harness -Condition ($document.state_id -eq "INT2_TEST_STATE" -and
+        $document.state_sha256 -eq $stateSha256) `
+        -Message "$RunName VERDICT.json did not bind the authorized state"
     $logPath = Join-Path $runDirectory "integrated-fresh-suite.log"
     $loggedLines = [System.IO.File]::ReadAllLines($logPath)
+    Assert-Harness -Condition ($loggedLines -contains "STATE_ID=INT2_TEST_STATE" -and
+        $loggedLines -contains "STATE_SHA256=$stateSha256") `
+        -Message "$RunName run header did not bind the authorized state"
     foreach ($prefix in @("INT1_CHECK_STREAM", "INT1_TEST_STREAM")) {
         $expectedLines = @(
             "${prefix}_BEFORE_EMPTY",
@@ -237,8 +248,10 @@ function Invoke-DevelopmentRunnerPreflight {
 
     $parameters = @{
         Mode = $Mode
-        AttemptNumber = 9
+        AttemptNumber = 1
         Labels = $Labels
+        StateFile = $stateFile
+        StateSha256 = $stateSha256
     }
     if ($CleanupTemplate) { $parameters.CleanupTemplate = $true }
     if ($FullSuiteParity) { $parameters.FullSuiteParity = $true }
@@ -254,6 +267,35 @@ try {
         -Message "integrated verifier script is absent"
     [System.IO.Directory]::CreateDirectory($temporaryHome) | Out-Null
     Set-Variable -Name HOME -Value $temporaryHome -Scope Script -Force
+    $testState = [ordered]@{
+        state_id = "INT2_TEST_STATE"
+        branch = "pktb/int-r3-tt1"
+        evidence_root = $testEvidenceRoot
+        database_tag = $testDatabaseTag
+        base_commit = "12f65f19bb5999eee3beb02cbd657c011882a460"
+        integrated_root = "12f65f19bb5999eee3beb02cbd657c011882a460"
+        merge = [ordered]@{
+            commit = "af7d596d766811b0a8581bd830506c6320bdc729"
+            parents = @(
+                "a9dadb5e75106eb5b918a99d65e239526b166243"
+                "76291565e040e0833670be330e1e2c1b5c7b346a"
+            )
+        }
+        allowed_paths = @(
+            "scripts/integrated_state.ps1"
+            "scripts/run_integrated_dev.ps1"
+            "scripts/verify_integrated.ps1"
+            "tests/test_integrated_state.ps1"
+            "tests/test_verify_integrated.ps1"
+        )
+        committed_child_allowed = $true
+    }
+    [System.IO.File]::WriteAllText(
+        $stateFile,
+        (($testState | ConvertTo-Json -Depth 6) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $stateSha256 = (Get-FileHash -LiteralPath $stateFile -Algorithm SHA256).Hash.ToLowerInvariant()
     $originalEnvironment = Get-EnvironmentSnapshot
     foreach ($item in @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" })) {
         Remove-Item -LiteralPath ("Env:{0}" -f $item.Name) -ErrorAction SilentlyContinue
@@ -344,10 +386,10 @@ try {
         Remove-Item -LiteralPath ("Env:{0}" -f $name) -ErrorAction SilentlyContinue
     }
     try {
-        $attemptNine = Join-Path (Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING") `
-            "PKTB_INT1\ME_DEV") "attempt_9"
-        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptNine)) `
-            -Message "attempt_9 already exists before database-free label preflight"
+        $attemptOne = Join-Path (Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING") `
+            (Join-Path $testEvidenceRoot "ME_DEV")) "attempt_1"
+        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptOne)) `
+            -Message "attempt_1 already exists before database-free label preflight"
 
         $accepted = Invoke-DevelopmentRunnerPreflight -Labels $fullSuiteLabels `
             -CleanupTemplate -FullSuiteParity
@@ -355,7 +397,7 @@ try {
             -not $accepted.Text.Contains("full-suite parity mode requires") -and
             -not $accepted.Text.Contains("test label must be module.Class")) `
             -Message "exact commissioned full-suite module set did not pass label preflight"
-        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptNine)) `
+        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptOne)) `
             -Message "exact full-suite label preflight created an attempt folder"
         Write-Output "FULL_SUITE_MODULE_SET_ACCEPTED=True"
 
@@ -366,7 +408,7 @@ try {
         Assert-Harness -Condition ($rejected.Text.Contains(
             "full-suite parity mode requires exactly the commissioned 23 module labels"
         )) -Message "non-exact module-only set was not rejected by full-suite parity validation"
-        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptNine)) `
+        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptOne)) `
             -Message "non-exact module-only label preflight created an attempt folder"
         Write-Output "NONEXACT_MODULE_SET_REJECTED=True"
 
@@ -383,9 +425,24 @@ try {
         Assert-Harness -Condition ($ordinary.Text.Contains("CREDENTIAL_INTEVIA_DATABASE_ENGINE=UNSET") -and
             -not $ordinary.Text.Contains("test label must be module.Class")) `
             -Message "ordinary module.Class label did not pass rule-2 label preflight"
-        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptNine)) `
+        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptOne)) `
             -Message "ordinary label preflight created an attempt folder"
         Write-Output "ORDINARY_CLASS_LABEL_ACCEPTED=True"
+
+        $focusedCloneLabels = @(
+            "tests.test_tt1_identity.CanonicalTemplateIdentityTests",
+            "tests.test_tt1_template_lifecycle.TemplateLifecycleToolingTests.test_template_clone_parity_and_receipt_cleanup"
+        )
+        $focused = Invoke-DevelopmentRunnerPreflight -Labels $focusedCloneLabels
+        Assert-Harness -Condition ($focused.Text.Contains("STATE_SHA256=$stateSha256") -and
+            $focused.Text.Contains("ME_DEV_ROOT=$(Join-Path (Join-Path (Join-Path $HOME 'INTEVIA_AGENT_STAGING') $testEvidenceRoot) 'ME_DEV')") -and
+            $focused.Text.Contains("ME_DATABASE=test_intevia_living_organism_${testDatabaseTag}_me_1") -and
+            $focused.Text.Contains("CREDENTIAL_INTEVIA_DATABASE_ENGINE=UNSET") -and
+            -not $focused.Text.Contains("test label must be module.Class")) `
+            -Message "focused clone labels or state binding failed the runner's preflight"
+        Assert-Harness -Condition (-not (Test-Path -LiteralPath $attemptOne)) `
+            -Message "focused clone label preflight created an attempt folder"
+        Write-Output "FOCUSED_CLONE_LABELS_ACCEPTED=True"
     }
     finally {
         Restore-EnvironmentSnapshot -Snapshot $developmentEnvironment
@@ -394,7 +451,7 @@ try {
         -Actual (Get-EnvironmentSnapshot)) `
         -Message "development label preflight did not restore the environment"
     Write-Output "DEVELOPMENT_PREFLIGHT_ENVIRONMENT_RESTORED=True"
-    Write-Output "ATTEMPT_9_CREATED=False"
+    Write-Output "ATTEMPT_1_CREATED=False"
     Write-Output "DEVELOPMENT_PREFLIGHT_DATABASE_ACCESS=NONE"
 }
 catch {
