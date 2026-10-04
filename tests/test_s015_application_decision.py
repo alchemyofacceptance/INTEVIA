@@ -45,6 +45,10 @@ from tests.s015_concurrency_support import (
     start_worker,
     wait_until_locked,
 )
+from tests.test_s015_role_command import (
+    _register_no_other_sessions_cleanup,
+    _set_local_concurrency_timeouts,
+)
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
@@ -71,6 +75,7 @@ class _Provider:
 @POSTGRES
 class ApplicationDecisionTests(TransactionTestCase):
     def setUp(self):
+        _register_no_other_sessions_cleanup(self)
         self.tag = f"s3-decision-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
@@ -985,7 +990,12 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertEqual(ApplicationDecision.objects.count(), 1)
 
     def _start_observed_worker(self, operation):
-        worker = start_worker(operation)
+        def bounded_operation():
+            with transaction.atomic():
+                _set_local_concurrency_timeouts()
+                return operation()
+
+        worker = start_worker(bounded_operation)
         self._workers.append(worker)
         return worker
 
@@ -1130,7 +1140,6 @@ class ApplicationDecisionTests(TransactionTestCase):
         results = Queue()
 
         def worker(kind, suffix):
-            close_old_connections()
             try:
                 barrier.wait(timeout=10)
                 if kind == "withdraw":
@@ -1147,16 +1156,15 @@ class ApplicationDecisionTests(TransactionTestCase):
                 results.put("ok")
             except Exception as exc:
                 results.put(exc)
-            finally:
-                connection.close()
 
-        threads = [threading.Thread(target=worker, args=(kind, str(index)), daemon=True)
-                   for index, kind in enumerate((first, second))]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
-            self.assertFalse(thread.is_alive())
+        self._register_workers()
+        workers = [
+            self._start_observed_worker(lambda kind=kind, suffix=str(index): worker(kind, suffix))
+            for index, kind in enumerate((first, second))
+        ]
+        for worker_handle in workers:
+            worker_handle.thread.join(timeout=30)
+            self.assertFalse(worker_handle.thread.is_alive())
         outcomes = [results.get_nowait(), results.get_nowait()]
         self.assertEqual(outcomes.count("ok"), 1, outcomes)
         self.assertIsInstance(next(outcome for outcome in outcomes if outcome != "ok"),

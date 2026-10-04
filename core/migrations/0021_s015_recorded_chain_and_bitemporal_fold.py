@@ -332,7 +332,7 @@ $$;
 CREATE FUNCTION public.s015_canonical_ts(p timestamptz) RETURNS text LANGUAGE sql IMMUTABLE AS $$
     SELECT to_char(p AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
 $$;
--- JSON string literal: mandatory escapes only (" \ and control characters), non-ASCII emitted as raw UTF-8; NULL -> null
+-- JSON string literal: mandatory escapes only (" \\ and control characters), non-ASCII emitted as raw UTF-8; NULL -> null
 CREATE FUNCTION public.s015_canonical_json_string(p text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
     SELECT CASE WHEN p IS NULL THEN 'null' ELSE to_json(p)::text END
 $$;

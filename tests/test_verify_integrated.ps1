@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SelfTestForceFailure
+)
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -45,13 +47,24 @@ function Test-EnvironmentSnapshot {
 function Restore-EnvironmentSnapshot {
     param([Parameter(Mandatory = $true)][System.Collections.Generic.Dictionary[string, string]]$Snapshot)
 
+    $current = Get-EnvironmentSnapshot
     foreach ($item in @(Get-ChildItem Env:)) {
         if (-not $Snapshot.ContainsKey($item.Name)) {
-            Remove-Item -LiteralPath ("Env:{0}" -f $item.Name) -ErrorAction SilentlyContinue
+            [System.Environment]::SetEnvironmentVariable(
+                $item.Name,
+                $null,
+                [System.EnvironmentVariableTarget]::Process
+            )
         }
     }
     foreach ($name in $Snapshot.Keys) {
-        Set-Item -LiteralPath ("Env:{0}" -f $name) -Value $Snapshot[$name]
+        if (-not $current.ContainsKey($name) -or $current[$name] -cne $Snapshot[$name]) {
+            [System.Environment]::SetEnvironmentVariable(
+                $name,
+                $Snapshot[$name],
+                [System.EnvironmentVariableTarget]::Process
+            )
+        }
     }
 }
 
@@ -269,10 +282,10 @@ try {
     Set-Variable -Name HOME -Value $temporaryHome -Scope Script -Force
     $testState = [ordered]@{
         state_id = "INT2_TEST_STATE"
-        branch = "pktb/int-r3-tt1"
+        branch = "pktb/aa-r4"
         evidence_root = $testEvidenceRoot
         database_tag = $testDatabaseTag
-        base_commit = "12f65f19bb5999eee3beb02cbd657c011882a460"
+        base_commit = "44abe706081c4bd29f6a2a3d132bb5636978aede"
         integrated_root = "12f65f19bb5999eee3beb02cbd657c011882a460"
         merge = [ordered]@{
             commit = "af7d596d766811b0a8581bd830506c6320bdc729"
@@ -282,10 +295,25 @@ try {
             )
         }
         allowed_paths = @(
-            "scripts/integrated_state.ps1"
+            "core/migrations/0021_s015_recorded_chain_and_bitemporal_fold.py"
             "scripts/run_integrated_dev.ps1"
-            "scripts/verify_integrated.ps1"
+            "src/intevia/services/__init__.py"
+            "src/intevia/services/organism_application_authority.py"
+            "src/intevia/services/organism_application_reads.py"
+            "src/intevia/services/organism_application_service.py"
+            "src/intevia/services/organism_authority.py"
+            "src/intevia/services/organism_command_support.py"
+            "src/intevia/services/organism_membership_service.py"
+            "src/intevia/services/organism_office_consent_service.py"
+            "src/intevia/services/organism_role_service.py"
             "tests/test_integrated_state.ps1"
+            "tests/test_s015_application_authority.py"
+            "tests/test_s015_application_decision.py"
+            "tests/test_s015_application_gateway.py"
+            "tests/test_s015_application_reads.py"
+            "tests/test_s015_application_service.py"
+            "tests/test_s015_membership_command.py"
+            "tests/test_s015_role_command.py"
             "tests/test_verify_integrated.ps1"
         )
         committed_child_allowed = $true
@@ -447,12 +475,32 @@ try {
     finally {
         Restore-EnvironmentSnapshot -Snapshot $developmentEnvironment
     }
+    $developmentEnvironmentAfter = Get-EnvironmentSnapshot
+    $changedEnvironmentNames = @(
+        foreach ($name in $developmentEnvironment.Keys) {
+            if (-not $developmentEnvironmentAfter.ContainsKey($name) -or
+                $developmentEnvironment[$name] -cne $developmentEnvironmentAfter[$name]) {
+                $name
+            }
+        }
+        foreach ($name in $developmentEnvironmentAfter.Keys) {
+            if (-not $developmentEnvironment.ContainsKey($name)) {
+                $name
+            }
+        }
+    )
+    $environmentMessage = "development label preflight did not restore the environment"
+    if ($changedEnvironmentNames.Count -gt 0) {
+        $environmentMessage += ": " + ($changedEnvironmentNames -join ", ")
+    }
     Assert-Harness -Condition (Test-EnvironmentSnapshot -Expected $developmentEnvironment `
-        -Actual (Get-EnvironmentSnapshot)) `
-        -Message "development label preflight did not restore the environment"
+        -Actual $developmentEnvironmentAfter) -Message $environmentMessage
     Write-Output "DEVELOPMENT_PREFLIGHT_ENVIRONMENT_RESTORED=True"
     Write-Output "ATTEMPT_1_CREATED=False"
     Write-Output "DEVELOPMENT_PREFLIGHT_DATABASE_ACCESS=NONE"
+    if ($SelfTestForceFailure) {
+        throw "SelfTestForceFailure"
+    }
 }
 catch {
     $harnessFailure = $_.Exception.Message
@@ -473,11 +521,14 @@ finally {
 }
 
 if ($null -ne $harnessFailure) {
-    Write-Output "HARNESS=FAIL"
+    Write-Host "HARNESS=FAIL"
     Write-Output "FAILURE=$harnessFailure"
     $global:LASTEXITCODE = 1
 }
 else {
     Write-Output "HARNESS=PASS"
     $global:LASTEXITCODE = 0
+}
+if ($null -ne $harnessFailure) {
+    throw $harnessFailure
 }

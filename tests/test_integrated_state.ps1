@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SelfTestForceFailure
+)
 
 $ErrorActionPreference = "Stop"
 $helperPath = Join-Path $PSScriptRoot "..\scripts\integrated_state.ps1"
@@ -29,7 +31,7 @@ function New-ScratchSeed {
     [void](Invoke-Git -Repository $Repository -Arguments @("init", "--quiet"))
     [void](Invoke-Git -Repository $Repository -Arguments @("config", "user.name", "INT-2 State Test"))
     [void](Invoke-Git -Repository $Repository -Arguments @("config", "user.email", "int2-state@example.invalid"))
-    [System.IO.File]::WriteAllText((Join-Path $Repository "tracked.txt"), "seed`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $Repository "tracked.txt"), "seed`r`n", [System.Text.UTF8Encoding]::new($false))
     [void](Invoke-Git -Repository $Repository -Arguments @("add", "tracked.txt"))
     [void](Invoke-Git -Repository $Repository -Arguments @("commit", "--quiet", "-m", "seed"))
     $common = Invoke-Git -Repository $Repository -Arguments @("rev-parse", "HEAD")
@@ -74,7 +76,7 @@ function Set-CandidateChange {
         [string]$Path = "allowed.txt"
     )
 
-    [System.IO.File]::WriteAllText((Join-Path $Repository $Path), "candidate`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $Repository $Path), "candidate`r`n", [System.Text.UTF8Encoding]::new($false))
 }
 
 function Add-AllowedCommit {
@@ -261,7 +263,7 @@ try {
     $repoE = Join-Path $temporaryRoot "case-e"
     $lineE = New-ScratchLine -Repository $repoE
     [void](Invoke-Git -Repository $repoE -Arguments @("checkout", "--quiet", "-b", "pktb/off-integrated-line", $lineE.Common))
-    [System.IO.File]::WriteAllText((Join-Path $repoE "side.txt"), "side`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $repoE "side.txt"), "side`r`n", [System.Text.UTF8Encoding]::new($false))
     [void](Invoke-Git -Repository $repoE -Arguments @("add", "side.txt"))
     [void](Invoke-Git -Repository $repoE -Arguments @("commit", "--quiet", "-m", "off-line base"))
     $offLineBase = Invoke-Git -Repository $repoE -Arguments @("rev-parse", "HEAD")
@@ -287,7 +289,7 @@ try {
 
     $repoHTracked = Join-Path $temporaryRoot "case-h-tracked"
     $lineHTracked = New-ScratchLine -Repository $repoHTracked
-    [System.IO.File]::WriteAllText((Join-Path $repoHTracked "tracked.txt"), "out of scope`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $repoHTracked "tracked.txt"), "out of scope`r`n", [System.Text.UTF8Encoding]::new($false))
     Assert-RefuseCase -Name "CASE_h_TRACKED_OUTSIDE_ALLOWED_PATHS" -Repository $repoHTracked `
         -State (New-StateDocument -Line $lineHTracked -Branch $lineHTracked.Branch `
             -BaseCommit $lineHTracked.IntegratedRoot -AllowedPaths @("allowed.txt")) `
@@ -295,7 +297,7 @@ try {
 
     $repoHUntracked = Join-Path $temporaryRoot "case-h-untracked"
     $lineHUntracked = New-ScratchLine -Repository $repoHUntracked
-    [System.IO.File]::WriteAllText((Join-Path $repoHUntracked "outside.txt"), "untracked out of scope`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $repoHUntracked "outside.txt"), "untracked out of scope`r`n", [System.Text.UTF8Encoding]::new($false))
     Assert-RefuseCase -Name "CASE_h_UNTRACKED_OUTSIDE_ALLOWED_PATHS" -Repository $repoHUntracked `
         -State (New-StateDocument -Line $lineHUntracked -Branch $lineHUntracked.Branch `
             -BaseCommit $lineHUntracked.IntegratedRoot -AllowedPaths @("allowed.txt")) `
@@ -345,7 +347,7 @@ try {
     $repoK = Join-Path $temporaryRoot "case-k"
     $lineK = New-ScratchLine -Repository $repoK
     [void](Add-AllowedCommit -Repository $repoK)
-    [System.IO.File]::WriteAllText((Join-Path $repoK "allowed.txt"), "dirty after commit`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText((Join-Path $repoK "allowed.txt"), "dirty after commit`r`n", [System.Text.UTF8Encoding]::new($false))
     Assert-RefuseCase -Name "CASE_k_COMMITTED_DIRTY_TREE" -Repository $repoK `
         -State (New-StateDocument -Line $lineK -Branch $lineK.Branch -BaseCommit $lineK.IntegratedRoot) `
         -ExpectedReason "worktree is not clean"
@@ -412,6 +414,9 @@ try {
     Write-Output "CASE_m_DATABASE_ACCESS=NONE"
     Write-Output "CASE_m_FOLDERS_CREATED=False"
 
+    if ($SelfTestForceFailure) {
+        throw "SelfTestForceFailure"
+    }
 }
 catch {
     $failure = $_.Exception.Message
@@ -431,7 +436,7 @@ if (Test-Path -LiteralPath $temporaryRoot -PathType Container) {
     $failure = "scratch repository cleanup did not remove the temporary root"
 }
 if ($null -ne $failure) {
-    Write-Output "STATE_TEST=FAIL"
+    Write-Host "STATE_TEST=FAIL"
     Write-Output "FAILURE=$failure"
     $global:LASTEXITCODE = 1
     [Environment]::ExitCode = 1
@@ -441,4 +446,7 @@ else {
     Write-Output "CASE_COUNT=$($results.Count)"
     $global:LASTEXITCODE = 0
     [Environment]::ExitCode = 0
+}
+if ($null -ne $failure) {
+    throw $failure
 }

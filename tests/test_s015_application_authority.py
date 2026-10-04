@@ -69,7 +69,12 @@ from src.intevia.services.organism_authority import (
     authority_target_fingerprint,
     canonical_json_bytes,
 )
-from src.intevia.services.organism_command_support import ReplayViewer, WithheldField, _command_payload
+from src.intevia.services.organism_command_support import (
+    ReplayViewer,
+    WithheldField,
+    _command_payload,
+    withheld_fields,
+)
 from tests.s015_0034_support import emit_guard_catalogue
 from tests.s015_0021_support import (
     T0,
@@ -80,6 +85,10 @@ from tests.s015_0021_support import (
     refresh,
     seed_identity,
     seed_test_gateway,
+)
+from tests.test_s015_role_command import (
+    _register_no_other_sessions_cleanup,
+    _run_with_external_locks,
 )
 
 
@@ -101,6 +110,20 @@ class TestFixtureBirthingFactSource:
         ):
             return None
         return self.fixture_reference
+
+
+class _CountingAuthorityProvider:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.requests = []
+
+    @property
+    def provider_version(self):
+        return self.delegate.provider_version
+
+    def evaluate_organism_authority(self, request):
+        self.requests.append(request)
+        return self.delegate.evaluate_organism_authority(request)
 
 
 class TestFixtureGovernedRegistrationFactSource:
@@ -137,6 +160,7 @@ class TestFixtureCoordinatorNominationEntitlementFactSource:
 @POSTGRES_ONLY
 class ProductionApplicationAuthorityTests(TransactionTestCase):
     def setUp(self):
+        _register_no_other_sessions_cleanup(self)
         self.tag = f"aa-r1-authority-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
@@ -180,9 +204,16 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             cursor.execute("SELECT clock_timestamp()")
             self.now = cursor.fetchone()[0]
 
-    def _service(self, *, birthing_source=None, registration_source=None, nomination_entitlement_source=None):
+    def _service(
+        self,
+        *,
+        birthing_source=None,
+        registration_source=None,
+        nomination_entitlement_source=None,
+        authority_provider=None,
+    ):
         self._capture_database_now()
-        provider = ProductionApplicationAuthorityProvider(
+        provider = authority_provider or ProductionApplicationAuthorityProvider(
             birthing_source=birthing_source,
             registration_source=registration_source,
             nomination_entitlement_source=nomination_entitlement_source,
@@ -681,7 +712,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN)
 
     def test_three_gateway_acts_qualify_drafts_and_effects(self):
-        service = self._service()
+        provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider())
+        service = self._service(authority_provider=provider)
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         actions = (
             (OrganismAction.EFFECT_APPLICATION_SETTINGS, {
@@ -704,6 +736,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             }),
         )
         for index, (action, fields) in enumerate(actions):
+            receipts_before_draft = OrganismCommandReceipt.objects.count()
             self._capture_database_now()
             draft = service.save_gateway_draft(GatewayDraftCommand(
                 credential=coordinator.credential,
@@ -716,8 +749,9 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 received_at=self.now,
                 fields=fields,
             ))
+            self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before_draft)
             self._capture_database_now()
-            event = service.effect_gateway_version(EffectGatewayVersionCommand(
+            effect_command = EffectGatewayVersionCommand(
                 credential=coordinator.credential,
                 living_organism_id=self.organism_uuid,
                 action=action,
@@ -727,8 +761,17 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 occurred_at=self.now,
                 effective_at=self.now,
                 received_at=self.now,
-            ))
+            )
+            event = service.effect_gateway_version(effect_command)
             self.assertEqual(event.action, action.value)
+            provider_calls = len(provider.requests)
+            decisions = AuthorityDecision.objects.count()
+            receipts = OrganismCommandReceipt.objects.count()
+            replay = service.effect_gateway_version(effect_command)
+            self.assertEqual(replay, event)
+            self.assertEqual(len(provider.requests), provider_calls)
+            self.assertEqual(AuthorityDecision.objects.count(), decisions)
+            self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
             if action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
                 configuration = LOGovernanceConfigurationVersion.objects.get(
                     version_uuid=draft.version_uuid,
@@ -1302,16 +1345,23 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(refusal.refusal_code, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
 
     def test_effective_coordinator_without_the_assignment_cannot_decide_and_can_reassign(self):
-        service = self._service(
+        provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=TestFixtureGovernedRegistrationFactSource(),
+        ))
+        service = self._service(
+            authority_provider=provider,
         )
         submission = self._submit(service, "reassign")
         application = Application.objects.get(application_uuid=submission.application_uuid)
         first_coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         second_coordinator = self._add_second_coordinator("reassign")
+        Identity.objects.filter(pk=first_coordinator.pk).update(
+            access_epoch=first_coordinator.access_epoch + 1,
+        )
+        first_coordinator.refresh_from_db()
         self._capture_database_now()
-        service.claim_application(ClaimApplicationCommand(
+        claim_command = ClaimApplicationCommand(
             credential=first_coordinator.credential,
             application_uuid=application.application_uuid,
             request_reference=f"aa-r1:claim-before-reassign:{self.tag}",
@@ -1319,7 +1369,20 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             occurred_at=self.now,
             effective_at=self.now,
             received_at=self.now,
-        ))
+        )
+        claim_result = service.claim_application(claim_command)
+        claim_decision = AuthorityDecision.objects.get(
+            decision_reference=claim_result.authority_decision_reference,
+        )
+        self.assertEqual(claim_decision.actor_identity_id, first_coordinator.identity_id)
+        self._capture_database_now()
+        claim_provider_calls = len(provider.requests)
+        claim_decisions = AuthorityDecision.objects.count()
+        claim_receipts = OrganismCommandReceipt.objects.count()
+        self.assertEqual(service.claim_application(claim_command), claim_result)
+        self.assertEqual(len(provider.requests), claim_provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), claim_decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), claim_receipts)
         with self.assertRaises(S015AuthorityDenied) as not_assignee:
             self._capture_database_now()
             service.decide_application(DecideApplicationCommand(
@@ -1363,8 +1426,15 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         reassign_fact_refs = {(fact["relation"], fact["reference"]) for fact in reassign_record.facts_read}
         self.assertIn(("core_csaassignment", str(original_claim.pk)), reassign_fact_refs)
         self.assertIn(("core_applicationengagement", str(first_engagement.pk)), reassign_fact_refs)
-        self.assertEqual(service.reassign_application(reassign_command).authority_reference,
-                         WithheldField("authority_reference", "SUBJECT"))
+        reassign_provider_calls = len(provider.requests)
+        reassign_decisions = AuthorityDecision.objects.count()
+        reassign_receipts = OrganismCommandReceipt.objects.count()
+        reassign_replay = service.reassign_application(reassign_command)
+        self.assertEqual(reassign_replay, reassigned)
+        self.assertEqual(reassign_replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(len(provider.requests), reassign_provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), reassign_decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), reassign_receipts)
         reassign_record.refresh_from_db()
         self.assertEqual(reassign_record.authority_reference.encode("utf-8"), reassign_reference.encode("utf-8"))
         self._capture_database_now()
@@ -1403,10 +1473,178 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decide_fact_refs = {(fact["relation"], fact["reference"]) for fact in decide_record.facts_read}
         self.assertIn(("core_csaassignment", str(replacement.pk)), decide_fact_refs)
         self.assertIn(("core_applicationengagement", str(second_engagement.pk)), decide_fact_refs)
-        self.assertEqual(service.decide_application(decide_command).authority_reference,
-                         WithheldField("authority_reference", "SUBJECT"))
+        decide_provider_calls = len(provider.requests)
+        decide_decisions = AuthorityDecision.objects.count()
+        decide_receipts = OrganismCommandReceipt.objects.count()
+        decide_replay = service.decide_application(decide_command)
+        self.assertEqual(decide_replay, decided)
+        self.assertEqual(decide_replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(len(provider.requests), decide_provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), decide_decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), decide_receipts)
+
+        def acquire_register_lock(cursor):
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [self.organism_uuid],
+            )
+
+        locked_replay = _run_with_external_locks(
+            self,
+            acquire_register_lock,
+            lambda _holder_pid, _start_worker, run_bounded: run_bounded(
+                lambda: service.decide_application(decide_command),
+            ),
+        )
+        self.assertEqual(locked_replay, decided)
+        self.assertEqual(len(provider.requests), decide_provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), decide_decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), decide_receipts)
+
         decide_record.refresh_from_db()
         self.assertEqual(decide_record.authority_reference.encode("utf-8"), decide_reference.encode("utf-8"))
+
+        self._capture_database_now()
+        self._end_fixture_membership(
+            second_coordinator,
+            "decider-departed-after-completion",
+            self.now,
+        )
+        departure_provider_calls = len(provider.requests)
+        departure_decisions = AuthorityDecision.objects.count()
+        departure_receipts = OrganismCommandReceipt.objects.count()
+        departed_replay = service.decide_application(decide_command)
+        self.assertEqual(departed_replay.application_uuid, decided.application_uuid)
+        self.assertEqual(departed_replay.action, decided.action)
+        self.assertEqual(departed_replay.recorded_at, decided.recorded_at)
+        self.assertEqual(departed_replay.lineage_reference, decided.lineage_reference)
+        self.assertEqual(departed_replay.authority_decision_reference, decided.authority_decision_reference)
+        self.assertEqual(departed_replay.completion_due_at, decided.completion_due_at)
+        self.assertEqual(departed_replay.completion_due_source, decided.completion_due_source)
+        self.assertEqual(departed_replay.record_uuid, WithheldField("record_uuid", "PROCESSING"))
+        self.assertEqual(
+            withheld_fields(departed_replay),
+            (
+                WithheldField("authority_reference", "SUBJECT"),
+                WithheldField("record_uuid", "PROCESSING"),
+            ),
+        )
+        self.assertEqual(len(provider.requests), departure_provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), departure_decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), departure_receipts)
+
+    def test_nonmember_claim_refuses_without_waiting_on_register_lock(self):
+        production_provider = ProductionApplicationAuthorityProvider(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+            registration_source=TestFixtureGovernedRegistrationFactSource(),
+        )
+        provider = _CountingAuthorityProvider(production_provider)
+        service = self._service(authority_provider=provider)
+        submission = self._submit(service, "nonmember-claim-register-lock")
+        application = Application.objects.get(application_uuid=submission.application_uuid)
+        claim_command = ClaimApplicationCommand(
+            credential=self.applicant.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:nonmember-claim:{self.tag}",
+            idempotency_key=f"aa-r1:nonmember-claim:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+        )
+        provider_calls = len(provider.requests)
+        decisions = AuthorityDecision.objects.count()
+        receipts = OrganismCommandReceipt.objects.count()
+
+        def acquire_register_lock(cursor):
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [self.organism_uuid],
+            )
+
+        refusal = _run_with_external_locks(
+            self,
+            acquire_register_lock,
+            lambda _holder_pid, _start_worker, run_bounded: run_bounded(
+                lambda: service.claim_application(claim_command),
+            ),
+        )
+        self.assertIsInstance(refusal, S015ApplicationAuthorityUnavailable)
+        self.assertEqual(len(provider.requests), provider_calls)
+        self.assertEqual(AuthorityDecision.objects.count(), decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
+
+    def test_nonmember_applicant_withdrawal_is_not_blocked_by_register_lock(self):
+        from threading import Event
+        from time import monotonic, sleep
+
+        provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+            registration_source=TestFixtureGovernedRegistrationFactSource(),
+        ))
+        service = self._service(authority_provider=provider)
+        submission = self._submit(service, "nonmember-withdrawal-register-lock")
+        application = Application.objects.get(application_uuid=submission.application_uuid)
+        self._capture_database_now()
+        command = WithdrawApplicationCommand(
+            credential=self.applicant.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:nonmember-withdrawal:{self.tag}",
+            idempotency_key=f"aa-r1:nonmember-withdrawal:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+        )
+        provider_calls = len(provider.requests)
+
+        def acquire_register_lock(cursor):
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [self.organism_uuid],
+            )
+
+        release_lock = Event()
+
+        def observe(holder_pid, start_worker, _run_bounded):
+            worker = start_worker(lambda: service.withdraw_application(command))
+            blocked = False
+            deadline = monotonic() + 5
+            while monotonic() < deadline:
+                if not worker.thread.is_alive():
+                    break
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_blocking_pids(%s)", [worker.pid])
+                    blocked = holder_pid in cursor.fetchone()[0]
+                if blocked:
+                    break
+                sleep(0.01)
+
+            outcome = worker.outcome
+            detail = "no worker error was reported"
+            if outcome is not None and outcome[0] == "error":
+                error = outcome[1]
+                detail = f"{type(error).__name__}: {str(error).replace(self.tag, self.tag[:8])}"
+            self.assertTrue(blocked, f"withdrawal did not wait after T-1; {detail}")
+            release_lock.set()
+            worker.thread.join(timeout=30)
+            self.assertFalse(worker.thread.is_alive(), "withdrawal worker remained alive after lock release")
+            return worker.outcome
+
+        withdrawal = _run_with_external_locks(
+            self,
+            acquire_register_lock,
+            observe,
+            holder_release_event=release_lock,
+        )
+        if withdrawal is None:
+            self.fail("withdrawal worker returned no outcome")
+        if withdrawal[0] != "ok":
+            error = withdrawal[1]
+            self.fail(
+                f"withdrawal worker outcome {withdrawal[0]}: "
+                f"{type(error).__name__}: {str(error).replace(self.tag, self.tag[:8])}"
+            )
+        self.assertEqual(withdrawal[1].action, OrganismAction.WITHDRAW_APPLICATION)
+        self.assertEqual(len(provider.requests), provider_calls + 1)
 
     def test_reassign_without_a_claim_is_refused(self):
         service = self._service(

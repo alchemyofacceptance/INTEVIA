@@ -14,7 +14,7 @@ from django.test import TransactionTestCase
 
 from core.forms import LOApplicationQuestionDraftForm, LOApplicationSettingsDraftForm
 from core.models import (
-    Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
+    Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement, AuthorityDecision,
     ApplicationLineage, ApplicationLineageEvent, ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent, Identity, IdentityTransition,
     LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
@@ -25,6 +25,7 @@ from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_service import (
     EffectGatewayVersionCommand, FormationLONameSource, GatewayDraftCommand,
     OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand, _PAIR_DOMAIN,
+    S015ApplicationAuthorityUnavailable,
     _validate_gateway_answer,
     default_application_question, gateway_version_status,
 )
@@ -49,6 +50,11 @@ from tests.s015_concurrency_support import (
     wait_for_blocker_set,
     wait_until_locked,
 )
+from tests.test_s015_role_command import (
+    _run_with_external_locks,
+    _register_no_other_sessions_cleanup,
+    _set_local_concurrency_timeouts,
+)
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 
 
@@ -59,7 +65,11 @@ POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 gateway requires Po
 class _CoordinatorProvider:
     """TEST-ONLY permissive provider for service and lock witnesses."""
 
+    def __init__(self):
+        self.requests = []
+
     def evaluate_organism_authority(self, request):
+        self.requests.append(request)
         if isinstance(request, S015OwnApplicantAuthorityRequest):
             return S015OwnApplicantAuthorityResponse(**asdict(request), authority_reference="s3:test:applicant")
         return S015PostFoundingAuthorityResponse(**asdict(request), authority_reference="s3:test:gateway")
@@ -113,6 +123,7 @@ class _TestDiscussionWelcome:
 @POSTGRES
 class ApplicationGatewayTests(TransactionTestCase):
     def setUp(self):
+        _register_no_other_sessions_cleanup(self)
         self.tag = f"s3-gateway-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
@@ -132,8 +143,9 @@ class ApplicationGatewayTests(TransactionTestCase):
             correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1), previous_transition=provision,
         )
         self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
+        self.provider = _CoordinatorProvider()
         self.service = OrganismApplicationService(
-            authority=S015Authority(provider=_CoordinatorProvider()),
+            authority=S015Authority(provider=self.provider),
             clock=lambda: NOW, name_source=_TestFixtureLONameSource(),
         )
 
@@ -209,8 +221,9 @@ class ApplicationGatewayTests(TransactionTestCase):
             care_pk = seed_identity(cursor, f"fake-care-{fresh()}")
         care = Identity.objects.select_related("credential").get(pk=care_pk)
         welcome = _TestDiscussionWelcome()
+        self.provider = _CoordinatorProvider()
         self.service = OrganismApplicationService(
-            authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
+            authority=S015Authority(provider=self.provider), clock=lambda: NOW,
             name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care), welcome=welcome,
         )
         return care, welcome
@@ -247,7 +260,12 @@ class ApplicationGatewayTests(TransactionTestCase):
         return workers
 
     def _start_worker(self, workers, operation):
-        worker = start_worker(operation)
+        def bounded_operation():
+            with transaction.atomic():
+                _set_local_concurrency_timeouts()
+                return operation()
+
+        worker = start_worker(bounded_operation)
         workers.append(worker)
         return worker
 
@@ -950,7 +968,9 @@ class ApplicationGatewayTests(TransactionTestCase):
             "question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
             "answer_format": "LONG_ANSWER",
         })
+        receipts_before_draft = OrganismCommandReceipt.objects.count()
         question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {})
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before_draft)
         self.assertEqual(question.question_text, form.initial["question_text"])
         self.assertEqual(question.answer_format, "LONG_ANSWER")
         settings_form = LOApplicationSettingsDraftForm()
@@ -1075,6 +1095,85 @@ class ApplicationGatewayTests(TransactionTestCase):
                 WithheldField("event_sequence", "PROCESSING"),
             },
         )
+
+    def test_submission_replay_does_not_wait_on_the_care_identity_row(self):
+        self.automatic_gateway()
+        care, _welcome = self.automatic_service()
+        applicant = self.applicant()
+        command = SubmitApplicationCommand(
+            credential=applicant.credential,
+            living_organism_id=self.organism.organism_id,
+            request_reference="s3:r4:care-held:submit",
+            idempotency_key="s3:r4:care-held:submit",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+            answer="TEST FIXTURE: replay with CARE identity held",
+        )
+        fresh_result = self.service.submit_application(command)
+        provider_calls = len(self.provider.requests)
+        decisions = ApplicationDecision.objects.count()
+        receipts = OrganismCommandReceipt.objects.count()
+
+        def hold_care_identity(cursor):
+            cursor.execute(
+                "SELECT id FROM public.core_identity WHERE id = %s FOR UPDATE",
+                [care.pk],
+            )
+
+        replay = _run_with_external_locks(
+            self,
+            hold_care_identity,
+            lambda _holder_pid, _start_worker, run_bounded: run_bounded(
+                lambda: self.service.submit_application(command),
+            ),
+        )
+        self.assertEqual(replay, fresh_result)
+        self.assertEqual(len(self.provider.requests), provider_calls)
+        self.assertEqual(ApplicationDecision.objects.count(), decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
+
+    def test_nonmember_gateway_effect_refuses_without_waiting_on_register_lock(self):
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        self.open_gateway()
+        version = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {})
+        nonmember = self.applicant()
+        service = OrganismApplicationService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: NOW,
+            name_source=_TestFixtureLONameSource(),
+        )
+        command = EffectGatewayVersionCommand(
+            credential=nonmember.credential,
+            living_organism_id=self.organism.organism_id,
+            action=OrganismAction.EFFECT_APPLICATION_QUESTION,
+            version_uuid=version.version_uuid,
+            request_reference="s3:r4:nonmember-effect",
+            idempotency_key="s3:r4:nonmember-effect",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+        )
+        decisions = AuthorityDecision.objects.count()
+        receipts = OrganismCommandReceipt.objects.count()
+
+        def acquire_register_lock(cursor):
+            cursor.execute(
+                "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
+                [self.organism.organism_id],
+            )
+
+        refusal = _run_with_external_locks(
+            self,
+            acquire_register_lock,
+            lambda _holder_pid, _start_worker, run_bounded: run_bounded(
+                lambda: service.effect_gateway_version(command),
+            ),
+        )
+        self.assertIsInstance(refusal, S015ApplicationAuthorityUnavailable)
+        self.assertEqual(AuthorityDecision.objects.count(), decisions)
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
 
     def test_incomplete_version_and_unresolved_placeholder_are_separate_refusals(self):
         version = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {})

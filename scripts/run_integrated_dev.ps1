@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet("fresh", "clone")][string]$Mode,
-    [Parameter(Mandatory = $true)][ValidateRange(1, 4)][int]$AttemptNumber,
+    [Parameter(Mandatory = $true)][ValidateRange(1, 99)][int]$AttemptNumber,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string[]]$Labels,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
     [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
