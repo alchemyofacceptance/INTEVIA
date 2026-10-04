@@ -1862,7 +1862,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
             )
-            self.assertEqual(cursor.fetchone()[0], 405)
+            # 0040 contributes 405 triggers; 0041 adds s015_r4s2_assign_current_membership.
+            self.assertEqual(cursor.fetchone()[0], 406)
             cursor.execute(
                 "SELECT trigger.tgname, trigger.tgenabled, function.proname, "
                 "pg_get_functiondef(function.oid) "

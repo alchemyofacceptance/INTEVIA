@@ -36,6 +36,7 @@ from core.models import (
     OfficeAppointmentConsent,
     OrganismCommandReceipt,
     OrganismMembership,
+    OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
 from s015_0021_support import (
@@ -4692,15 +4693,144 @@ class S015RoleCommandTests(TransactionTestCase):
             assignment_outcome=assignment_outcome,
             nominee_state=nominee_state,
             assignment_state=assignment.state,
-        )  # F-R4S1-2-OPEN: the required outcome is the ASSIGN refused (DENIED); this records current behaviour as evidence, not an approved outcome
+        )  # F-R4S1-2 remedy (R4 slice 2): the completed departure is honoured; the ASSIGN is refused
         self.assertTrue(result["gate_reached"])
         self.assertEqual(_r4s1_outcome(result["first"]), "ok")
-        self.assertTrue(
-            assignment_outcome == "ok" or assignment_outcome.startswith("refused:"),
-        )
         self.assertIsNotNone(result["wait"])
         self.assertIsNone(result["cleanup_error"])
         self.assertEqual(nominee.pk, assignment.membership.identity_id)
+        # 1. the correct refusal, by the service's current-membership check (⟨C.037⟩)
+        self.assertEqual(assignment_outcome, "refused:S015AssignmentMembershipRefused")
+        # 2. no new appointment effect: no ASSIGN event, the assignment not ACTIVE
+        self.assertEqual(
+            [event.action for event in ContextualRoleAssignmentStateEvent.objects.filter(
+                assignment=assignment,
+            ).order_by("sequence")],
+            ["PROPOSE"],
+        )
+        self.assertEqual(assignment.state, "PROPOSED")
+        # 3. the departure remaining effective
+        membership = OrganismMembership.objects.get(membership_uuid=membership_uuid)
+        self.assertEqual(nominee_state, "ENDED")
+        self.assertEqual(membership.state, "ENDED")
+        self.assertEqual(membership.head_transition.resulting_state, "ENDED")
+        self.assertEqual(
+            self._fold_membership_now(membership),
+            "ENDED",
+        )
+
+    def _fold_membership_now(self, membership):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT public.s015_fold_effective_state(%s, %s, clock_timestamp(), clock_timestamp())",
+                ["core_organismmembership", membership.pk],
+            )
+            return cursor.fetchone()[0]
+
+    def test_r4s2_f1_backdated_assign_after_departure_is_refused(self):
+        """[R4 slice 2, F-R4S1-1] A supplied earlier effective_at does not override a completed departure on this route."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        label = "r4s2-f1"
+        ids, founder, nominee, membership_uuid, _provider, _service, proposal = (
+            self._r4s1_prepare_proposal(label)
+        )
+        departure = self._r4s1_departure_operation(
+            nominee,
+            membership_uuid,
+            label,
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        departure()
+        membership = OrganismMembership.objects.get(membership_uuid=membership_uuid)
+        self.assertEqual(membership.state, "ENDED")
+        assign_service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        # effective_at = the fixture NOW: earlier than the departure's database-time effective moment
+        # (attempt 1's shape), and not before the proposal's head (IL-3 does not fire)
+        assign_command = self._transition_command(
+            actor=founder,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            request_reference=f"request:{label}:assign",
+            idempotency_key=f"idem:{label}:assign",
+            effective_at=NOW,
+        )
+        with self.assertRaises(S015AssignmentMembershipRefused):
+            assign_service.transition_assignment(assign_command)
+        assignment = ContextualRoleAssignment.objects.get(assignment_uuid=proposal.assignment_uuid)
+        self.assertEqual(
+            [event.action for event in ContextualRoleAssignmentStateEvent.objects.filter(
+                assignment=assignment,
+            ).order_by("sequence")],
+            ["PROPOSE"],
+        )
+        self.assertEqual(assignment.state, "PROPOSED")
+        membership.refresh_from_db()
+        self.assertEqual(membership.state, "ENDED")
+        self.assertEqual(self._fold_membership_now(membership), "ENDED")
+
+    def test_r4s2_f1_control_backdated_assign_of_current_member_is_admitted(self):
+        """[R4 slice 2, positive control] The same backdated ASSIGN is admitted where the nominee has not departed."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        label = "r4s2-f1-control"
+        ids, founder, nominee, membership_uuid, _provider, _service, proposal = (
+            self._r4s1_prepare_proposal(label)
+        )
+        assign_service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        result = assign_service.transition_assignment(self._transition_command(
+            actor=founder,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            request_reference=f"request:{label}:assign",
+            idempotency_key=f"idem:{label}:assign",
+            effective_at=NOW,
+        ))
+        assignment = ContextualRoleAssignment.objects.get(assignment_uuid=proposal.assignment_uuid)
+        self.assertEqual(assignment.state, "ACTIVE")
+
+    def test_r4s2_guard_condition_and_trigger_installed(self):
+        """[R4 slice 2, the database guard] The ASSIGN guard's condition is false for a departed member at record time, and the trigger is installed."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        label = "r4s2-guard"
+        ids, founder, nominee, membership_uuid, _provider, _service, proposal = (
+            self._r4s1_prepare_proposal(label)
+        )
+        assignment = ContextualRoleAssignment.objects.get(assignment_uuid=proposal.assignment_uuid)
+
+        def condition(effective_at):
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT public.s015_r4s2_assign_membership_current(%s, %s, clock_timestamp())",
+                    [assignment.pk, effective_at],
+                )
+                return cursor.fetchone()[0]
+
+        self.assertTrue(condition(NOW))
+        self._r4s1_departure_operation(
+            nominee, membership_uuid, label, ProductionApplicationAuthorityProvider(database_alias="default"),
+        )()
+        # a supplied earlier effective_at (the fixture NOW) does not satisfy the guard once the departure is on the record
+        self.assertFalse(condition(NOW))
+        self.assertFalse(condition(self._database_now()))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                 WHERE c.relname = 'core_contextualroleassignmentstateevent'
+                   AND t.tgname = 's015_r4s2_assign_current_membership' AND NOT t.tgisinternal
+                """
+            )
+            self.assertEqual(cursor.fetchone()[0], 1)
 
     def test_r4s1_c3_order1_proposal_serializes_with_nominee_departure(self):
         """[predicted, determination §7] Proposal takes the register before nominee rows and completes without a cycle."""

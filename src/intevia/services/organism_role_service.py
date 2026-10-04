@@ -30,7 +30,8 @@ round.
 Order inside the transaction (as S1 at d6af911): the atomic block; canonical input validation
 (including refusal of an undecided or unused action or state token); the actor lock; the mutex;
 target resolution so the fingerprint can be built (a missing target is not-found); replay; then
-authority; then every state-reading refusal — IL-4, the decided edge set, IL-3, IL-7 — then the
+authority; then every state-reading refusal — the nominee's current membership on ASSIGN (R4
+slice 2), IL-4, the decided edge set, IL-3, IL-7 — then the
 event write with every chain-contract column (TRANSPORT, actor PARTY/STANDING, enterer = actor),
 the cache refresh with `clock_timestamp()`, and the receipt.
 
@@ -91,6 +92,7 @@ from core.models import (
     LivingOrganism,
     OfficeAppointmentConsent,
     OrganismMembership,
+    OrganismMembershipTransition,
     OrganismRoleDefinition,
 )
 from core.organism_contract import OrganismAction
@@ -1014,6 +1016,31 @@ class OrganismRoleService(_OrganismCommandService):
                 .select_related("membership", "role_definition")
                 .get(pk=assignment.pk)
             )
+            # R4 slice 2 (the Human Governor, 4 Oct 2026): a completed departure is honoured at
+            # record time. The nominee's membership state is read from the row locked above,
+            # under the organism lock, after definitive authorisation. Neither the provider's
+            # fold at the act's coordinates nor a supplied earlier effective_at overrides it:
+            # an office requires a current membership (⟨C.037⟩). Mirrors _execute_propose.
+            if assignment.membership.state != "ACTIVE":
+                raise S015AssignmentMembershipRefused(
+                    "an office requires a current membership (⟨C.037⟩)"
+                )
+            proposal_recorded_at = (
+                ContextualRoleAssignmentStateEvent.objects.using(self._alias)
+                .filter(assignment=assignment, sequence=1, action="PROPOSE")
+                .values_list("recorded_at", flat=True)
+                .first()
+            )
+            if proposal_recorded_at is None:
+                raise S015AssignmentNotFound("office nomination proposal not found")
+            if OrganismMembershipTransition.objects.using(self._alias).filter(
+                membership_id=assignment.membership_id,
+                resulting_state="ENDED",
+                recorded_at__gt=proposal_recorded_at,
+            ).exists():
+                raise S015AssignmentMembershipRefused(
+                    "the nomination predates the nominee's departure; a fresh nomination is required"
+                )
             self._verify_assign_consent(
                 assignment=assignment,
                 effective_at=effective_at,

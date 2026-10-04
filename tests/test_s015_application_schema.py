@@ -41,7 +41,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0040_s2b_role_actor_nullable_state"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0041_r4s2_assign_current_membership"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
