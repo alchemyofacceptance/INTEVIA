@@ -39,6 +39,7 @@ from src.intevia.services.organism_command_support import (
     _empty_anchor_fingerprint,
     _lock_actor,
     _lock_actor_membership_context,
+    _lock_registered_organism,
     _OrganismCommandService,
     _resulting_temporal_basis,
     _validate_timestamp,
@@ -860,9 +861,13 @@ class OrganismMembershipService(_OrganismCommandService):
         if replay is not None:
             return replay
 
+        _lock_registered_organism(
+            database_alias=self._alias,
+            organism_id=membership.living_organism.organism_id,
+        )
         membership = (
             OrganismMembership.objects.using(self._alias)
-            .select_for_update()
+            .select_for_update(of=("self",))
             .select_related("identity", "living_organism")
             .get(pk=membership.pk)
         )

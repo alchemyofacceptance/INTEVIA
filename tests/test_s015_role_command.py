@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -62,6 +63,7 @@ from src.intevia.services.organism_command_support import (
 )
 from src.intevia.services.organism_office_consent_service import OfficeConsentCommandResult
 from src.intevia.services.organism_membership_service import (
+    S015MembershipEdgeRefused,
     S015OperationNotYetImplemented,
 )
 from src.intevia.services.organism_role_service import (
@@ -76,7 +78,7 @@ from src.intevia.services.organism_role_service import (
     TransitionAssignmentCommand,
     _validate_assignment_edge,
 )
-from tests.s015_concurrency_support import backend_pid
+from tests.s015_concurrency_support import backend_pid, exact_wait
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
@@ -293,6 +295,166 @@ def _run_bounded_concurrency_worker(testcase, operation):
             abort_events=[worker.abort_event],
         )
     return worker.outcome
+
+
+def _start_r4s1_worker(operation, name):
+    worker = _ConcurrencyWorker(
+        stop_event=threading.Event(),
+        abort_event=threading.Event(),
+    )
+
+    def run():
+        close_old_connections()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '5s'")
+                cursor.execute("SET statement_timeout = '10s'")
+            # Correction: this wrapped service calls in a rollback-prone outer transaction; it should leave authority_atomic outermost.
+            worker.pid = backend_pid(connection)
+            worker.ready.set()
+            result = operation()
+            worker.outcome = ("ok", result)
+        except Exception as error:
+            worker.outcome = ("error", error)
+        finally:
+            worker.ready.set()
+            connection.close()
+
+    worker.thread = threading.Thread(target=run, name=name, daemon=True)
+    worker.thread.start()
+    return worker
+
+
+def _capture_r4s1_exact_wait(waiter, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if waiter.pid is not None:
+            try:
+                with connection.cursor() as cursor:
+                    return exact_wait(cursor, waiter.pid)
+            except AssertionError:
+                pass
+        if waiter.thread is not None and not waiter.thread.is_alive():
+            break
+        time.sleep(0.01)
+    return None
+
+
+def _r4s1_sqlstate(error):
+    current = error
+    while current is not None:
+        state = getattr(current, "sqlstate", None) or getattr(current, "pgcode", None)
+        if state is not None:
+            return state
+        current = current.__cause__
+    return None
+
+
+def _r4s1_outcome(worker):
+    if worker.outcome is None:
+        return "timeout"
+    kind, value = worker.outcome
+    if kind == "ok":
+        return "ok"
+    return _r4s1_error_outcome(value)
+
+
+def _r4s1_error_outcome(value):
+    if isinstance(value, TimeoutError):
+        return "timeout"
+    state = _r4s1_sqlstate(value)
+    if state == "40P01":
+        return "deadlock_40P01"
+    if state in {"55P03", "57014"}:
+        return "timeout"
+    refusal_code = getattr(value, "refusal_code", None)
+    if refusal_code is not None:
+        return f"refused:{getattr(refusal_code, 'value', refusal_code)}"
+    # Correction: this checked a service limit ID as a refusal code; it should identify the service refusal class.
+    if isinstance(
+        value,
+        (
+            S015OperationNotYetImplemented,
+            S015MembershipEdgeRefused,
+            S015AssignmentEdgeRefused,
+            S015AssignmentMembershipRefused,
+            S015AssignmentStateUnused,
+            S015AssignmentTermRefused,
+        ),
+    ):
+        return f"refused:{type(value).__name__}"
+    return f"other:{type(value).__name__}"
+
+
+def _r4s1_rows():
+    from core.models import AuthorityDecision, OrganismMembershipTransition
+
+    return {
+        "membership_transitions": OrganismMembershipTransition.objects.count(),
+        "assignment_events": ContextualRoleAssignmentStateEvent.objects.count(),
+        "decisions": AuthorityDecision.objects.count(),
+        "receipts": OrganismCommandReceipt.objects.count(),
+    }
+
+
+def _r4s1_row_delta(before):
+    after = _r4s1_rows()
+    return ",".join(f"{name}:{after[name] - before[name]}" for name in before)
+
+
+def _finish_r4s1_workers(testcase, workers, release_events):
+    try:
+        _finish_concurrency_workers(
+            testcase,
+            workers,
+            stop_events=release_events,
+            abort_events=[worker.abort_event for worker in workers],
+        )
+    except Exception as error:
+        return error
+    return None
+
+
+def _r4s1_nowait_probe(table, row_id):
+    queries = {
+        "core_identity": "SELECT id FROM public.core_identity WHERE id = %s FOR UPDATE NOWAIT",
+        "core_organismmembership": (
+            "SELECT id FROM public.core_organismmembership WHERE id = %s FOR UPDATE NOWAIT"
+        ),
+        "core_livingorganism": (
+            "SELECT id FROM public.core_livingorganism WHERE id = %s FOR UPDATE NOWAIT"
+        ),
+    }
+    if table not in queries:
+        raise ValueError(f"unsupported witness probe table: {table}")
+    try:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(queries[table], [row_id])
+            if cursor.fetchone() is None:
+                return "MISSING", None
+        return "ACQUIRED", None
+    except DatabaseError as error:
+        state = _r4s1_sqlstate(error)
+        if state == "55P03":
+            return "LOCK_NOT_AVAILABLE", state
+        raise
+
+
+class _PausedProductionProvider:
+    def __init__(self, entered, release):
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        self._provider = ProductionApplicationAuthorityProvider(database_alias="default")
+        self.entered = entered
+        self.release = release
+
+    def evaluate_organism_authority(self, request):
+        self.entered.set()
+        if not self.release.wait(timeout=20):
+            raise TimeoutError("R4 slice 1 witness authority pause was not released")
+        return self._provider.evaluate_organism_authority(request)
 
 
 class S015HistoricalAuthorityReferenceReplayTests(SimpleTestCase):
@@ -4158,3 +4320,772 @@ class S015RoleCommandTests(TransactionTestCase):
                         )
                     )
                 self.assertEqual(self._counts(), before)
+
+    def _run_r4s1_pair(
+        self,
+        *,
+        first_operation,
+        second_operation,
+        first_gate,
+        release_first,
+        patch_context=None,
+        probe=None,
+    ):
+        workers = []
+        first_ready = False
+        gate_reached = False
+        second_ready = False
+        wait = None
+        probe_result = None
+        second_finished_while_first_paused = False
+        cleanup_error = None
+        context = patch_context if patch_context is not None else nullcontext()
+        try:
+            with context:
+                first = _start_r4s1_worker(first_operation, "r4s1-first")
+                workers.append(first)
+                first_ready = first.ready.wait(timeout=5)
+                gate_reached = first_gate.wait(timeout=10)
+                second = _start_r4s1_worker(second_operation, "r4s1-second")
+                workers.append(second)
+                second_ready = second.ready.wait(timeout=5)
+                wait = _capture_r4s1_exact_wait(second, timeout=3.0)
+                second.thread.join(timeout=0.2)
+                second_finished_while_first_paused = not second.thread.is_alive()
+                if probe is not None:
+                    try:
+                        probe_result = probe()
+                    except Exception as error:
+                        probe_result = f"other:{type(error).__name__}"
+                release_first.set()
+                for worker in workers:
+                    worker.thread.join(timeout=12)
+                cleanup_error = _finish_r4s1_workers(self, workers, [release_first])
+        finally:
+            release_first.set()
+            if workers and any(worker.thread.is_alive() for worker in workers):
+                cleanup_error = _finish_r4s1_workers(self, workers, [release_first])
+        return {
+            "first": first if workers else None,
+            "second": second if len(workers) > 1 else None,
+            "first_ready": first_ready,
+            "gate_reached": gate_reached,
+            "second_ready": second_ready,
+            "wait": wait,
+            "probe": probe_result,
+            "second_finished_while_first_paused": second_finished_while_first_paused,
+            "cleanup_error": cleanup_error,
+        }
+
+    def _r4s1_departure_operation(self, member, membership_uuid, label, provider):
+        from src.intevia.services.organism_membership_service import (
+            OrganismMembershipService,
+            TransitionMembershipCommand,
+        )
+
+        service = OrganismMembershipService(
+            authority=S015Authority(provider=provider, database_alias="default"),
+            clock=self._database_now,
+            database_alias="default",
+        )
+        at = self._database_now()
+        command = TransitionMembershipCommand(
+            credential=member.credential,
+            request_reference=f"request:{label}:leave",
+            idempotency_key=f"idem:{label}:leave",
+            occurred_at=at,
+            effective_at=at,
+            received_at=at,
+            membership_uuid=membership_uuid,
+            resulting_state="ENDED",
+            reason_class="TEST_ONLY_REASON_LEAVE",
+        )
+        return lambda: service.transition_membership(command)
+
+    def _r4s1_prepare_proposal(self, label):
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        ids, founder = self._setup_organism(label)
+        _, nominee, membership_uuid = self._add_active_member(ids, label)
+        provider = ProductionApplicationAuthorityProvider(database_alias="default")
+        service = self._service(provider)
+        proposal = service.propose_assignment(
+            self._propose_command(
+                actor=founder,
+                membership_uuid=membership_uuid,
+                role_definition_uuid=ids["coordinator_role_uuid"],
+                request_reference=f"request:{label}:propose",
+                idempotency_key=f"idem:{label}:propose",
+                received_at=self._database_now(),
+            )
+        )
+        self._record_test_consent(
+            provider=provider,
+            actor=nominee,
+            assignment_uuid=proposal.assignment_uuid,
+            label=label,
+        )
+        return ids, founder, nominee, membership_uuid, provider, service, proposal
+
+    def _r4s1_print_pair(self, name, order, result, before, **fields):
+        details = " ".join(f"{key}={value}" for key, value in fields.items())
+        print(
+            f"WITNESS {name} order={order} "
+            f"first={_r4s1_outcome(result['first'])} "
+            f"second={_r4s1_outcome(result['second'])} "
+            f"{details} rows={_r4s1_row_delta(before)}",
+            flush=True,
+        )
+
+    def test_r4s1_c1_order1_end_and_reassign(self):
+        """[predicted, determination §7] A coordinator ends or reassigns the office while the holder leaves."""
+        from src.intevia.services import organism_membership_service as membership_module
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        observations = []
+        for action in ("END", "REASSIGN"):
+            label = f"r4s1-c1-order1-{action.lower()}"
+            ids, founder, holder, _setup_service, _proposal, assigned = self._propose_then_assign(
+                label=label,
+            )
+            service = self._service(
+                ProductionApplicationAuthorityProvider(database_alias="default"),
+            )
+            membership_uuid = OrganismMembership.objects.get(
+                identity=holder,
+                living_organism_id=ids["lo"],
+            ).membership_uuid
+            actor_locked = threading.Event()
+            release_departure = threading.Event()
+            original_lock_actor = membership_module._lock_actor
+
+            def pause_after_departure_actor(*args, **kwargs):
+                actor = original_lock_actor(*args, **kwargs)
+                actor_locked.set()
+                if not release_departure.wait(timeout=20):
+                    raise TimeoutError("C1-W departure actor pause was not released")
+                return actor
+
+            departure = self._r4s1_departure_operation(
+                holder,
+                membership_uuid,
+                label,
+                ProductionApplicationAuthorityProvider(database_alias="default"),
+            )
+            coordinator_command = self._transition_command(
+                actor=founder,
+                assignment_uuid=assigned.assignment_uuid,
+                action=action,
+                resulting_state="ENDED",
+                request_reference=f"request:{label}:{action.lower()}",
+                idempotency_key=f"idem:{label}:{action.lower()}",
+            )
+            before = _r4s1_rows()
+            result = self._run_r4s1_pair(
+                first_operation=departure,
+                second_operation=lambda: service.transition_assignment(coordinator_command),
+                first_gate=actor_locked,
+                release_first=release_departure,
+                patch_context=patch.object(
+                    membership_module,
+                    "_lock_actor",
+                    side_effect=pause_after_departure_actor,
+                ),
+            )
+            self._r4s1_print_pair(
+                "C1-W",
+                1,
+                result,
+                before,
+                action=action,
+                gate=result["gate_reached"],
+                coordinator_completed_while_departure_paused=result[
+                    "second_finished_while_first_paused"
+                ],
+                wait=result["wait"],
+            )
+            observations.append((action, ids, holder, assigned, result))
+
+        for action, ids, holder, assigned, result in observations:
+            self.assertTrue(result["first_ready"])
+            self.assertTrue(result["gate_reached"])
+            self.assertTrue(result["second_ready"])
+            self.assertTrue(result["second_finished_while_first_paused"])
+            self.assertEqual(_r4s1_outcome(result["first"]), "ok")
+            self.assertEqual(_r4s1_outcome(result["second"]), "ok")
+            self.assertIsNone(result["cleanup_error"])
+            membership = OrganismMembership.objects.get(identity=holder, living_organism_id=ids["lo"])
+            membership.refresh_from_db()
+            self.assertEqual(membership.state, "ENDED")
+            assignment = ContextualRoleAssignment.objects.get(assignment_uuid=assigned.assignment_uuid)
+            self.assertEqual(assignment.state, "ENDED")
+            actions = list(
+                ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment)
+                .order_by("sequence")
+                .values_list("action", flat=True)
+            )
+            self.assertEqual(actions[-1], action)
+
+    def test_r4s1_c1_order2_end_waits_for_departure(self):
+        """[predicted, determination §7] A holder with an active office is refused IL-2 after the coordinator waits."""
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        ids, founder, holder, service, _proposal, assigned = self._propose_then_assign(
+            label="r4s1-c1-order2",
+        )
+        service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        membership_uuid = OrganismMembership.objects.get(
+            identity=holder,
+            living_organism_id=ids["lo"],
+        ).membership_uuid
+        provider_entered = threading.Event()
+        release_departure = threading.Event()
+        departure = self._r4s1_departure_operation(
+            holder,
+            membership_uuid,
+            "r4s1-c1-order2",
+            _PausedProductionProvider(provider_entered, release_departure),
+        )
+        coordinator_command = self._transition_command(
+            actor=founder,
+            assignment_uuid=assigned.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+            request_reference="request:r4s1-c1-order2:end",
+            idempotency_key="idem:r4s1-c1-order2:end",
+        )
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=departure,
+            second_operation=lambda: service.transition_assignment(coordinator_command),
+            first_gate=provider_entered,
+            release_first=release_departure,
+        )
+        self._r4s1_print_pair(
+            "C1-W",
+            2,
+            result,
+            before,
+            wait=result["wait"],
+        )
+        self.assertTrue(result["gate_reached"])
+        self.assertEqual(_r4s1_outcome(result["first"]), "refused:C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED")  # IL-2-DEPENDENT: S5 replaces this expectation with the automatic office ending
+        self.assertEqual(_r4s1_outcome(result["second"]), "ok")
+        self.assertIsNotNone(result["wait"])
+        self.assertEqual(result["wait"]["tuple_relation"], "core_livingorganism")
+        self.assertIn(result["first"].pid, result["wait"]["holders"])
+        self.assertIsNone(result["cleanup_error"])
+
+    def test_r4s1_c2_order1_assignment_serializes_with_departure(self):
+        """[predicted, determination §7] Departure waits at the register without taking the nominee membership row."""
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        ids, founder, nominee, membership_uuid, _provider, service, proposal = (
+            self._r4s1_prepare_proposal("r4s1-c2-order1")
+        )
+        provider_entered = threading.Event()
+        release_assignment = threading.Event()
+        assign_provider = _PausedProductionProvider(provider_entered, release_assignment)
+        assign_service = self._service(assign_provider)
+        assign_command = self._transition_command(
+            actor=founder,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            request_reference="request:r4s1-c2-order1:assign",
+            idempotency_key="idem:r4s1-c2-order1:assign",
+        )
+        departure = self._r4s1_departure_operation(
+            nominee,
+            membership_uuid,
+            "r4s1-c2-order1",
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        membership_pk = OrganismMembership.objects.get(membership_uuid=membership_uuid).pk
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=lambda: assign_service.transition_assignment(assign_command),
+            second_operation=departure,
+            first_gate=provider_entered,
+            release_first=release_assignment,
+            probe=lambda: _r4s1_nowait_probe("core_organismmembership", membership_pk),
+        )
+        self._r4s1_print_pair(
+            "C2-W",
+            1,
+            result,
+            before,
+            member_probe=result["probe"],
+            wait=result["wait"],
+        )
+        self.assertTrue(result["gate_reached"])
+        self.assertEqual(_r4s1_outcome(result["first"]), "ok")
+        self.assertEqual(_r4s1_outcome(result["second"]), "refused:C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED")  # IL-2-DEPENDENT: S5 replaces this expectation with the automatic office ending
+        self.assertEqual(result["probe"], ("ACQUIRED", None))
+        self.assertIsNotNone(result["wait"])
+        self.assertEqual(result["wait"]["tuple_relation"], "core_livingorganism")
+        self.assertIsNone(result["cleanup_error"])
+
+    def test_r4s1_c2_order2_departure_precedes_assignment(self):
+        """[predicted, determination §7] Report the serialized ASSIGN outcome and membership state; F-R4S1-2 remains open."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        ids, founder, nominee, membership_uuid, _provider, _service, proposal = (
+            self._r4s1_prepare_proposal("r4s1-c2-order2")
+        )
+        provider_entered = threading.Event()
+        release_departure = threading.Event()
+        departure = self._r4s1_departure_operation(
+            nominee,
+            membership_uuid,
+            "r4s1-c2-order2",
+            _PausedProductionProvider(provider_entered, release_departure),
+        )
+        assign_service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+
+        def assign_after_departure_started():
+            at = self._database_now()
+            assign_command = self._transition_command(
+                actor=founder,
+                assignment_uuid=proposal.assignment_uuid,
+                action="ASSIGN",
+                resulting_state="ACTIVE",
+                effective_until_state="NONE",
+                request_reference="request:r4s1-c2-order2:assign",
+                idempotency_key="idem:r4s1-c2-order2:assign",
+                occurred_at=at,
+                effective_at=at,
+                received_at=at,
+            )
+            return assign_service.transition_assignment(assign_command)
+
+        # Correction: this checked a backdated ASSIGN preceding leave; it should check a database-timed ASSIGN after departure starts.
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=departure,
+            second_operation=assign_after_departure_started,
+            first_gate=provider_entered,
+            release_first=release_departure,
+        )
+        assignment_outcome = _r4s1_outcome(result["second"])
+        nominee_state = OrganismMembership.objects.get(membership_uuid=membership_uuid).state
+        assignment = ContextualRoleAssignment.objects.get(assignment_uuid=proposal.assignment_uuid)
+        self._r4s1_print_pair(
+            "C2-W",
+            2,
+            result,
+            before,
+            wait=result["wait"],
+            assignment_outcome=assignment_outcome,
+            nominee_state=nominee_state,
+            assignment_state=assignment.state,
+        )  # F-R4S1-2-OPEN: the required outcome is the ASSIGN refused (DENIED); this records current behaviour as evidence, not an approved outcome
+        self.assertTrue(result["gate_reached"])
+        self.assertEqual(_r4s1_outcome(result["first"]), "ok")
+        self.assertTrue(
+            assignment_outcome == "ok" or assignment_outcome.startswith("refused:"),
+        )
+        self.assertIsNotNone(result["wait"])
+        self.assertIsNone(result["cleanup_error"])
+        self.assertEqual(nominee.pk, assignment.membership.identity_id)
+
+    def test_r4s1_c3_order1_proposal_serializes_with_nominee_departure(self):
+        """[predicted, determination §7] Proposal takes the register before nominee rows and completes without a cycle."""
+        from src.intevia.services import organism_membership_service as membership_module
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        label = "r4s1-c3-order1"
+        ids, founder = self._setup_organism(label)
+        _, nominee, membership_uuid = self._add_active_member(ids, label)
+        departure_actor_locked = threading.Event()
+        release_departure_actor = threading.Event()
+        proposal_entered = threading.Event()
+        release_proposal = threading.Event()
+        original_lock_actor = membership_module._lock_actor
+
+        def pause_after_departure_actor(*args, **kwargs):
+            actor = original_lock_actor(*args, **kwargs)
+            departure_actor_locked.set()
+            if not release_departure_actor.wait(timeout=20):
+                raise TimeoutError("C3-W departure actor pause was not released")
+            return actor
+
+        provider = _PausedProductionProvider(proposal_entered, release_proposal)
+        role_service = self._service(provider)
+        proposal_command = self._propose_command(
+            actor=founder,
+            membership_uuid=membership_uuid,
+            role_definition_uuid=ids["coordinator_role_uuid"],
+            request_reference=f"request:{label}:propose",
+            idempotency_key=f"idem:{label}:propose",
+            received_at=self._database_now(),
+        )
+        departure = self._r4s1_departure_operation(
+            nominee,
+            membership_uuid,
+            label,
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        before = _r4s1_rows()
+        workers = []
+        release_events = [release_departure_actor, release_proposal]
+        proposal_wait = None
+        departure_wait = None
+        membership_row_wait = None
+        membership_probe_worker = None
+        membership_probe_ready = False
+        cleanup_error = None
+        departure_ready = proposal_ready = False
+        gate_reached = False
+        membership_pk = OrganismMembership.objects.get(membership_uuid=membership_uuid).pk
+
+        def lock_nominee_membership_row():
+            with transaction.atomic():
+                return OrganismMembership.objects.select_for_update().get(pk=membership_pk).pk
+
+        try:
+            with patch.object(
+                membership_module,
+                "_lock_actor",
+                side_effect=pause_after_departure_actor,
+            ):
+                departure_worker = _start_r4s1_worker(departure, "r4s1-c3-departure")
+                workers.append(departure_worker)
+                departure_ready = departure_worker.ready.wait(timeout=5)
+                gate_reached = departure_actor_locked.wait(timeout=10)
+                proposal_worker = _start_r4s1_worker(
+                    lambda: role_service.propose_assignment(proposal_command),
+                    "r4s1-c3-proposal",
+                )
+                workers.append(proposal_worker)
+                proposal_ready = proposal_worker.ready.wait(timeout=5)
+                proposal_paused = proposal_entered.wait(timeout=1.0)
+                if not proposal_paused:
+                    proposal_wait = _capture_r4s1_exact_wait(proposal_worker, timeout=2.0)
+                else:
+                    release_departure_actor.set()
+                    departure_wait = _capture_r4s1_exact_wait(departure_worker, timeout=3.0)
+                    # Correction: this checked whether the membership row was free; it should check that the paused PROPOSE, not the waiting departure, holds it.
+                    membership_probe_worker = _start_r4s1_worker(
+                        lock_nominee_membership_row,
+                        "r4s1-c3-membership-row-probe",
+                    )
+                    workers.append(membership_probe_worker)
+                    membership_probe_ready = membership_probe_worker.ready.wait(timeout=5)
+                    membership_row_wait = _capture_r4s1_exact_wait(
+                        membership_probe_worker,
+                        timeout=3.0,
+                    )
+                release_departure_actor.set()
+                release_proposal.set()
+                for worker in workers:
+                    worker.thread.join(timeout=12)
+                cleanup_error = _finish_r4s1_workers(self, workers, release_events)
+        finally:
+            for event in release_events:
+                event.set()
+            if workers and any(worker.thread.is_alive() for worker in workers):
+                cleanup_error = _finish_r4s1_workers(self, workers, release_events)
+
+        self._r4s1_print_pair(
+            "C3-W",
+            1,
+            {"first": departure_worker, "second": proposal_worker},
+            before,
+            proposal_wait=proposal_wait,
+            departure_wait=departure_wait,
+            membership_row_wait=membership_row_wait,
+            proposal_paused=proposal_entered.is_set(),
+            gate=gate_reached,
+        )
+        self.assertTrue(departure_ready)
+        self.assertTrue(proposal_ready)
+        self.assertTrue(gate_reached)
+        self.assertTrue(proposal_entered.is_set())
+        self.assertIsNotNone(departure_wait)
+        self.assertEqual(departure_wait["tuple_relation"], "core_livingorganism")
+        self.assertTrue(membership_probe_ready)
+        self.assertIsNotNone(membership_row_wait)
+        self.assertEqual(membership_row_wait["holders"], [proposal_worker.pid])
+        self.assertNotIn(departure_worker.pid, membership_row_wait["holders"])
+        self.assertEqual(_r4s1_outcome(departure_worker), "ok")
+        self.assertEqual(_r4s1_outcome(proposal_worker), "ok")
+        self.assertIsNone(cleanup_error)
+        membership = OrganismMembership.objects.get(membership_uuid=membership_uuid)
+        self.assertEqual(membership.state, "ENDED")
+
+    def test_r4s1_c3_order2_departure_precedes_proposal(self):
+        """[predicted, determination §7] Proposal refuses after the nominee's departure commits."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        label = "r4s1-c3-order2"
+        ids, founder = self._setup_organism(label)
+        _, nominee, membership_uuid = self._add_active_member(ids, label)
+        provider_entered = threading.Event()
+        release_departure = threading.Event()
+        departure = self._r4s1_departure_operation(
+            nominee,
+            membership_uuid,
+            label,
+            _PausedProductionProvider(provider_entered, release_departure),
+        )
+        role_service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        proposal_command = self._propose_command(
+            actor=founder,
+            membership_uuid=membership_uuid,
+            role_definition_uuid=ids["coordinator_role_uuid"],
+            request_reference=f"request:{label}:propose",
+            idempotency_key=f"idem:{label}:propose",
+            received_at=self._database_now(),
+        )
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=departure,
+            second_operation=lambda: role_service.propose_assignment(proposal_command),
+            first_gate=provider_entered,
+            release_first=release_departure,
+        )
+        self._r4s1_print_pair("C3-W", 2, result, before, wait=result["wait"])
+        self.assertTrue(result["gate_reached"])
+        self.assertEqual(_r4s1_outcome(result["first"]), "ok")
+        self.assertEqual(_r4s1_outcome(result["second"]), "refused:S015AssignmentMembershipRefused")
+        self.assertIsNotNone(result["wait"])
+        self.assertIsNone(result["cleanup_error"])
+
+    def test_r4s1_c3b_proposal_and_other_office_end_both_complete(self):
+        """[predicted, determination §7] A coordinator's proposal and another coordinator's END do not deadlock."""
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+
+        label = "r4s1-c3b"
+        ids, founder, holder, _setup_service, _old_proposal, assigned = self._propose_then_assign(
+            label=label,
+        )
+        _, nominee, membership_uuid = self._add_active_member(ids, f"{label}-nominee")
+        provider_entered = threading.Event()
+        release_proposal = threading.Event()
+        proposal_service = self._service(
+            _PausedProductionProvider(provider_entered, release_proposal),
+        )
+        proposal_command = self._propose_command(
+            actor=holder,
+            membership_uuid=membership_uuid,
+            role_definition_uuid=ids["coordinator_role_uuid"],
+            request_reference=f"request:{label}:propose",
+            idempotency_key=f"idem:{label}:propose",
+            received_at=self._database_now(),
+        )
+        end_service = self._service(
+            ProductionApplicationAuthorityProvider(database_alias="default"),
+        )
+        end_command = self._transition_command(
+            actor=founder,
+            assignment_uuid=assigned.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+            request_reference=f"request:{label}:end-holder",
+            idempotency_key=f"idem:{label}:end-holder",
+        )
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=lambda: proposal_service.propose_assignment(proposal_command),
+            second_operation=lambda: end_service.transition_assignment(end_command),
+            first_gate=provider_entered,
+            release_first=release_proposal,
+        )
+        self._r4s1_print_pair("C3b-W", 1, result, before, wait=result["wait"])
+        self.assertTrue(result["gate_reached"])
+        self.assertEqual(_r4s1_outcome(result["first"]), "ok")
+        self.assertEqual(_r4s1_outcome(result["second"]), "ok")
+        self.assertIsNone(result["cleanup_error"])
+        self.assertEqual(
+            ContextualRoleAssignment.objects.get(assignment_uuid=assigned.assignment_uuid).state,
+            "ENDED",
+        )
+        self.assertEqual(
+            ContextualRoleAssignment.objects.get(
+                assignment_uuid=result["first"].outcome[1].assignment_uuid,
+            ).state,
+            "PROPOSED",
+        )
+
+    def test_r4s1_propose_regressions(self):
+        """[predicted, determination §7] Legitimate proposals and the decided PROPOSE refusals retain their codes."""
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+        from src.intevia.services.organism_membership_service import (
+            OrganismMembershipService,
+            TransitionMembershipCommand,
+        )
+
+        ids, founder = self._setup_organism("r4s1-propose-regressions")
+        _, nominee, active_membership_uuid = self._add_active_member(
+            ids,
+            "r4s1-propose-regressions-active",
+        )
+        with transaction.atomic(), connection.cursor() as cursor:
+            _, inactive_pk, inactive_membership_uuid = _add_member(
+                cursor,
+                ids,
+                "r4s1-propose-regressions-probationary",
+                state="PROBATIONARY",
+            )
+        _, requester, requester_membership_uuid = self._add_active_member(
+            ids,
+            "r4s1-propose-regressions-requester",
+        )
+        production_provider = ProductionApplicationAuthorityProvider(database_alias="default")
+        role_service = self._service(production_provider)
+        membership_service = OrganismMembershipService(
+            authority=S015Authority(provider=production_provider, database_alias="default"),
+            clock=self._database_now,
+            database_alias="default",
+        )
+        at = self._database_now()
+        membership_service.transition_membership(
+            TransitionMembershipCommand(
+                credential=requester.credential,
+                request_reference="request:r4s1-propose-regressions:requester-leave",
+                idempotency_key="idem:r4s1-propose-regressions:requester-leave",
+                occurred_at=at,
+                effective_at=at,
+                received_at=at,
+                membership_uuid=requester_membership_uuid,
+                resulting_state="ENDED",
+                reason_class="TEST_ONLY_REASON_LEAVE",
+            )
+        )
+        with transaction.atomic(), connection.cursor() as cursor:
+            _, circle_role_uuid = _add_role_definition(
+                cursor,
+                ids,
+                "r4s1-propose-regressions-circle",
+                "TEST_ONLY_CIRCLE_SCRIBE",
+                scope="CIRCLE",
+            )
+            _, noncoordinator_role_uuid = _add_role_definition(
+                cursor,
+                ids,
+                "r4s1-propose-regressions-noncoordinator",
+                "TEST_ONLY_NON_COORDINATOR",
+                scope="LIVING_ORGANISM",
+            )
+
+        observations = {}
+
+        def observe(name, operation, *, refusal_label=None):
+            before = _r4s1_rows()
+            try:
+                value = operation()
+                outcome = "ok"
+                error = None
+            except Exception as caught:
+                value = None
+                error = caught
+                if refusal_label is not None and isinstance(caught, refusal_label):
+                    outcome = "refused:T-1"
+                elif isinstance(caught, S015AssignmentMembershipRefused):
+                    outcome = "refused:NOMINEE_NOT_ACTIVE"
+                else:
+                    outcome = _r4s1_error_outcome(caught)
+            print(
+                f"WITNESS PROPOSE-REGRESS case={name} result={outcome} "
+                f"rows={_r4s1_row_delta(before)}",
+                flush=True,
+            )
+            observations[name] = (outcome, value, error)
+
+        def propose(actor, membership_id, role_uuid, suffix):
+            return role_service.propose_assignment(
+                self._propose_command(
+                    actor=actor,
+                    membership_uuid=membership_id,
+                    role_definition_uuid=role_uuid,
+                    request_reference=f"request:r4s1-propose-regressions:{suffix}",
+                    idempotency_key=f"idem:r4s1-propose-regressions:{suffix}",
+                    received_at=self._database_now(),
+                )
+            )
+
+        observe(
+            "legitimate",
+            lambda: propose(
+                founder,
+                active_membership_uuid,
+                ids["coordinator_role_uuid"],
+                "legitimate",
+            ),
+        )
+        observe(
+            "non-member",
+            lambda: propose(
+                requester,
+                active_membership_uuid,
+                ids["coordinator_role_uuid"],
+                "non-member",
+            ),
+            refusal_label=S015AssignmentAuthorityUnavailable,
+        )
+        exact_role_service = self._service(_ExactProvider())
+        observe(
+            "nominee-not-active",
+            lambda: exact_role_service.propose_assignment(
+                self._propose_command(
+                    actor=founder,
+                    membership_uuid=inactive_membership_uuid,
+                    role_definition_uuid=ids["coordinator_role_uuid"],
+                    request_reference="request:r4s1-propose-regressions:inactive",
+                    idempotency_key="idem:r4s1-propose-regressions:inactive",
+                    received_at=self._database_now(),
+                )
+            ),
+        )
+        observe(
+            "scope",
+            lambda: exact_role_service.propose_assignment(
+                self._propose_command(
+                    actor=founder,
+                    membership_uuid=active_membership_uuid,
+                    role_definition_uuid=circle_role_uuid,
+                    request_reference="request:r4s1-propose-regressions:scope",
+                    idempotency_key="idem:r4s1-propose-regressions:scope",
+                    received_at=self._database_now(),
+                )
+            ),
+        )
+        observe(
+            "code",
+            lambda: exact_role_service.propose_assignment(
+                self._propose_command(
+                    actor=founder,
+                    membership_uuid=active_membership_uuid,
+                    role_definition_uuid=noncoordinator_role_uuid,
+                    request_reference="request:r4s1-propose-regressions:code",
+                    idempotency_key="idem:r4s1-propose-regressions:code",
+                    received_at=self._database_now(),
+                )
+            ),
+        )
+
+        self.assertEqual(observations["legitimate"][0], "ok")
+        self.assertIsInstance(observations["non-member"][2], S015AssignmentAuthorityUnavailable)
+        self.assertIsInstance(observations["nominee-not-active"][2], S015AssignmentMembershipRefused)
+        self.assertEqual(getattr(observations["scope"][2], "limit_id", None), "IL-6")
+        self.assertEqual(getattr(observations["code"][2], "limit_id", None), "IL-8")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from queue import Queue
@@ -28,7 +29,17 @@ from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, foun
 from tests.s015_concurrency_support import cleanup_workers, exact_wait, start_worker, wait_until_locked
 from tests.test_s015_role_command import (
     _CountingProvider,
+    _PausedProductionProvider,
+    _capture_r4s1_exact_wait,
+    _finish_r4s1_workers,
     _register_no_other_sessions_cleanup,
+    _r4s1_nowait_probe,
+    _r4s1_error_outcome,
+    _r4s1_outcome,
+    _r4s1_row_delta,
+    _r4s1_rows,
+    _run_bounded_concurrency_worker,
+    _start_r4s1_worker,
     _run_with_external_locks,
     _set_local_concurrency_timeouts,
 )
@@ -1454,7 +1465,11 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(OrganismMembershipTransition.objects.count(), 2)
 
     def test_loi_x1_s1_departure_and_registered_session_complete_without_cycle(self):
-        """On the pre-0032 implementation this interleaving ended in deadlock detected (Vision Chamber X1)."""
+        """The pre-0032 deadlock is historical and preserved by the LOI evidence.
+
+        Since R4 slice 1, departure takes the registered organism lock first;
+        this test confirms completion without a cycle.
+        """
         ids, actor, target = self._setup_organism(f"loi-x1-{fresh()}")
         membership = self._fixture_membership(ids, target, "ACTIVE", "loi-x1-active")
         organism_uuid = ids["organism_uuid"]
@@ -1554,3 +1569,264 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertNotIn("deadlock detected", str(registered_result).lower())
         membership.refresh_from_db()
         self.assertEqual(membership.state, "ENDED")
+
+    def test_r4s1_b_nonself_departure_does_not_lock_members_identity(self):
+        """[predicted, determination §9(b)] A non-subject refusal does not lock the subject identity."""
+        from unittest.mock import patch
+
+        from core.models import OrganismRoleDefinition
+        from src.intevia.services import organism_membership_service as membership_module
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService,
+            ProposeAssignmentCommand,
+        )
+
+        label = "r4s1-b-nonself"
+        ids, _founder, member = self._setup_organism(f"{label}-target-lo")
+        target_membership = self._fixture_membership(
+            ids,
+            member,
+            "ACTIVE",
+            f"{label}-target-membership",
+        )
+        # Correction: this checked role-test helper availability; it should check denial for a valid ACTIVE requester.
+        with transaction.atomic(), connection.cursor() as cursor:
+            requester_pk = seed_identity(cursor, f"{label}-requester")
+        requester = Identity.objects.get(pk=requester_pk)
+        self._fixture_membership(
+            ids,
+            requester,
+            "ACTIVE",
+            f"{label}-requester-membership",
+            at=NOW,
+        )
+
+        # Correction: this tried to create a second platform-root LO; it should use the existing root for departure and a non-root LO for M's act.
+        with transaction.atomic(), connection.cursor() as cursor:
+            other_ids = found_nonroot(cursor, f"{label}-member-act-lo")
+            other_nominee_pk = seed_identity(cursor, f"{label}-member-act-nominee")
+        other_nominee = Identity.objects.get(pk=other_nominee_pk)
+        member_membership = self._fixture_membership(
+            other_ids,
+            member,
+            "ACTIVE",
+            f"{label}-member-act-membership",
+        )
+        nominee_membership = self._fixture_membership(
+            other_ids,
+            other_nominee,
+            "ACTIVE",
+            f"{label}-member-act-nominee",
+        )
+        coordinator_role = OrganismRoleDefinition.objects.get(
+            pk=other_ids["roles"]["COORDINATOR"],
+        )
+        self._assign_office(
+            ids=other_ids,
+            membership=member_membership,
+            role_definition_id=other_ids["roles"]["COORDINATOR"],
+            tag=f"{label}:member-office",
+        )
+
+        production_provider = ProductionApplicationAuthorityProvider(database_alias="default")
+        attempt_provider = production_provider
+        release_attempt = threading.Event()
+        gate = threading.Event()
+        register_helper = getattr(membership_module, "_lock_registered_organism", None)
+        if register_helper is None:
+            attempt_provider = _PausedProductionProvider(gate, release_attempt)
+            patch_context = None
+        else:
+            def pause_after_register(database_alias, organism_id):
+                result = register_helper(database_alias, organism_id)
+                if str(organism_id) == str(ids["organism_uuid"]):
+                    gate.set()
+                    if not release_attempt.wait(timeout=20):
+                        raise TimeoutError("B-NONSELF-W register pause was not released")
+                return result
+
+            patch_context = patch.object(
+                membership_module,
+                "_lock_registered_organism",
+                side_effect=pause_after_register,
+            )
+
+        attempt_service = self._service(attempt_provider)
+        attempt_command = self._transition_command(
+            actor=requester,
+            membership_uuid=target_membership.membership_uuid,
+            resulting_state="ENDED",
+            request_reference=f"request:{label}:unauthorised-leave",
+            idempotency_key=f"idem:{label}:unauthorised-leave",
+            reason_class="TEST_ONLY_REASON_LEAVE",
+        )
+        role_service = OrganismRoleService(
+            authority=S015Authority(
+                provider=production_provider,
+                database_alias="default",
+            ),
+            clock=lambda: NOW,
+            database_alias="default",
+        )
+        member_command = ProposeAssignmentCommand(
+            credential=member.credential,
+            request_reference=f"request:{label}:member-proposal",
+            idempotency_key=f"idem:{label}:member-proposal",
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=self._database_now(),
+            effective_until_state="NONE",
+            effective_until=None,
+            membership_uuid=nominee_membership.membership_uuid,
+            role_definition_uuid=coordinator_role.role_uuid,
+        )
+
+        before = _r4s1_rows()
+        workers = []
+        release_events = [release_attempt]
+        attempt_ready = member_act_ready = False
+        gate_reached = False
+        member_act_wait = None
+        member_identity_probe = None
+        member_act_completed_while_attempt_paused = False
+        cleanup_error = None
+        context = patch_context if patch_context is not None else nullcontext()
+        try:
+            with context:
+                attempt_worker = _start_r4s1_worker(
+                    lambda: attempt_service.transition_membership(attempt_command),
+                    "r4s1-b-nonself-attempt",
+                )
+                workers.append(attempt_worker)
+                attempt_ready = attempt_worker.ready.wait(timeout=5)
+                gate_reached = gate.wait(timeout=10)
+                member_act_worker = _start_r4s1_worker(
+                    lambda: role_service.propose_assignment(member_command),
+                    "r4s1-b-nonself-member-act",
+                )
+                workers.append(member_act_worker)
+                member_act_ready = member_act_worker.ready.wait(timeout=5)
+                member_act_wait = _capture_r4s1_exact_wait(member_act_worker, timeout=3.0)
+                member_act_worker.thread.join(timeout=0.2)
+                member_act_completed_while_attempt_paused = not member_act_worker.thread.is_alive()
+                member_identity_probe = _r4s1_nowait_probe("core_identity", member.pk)
+                release_attempt.set()
+                for worker in workers:
+                    worker.thread.join(timeout=12)
+                cleanup_error = _finish_r4s1_workers(self, workers, release_events)
+        finally:
+            release_attempt.set()
+            if workers and any(worker.thread.is_alive() for worker in workers):
+                cleanup_error = _finish_r4s1_workers(self, workers, release_events)
+
+        print(
+            f"WITNESS B-NONSELF-W order=1 "
+            f"attempt={_r4s1_outcome(attempt_worker)} "
+            f"member_act={_r4s1_outcome(member_act_worker)} "
+            f"member_act_completed_while_attempt_paused={member_act_completed_while_attempt_paused} "
+            f"identity_probe={member_identity_probe} member_act_wait={member_act_wait!r} "
+            f"gate={gate_reached} rows={_r4s1_row_delta(before)}",
+            flush=True,
+        )
+        self.assertTrue(attempt_ready)
+        self.assertTrue(member_act_ready)
+        self.assertTrue(gate_reached)
+        self.assertEqual(_r4s1_outcome(attempt_worker), "refused:DENIED")
+        self.assertEqual(_r4s1_outcome(member_act_worker), "ok")
+        self.assertTrue(member_act_completed_while_attempt_paused)
+        self.assertEqual(member_identity_probe, ("ACQUIRED", None))
+        self.assertIsNone(cleanup_error)
+        target_membership.refresh_from_db()
+        self.assertEqual(target_membership.state, "ACTIVE")
+        self.assertEqual(
+            OrganismMembershipTransition.objects.filter(membership=target_membership).count(),
+            1,
+        )
+
+    def test_r4s1_w_r4b_reports_departure_reread_lock_scope(self):
+        """[predicted, determination §7] Report the departure re-read SQL and LO probe as facts."""
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+
+        ids, actor, target = self._setup_organism("r4s1-w-r4b")
+        # Correction: this checked a temporally invisible fixture; it should check the re-read for a departable ACTIVE member.
+        membership = self._fixture_membership(
+            ids,
+            target,
+            "ACTIVE",
+            "r4s1-w-r4b-target",
+            at=NOW,
+        )
+        service = self._service(ProductionApplicationAuthorityProvider(database_alias="default"))
+        command = self._transition_command(
+            actor=target,
+            membership_uuid=membership.membership_uuid,
+            resulting_state="ENDED",
+            request_reference="request:r4s1-w-r4b:leave",
+            idempotency_key="idem:r4s1-w-r4b:leave",
+            reason_class="TEST_ONLY_REASON_LEAVE",
+            received_at=self._database_now(),
+        )
+        observations = []
+
+        def capture_departure_reads(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            normalized = sql.casefold()
+            if (
+                normalized.lstrip().startswith("select")
+                and "core_organismmembership" in normalized
+                and "core_identity" in normalized
+                and "core_livingorganism" in normalized
+            ):
+                phase = "post-replay" if "for update" in normalized else "pre-replay"
+                rendered = connection.ops.last_executed_query(
+                    context["cursor"].cursor,
+                    sql,
+                    params,
+                )
+                probe = None
+                if phase == "post-replay":
+                    probe = _run_bounded_concurrency_worker(
+                        self,
+                        lambda: _r4s1_nowait_probe("core_livingorganism", ids["lo"]),
+                    )
+                observations.append((phase, sql, rendered, probe))
+            return result
+
+        before = _r4s1_rows()
+        outcome = None
+        error = None
+        try:
+            with CaptureQueriesContext(connection):
+                with connection.execute_wrapper(capture_departure_reads):
+                    outcome = service.transition_membership(command)
+        except Exception as caught:
+            error = caught
+        status = "ok" if error is None else _r4s1_error_outcome(error)
+        post_read = next((item for item in observations if item[0] == "post-replay"), None)
+        of_clause = None
+        if post_read is not None:
+            import re
+
+            match = re.search(r"\bFOR UPDATE\b(?:\s+OF\s+[^;]+)?", post_read[1], re.IGNORECASE)
+            of_clause = match.group(0) if match is not None else None
+        print(
+            f"WITNESS W-R4b order=1 departure={status} "
+            f"sql={None if post_read is None else post_read[1]!r} "
+            f"rendered_sql={None if post_read is None else post_read[2]!r} "
+            f"of_clause={of_clause!r} "
+            f"lo_probe={None if post_read is None else post_read[3]!r} "
+            f"rows={_r4s1_row_delta(before)}",
+            flush=True,
+        )
+        self.assertIsNone(error, repr(error))
+        self.assertEqual(status, "ok")
+        self.assertIsNotNone(post_read)
+        self.assertEqual(post_read[0], "post-replay")
+        self.assertEqual(post_read[3][0], "ok")
+        self.assertEqual(post_read[3][1], ("LOCK_NOT_AVAILABLE", "55P03"))
+        self.assertEqual(outcome.resulting_state, "ENDED")

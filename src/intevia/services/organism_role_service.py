@@ -107,6 +107,7 @@ from src.intevia.services.organism_command_support import (
     _founding_provenance_assignment_id,
     _lock_actor,
     _lock_actor_membership_context,
+    _lock_registered_organism,
     _read_actor_active_membership,
     _OrganismCommandService,
     _resulting_temporal_basis,
@@ -733,9 +734,13 @@ class OrganismRoleService(_OrganismCommandService):
             living_organism_pk=membership.living_organism_id,
             unavailable=S015AssignmentAuthorityUnavailable,
         )
+        _lock_registered_organism(
+            database_alias=self._alias,
+            organism_id=membership.living_organism.organism_id,
+        )
         membership = (
             OrganismMembership.objects.using(self._alias)
-            .select_for_update()
+            .select_for_update(of=("self",))
             .select_related("identity", "living_organism")
             .get(pk=membership.pk)
         )
@@ -970,9 +975,13 @@ class OrganismRoleService(_OrganismCommandService):
                 .get(pk=assignment.membership.living_organism_id)
             )
         else:
+            _lock_registered_organism(
+                database_alias=self._alias,
+                organism_id=assignment.membership.living_organism.organism_id,
+            )
             assignment = (
                 ContextualRoleAssignment.objects.using(self._alias)
-                .select_for_update()
+                .select_for_update(of=("self", "membership"))
                 .select_related("membership__living_organism", "membership__identity", "role_definition")
                 .get(pk=assignment.pk)
             )

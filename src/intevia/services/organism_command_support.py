@@ -52,6 +52,12 @@ from src.intevia.services.organism_authority import (
 _MUTEX_DOMAIN = b"INTEVIA:S015:ORGANISM_COMMAND_MUTEX:v1\x00"
 
 
+def _lock_registered_organism(database_alias: str, organism_id) -> None:
+    """Take the registered organism lock before any per-organism row locks."""
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organism_id])
+
+
 class S015CommandSubstrateError(Exception):
     pass
 
