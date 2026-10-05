@@ -1153,24 +1153,50 @@ class OrganismRoleService(_OrganismCommandService):
         ).first()
         if proposal is None:
             raise S015AssignmentNotFound("office nomination proposal not found")
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            record_time = cursor.fetchone()[0]
         if proposal.actor_id == assignment.membership.identity_id:
             withdrawn = OfficeAppointmentConsent.objects.using(self._alias).filter(
                 assignment=assignment,
                 proposal_event=proposal,
                 action="WITHDRAW",
                 effective_at__lte=effective_at,
-                recorded_at__lte=evaluated_at,
+                recorded_at__lte=record_time,
             ).exists()
             expected_reference = None if withdrawn else "e:" + str(proposal.event_uuid)
+            refusal_message = (
+                "Appointment not completed: the nominee withdrew their consent to this nomination. "
+                "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
+                if withdrawn
+                else "ASSIGN consent is absent or withdrawn"
+            )
         else:
             rows = list(OfficeAppointmentConsent.objects.using(self._alias).filter(
                 assignment=assignment,
                 proposal_event=proposal,
                 nominee_membership=assignment.membership,
                 effective_at__lte=effective_at,
-                recorded_at__lte=evaluated_at,
+                recorded_at__lte=record_time,
             ).order_by("ordinal"))
             latest = rows[-1] if rows else None
+            if latest is None:
+                refusal_message = (
+                    "Appointment not completed: the nominee has not yet consented to this nomination. "
+                    "No appointment was made. The appointment can proceed once they record their consent."
+                )
+            elif latest.action == "DECLINE":
+                refusal_message = (
+                    "Appointment not completed: the nominee declined this nomination. "
+                    "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
+                )
+            elif latest.action == "WITHDRAW":
+                refusal_message = (
+                    "Appointment not completed: the nominee withdrew their consent to this nomination. "
+                    "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
+                )
+            else:
+                refusal_message = "ASSIGN consent is absent or withdrawn"
             expected_reference = (
                 "c:" + str(latest.consent_uuid)
                 if latest is not None and latest.action == "CONSENT"
@@ -1181,7 +1207,7 @@ class OrganismRoleService(_OrganismCommandService):
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise S015AssignmentEdgeRefused("ASSIGN authority did not name its consent fact") from exc
         if expected_reference is None or facts.get("u") != expected_reference:
-            raise S015AssignmentEdgeRefused("ASSIGN consent is absent or withdrawn")
+            raise S015AssignmentEdgeRefused(refusal_message)
 
     def _write_event(
         self,

@@ -4150,6 +4150,235 @@ class S015RoleCommandTests(TransactionTestCase):
         run_order(first_action="WITHDRAW", label="withdraw-first")
         run_order(first_action="ASSIGN", label="assign-first")
 
+    def _r4s3_outcome(self, worker):
+        if worker is None or worker.outcome is None:
+            return "timeout"
+        kind, value = worker.outcome
+        if kind == "ok":
+            return "ok"
+        state = _r4s1_sqlstate(value)
+        if state == "40P01":
+            return "deadlock_40P01"
+        if state in {"55P03", "57014"} or isinstance(value, TimeoutError):
+            return "timeout"
+        refusal_code = getattr(value, "refusal_code", None)
+        if refusal_code is not None:
+            return f"refused:{getattr(refusal_code, 'value', refusal_code)}"
+        if isinstance(value, S015AssignmentEdgeRefused):
+            return f"refused:{type(value).__name__}"
+        if isinstance(value, IntegrityError):
+            cause = value.__cause__
+            diagnostic = getattr(cause, "diag", None)
+            message = getattr(diagnostic, "message_primary", "") or ""
+            constraint = getattr(diagnostic, "constraint_name", None)
+            if message.startswith("S2B assignment consent refused:"):
+                return "db_refused:IntegrityError:s2b_guard_assign_consent"
+            if constraint:
+                return f"db_refused:IntegrityError:{constraint}"
+        return f"other:{type(value).__name__}"
+
+    def _r4s3_withdraw_while_assign_waits(self, *, self_proposal):
+        from core.models import AuthorityDecision
+        from src.intevia.services.organism_application_authority import (
+            ProductionApplicationAuthorityProvider,
+        )
+        from src.intevia.services.organism_office_consent_service import (
+            OfficeAppointmentConsentService,
+            RecordOfficeConsentCommand,
+        )
+
+        case = "S" if self_proposal else "O"
+        label = f"r4s3-w1b-tight-{case.lower()}"
+        ids, coordinator = self._setup_organism(label)
+        _, nominee, nominee_membership_uuid = self._add_active_member(ids, label)
+        provider = ProductionApplicationAuthorityProvider(database_alias="default")
+        proposal_at = self._database_now()
+        proposal = self._service(provider).propose_assignment(self._propose_command(
+            actor=nominee if self_proposal else coordinator,
+            membership_uuid=nominee_membership_uuid,
+            role_definition_uuid=ids["coordinator_role_uuid"],
+            request_reference=f"request:{label}:propose",
+            idempotency_key=f"idem:{label}:propose",
+            occurred_at=proposal_at,
+            effective_at=proposal_at,
+            received_at=proposal_at,
+        ))
+        proposal_event = _event_for_result(proposal)
+        if not self_proposal:
+            self._record_test_consent(
+                provider=provider,
+                actor=nominee,
+                assignment_uuid=proposal.assignment_uuid,
+                label=label,
+                effective_at=proposal_at,
+            )
+
+        provider_entered = threading.Event()
+        release_withdrawal = threading.Event()
+        paused_provider = _PausedProductionProvider(provider_entered, release_withdrawal)
+        consent_service = OfficeAppointmentConsentService(
+            authority=S015Authority(provider=paused_provider, database_alias="default"),
+            clock=self._database_now,
+            database_alias="default",
+        )
+        assign_service = self._service(provider)
+        assign_received_at = []
+
+        def withdraw():
+            received_at = self._database_now()
+            return consent_service.record_office_consent(RecordOfficeConsentCommand(
+                credential=nominee.credential,
+                request_reference=f"request:{label}:withdraw",
+                idempotency_key=f"idem:{label}:withdraw",
+                occurred_at=received_at,
+                effective_at=proposal_at,
+                received_at=received_at,
+                assignment_uuid=proposal.assignment_uuid,
+                proposal_event_uuid=proposal_event.event_uuid,
+                action="WITHDRAW",
+            ))
+
+        def assign_while_withdrawal_waits():
+            received_at = self._database_now()
+            assign_received_at.append(received_at)
+            return assign_service.transition_assignment(self._transition_command(
+                actor=coordinator,
+                assignment_uuid=proposal.assignment_uuid,
+                action="ASSIGN",
+                resulting_state="ACTIVE",
+                effective_until_state="NONE",
+                request_reference=f"request:{label}:assign",
+                idempotency_key=f"idem:{label}:assign",
+                occurred_at=received_at,
+                effective_at=received_at,
+                received_at=received_at,
+            ))
+
+        before = _r4s1_rows()
+        result = self._run_r4s1_pair(
+            first_operation=withdraw,
+            second_operation=assign_while_withdrawal_waits,
+            first_gate=provider_entered,
+            release_first=release_withdrawal,
+        )
+        assignment = ContextualRoleAssignment.objects.get(
+            assignment_uuid=proposal.assignment_uuid,
+        )
+        office_actions = list(
+            ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment)
+            .order_by("sequence")
+            .values_list("action", flat=True)
+        )
+        consent_rows = list(
+            OfficeAppointmentConsent.objects.filter(assignment=assignment).order_by("ordinal")
+        )
+        consent_actions = [row.action for row in consent_rows]
+        withdrawal_row = next((row for row in consent_rows if row.action == "WITHDRAW"), None)
+        discriminates = (
+            len(assign_received_at) == 1
+            and withdrawal_row is not None
+            and withdrawal_row.recorded_at > assign_received_at[0]
+        )
+        withdraw_outcome = self._r4s3_outcome(result["first"])
+        assign_outcome = self._r4s3_outcome(result["second"])
+        print(
+            f"WITNESS {case} withdraw={withdraw_outcome} assign={assign_outcome} "
+            f"discriminates={str(discriminates).lower()} "
+            f"rows={office_actions};{consent_actions};{assignment.state}",
+            flush=True,
+        )
+
+        self.assertTrue(discriminates, "WITHDRAW must be recorded after ASSIGN received_at")
+        self.assertEqual(withdraw_outcome, "ok")
+        self.assertEqual(
+            assign_outcome,
+            "refused:S015AssignmentEdgeRefused",
+        )
+        assignment_error = result["second"].outcome[1]
+        expected_message = (
+            "Appointment not completed: the nominee withdrew their consent to this nomination. "
+            "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
+        )
+        self.assertEqual(str(assignment_error), expected_message)
+        self.assertEqual(assignment_error.args, (expected_message,))
+        self.assertEqual(vars(assignment_error), {})
+        self.assertTrue(result["gate_reached"], "WITHDRAW did not pause inside authority")
+        self.assertIsNotNone(result["wait"], "ASSIGN did not wait for the held organism lock")
+        self.assertEqual(result["wait"]["tuple_relation"], "core_livingorganism")
+        self.assertEqual(result["wait"]["holders"], [result["first"].pid])
+        self.assertFalse(result["second_finished_while_first_paused"])
+        self.assertIsNone(result["cleanup_error"])
+        self.assertEqual(office_actions, ["PROPOSE"])
+        self.assertEqual(assignment.state, "PROPOSED")
+        self.assertEqual(consent_actions, ["WITHDRAW"] if self_proposal else ["CONSENT", "WITHDRAW"])
+
+        with self.assertRaises(S015AuthorityDenied) as later_assignment_refusal:
+            assign_service.transition_assignment(self._transition_command(
+                actor=coordinator,
+                assignment_uuid=proposal.assignment_uuid,
+                action="ASSIGN",
+                resulting_state="ACTIVE",
+                effective_until_state="NONE",
+                request_reference=f"request:{label}:later-assign",
+                idempotency_key=f"idem:{label}:later-assign",
+                occurred_at=self._database_now(),
+                effective_at=proposal_at,
+                received_at=self._database_now(),
+            ))
+        self.assertIs(
+            later_assignment_refusal.exception.refusal_code,
+            S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
+        )
+        later_decision = AuthorityDecision.objects.get(
+            decision_reference=later_assignment_refusal.exception.authority_decision_reference,
+        )
+        self.assertIn(
+            ("core_officeappointmentconsent", str(withdrawal_row.consent_uuid)),
+            {(fact["relation"], fact["reference"]) for fact in later_decision.facts_read},
+        )
+
+        if not self_proposal:
+            with self.assertRaises(S015AuthorityDenied) as later_consent_refusal:
+                consent_service.record_office_consent(RecordOfficeConsentCommand(
+                    credential=nominee.credential,
+                    request_reference=f"request:{label}:later-consent",
+                    idempotency_key=f"idem:{label}:later-consent",
+                    occurred_at=self._database_now(),
+                    effective_at=proposal_at,
+                    received_at=self._database_now(),
+                    assignment_uuid=proposal.assignment_uuid,
+                    proposal_event_uuid=proposal_event.event_uuid,
+                    action="CONSENT",
+                ))
+            self.assertIs(
+                later_consent_refusal.exception.refusal_code,
+                S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
+            )
+
+        if self_proposal:
+            fresh_at = self._database_now()
+            fresh_proposal = self._service(provider).propose_assignment(self._propose_command(
+                actor=nominee,
+                membership_uuid=nominee_membership_uuid,
+                role_definition_uuid=ids["coordinator_role_uuid"],
+                request_reference=f"request:{label}:fresh-propose",
+                idempotency_key=f"idem:{label}:fresh-propose",
+                occurred_at=fresh_at,
+                effective_at=fresh_at,
+                received_at=fresh_at,
+            ))
+            fresh_event = _event_for_result(fresh_proposal)
+            self.assertNotEqual(fresh_proposal.assignment_uuid, proposal.assignment_uuid)
+            self.assertNotEqual(fresh_event.event_uuid, proposal_event.event_uuid)
+
+    def test_r4s3_w1b_tight_self_volunteer_withdraws_while_assign_waits(self):
+        """[predicted, LD F-R4S1 determination Q6: on the unchanged code, the ASSIGN is admitted]"""
+        self._r4s3_withdraw_while_assign_waits(self_proposal=True)
+
+    def test_r4s3_w1b_tight_nominee_withdraws_consent_while_assign_waits(self):
+        """[predicted, LD F-R4S1 determination Q6: on the unchanged code, the ASSIGN is admitted]"""
+        self._r4s3_withdraw_while_assign_waits(self_proposal=False)
+
     # R14 — cache equals the fold after each command.
     def test_cache_equals_fold_after_each_command(self):
         ids, founder = self._setup_organism("cache")
