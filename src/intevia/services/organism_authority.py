@@ -65,6 +65,7 @@ class S015AuthorityRefusalCode(str, Enum):
     C_LO_CLOSED = "C_LO_CLOSED"
     C_LO_NO_CAPACITY = "C_LO_NO_CAPACITY"
     C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED = "C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED"
+    C_REFERENCE_UNREPRESENTABLE = "C_REFERENCE_UNREPRESENTABLE"
     E_NOMINATION_POLICY_NOT_ENTITLED = "E_NOMINATION_POLICY_NOT_ENTITLED"
     C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN = "C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN"
     C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED = "C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED"
@@ -576,7 +577,21 @@ def _facts_read(request: S015AuthorityRequest, authority_reference: str | None) 
         if value == "-":
             continue
         relation, reference_prefix = prefix[key]
-        reference = None if value is None else str(value)
+        if (
+            key == "e"
+            and type(value) is int
+            and request.action in {
+                OrganismAction.DECIDE_APPLICATION,
+                OrganismAction.REASSIGN_APPLICATION,
+            }
+        ):
+            target = request.target
+            application_uuid = target.get("application_uuid") if type(target) is dict else None
+            if application_uuid is None:
+                raise S015AuthorityMalformed("application engagement reference has no application target")
+            reference = f"{application_uuid}:{value}"
+        else:
+            reference = None if value is None else str(value)
         if reference is not None and reference_prefix is not None and not reference.startswith(reference_prefix):
             reference = reference_prefix + reference
         facts.append({"relation": relation, "reference": reference, "eligible_at": eligible_at})

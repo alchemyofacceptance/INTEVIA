@@ -1044,7 +1044,6 @@ class OrganismRoleService(_OrganismCommandService):
             self._verify_assign_consent(
                 assignment=assignment,
                 effective_at=effective_at,
-                evaluated_at=received_at,
                 authority_reference=decision.authority_reference,
             )
 
@@ -1143,7 +1142,6 @@ class OrganismRoleService(_OrganismCommandService):
         *,
         assignment: ContextualRoleAssignment,
         effective_at: datetime,
-        evaluated_at: datetime,
         authority_reference: str,
     ) -> None:
         proposal = ContextualRoleAssignmentStateEvent.objects.using(self._alias).filter(
@@ -1169,7 +1167,12 @@ class OrganismRoleService(_OrganismCommandService):
                 "Appointment not completed: the nominee withdrew their consent to this nomination. "
                 "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
                 if withdrawn
-                else "ASSIGN consent is absent or withdrawn"
+                else (
+                    "Appointment not completed: the recorded authority reference does not match the "
+                    "nominee's current consent record. No appointment was made. This is a record "
+                    "inconsistency, not a withdrawal or decline by the nominee. The inconsistency "
+                    "needs to be checked before proceeding."
+                )
             )
         else:
             rows = list(OfficeAppointmentConsent.objects.using(self._alias).filter(
@@ -1196,7 +1199,12 @@ class OrganismRoleService(_OrganismCommandService):
                     "This nomination is closed. If they wish to proceed later, a fresh nomination is required."
                 )
             else:
-                refusal_message = "ASSIGN consent is absent or withdrawn"
+                refusal_message = (
+                    "Appointment not completed: the recorded authority reference does not match the "
+                    "nominee's current consent record. No appointment was made. This is a record "
+                    "inconsistency, not a withdrawal or decline by the nominee. The inconsistency "
+                    "needs to be checked before proceeding."
+                )
             expected_reference = (
                 "c:" + str(latest.consent_uuid)
                 if latest is not None and latest.action == "CONSENT"

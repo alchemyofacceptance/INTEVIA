@@ -18,7 +18,7 @@ import hashlib
 import importlib
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from unittest import skipUnless
 from uuid import uuid4
@@ -31,6 +31,7 @@ from core.models import (
     ApplicationEngagement,
     AuthorityDecision,
     CSAAssignment,
+    CSAAssignmentEnd,
     ContextualRoleAssignment,
     Identity,
     IdentityTransition,
@@ -50,10 +51,12 @@ from src.intevia.services.organism_application_service import (
     ApplicationCommandResult,
     _COMMAND_DOMAIN,
     S015ApplicationAuthorityUnavailable,
+    S015ApplicationRefused,
     ClaimApplicationCommand,
     DecideApplicationCommand,
     EffectGatewayVersionCommand,
     GatewayDraftCommand,
+    gateway_version_status,
     OrganismApplicationService,
     ReassignApplicationCommand,
     SubmitApplicationCommand,
@@ -124,6 +127,43 @@ class _CountingAuthorityProvider:
     def evaluate_organism_authority(self, request):
         self.requests.append(request)
         return self.delegate.evaluate_organism_authority(request)
+
+
+class _HistoricalReferenceAuthorityProvider:
+    provider_identity = ProductionApplicationAuthorityProvider.provider_identity
+
+    def __init__(self, delegate, provider_version):
+        self.delegate = delegate
+        self.provider_version = provider_version
+
+    def evaluate_organism_authority(self, request):
+        result = self.delegate.evaluate_organism_authority(request)
+        if (
+            request.action not in {
+                OrganismAction.DECIDE_APPLICATION,
+                OrganismAction.REASSIGN_APPLICATION,
+            }
+            or getattr(result, "refusal_code", None) is not None
+        ):
+            return result
+        facts = json.loads(result.authority_reference[len("s015a1:"):])
+        claim = CSAAssignment.objects.get(assignment_uuid=facts["a"])
+        engagement = ApplicationEngagement.objects.get(
+            application__application_uuid=request.target["application_uuid"],
+            engagement_ordinal=facts["e"],
+        )
+        configuration = LOGovernanceConfigurationVersion.objects.get(
+            version_uuid=facts["c"],
+        )
+        facts.update({
+            "a": str(claim.pk),
+            "e": str(engagement.pk),
+            "t": "CQ_INACTIVE" if configuration.cq_active is not True else "SOLE_COORDINATOR",
+        })
+        return replace(
+            result,
+            authority_reference="s015a1:" + canonical_json_bytes(facts).decode("utf-8"),
+        )
 
 
 class TestFixtureGovernedRegistrationFactSource:
@@ -1344,7 +1384,29 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             ))
         self.assertEqual(refusal.refusal_code, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
 
+    def test_w_d1b_authority_reference_bound_is_238_characters(self):
+        facts = {
+            "a": str(uuid4()),
+            "c": str(uuid4()),
+            "e": 2147483647,
+            "m": str(uuid4()),
+            "o": str(uuid4()),
+            "s": str(uuid4()),
+        }
+        reference = "s015a1:" + canonical_json_bytes(facts).decode("utf-8")
+
+        self.assertEqual(set(facts), {"a", "c", "e", "m", "o", "s"})
+        self.assertEqual(type(facts["e"]), int)
+        self.assertTrue(all(type(facts[key]) is str and len(facts[key]) == 36 for key in ("a", "c", "m", "o", "s")))
+        self.assertEqual(len(reference), 238)
+        self.assertLessEqual(len(reference), 255)
+
     def test_effective_coordinator_without_the_assignment_cannot_decide_and_can_reassign(self):
+        """Consumer update: R3 key-form expectations become R4 UUID/integer forms served unchanged.
+
+        W-D1i Phase A PASS: C:\\Users\\Carewen\\INTEVIA_AGENT_STAGING\\PKTB_R4S4\\ME_DEV\\AA_R3_D1_PRECONDITION_CHECK.md,
+        SHA-256 aa7cb26c3d09ccb20f88adcf510ade7843b5a23e0cf6f8029360e7ccb5e1f907.
+        """
         provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=TestFixtureGovernedRegistrationFactSource(),
@@ -1409,8 +1471,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
         reassigned = service.reassign_application(reassign_command)
         self.assertEqual(reassigned.action, OrganismAction.REASSIGN_APPLICATION)
-        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R3.0")
-        self.assertEqual(reassigned.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R4.0")
         replacement = CSAAssignment.objects.get(application=application, replaces__isnull=False)
         original_claim = CSAAssignment.objects.get(application=application, replaces__isnull=True)
         first_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
@@ -1420,18 +1481,43 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
         reassign_reference = reassign_record.authority_reference
         reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
-        self.assertEqual(reassign_record.provider_version, "R3.0")
-        self.assertEqual(reassign_facts["a"], str(original_claim.pk))
-        self.assertEqual(reassign_facts["e"], str(first_engagement.pk))
+        self.assertEqual((reassign_record.outcome, reassign_record.refusal_code), ("QUALIFIED", None))
+        self.assertEqual(reassign_record.provider_version, "R4.0")
+        self.assertEqual(set(reassign_facts), {"a", "c", "e", "m", "o", "s"})
+        self.assertEqual(reassign_facts["a"], str(original_claim.assignment_uuid))
+        self.assertEqual(type(reassign_facts["e"]), int)
+        self.assertEqual(reassign_facts["e"], first_engagement.engagement_ordinal)
+        self.assertIsInstance(reassigned.authority_reference, str)
+        self.assertEqual(reassigned.authority_reference, reassign_reference)
+        self.assertLessEqual(len(reassign_reference), 255)
         reassign_fact_refs = {(fact["relation"], fact["reference"]) for fact in reassign_record.facts_read}
-        self.assertIn(("core_csaassignment", str(original_claim.pk)), reassign_fact_refs)
-        self.assertIn(("core_applicationengagement", str(first_engagement.pk)), reassign_fact_refs)
+        self.assertIn(("core_csaassignment", str(original_claim.assignment_uuid)), reassign_fact_refs)
+        self.assertIn((
+            "core_applicationengagement",
+            f"{application.application_uuid}:{first_engagement.engagement_ordinal}",
+        ), reassign_fact_refs)
+        self.assertEqual(
+            ApplicationEngagement.objects.filter(
+                application__application_uuid=application.application_uuid,
+                engagement_ordinal=reassign_facts["e"],
+            ).count(),
+            1,
+        )
+        reassign_configuration = LOGovernanceConfigurationVersion.objects.get(
+            version_uuid=reassign_facts["c"],
+        )
+        self.assertEqual(gateway_version_status("default", reassign_configuration, self.now), "EFFECTIVE")
+        self.assertEqual(
+            "CQ_INACTIVE" if reassign_configuration.cq_active is not True else "SOLE_COORDINATOR",
+            "CQ_INACTIVE",
+        )
         reassign_provider_calls = len(provider.requests)
         reassign_decisions = AuthorityDecision.objects.count()
         reassign_receipts = OrganismCommandReceipt.objects.count()
         reassign_replay = service.reassign_application(reassign_command)
         self.assertEqual(reassign_replay, reassigned)
-        self.assertEqual(reassign_replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(reassign_replay.authority_reference, reassign_reference)
+        self.assertIsInstance(reassign_replay.authority_reference, str)
         self.assertEqual(len(provider.requests), reassign_provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), reassign_decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), reassign_receipts)
@@ -1463,22 +1549,44 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             outcome="DECLINE",
         )
         decided = service.decide_application(decide_command)
-        self.assertEqual(decided.authority_reference, WithheldField("authority_reference", "SUBJECT"))
         decide_record = AuthorityDecision.objects.get(decision_reference=decided.authority_decision_reference)
         decide_reference = decide_record.authority_reference
         decide_facts = json.loads(decide_reference[len("s015a1:"):])
-        self.assertEqual(decide_record.provider_version, "R3.0")
-        self.assertEqual(decide_facts["a"], str(replacement.pk))
-        self.assertEqual(decide_facts["e"], str(second_engagement.pk))
+        self.assertEqual((decide_record.outcome, decide_record.refusal_code), ("QUALIFIED", None))
+        self.assertEqual(decide_record.provider_version, "R4.0")
+        self.assertEqual(set(decide_facts), {"a", "c", "e", "m", "o", "s"})
+        self.assertEqual(decide_facts["a"], str(replacement.assignment_uuid))
+        self.assertEqual(type(decide_facts["e"]), int)
+        self.assertEqual(decide_facts["e"], second_engagement.engagement_ordinal)
+        self.assertIsInstance(decided.authority_reference, str)
+        self.assertEqual(decided.authority_reference, decide_reference)
+        self.assertLessEqual(len(decide_reference), 255)
         decide_fact_refs = {(fact["relation"], fact["reference"]) for fact in decide_record.facts_read}
-        self.assertIn(("core_csaassignment", str(replacement.pk)), decide_fact_refs)
-        self.assertIn(("core_applicationengagement", str(second_engagement.pk)), decide_fact_refs)
+        self.assertIn(("core_csaassignment", str(replacement.assignment_uuid)), decide_fact_refs)
+        self.assertIn((
+            "core_applicationengagement",
+            f"{application.application_uuid}:{second_engagement.engagement_ordinal}",
+        ), decide_fact_refs)
+        resolved_decide_engagement = ApplicationEngagement.objects.get(
+            application__application_uuid=application.application_uuid,
+            engagement_ordinal=decide_facts["e"],
+        )
+        self.assertEqual(resolved_decide_engagement.engagement_reference, decide_facts["a"])
+        decide_configuration = LOGovernanceConfigurationVersion.objects.get(
+            version_uuid=decide_facts["c"],
+        )
+        self.assertEqual(gateway_version_status("default", decide_configuration, self.now), "EFFECTIVE")
+        self.assertEqual(
+            "CQ_INACTIVE" if decide_configuration.cq_active is not True else "SOLE_COORDINATOR",
+            "CQ_INACTIVE",
+        )
         decide_provider_calls = len(provider.requests)
         decide_decisions = AuthorityDecision.objects.count()
         decide_receipts = OrganismCommandReceipt.objects.count()
         decide_replay = service.decide_application(decide_command)
         self.assertEqual(decide_replay, decided)
-        self.assertEqual(decide_replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(decide_replay.authority_reference, decide_reference)
+        self.assertIsInstance(decide_replay.authority_reference, str)
         self.assertEqual(len(provider.requests), decide_provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), decide_decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), decide_receipts)
@@ -1522,16 +1630,309 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(departed_replay.completion_due_at, decided.completion_due_at)
         self.assertEqual(departed_replay.completion_due_source, decided.completion_due_source)
         self.assertEqual(departed_replay.record_uuid, WithheldField("record_uuid", "PROCESSING"))
+        self.assertEqual(departed_replay.authority_reference, decided.authority_reference)
         self.assertEqual(
             withheld_fields(departed_replay),
-            (
-                WithheldField("authority_reference", "SUBJECT"),
-                WithheldField("record_uuid", "PROCESSING"),
-            ),
+            (WithheldField("record_uuid", "PROCESSING"),),
         )
         self.assertEqual(len(provider.requests), departure_provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), departure_decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), departure_receipts)
+
+    def test_w_d1d_and_w_d1f_historical_reference_forms_coexist_without_rewriting(self):
+        """W-D1d/W-D1f: R2, interim R3 and D1 records pass the installed guards side by side."""
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        for version in ("R2.0", "R3.0", "R4.0"):
+            delegate = ProductionApplicationAuthorityProvider(
+                birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+                registration_source=TestFixtureGovernedRegistrationFactSource(),
+            )
+            provider = (
+                delegate
+                if version == "R4.0"
+                else _HistoricalReferenceAuthorityProvider(delegate, version)
+            )
+            service = self._service(authority_provider=provider)
+            with transaction.atomic(), connection.cursor() as cursor:
+                applicant_pk = seed_identity(
+                    cursor,
+                    f"reference-forms-applicant-{version}-{self.tag}",
+                )
+            applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
+            self._add_fixture_access_history(applicant, f"reference-forms-{version}")
+            submission = self._submit(
+                service,
+                f"reference-forms-{version}",
+                applicant=applicant,
+            )
+            application = Application.objects.get(application_uuid=submission.application_uuid)
+            self._capture_database_now()
+            service.claim_application(ClaimApplicationCommand(
+                credential=coordinator.credential,
+                application_uuid=application.application_uuid,
+                request_reference=f"aa-r1:reference-forms-claim:{version}:{self.tag}",
+                idempotency_key=f"aa-r1:reference-forms-claim:key:{version}:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+            ))
+            first_assignment = CSAAssignment.objects.get(application=application)
+
+            self._capture_database_now()
+            reassign_at = self.now + timedelta(minutes=1)
+            reassign_command = ReassignApplicationCommand(
+                credential=coordinator.credential,
+                application_uuid=application.application_uuid,
+                request_reference=f"aa-r1:reference-forms-reassign:{version}:{self.tag}",
+                idempotency_key=f"aa-r1:reference-forms-reassign:key:{version}:{self.tag}",
+                occurred_at=self.now,
+                effective_at=reassign_at,
+                received_at=self.now,
+            )
+            reassigned = service.reassign_application(reassign_command)
+            ending = CSAAssignmentEnd.objects.get(assignment=first_assignment)
+            self.assertEqual(
+                service.application_status(application, ending.effective_at, ending.recorded_at),
+                "UNABLE",
+            )
+            reassign_record = AuthorityDecision.objects.get(
+                decision_reference=reassigned.authority_decision_reference,
+            )
+            reassign_reference = reassign_record.authority_reference
+            self.assertEqual(reassign_record.provider_version, version)
+            self.assertEqual(reassign_record.outcome, "QUALIFIED")
+            self.assertEqual(reassigned.authority_reference, (
+                reassign_reference if version == "R4.0"
+                else WithheldField("authority_reference", "SUBJECT")
+            ))
+            self.assertEqual(service.reassign_application(reassign_command), reassigned)
+            self.assertEqual(service.reassign_application(reassign_command).authority_reference, (
+                reassign_reference if version == "R4.0"
+                else WithheldField("authority_reference", "SUBJECT")
+            ))
+            reassign_record.refresh_from_db()
+            self.assertEqual(reassign_record.authority_reference.encode("utf-8"), reassign_reference.encode("utf-8"))
+            if version != "R4.0":
+                reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
+                self.assertIsInstance(reassign_facts["a"], str)
+                self.assertTrue(reassign_facts["a"].isdecimal())
+                self.assertIsInstance(reassign_facts["e"], str)
+                self.assertTrue(reassign_facts["e"].isdecimal())
+
+            self._capture_database_now()
+            decide_command = DecideApplicationCommand(
+                credential=coordinator.credential,
+                application_uuid=application.application_uuid,
+                request_reference=f"aa-r1:reference-forms-decide:{version}:{self.tag}",
+                idempotency_key=f"aa-r1:reference-forms-decide:key:{version}:{self.tag}",
+                occurred_at=self.now,
+                effective_at=reassign_at + timedelta(minutes=1),
+                received_at=self.now,
+                outcome="DECLINE",
+            )
+            decided = service.decide_application(decide_command)
+            decide_record = AuthorityDecision.objects.get(
+                decision_reference=decided.authority_decision_reference,
+            )
+            decide_reference = decide_record.authority_reference
+            self.assertEqual(decide_record.provider_version, version)
+            self.assertEqual(decide_record.outcome, "QUALIFIED")
+            expected = (
+                decide_reference if version == "R4.0"
+                else WithheldField("authority_reference", "SUBJECT")
+            )
+            self.assertEqual(decided.authority_reference, expected)
+            self.assertEqual(service.decide_application(decide_command).authority_reference, expected)
+            decide_record.refresh_from_db()
+            self.assertEqual(decide_record.authority_reference.encode("utf-8"), decide_reference.encode("utf-8"))
+            if version != "R4.0":
+                decide_facts = json.loads(decide_reference[len("s015a1:"):])
+                self.assertIsInstance(decide_facts["a"], str)
+                self.assertTrue(decide_facts["a"].isdecimal())
+                self.assertIsInstance(decide_facts["e"], str)
+                self.assertTrue(decide_facts["e"].isdecimal())
+
+        self.assertEqual(
+            AuthorityDecision.objects.filter(
+                action__in={
+                    OrganismAction.DECIDE_APPLICATION.value,
+                    OrganismAction.REASSIGN_APPLICATION.value,
+                },
+                outcome="QUALIFIED",
+            ).count(),
+            6,
+        )
+
+    def test_w_d1g_size_refusal_is_distinct_and_discloses_denied(self):
+        submission_service = self._service(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+            registration_source=TestFixtureGovernedRegistrationFactSource(),
+        )
+        submission = self._submit(submission_service, "oversize-reference")
+        application = Application.objects.get(application_uuid=submission.application_uuid)
+        action = OrganismAction.REASSIGN_APPLICATION
+        target = {
+            "action": action.value,
+            "application_uuid": application.application_uuid,
+            "organism_uuid": self.organism_uuid,
+        }
+        production = ProductionApplicationAuthorityProvider()
+
+        class ForcedOversizeProvider:
+            provider_identity = production.provider_identity
+            provider_version = production.provider_version
+
+            def evaluate_organism_authority(self, request):
+                return ProductionApplicationAuthorityProvider._qualified(
+                    request,
+                    {"x": "x" * 255},
+                )
+
+        class GenuineDeniedProvider:
+            provider_identity = production.provider_identity
+            provider_version = production.provider_version
+
+            def evaluate_organism_authority(self, request):
+                return production._refuse(
+                    request,
+                    S015AuthorityRefusalCode.DENIED,
+                    S015AuthorityRefusalCode.DENIED,
+                )
+
+        def refused_record(provider, actor, suffix, expected_code):
+            request = self._post_request(actor, action, target, suffix=suffix)
+            with transaction.atomic():
+                with self.assertRaises(S015AuthorityDenied) as denied:
+                    S015Authority(provider=provider).qualify(request)
+            self.assertEqual(denied.exception.disclosed_refusal_code, S015AuthorityRefusalCode.DENIED)
+            self.assertEqual(denied.exception.refusal_code, expected_code)
+            return AuthorityDecision.objects.get(
+                decision_reference=denied.exception.authority_decision_reference,
+            )
+
+        current_member = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        oversize_member = refused_record(
+            ForcedOversizeProvider(), current_member, "oversize-member", 
+            S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE,
+        )
+        oversize_nonmember = refused_record(
+            ForcedOversizeProvider(), self.applicant, "oversize-nonmember",
+            S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE,
+        )
+        genuine_denied = refused_record(
+            GenuineDeniedProvider(), current_member, "genuine-denied",
+            S015AuthorityRefusalCode.DENIED,
+        )
+
+        for record in (oversize_member, oversize_nonmember):
+            self.assertEqual(
+                (record.outcome, record.refusal_code, record.authority_reference),
+                (
+                    "REFUSED",
+                    S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE.value,
+                    's015a1:{"x":"C_REFERENCE_UNREPRESENTABLE"}',
+                ),
+            )
+            self.assertEqual(len(record.authority_reference), 42)
+        self.assertEqual((genuine_denied.outcome, genuine_denied.refusal_code), ("REFUSED", "DENIED"))
+        self.assertNotEqual(oversize_member.authority_reference, genuine_denied.authority_reference)
+        self.assertNotEqual(oversize_member.decision_reference, genuine_denied.decision_reference)
+
+    def test_w_d1h_reassign_records_latest_engagement_before_service_refusal(self):
+        provider = ProductionApplicationAuthorityProvider(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
+            registration_source=TestFixtureGovernedRegistrationFactSource(),
+        )
+        service = self._service(authority_provider=provider)
+        submission = self._submit(service, "reassign-mismatched-engagement")
+        application = Application.objects.get(application_uuid=submission.application_uuid)
+        coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        self._capture_database_now()
+        service.claim_application(ClaimApplicationCommand(
+            credential=coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:mismatched-engagement-claim:{self.tag}",
+            idempotency_key=f"aa-r1:mismatched-engagement-claim:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+        ))
+        first_assignment = CSAAssignment.objects.get(application=application)
+        self._capture_database_now()
+        first_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
+        provider_effective_at = self.now + timedelta(minutes=1)
+        future_reassign_at = self.now + timedelta(minutes=2)
+        service.reassign_application(ReassignApplicationCommand(
+            credential=coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:mismatched-engagement-prior-reassign:{self.tag}",
+            idempotency_key=f"aa-r1:mismatched-engagement-prior-reassign:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=future_reassign_at,
+            received_at=self.now,
+        ))
+        ending = CSAAssignmentEnd.objects.get(assignment=first_assignment)
+        self.assertEqual(
+            service.application_status(application, ending.effective_at, ending.recorded_at),
+            "UNABLE",
+        )
+        latest_engagement = ApplicationEngagement.objects.get(
+            application=application,
+            engagement_ordinal=2,
+        )
+        self.assertNotEqual(latest_engagement.engagement_reference, str(first_assignment.assignment_uuid))
+        self._capture_database_now()
+        target = {
+            "action": OrganismAction.REASSIGN_APPLICATION.value,
+            "application_uuid": application.application_uuid,
+            "organism_uuid": self.organism_uuid,
+        }
+        provider_request = self._post_request(
+            coordinator,
+            OrganismAction.REASSIGN_APPLICATION,
+            target,
+            effective_at=provider_effective_at,
+            suffix="mismatched-engagement-provider",
+        )
+        with transaction.atomic():
+            S015Authority(provider=provider).qualify(provider_request)
+            provider_record = AuthorityDecision.objects.get(
+                request_reference=provider_request.request_reference,
+            )
+            facts = json.loads(provider_record.authority_reference[len("s015a1:"):])
+            resolved_engagement = ApplicationEngagement.objects.get(
+                application__application_uuid=application.application_uuid,
+                engagement_ordinal=facts["e"],
+            )
+            fact_refs = {(fact["relation"], fact["reference"]) for fact in provider_record.facts_read}
+            self.assertEqual(provider_record.outcome, "QUALIFIED")
+            self.assertEqual(provider_record.provider_version, "R4.0")
+            self.assertEqual(facts["a"], str(first_assignment.assignment_uuid))
+            self.assertEqual(type(facts["e"]), int)
+            self.assertEqual(facts["e"], resolved_engagement.engagement_ordinal)
+            self.assertEqual(resolved_engagement.engagement_reference, facts["a"])
+            self.assertNotEqual(latest_engagement.engagement_reference, facts["a"])
+            self.assertEqual(
+                f"{application.application_uuid}:{facts['e']}",
+                f"{application.application_uuid}:{resolved_engagement.engagement_ordinal}",
+            )
+            self.assertIn(
+                ("core_applicationengagement", f"{application.application_uuid}:{facts['e']}"),
+                fact_refs,
+            )
+
+        command = ReassignApplicationCommand(
+            credential=coordinator.credential,
+            application_uuid=application.application_uuid,
+            request_reference=f"aa-r1:mismatched-engagement-reassign:{self.tag}",
+            idempotency_key=f"aa-r1:mismatched-engagement-reassign:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=provider_effective_at,
+            received_at=self.now,
+        )
+        with self.assertRaises(S015ApplicationRefused):
+            service.reassign_application(command)
+        self.assertFalse(AuthorityDecision.objects.filter(request_reference=command.request_reference).exists())
 
     def test_nonmember_claim_refuses_without_waiting_on_register_lock(self):
         production_provider = ProductionApplicationAuthorityProvider(
@@ -1725,27 +2126,29 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decision = service.decide_application(decide_command)
         decision_record = AuthorityDecision.objects.get(decision_reference=decision.authority_decision_reference)
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R3.0")
-        self.assertEqual(decision.authority_reference, WithheldField("authority_reference", "SUBJECT"))
+        self.assertEqual(decision_record.provider_version, "R4.0")
+        self.assertEqual(decision.authority_reference, decision_record.authority_reference)
+        self.assertIsInstance(decision.authority_reference, str)
         self.assertLessEqual(len(decision_record.authority_reference), 255)
         self.assertTrue(any(fact["relation"] == "core_applicationengagement" for fact in decision_record.facts_read))
         assignment_fact = next(
             fact for fact in decision_record.facts_read
             if fact["relation"] == "core_csaassignment"
         )
+        claim = CSAAssignment.objects.get(application=application)
         self.assertEqual(
             assignment_fact["reference"],
-            str(CSAAssignment.objects.get(application=application).pk),
+            str(claim.assignment_uuid),
         )
-        claim = CSAAssignment.objects.get(application=application)
         engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
         decision_facts = json.loads(decision_record.authority_reference[len("s015a1:"):])
-        self.assertEqual(decision_facts["a"], str(claim.pk))
-        self.assertEqual(decision_facts["e"], str(engagement.pk))
+        self.assertEqual(decision_facts["a"], str(claim.assignment_uuid))
+        self.assertEqual(type(decision_facts["e"]), int)
+        self.assertEqual(decision_facts["e"], engagement.engagement_ordinal)
         stored_reference = decision_record.authority_reference
         self.assertEqual(
             service.decide_application(decide_command).authority_reference,
-            WithheldField("authority_reference", "SUBJECT"),
+            decision_record.authority_reference,
         )
         decision_record.refresh_from_db()
         self.assertEqual(decision_record.authority_reference.encode("utf-8"), stored_reference.encode("utf-8"))

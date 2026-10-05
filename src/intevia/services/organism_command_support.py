@@ -189,14 +189,14 @@ def _has_pk_valued_reference(reference: object) -> bool:
     if type(facts) is not dict:
         return False
 
-    def is_pk(value: object) -> bool:
-        return type(value) is int or (type(value) is str and value.isdecimal())
+    def is_pk_string(value: object) -> bool:
+        return type(value) is str and value.isdecimal()
 
-    if is_pk(facts.get("a")):
+    if type(facts.get("a")) is int or is_pk_string(facts.get("a")):
         return True
     event = facts.get("e")
-    return is_pk(event) or (
-        type(event) is str and ":" in event and is_pk(event.split(":", 1)[0])
+    return is_pk_string(event) or (
+        type(event) is str and ":" in event and is_pk_string(event.split(":", 1)[0])
     )
 
 

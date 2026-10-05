@@ -205,7 +205,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R3.0"
+    provider_version = "R4.0"
 
     def __init__(
         self,
@@ -1268,9 +1268,8 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
             facts = self._coordinator_facts(request, membership, office, configuration, settings)
             facts.update({
-                "a": str(claim.pk),
-                "e": str(engagement.pk),
-                "t": "CQ_INACTIVE" if configuration.cq_active is not True else "SOLE_COORDINATOR",
+                "a": str(claim.assignment_uuid),
+                "e": engagement.engagement_ordinal,
             })
             return self._qualified(request, facts)
         if request.action is OrganismAction.DECIDE_APPLICATION:
@@ -1290,9 +1289,8 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOT_ASSIGNEE)
             facts = self._coordinator_facts(request, membership, office, configuration, settings)
             facts.update({
-                "a": str(claim.pk),
-                "e": str(engagement.pk),
-                "t": "CQ_INACTIVE" if configuration.cq_active is not True else "SOLE_COORDINATOR",
+                "a": str(claim.assignment_uuid),
+                "e": engagement.engagement_ordinal,
             })
             return self._qualified(request, facts)
         return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -1518,10 +1516,10 @@ class ProductionApplicationAuthorityProvider:
     @staticmethod
     def _refusal_for_size(request: S015AuthorityRequest) -> S015AuthorityResult:
         fields = asdict(request)
-        fields["refusal_code"] = S015AuthorityRefusalCode.DENIED
+        fields["refusal_code"] = S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE
         fields["disclosed_refusal_code"] = S015AuthorityRefusalCode.DENIED
         fields["authority_reference"] = "s015a1:" + canonical_json_bytes({
-            "x": S015AuthorityRefusalCode.DENIED.value,
+            "x": S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE.value,
         }).decode("utf-8")
         if type(request) is S015OwnApplicantAuthorityRequest:
             return S015OwnApplicantAuthorityRefusal(**fields)
