@@ -29,6 +29,7 @@ S015_TRUNCATE_GUARDIANS = {
     "core_contextualroleassignment": (
         "s015_contextualroleassignment_truncate_immutable"
     ),
+    "core_lofoundingcontentversion": "s015_lofoundingcontentversion_truncate_immutable",
     "core_authorityprincipalaliasreview": (
         "s015_authorityprincipalaliasreview_truncate_append_only"
     ),
@@ -41,6 +42,8 @@ S015_TRUNCATE_GUARDIANS = {
     "core_organismcommandreceipt": (
         "s015_organismcommandreceipt_truncate_append_only"
     ),
+    "core_platformtermsversion": "s015_platformtermsversion_truncate_immutable",
+    "core_platformtermsacceptance": "s015_platformtermsacceptance_truncate_immutable",
 }
 
 # Tables created by migrations in raw SQL, with no Django model, that a test can write.

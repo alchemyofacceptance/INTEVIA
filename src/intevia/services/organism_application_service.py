@@ -17,7 +17,8 @@ from core.models import (
     ApplicationWithdrawal, CSAAssignment, CSAAssignmentEnd, ContextualRoleAssignment,
     Identity, IdentityTransition, LivingOrganism, LivingOrganismEvent,
     LOApplicationGateway, LOApplicationSettingsVersion, LOApplicationQuestionVersion,
-    LOGovernanceConfigurationVersion, OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
+    LOGovernanceConfigurationVersion, LOFoundingContentVersion, OrganismCommandReceipt,
+    OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
@@ -78,7 +79,14 @@ class LONameSource(Protocol):
 
 class FormationLONameSource:
     def name_for(self, living_organism: LivingOrganism) -> str:
-        raise S015OperationNotYetImplemented("lo_name", "S3-IL-LONAME", "FORMATION")
+        database_alias = living_organism._state.db or "default"
+        name = LOFoundingContentVersion.objects.using(database_alias).filter(
+            living_organism_id=living_organism.pk,
+            version=1,
+        ).values_list("name", flat=True).first()
+        if name is None:
+            raise S015OperationNotYetImplemented("lo_name", "S3-IL-LONAME", "FORMATION")
+        return name
 
 
 class CareExecutor(Protocol):
@@ -826,7 +834,7 @@ class OrganismApplicationService:
                 LOApplicationQuestionVersion: {"question_text", "answer_format", "options"},
                 LOGovernanceConfigurationVersion: {"cq_active", "inherit_portal_cq_settings",
                                                    "require_cq_to_change_lo_settings", "require_cq_to_change_application_question",
-                                                   "coordinator_nomination_policy", "role_suspension_enabled",
+                                                   "governance_enabled", "coordinator_nomination_policy", "role_suspension_enabled",
                                                    "suspension_tolls_term"},
             }[model]
             if not isinstance(command.fields, dict) or not command.fields.keys() <= allowed:
@@ -837,9 +845,23 @@ class OrganismApplicationService:
                 )
                 if gateway_version_status(self._alias, version, gateway_at) != "DRAFT":
                     raise S015ApplicationRefused("governed gateway version cannot be edited")
-                for field, value in command.fields.items():
+                fields = dict(command.fields)
+                if (
+                    model is LOGovernanceConfigurationVersion
+                    and "governance_enabled" not in fields
+                    and version.governance_enabled is None
+                ):
+                    predecessor = _effective_gateway_version(
+                        self._alias, organism, command.action, gateway_at,
+                    )
+                    fields["governance_enabled"] = (
+                        True
+                        if predecessor is None or predecessor.governance_enabled is None
+                        else predecessor.governance_enabled
+                    )
+                for field, value in fields.items():
                     setattr(version, field, value)
-                version.save(using=self._alias, update_fields=list(command.fields))
+                version.save(using=self._alias, update_fields=list(fields))
             else:
                 predecessor = _effective_gateway_version(self._alias, organism, command.action, gateway_at)
                 fields = dict(command.fields)
@@ -847,6 +869,13 @@ class OrganismApplicationService:
                     "question_text" not in fields or "answer_format" not in fields
                 ):
                     fields = {**default_application_question(organism, self._name_source), **fields}
+                if model is LOGovernanceConfigurationVersion:
+                    fields.setdefault(
+                        "governance_enabled",
+                        True
+                        if predecessor is None or predecessor.governance_enabled is None
+                        else predecessor.governance_enabled,
+                    )
                 version = model.objects.using(self._alias).create(
                     living_organism=organism, actor=actor, enterer=actor, supersedes=predecessor,
                     occurred_at=occurred_at, effective_at=effective_at, received_at=received_at,
@@ -869,6 +898,10 @@ class OrganismApplicationService:
                 raise S015ApplicationRefused("gateway version already effective")
             if not _gateway_version_complete(version):
                 raise S015ApplicationRefused("S3FU gateway effect: version incomplete")
+            if isinstance(version, LOGovernanceConfigurationVersion) and version.governance_enabled is None:
+                raise S015ApplicationRefused(
+                    "S3FU governance configuration effect: GOVERNANCE choice is not confirmed"
+                )
             if isinstance(version, LOGovernanceConfigurationVersion) and version.cq_active is True:
                 raise S015OperationNotYetImplemented("cq_configuration", "S3-IL-CQ", "DISCUSSION")
             if isinstance(version, LOApplicationSettingsVersion) and version.processing_responsibility == "APPLICATION_CIRCLE":

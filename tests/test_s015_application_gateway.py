@@ -26,7 +26,7 @@ from src.intevia.services.organism_application_service import (
     EffectGatewayVersionCommand, FormationLONameSource, GatewayDraftCommand,
     OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand, _PAIR_DOMAIN,
     S015ApplicationAuthorityUnavailable,
-    _validate_gateway_answer,
+    _effective_gateway_version, _validate_gateway_answer,
     default_application_question, gateway_version_status,
 )
 from src.intevia.services.organism_authority import (
@@ -1230,6 +1230,128 @@ class ApplicationGatewayTests(TransactionTestCase):
         ))
         configuration.refresh_from_db()
         self.effect(configuration, config_action)
+
+    def test_governance_choice_defaults_copies_and_remains_effective(self):
+        action = OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+        common = {
+            "cq_active": False,
+            "inherit_portal_cq_settings": False,
+            "require_cq_to_change_lo_settings": False,
+            "require_cq_to_change_application_question": False,
+        }
+        first = self.draft(action, common)
+        self.assertIs(first.governance_enabled, True)
+        self.effect(first, action)
+        first.refresh_from_db()
+        first_event = LivingOrganismEvent.objects.get(
+            living_organism=self.organism,
+            action=action.value,
+            evidence_reference=f"governance-configuration-version:{first.version_uuid}",
+        )
+        self.assertEqual(
+            _effective_gateway_version("default", self.organism, action, first.effective_at, first_event.recorded_at),
+            first,
+        )
+
+        second = self.draft(action, {**common, "governance_enabled": False})
+        self.assertIs(second.governance_enabled, False)
+        self.assertEqual(second.supersedes_id, first.pk)
+        self.effect(second, action)
+        second.refresh_from_db()
+        second_event = LivingOrganismEvent.objects.get(
+            living_organism=self.organism,
+            action=action.value,
+            evidence_reference=f"governance-configuration-version:{second.version_uuid}",
+        )
+        self.assertEqual(
+            _effective_gateway_version("default", self.organism, action, second.effective_at, second_event.recorded_at),
+            second,
+        )
+
+        third = self.draft(action, common)
+        self.assertIs(third.governance_enabled, False)
+        self.assertEqual(third.supersedes_id, second.pk)
+        self.effect(third, action)
+        third.refresh_from_db()
+        third_event = LivingOrganismEvent.objects.get(
+            living_organism=self.organism,
+            action=action.value,
+            evidence_reference=f"governance-configuration-version:{third.version_uuid}",
+        )
+        self.assertEqual(
+            _effective_gateway_version("default", self.organism, action, third.effective_at, third_event.recorded_at),
+            third,
+        )
+
+        fourth = self.draft(action, {**common, "governance_enabled": True})
+        self.assertIs(fourth.governance_enabled, True)
+        self.assertEqual(fourth.supersedes_id, third.pk)
+        self.effect(fourth, action)
+        fourth.refresh_from_db()
+        fourth_event = LivingOrganismEvent.objects.get(
+            living_organism=self.organism,
+            action=action.value,
+            evidence_reference=f"governance-configuration-version:{fourth.version_uuid}",
+        )
+        self.assertEqual(
+            _effective_gateway_version("default", self.organism, action, fourth.effective_at, fourth_event.recorded_at),
+            fourth,
+        )
+
+    def test_governance_configuration_cannot_be_effected_without_confirmation(self):
+        action = OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+        configuration = self.draft(action, {
+            "cq_active": False,
+            "governance_enabled": None,
+            "inherit_portal_cq_settings": False,
+            "require_cq_to_change_lo_settings": False,
+            "require_cq_to_change_application_question": False,
+        })
+        before_events = LivingOrganismEvent.objects.filter(
+            living_organism=self.organism, action=action.value,
+        ).count()
+        with self.assertRaisesMessage(
+            S015ApplicationRefused,
+            "S3FU governance configuration effect: GOVERNANCE choice is not confirmed",
+        ):
+            self.effect(configuration, action)
+        configuration.refresh_from_db()
+        self.assertIsNone(configuration.governance_enabled)
+        self.assertEqual(
+            LivingOrganismEvent.objects.filter(
+                living_organism=self.organism, action=action.value,
+            ).count(),
+            before_events,
+        )
+
+    def test_effecting_governance_choice_confers_no_membership_circle_or_office(self):
+        action = OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+        configuration = self.draft(action, {
+            "cq_active": False,
+            "inherit_portal_cq_settings": False,
+            "require_cq_to_change_lo_settings": False,
+            "require_cq_to_change_application_question": False,
+        })
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_circle",
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismroledefinition",
+        )
+        before = {}
+        with connection.cursor() as cursor:
+            for table in tables:
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                before[table] = cursor.fetchone()[0]
+
+        self.effect(configuration, action)
+
+        with connection.cursor() as cursor:
+            for table in tables:
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                self.assertEqual(cursor.fetchone()[0], before[table], table)
 
     def test_effect_guard_attributes_evidence_organism_continuity_and_duplicate(self):
         with transaction.atomic(), connection.cursor() as cursor:

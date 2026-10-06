@@ -41,7 +41,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0041_r4s2_assign_current_membership"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0042_sb1_founding_terms_phases"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -86,6 +86,7 @@ class ApplicationLineageSchema(TransactionTestCase):
         automatic = importlib.import_module("core.migrations.0030_s015_automatic_application")
         admission = importlib.import_module("core.migrations.0031_s1fu_admission_actor_requirement")
         authority = importlib.import_module("core.migrations.0033_s015_application_authority")
+        sb1 = importlib.import_module("core.migrations.0042_sb1_founding_terms_phases")
         declared = {
             name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
             for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
@@ -110,6 +111,9 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s3fu_application_settings_basis_valid": authority.SETTINGS_BASIS_VALID_SQL,
             "s3fu_guard_application_engagement_basis": authority.ENGAGEMENT_BASIS_GUARD_SQL,
             "s1fu_guard_admission_route": admission.ADMISSION_ROUTE_SQL,
+            "s3_guard_lo_actor": sb1.NEW_S3_GUARD_LO_ACTOR_BODY,
+            "s1fu_guard_admission_route": sb1.NEW_S1FU_GUARD_ADMISSION_ROUTE_BODY,
+            "s3fu_guard_gateway_effect": sb1.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
         })
         declared_triggers = {}
 
@@ -188,6 +192,58 @@ class ApplicationLineageSchema(TransactionTestCase):
                                ("s3fu_10_gateway_effect", "s3fu_guard_gateway_effect")):
             declare("core_livingorganismevent", name, f"CREATE TRIGGER {name} BEFORE INSERT "
                     f"ON public.core_livingorganismevent FOR EACH ROW EXECUTE FUNCTION public.{function}()")
+        declare("core_livingorganismevent", "sb_livingorganismevent_phase_guard",
+                "CREATE TRIGGER sb_livingorganismevent_phase_guard BEFORE INSERT "
+                "ON public.core_livingorganismevent FOR EACH ROW "
+                "EXECUTE FUNCTION public.sb_guard_phase_event()")
+        for table, name, ddl in (
+            ("core_platformtermsversion", "sb_platformtermsversion_record_time",
+             "CREATE TRIGGER sb_platformtermsversion_record_time BEFORE INSERT "
+             "ON public.core_platformtermsversion FOR EACH ROW "
+             "EXECUTE FUNCTION public.s3_assign_record_time()"),
+            ("core_platformtermsversion", "sb_platformtermsversion_immutable",
+             "CREATE TRIGGER sb_platformtermsversion_immutable BEFORE UPDATE OR DELETE "
+             "ON public.core_platformtermsversion FOR EACH ROW "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_platformtermsversion", "s015_platformtermsversion_truncate_immutable",
+             "CREATE TRIGGER s015_platformtermsversion_truncate_immutable BEFORE TRUNCATE "
+             "ON public.core_platformtermsversion FOR EACH STATEMENT "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_platformtermsacceptance", "sb_platformtermsacceptance_record_time",
+             "CREATE TRIGGER sb_platformtermsacceptance_record_time BEFORE INSERT "
+             "ON public.core_platformtermsacceptance FOR EACH ROW "
+             "EXECUTE FUNCTION public.s3_assign_record_time()"),
+            ("core_platformtermsacceptance", "sb_platformtermsacceptance_immutable",
+             "CREATE TRIGGER sb_platformtermsacceptance_immutable BEFORE UPDATE OR DELETE "
+             "ON public.core_platformtermsacceptance FOR EACH ROW "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_platformtermsacceptance", "s015_platformtermsacceptance_truncate_immutable",
+             "CREATE TRIGGER s015_platformtermsacceptance_truncate_immutable BEFORE TRUNCATE "
+             "ON public.core_platformtermsacceptance FOR EACH STATEMENT "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_record_time",
+             "CREATE TRIGGER sb_lofoundingcontentversion_record_time BEFORE INSERT "
+             "ON public.core_lofoundingcontentversion FOR EACH ROW "
+             "EXECUTE FUNCTION public.s3_assign_record_time()"),
+            ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_immutable",
+             "CREATE TRIGGER sb_lofoundingcontentversion_immutable BEFORE UPDATE OR DELETE "
+             "ON public.core_lofoundingcontentversion FOR EACH ROW "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_lofoundingcontentversion", "s015_lofoundingcontentversion_truncate_immutable",
+             "CREATE TRIGGER s015_lofoundingcontentversion_truncate_immutable BEFORE TRUNCATE "
+             "ON public.core_lofoundingcontentversion FOR EACH STATEMENT "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_commitment",
+             "CREATE TRIGGER sb_lofoundingcontentversion_commitment BEFORE INSERT "
+             "ON public.core_lofoundingcontentversion FOR EACH ROW "
+             "EXECUTE FUNCTION public.sb_assign_founding_content_commitment()"),
+            ("core_livingorganism", "sb_livingorganism_terms_acceptance",
+             "CREATE CONSTRAINT TRIGGER sb_livingorganism_terms_acceptance "
+             "AFTER UPDATE OF founding_authority_basis_id ON public.core_livingorganism "
+             "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW "
+             "EXECUTE FUNCTION public.sb_guard_terms_acceptance()"),
+        ):
+            declare(table, name, ddl)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT p.proname, md5(pg_get_functiondef(p.oid)), p.prosrc "
@@ -207,8 +263,21 @@ class ApplicationLineageSchema(TransactionTestCase):
             }
             for name, sql in declared.items():
                 with self.subTest(function=name, installed_md5=installed[name][0]):
-                    self.assertEqual(installed[name][1], sql.split("AS $$", 1)[1].rsplit("$$;", 1)[0])
-                    cursor.execute(sql.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
+                    if name in {
+                        "s3_guard_lo_actor",
+                        "s1fu_guard_admission_route",
+                        "s3fu_guard_gateway_effect",
+                    }:
+                        expected_prosrc = sql
+                        source_sql = (
+                            f"CREATE OR REPLACE FUNCTION public.{name}() "
+                            f"RETURNS trigger LANGUAGE plpgsql AS $${sql}$$"
+                        )
+                    else:
+                        expected_prosrc = sql.split("AS $$", 1)[1].rsplit("$$;", 1)[0]
+                        source_sql = sql
+                    self.assertEqual(installed[name][1], expected_prosrc)
+                    cursor.execute(source_sql.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
                     signature = signatures.get(name, "")
                     cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [f"pg_temp.{name}({signature})"])
                     expected_definition = re.sub(
@@ -222,7 +291,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid) "
                 "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = 'public' AND t.tgname ~ '^(s3_|s3fu_|s1fu_)' "
+                "WHERE n.nspname = 'public' AND t.tgname ~ '^(s3_|s3fu_|s1fu_|sb_|s015_(platformtermsversion|platformtermsacceptance|lofoundingcontentversion)_truncate_immutable$)' "
                 "AND NOT t.tgisinternal"
             )
             installed_triggers = {(table, name): definition for table, name, definition in cursor.fetchall()}
@@ -351,11 +420,12 @@ class ApplicationLineageSchema(TransactionTestCase):
 
     def test_0030_empty_reverse_reapply_preserves_historical_bytes(self):
         head = current_core_leaf(connection)
-        with transaction.atomic(), connection.cursor() as cursor:
-            ids = found_nonroot(cursor, tag=f"s3fu-0030-{fresh()}")
-        with connection.cursor() as cursor:
-            before = snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"])
         try:
+            MigrationExecutor(connection).migrate([("core", "0041_r4s2_assign_current_membership")])
+            with transaction.atomic(), connection.cursor() as cursor:
+                ids = found_nonroot(cursor, tag=f"s3fu-0030-{fresh()}")
+            with connection.cursor() as cursor:
+                before = snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"])
             MigrationExecutor(connection).migrate([("core", "0029_s015_application_gateway")])
             with connection.cursor() as cursor:
                 self.assertEqual(snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"]), before)
@@ -366,6 +436,73 @@ class ApplicationLineageSchema(TransactionTestCase):
                 self.assertEqual(snapshot(cursor, ids["events"][EVENT_TABLE], ids["membership"]), before)
                 cursor.execute("SELECT pg_get_functiondef('public.s3_guard_lo_actor()'::regprocedure)")
                 self.assertIn("IF NEW.entry_mode = 'COMPOSED'", cursor.fetchone()[0])
+        finally:
+            MigrationExecutor(connection).migrate(head)
+
+    def test_0042_reverse_refuses_rows_and_restores_previous_bodies(self):
+        head = current_core_leaf(connection)
+        migration = importlib.import_module("core.migrations.0042_sb1_founding_terms_phases")
+
+        class Rollback(Exception):
+            pass
+
+        with self.assertRaises(Rollback):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO public.core_platformtermsversion "
+                        "(terms_version_uuid, version_label, text_commitment, text_body, "
+                        "cited_rulings, published_by_authority_reference, is_fixture, effective_from) "
+                        "VALUES (%s, %s, %s, %s, '[]'::jsonb, %s, FALSE, %s)",
+                        (
+                            uuid.uuid4(),
+                            f"sb1-rv-{uuid.uuid4().hex[:8]}",
+                            "s015r1:" + ("0" * 64),
+                            "Reverse refusal witness",
+                            "test:sb1-reverse",
+                            T0,
+                        ),
+                    )
+                with self.assertRaisesMessage(
+                    RuntimeError,
+                    "SB-1 reverse refused while core_platformtermsversion contains rows",
+                ):
+                    MigrationExecutor(connection).migrate(
+                        [("core", "0041_r4s2_assign_current_membership")]
+                    )
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM django_migrations "
+                        "WHERE app = 'core' "
+                        "AND name = '0042_sb1_founding_terms_phases')"
+                    )
+                    self.assertTrue(cursor.fetchone()[0])
+                raise Rollback()
+
+        try:
+            MigrationExecutor(connection).migrate(
+                [("core", "0041_r4s2_assign_current_membership")]
+            )
+            expected_bodies = {
+                "s3_guard_lo_actor": migration.PREVIOUS_S3_GUARD_LO_ACTOR_BODY,
+                "s1fu_guard_admission_route": migration.PREVIOUS_S1FU_GUARD_ADMISSION_ROUTE_BODY,
+                "s3fu_guard_gateway_effect": migration.PREVIOUS_S3FU_GUARD_GATEWAY_EFFECT_BODY,
+            }
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT p.proname, p.prosrc FROM pg_catalog.pg_proc p "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+                    "WHERE n.nspname = 'public' AND p.proname = ANY(%s)",
+                    [list(expected_bodies)],
+                )
+                self.assertEqual(dict(cursor.fetchall()), expected_bodies)
+                cursor.execute(
+                    "SELECT count(*) FROM pg_catalog.pg_trigger t "
+                    "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
+                )
+                self.assertEqual(cursor.fetchone()[0], 406)
         finally:
             MigrationExecutor(connection).migrate(head)
 

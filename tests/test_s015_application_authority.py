@@ -1471,7 +1471,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
         reassigned = service.reassign_application(reassign_command)
         self.assertEqual(reassigned.action, OrganismAction.REASSIGN_APPLICATION)
-        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R4.0")
+        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R5.0")
         replacement = CSAAssignment.objects.get(application=application, replaces__isnull=False)
         original_claim = CSAAssignment.objects.get(application=application, replaces__isnull=True)
         first_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
@@ -1482,7 +1482,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         reassign_reference = reassign_record.authority_reference
         reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
         self.assertEqual((reassign_record.outcome, reassign_record.refusal_code), ("QUALIFIED", None))
-        self.assertEqual(reassign_record.provider_version, "R4.0")
+        self.assertEqual(reassign_record.provider_version, "R5.0")
         self.assertEqual(set(reassign_facts), {"a", "c", "e", "m", "o", "s"})
         self.assertEqual(reassign_facts["a"], str(original_claim.assignment_uuid))
         self.assertEqual(type(reassign_facts["e"]), int)
@@ -1553,7 +1553,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decide_reference = decide_record.authority_reference
         decide_facts = json.loads(decide_reference[len("s015a1:"):])
         self.assertEqual((decide_record.outcome, decide_record.refusal_code), ("QUALIFIED", None))
-        self.assertEqual(decide_record.provider_version, "R4.0")
+        self.assertEqual(decide_record.provider_version, "R5.0")
         self.assertEqual(set(decide_facts), {"a", "c", "e", "m", "o", "s"})
         self.assertEqual(decide_facts["a"], str(replacement.assignment_uuid))
         self.assertEqual(type(decide_facts["e"]), int)
@@ -1642,14 +1642,14 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_w_d1d_and_w_d1f_historical_reference_forms_coexist_without_rewriting(self):
         """W-D1d/W-D1f: R2, interim R3 and D1 records pass the installed guards side by side."""
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
-        for version in ("R2.0", "R3.0", "R4.0"):
+        for version in ("R2.0", "R3.0", "R4.0", "R5.0"):
             delegate = ProductionApplicationAuthorityProvider(
                 birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
                 registration_source=TestFixtureGovernedRegistrationFactSource(),
             )
             provider = (
                 delegate
-                if version == "R4.0"
+                if version == "R5.0"
                 else _HistoricalReferenceAuthorityProvider(delegate, version)
             )
             service = self._service(authority_provider=provider)
@@ -1702,17 +1702,17 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             self.assertEqual(reassign_record.provider_version, version)
             self.assertEqual(reassign_record.outcome, "QUALIFIED")
             self.assertEqual(reassigned.authority_reference, (
-                reassign_reference if version == "R4.0"
+                reassign_reference if version == "R5.0"
                 else WithheldField("authority_reference", "SUBJECT")
             ))
             self.assertEqual(service.reassign_application(reassign_command), reassigned)
             self.assertEqual(service.reassign_application(reassign_command).authority_reference, (
-                reassign_reference if version == "R4.0"
+                reassign_reference if version == "R5.0"
                 else WithheldField("authority_reference", "SUBJECT")
             ))
             reassign_record.refresh_from_db()
             self.assertEqual(reassign_record.authority_reference.encode("utf-8"), reassign_reference.encode("utf-8"))
-            if version != "R4.0":
+            if version != "R5.0":
                 reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
                 self.assertIsInstance(reassign_facts["a"], str)
                 self.assertTrue(reassign_facts["a"].isdecimal())
@@ -1738,14 +1738,14 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             self.assertEqual(decide_record.provider_version, version)
             self.assertEqual(decide_record.outcome, "QUALIFIED")
             expected = (
-                decide_reference if version == "R4.0"
+                decide_reference if version == "R5.0"
                 else WithheldField("authority_reference", "SUBJECT")
             )
             self.assertEqual(decided.authority_reference, expected)
             self.assertEqual(service.decide_application(decide_command).authority_reference, expected)
             decide_record.refresh_from_db()
             self.assertEqual(decide_record.authority_reference.encode("utf-8"), decide_reference.encode("utf-8"))
-            if version != "R4.0":
+            if version != "R5.0":
                 decide_facts = json.loads(decide_reference[len("s015a1:"):])
                 self.assertIsInstance(decide_facts["a"], str)
                 self.assertTrue(decide_facts["a"].isdecimal())
@@ -1760,7 +1760,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 },
                 outcome="QUALIFIED",
             ).count(),
-            6,
+            8,
         )
 
     def test_w_d1g_size_refusal_is_distinct_and_discloses_denied(self):
@@ -1906,7 +1906,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             )
             fact_refs = {(fact["relation"], fact["reference"]) for fact in provider_record.facts_read}
             self.assertEqual(provider_record.outcome, "QUALIFIED")
-            self.assertEqual(provider_record.provider_version, "R4.0")
+            self.assertEqual(provider_record.provider_version, "R5.0")
             self.assertEqual(facts["a"], str(first_assignment.assignment_uuid))
             self.assertEqual(type(facts["e"]), int)
             self.assertEqual(facts["e"], resolved_engagement.engagement_ordinal)
@@ -2126,7 +2126,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decision = service.decide_application(decide_command)
         decision_record = AuthorityDecision.objects.get(decision_reference=decision.authority_decision_reference)
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R4.0")
+        self.assertEqual(decision_record.provider_version, "R5.0")
         self.assertEqual(decision.authority_reference, decision_record.authority_reference)
         self.assertIsInstance(decision.authority_reference, str)
         self.assertLessEqual(len(decision_record.authority_reference), 255)
@@ -2265,8 +2265,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
             )
-            # 0040 contributes 405 triggers; 0041 adds s015_r4s2_assign_current_membership.
-            self.assertEqual(cursor.fetchone()[0], 406)
+            # 0040 contributes 405 triggers; 0041 adds one, and 0042 adds twelve.
+            self.assertEqual(cursor.fetchone()[0], 418)
             cursor.execute(
                 "SELECT trigger.tgname, trigger.tgenabled, function.proname, "
                 "pg_get_functiondef(function.oid) "

@@ -11,6 +11,7 @@ import hashlib
 import json
 import uuid
 
+from django.conf import settings
 from django.db import connection
 
 
@@ -49,6 +50,19 @@ def u(seed):
 
 def fresh():
     return uuid.uuid4().hex[:10]
+
+
+_DISPOSABLE_TEST_DATABASE_PREFIX = "test_intevia_living_organism_"
+
+
+def _require_disposable_fixture_database():
+    database_name = connection.settings_dict.get("NAME")
+    if (
+        type(database_name) is not str
+        or not database_name.startswith(_DISPOSABLE_TEST_DATABASE_PREFIX)
+        or database_name == _DISPOSABLE_TEST_DATABASE_PREFIX
+    ):
+        raise RuntimeError("labelled founding fixtures require an attempt-owned disposable database")
 
 
 def empty_fp(cur, token, identity):
@@ -198,6 +212,25 @@ def seed_authority(cur, tag, issuer_id):
     return principal_id, cur.fetchone()[0]
 
 
+def seed_fixture_substitute_authority(cur, tag):
+    if not settings.INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED:
+        raise RuntimeError("labelled fixture authority seeding is not permitted")
+    _require_disposable_fixture_database()
+    cur.execute(
+        "INSERT INTO public.core_authorityprincipal "
+        "(principal_uuid, canonical_governed_source_id, governed_source_namespace, display_label, recorded_at) "
+        "VALUES (%s, %s, 'INTEVIA_FIXTURE_AUTHORITY_V1', %s, now()) "
+        "RETURNING id, principal_uuid",
+        (
+            u(f"fixture-authority-principal:{tag}"),
+            f"urn:intevia:governed-source:fixture-authority:{tag}",
+            f"Labelled fixture substitute {tag}",
+        ),
+    )
+    principal_id, principal_uuid = cur.fetchone()
+    return {"id": principal_id, "principal_uuid": str(principal_uuid)}
+
+
 def drop_unset_check(cur):
     cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT IF EXISTS s015_platform_root_unset_ck")
 
@@ -225,6 +258,7 @@ def found_organism(
     codes/active_versions override the definition inventory: {code: [(version, active), ...]}.
     skip names limbs to omit for negative tests. assign_founder overrides whether INTEVIA_FOUNDER_STEWARD is assigned.
     """
+    _require_disposable_fixture_database()
     ids = {"identity": seed_identity(cur, tag), "events": {}, "assignment_events": {}}
     ids["principal"], ids["basis"] = seed_authority(cur, tag, ids["identity"])
     lo_uuid = u(f"organism:{tag}")
@@ -233,6 +267,62 @@ def found_organism(
                 (lo_uuid, f"u21g-{tag}", T0, T0, empty_fp(cur, "core_livingorganism", lo_uuid), f"u21g:spine:{tag}", root))
     ids["lo"] = lo = cur.fetchone()[0]
     act, basis = ids["identity"], ids["basis"]
+    cur.execute(
+        "SELECT to_regclass('public.core_platformtermsversion'), "
+        "to_regclass('public.core_platformtermsacceptance')"
+    )
+    terms_version_table, terms_acceptance_table = cur.fetchone()
+    if (terms_version_table is None) != (terms_acceptance_table is None):
+        raise RuntimeError("fixture platform-terms tables are only partially installed")
+    if terms_version_table is not None:
+        cur.execute(
+            "SELECT id, is_fixture, published_by_authority_reference "
+            "FROM public.core_platformtermsversion "
+            "WHERE version_label = %s ORDER BY id LIMIT 1",
+            ("FIXTURE-DEV-1",),
+        )
+        terms_version = cur.fetchone()
+        if terms_version is None:
+            terms_body = "Labelled development-only fixture terms for disposable tests."
+            cur.execute(
+                "INSERT INTO public.core_platformtermsversion "
+                "(terms_version_uuid, version_label, text_commitment, text_body, cited_rulings, "
+                "published_by_authority_reference, is_fixture, effective_from) "
+                "VALUES (%s, 'FIXTURE-DEV-1', %s, %s, '[]'::jsonb, "
+                "'fixture:development', TRUE, %s) RETURNING id",
+                (
+                    u("platform-terms-version:FIXTURE-DEV-1"),
+                    "s015r1:" + hx(terms_body),
+                    terms_body,
+                    T0,
+                ),
+            )
+            terms_version_id = cur.fetchone()[0]
+        else:
+            terms_version_id, is_fixture, publisher_reference = terms_version
+            if not is_fixture or publisher_reference != "fixture:development":
+                raise RuntimeError("FIXTURE-DEV-1 must remain a labelled fixture terms version")
+        if "terms_acceptance" not in skip:
+            cur.execute("SELECT access_epoch FROM public.core_identity WHERE id = %s", (act,))
+            founder_access_epoch = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO public.core_platformtermsacceptance "
+                "(acceptance_uuid, terms_version_id, acceptance_kind, subject_reference, "
+                "accepted_by_identity_id, accepted_by_access_epoch, accepted_at, received_at, "
+                "acceptance_commitment) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    u(f"platform-terms-acceptance:{lo_uuid}"),
+                    terms_version_id,
+                    "GENESIS" if root else "FOUNDING",
+                    f"living-organism:{lo_uuid}",
+                    act,
+                    founder_access_epoch,
+                    T0,
+                    T0,
+                    "s015r1:" + hx(f"fixture-acceptance:{lo_uuid}"),
+                ),
+            )
     if "lo_event" not in skip:
         ids["lo_event"] = append_event(cur, "core_livingorganismevent", lo, 1, "FOUND", None, "ACTIVE", act, basis, tag)[0]
         ids["events"]["core_livingorganismevent"] = ids["lo_event"]

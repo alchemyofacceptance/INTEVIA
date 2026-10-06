@@ -76,6 +76,12 @@ class _Provider:
 class ApplicationDecisionTests(TransactionTestCase):
     def setUp(self):
         _register_no_other_sessions_cleanup(self)
+        if self._testMethodName in {
+            "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
+            "test_g1_withdrawal_witness_on_both_schemas",
+            "test_g2_ending_witness_on_both_schemas",
+        }:
+            MigrationExecutor(connection).migrate([("core", "0041_r4s2_assign_current_membership")])
         self.tag = f"s3-decision-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)

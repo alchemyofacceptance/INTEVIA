@@ -50,7 +50,7 @@ from django.db import connection
 #         0038: 405 - adds the nullable Coordinator nomination-policy field; no triggers added [D]
 #         0039: 405 - adds two nullable role-suspension settings; no triggers added [D]
 #         0040: 405 - state-only; columns relaxed by 0022
-# REQ-G1  the twelve required truncate guardians of the standard backend are present and enabled [D]
+# REQ-G1  the fifteen required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
 # REQ-D1  core_role holds exactly the rows migration 0003's create_triad_roles defines
@@ -89,7 +89,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0038_s2b_coordinator_nomination_policy": 405,
                           "0039_s2b_role_suspension_settings": 405,
                           "0040_s2b_role_actor_nullable_state": 405,
-                          "0041_r4s2_assign_current_membership": 406}
+                          "0041_r4s2_assign_current_membership": 406,
+                          "0042_sb1_founding_terms_phases": 418}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 

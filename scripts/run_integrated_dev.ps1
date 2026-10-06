@@ -213,7 +213,7 @@ try {
     $env:VERIFICATION_RUN_NONCE = $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0041_r4s2_assign_current_membership"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0042_sb1_founding_terms_phases"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore

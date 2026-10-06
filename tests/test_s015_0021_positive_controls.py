@@ -148,7 +148,9 @@ class VocabulariesAndShapes(_S015PositiveBase):
 class CacheBoundary(_S015PositiveBase):
     def test_pos_control_refresh_moves_coordinates_and_route_requalifies(self):
         ids = self.commits(lambda cur: found_root(cur))
-        known = dt.datetime.now(dt.timezone.utc)
+        with connection.cursor() as cur:
+            cur.execute("SELECT clock_timestamp()")
+            known = cur.fetchone()[0]
         fp = self.commits(lambda cur: (cur.execute("SELECT public.s015_refresh_governed_cache('core_livingorganism', %s, %s, %s)", (ids["lo"], T0, known)), cur.fetchone()[0])[1])
         projection, n, served, route_fp = self.route("core_livingorganism", ids["lo"], T0, known)
         self.assertEqual((projection, n, served, route_fp), ("ACTIVE", 1, "CACHE_REQUALIFIED", fp))

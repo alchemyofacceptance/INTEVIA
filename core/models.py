@@ -4733,6 +4733,7 @@ class LOGovernanceConfigurationVersion(_LOGatewayVersion):
 
     supersedes = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+", null=True, blank=True)
     cq_active = models.BooleanField(null=True, blank=True)
+    governance_enabled = models.BooleanField(null=True, blank=True)
     inherit_portal_cq_settings = models.BooleanField(null=True, blank=True)
     require_cq_to_change_lo_settings = models.BooleanField(null=True, blank=True)
     require_cq_to_change_application_question = models.BooleanField(null=True, blank=True)
@@ -5281,3 +5282,90 @@ class ApplicationLineageEvent(_S015ChainEvent):
 
     class Meta:
         constraints = _s015_event_constraints("applicationlineageevent", "application_lineage")
+
+
+class PlatformTermsVersion(_S015AppendOnly):
+    terms_version_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    version_label = models.CharField(max_length=32)
+    text_commitment = models.CharField(max_length=71)
+    text_body = models.TextField()
+    cited_rulings = models.JSONField(blank=True, default=list)
+    published_by_authority_reference = models.CharField(max_length=255)
+    is_fixture = models.BooleanField(default=False)
+    effective_from = models.DateTimeField()
+    effective_until = models.DateTimeField(null=True, blank=True)
+    supersedes = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+
+class PlatformTermsAcceptance(_S015AppendOnly):
+    class Kind(models.TextChoices):
+        REGISTRATION = "REGISTRATION"
+        FOUNDING = "FOUNDING"
+        GENESIS = "GENESIS"
+
+    acceptance_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    terms_version = models.ForeignKey(
+        PlatformTermsVersion,
+        on_delete=models.PROTECT,
+        related_name="acceptances",
+    )
+    acceptance_kind = models.CharField(max_length=12, choices=Kind.choices)
+    subject_reference = models.CharField(max_length=255)
+    accepted_by_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    accepted_by_access_epoch = models.PositiveBigIntegerField()
+    accepted_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+    acceptance_commitment = models.CharField(max_length=71)
+
+
+class LOFoundingContentVersion(_S015AppendOnly):
+    content_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="founding_content_versions",
+    )
+    version = models.PositiveIntegerField()
+    supersedes = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=90)
+    purpose = models.TextField()
+    vision = models.TextField(null=True, blank=True)
+    mission = models.TextField(null=True, blank=True)
+    values = models.TextField(null=True, blank=True)
+    actor_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    authority_decision_reference = models.CharField(max_length=71)
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+    content_commitment = models.CharField(max_length=71, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("living_organism", "version"),
+                name="sb_lofoundingcontentversion_lo_version_uniq",
+            ),
+        ]

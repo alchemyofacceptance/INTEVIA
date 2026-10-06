@@ -11,6 +11,7 @@ from .settings import *  # noqa: E402,F403
 
 S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
 S015_DATABASE_PREFIX = "test_intevia_living_organism_"
+INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED = True
 
 requested_s015_route = os.environ.get("INTEVIA_S015_TEST_ROUTE")
 configured_database = DATABASES["default"]

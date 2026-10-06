@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0041_r4s2_assign_current_membership"
+$expectedCoreHead = "0042_sb1_founding_terms_phases"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",

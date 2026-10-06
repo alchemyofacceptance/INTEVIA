@@ -20,6 +20,7 @@ from core.models import (
     Identity,
     LivingOrganism,
     LivingOrganismEvent,
+    LOFoundingContentVersion,
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
     LOGovernanceConfigurationVersion,
@@ -27,10 +28,14 @@ from core.models import (
     OrganismMembershipTransition,
     OrganismRoleDefinition,
     OfficeAppointmentConsent,
+    PlatformTermsVersion,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     S015AuthorityRefusalCode,
+    S015PreFoundingAuthorityRefusal,
+    S015PreFoundingAuthorityRequest,
+    S015PreFoundingAuthorityResponse,
     S015OwnApplicantAuthorityRefusal,
     S015OwnApplicantAuthorityRequest,
     S015OwnApplicantAuthorityResponse,
@@ -42,6 +47,7 @@ from src.intevia.services.organism_authority import (
     authority_target_fingerprint,
     canonical_json_bytes,
 )
+from src.intevia.services.organism_formation_authority import founding_acceptance_uuid
 
 
 class BirthingFactSource(Protocol):
@@ -109,6 +115,7 @@ _POST_ACTIONS = {
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.TRANSITION_MEMBERSHIP,
+    OrganismAction.TRANSITION_LIVING_ORGANISM,
 }
 
 
@@ -205,7 +212,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R4.0"
+    provider_version = "R5.0"
 
     def __init__(
         self,
@@ -225,6 +232,8 @@ class ProductionApplicationAuthorityProvider:
         )
 
     def evaluate_organism_authority(self, request: S015AuthorityRequest) -> S015AuthorityResult:
+        if type(request) is S015PreFoundingAuthorityRequest:
+            return self._evaluate_founding(request)
         if type(request) is S015OwnApplicantAuthorityRequest:
             if request.action not in _OWN_ACTIONS:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -234,7 +243,11 @@ class ProductionApplicationAuthorityProvider:
         else:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
 
-        if request.command_subtype != request.action.value:
+        phase_advance_subtype = f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
+        if request.command_subtype != request.action.value and not (
+            request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
+            and request.command_subtype == phase_advance_subtype
+        ):
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
         if request.action is OrganismAction.TRANSITION_MEMBERSHIP and (
             request.target is None or request.target.get("resulting_state") != "ENDED"
@@ -297,6 +310,18 @@ class ProductionApplicationAuthorityProvider:
                         raise ValueError
                 except (KeyError, TypeError, ValueError):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.TRANSITION_LIVING_ORGANISM:
+                if (
+                    request.command_subtype != (
+                        f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
+                    )
+                    or set(request.target) != {
+                        "action", "organism_uuid", "from_phase", "to_phase",
+                    }
+                    or type(request.target.get("from_phase")) is not str
+                    or type(request.target.get("to_phase")) is not str
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action in _VERSION_SPECS:
                 if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -341,6 +366,135 @@ class ProductionApplicationAuthorityProvider:
         if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
             return self._qualify_office_consent(request, organism)
         return self._coordinator_act(request, organism)
+
+    def _evaluate_founding(
+        self,
+        request: S015PreFoundingAuthorityRequest,
+    ) -> S015AuthorityResult:
+        target = request.target
+        expected_keys = {
+            "action",
+            "founder_identity_uuid",
+            "proposed_organism_uuid",
+            "founding_rule_reference",
+            "instrument_references",
+        }
+        if (
+            request.action is not OrganismAction.FOUND_LIVING_ORGANISM
+            or request.command_subtype != OrganismAction.FOUND_LIVING_ORGANISM.value
+            or target is None
+            or set(target) != expected_keys
+            or target.get("action") != OrganismAction.FOUND_LIVING_ORGANISM.value
+            or target.get("founder_identity_uuid") != request.actor_identity_id
+            or target.get("proposed_organism_uuid") != request.living_organism_id
+            or target.get("instrument_references") != []
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+                S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+            )
+        if not self._identity_active(request):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+            )
+
+        rule_reference = target.get("founding_rule_reference")
+        if type(rule_reference) is not str or not rule_reference.startswith("platform-terms-version:"):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+            )
+        version_text = rule_reference.removeprefix("platform-terms-version:").removesuffix("#founding")
+        try:
+            version_uuid = UUID(version_text)
+        except (TypeError, ValueError):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+            )
+        if rule_reference != f"platform-terms-version:{version_uuid}#founding":
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+            )
+
+        eligible_versions = PlatformTermsVersion.objects.using(self.database_alias).filter(
+            effective_from__lte=request.effective_at,
+            recorded_at__lte=request.evaluated_at,
+        )
+        superseded_ids = eligible_versions.filter(
+            supersedes__isnull=False,
+        ).values_list("supersedes_id", flat=True)
+        current_version = (
+            eligible_versions.exclude(pk__in=superseded_ids)
+            .order_by("-effective_from", "-recorded_at", "-pk")
+            .first()
+        )
+        requested_version = eligible_versions.filter(terms_version_uuid=version_uuid).first()
+        if requested_version is None or current_version is None or requested_version.pk != current_version.pk:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED,
+            )
+        if requested_version.is_fixture:
+            database_name = connections[self.database_alias].settings_dict.get("NAME")
+            if (
+                type(database_name) is not str
+                or not database_name.startswith("test_intevia_living_organism_")
+                or database_name == "test_intevia_living_organism_"
+            ):
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                    S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                )
+
+        registration_reference = self.registration_source.reference_at(
+            request.actor_identity_id,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        if type(registration_reference) is not str or not registration_reference.startswith(
+            "learner-registration:"
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+            )
+        try:
+            registration_uuid = UUID(registration_reference.removeprefix("learner-registration:"))
+        except (TypeError, ValueError):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+            )
+        if registration_reference != f"learner-registration:{registration_uuid}":
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+                S015AuthorityRefusalCode.E_NOT_REGISTERED,
+            )
+
+        acceptance_uuid = founding_acceptance_uuid(request.living_organism_id)
+        authority_reference = "s015a1:" + canonical_json_bytes({
+            "kind": "FOUNDING",
+            "rule": rule_reference,
+            "registration": registration_reference,
+            "terms": f"platform-terms-acceptance:{acceptance_uuid}",
+        }).decode("utf-8")
+        return S015PreFoundingAuthorityResponse(
+            **asdict(request),
+            authority_reference=authority_reference,
+        )
 
     def _qualify_membership_departure(
         self,
@@ -799,6 +953,8 @@ class ProductionApplicationAuthorityProvider:
         if facts:
             authority_facts.update(facts)
         fields["authority_reference"] = "s015a1:" + canonical_json_bytes(authority_facts).decode("utf-8")
+        if type(request) is S015PreFoundingAuthorityRequest:
+            return S015PreFoundingAuthorityRefusal(**fields)
         if type(request) is S015OwnApplicantAuthorityRequest:
             return S015OwnApplicantAuthorityRefusal(**fields)
         return S015PostFoundingAuthorityRefusal(**fields)
@@ -1037,9 +1193,125 @@ class ProductionApplicationAuthorityProvider:
         if office is None:
             return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
 
+        if request.command_subtype == (
+            f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
+        ):
+            return self._qualify_phase_advance(request, organism, office)
         if request.action in _VERSION_SPECS:
             return self._qualify_gateway_change(request, organism, membership, office)
         return self._qualify_application_processing(request, organism, membership, office)
+
+    def _qualify_phase_advance(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+        office: ContextualRoleAssignment,
+    ) -> S015AuthorityResult:
+        target = request.target
+        if target is None:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        from_phase = target["from_phase"]
+        to_phase = target["to_phase"]
+
+        birthing_recorded = LivingOrganismEvent.objects.using(self.database_alias).filter(
+            living_organism=organism,
+            action="BIRTHING",
+            effective_at__lte=request.effective_at,
+            received_at__lte=request.evaluated_at,
+            recorded_at__lte=request.evaluated_at,
+        ).exists()
+        latest_phase_reference = LivingOrganismEvent.objects.using(self.database_alias).filter(
+            living_organism=organism,
+            action="PHASE_ADVANCE",
+            effective_at__lte=request.effective_at,
+            received_at__lte=request.evaluated_at,
+            recorded_at__lte=request.evaluated_at,
+        ).order_by(
+            "-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid",
+        ).values_list("evidence_reference", flat=True).first()
+        current_phase = (
+            "CONCEIVING"
+            if latest_phase_reference is None
+            else latest_phase_reference.rsplit(":", 1)[1].split("->", 1)[1]
+        )
+        if (
+            birthing_recorded
+            or from_phase != current_phase
+            or (from_phase, to_phase) not in {
+                ("CONCEIVING", "GERMINATING"),
+                ("GERMINATING", "BIRTHING"),
+            }
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.PHASE_OUT_OF_ORDER,
+                facts={"p": f"{from_phase}->{to_phase}"},
+            )
+
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM public.core_organismmembership m "
+                "WHERE m.living_organism_id = %s "
+                "AND public.s015_fold_effective_state("
+                "'core_organismmembership', m.id, %s, %s) = 'ACTIVE'",
+                [organism.pk, request.effective_at, request.evaluated_at],
+            )
+            electorate_count = cursor.fetchone()[0]
+        if electorate_count > 1:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED,
+                facts={"p": f"{from_phase}->{to_phase}"},
+            )
+
+        configuration = None
+        if to_phase == "GERMINATING":
+            content = LOFoundingContentVersion.objects.using(self.database_alias).filter(
+                living_organism=organism,
+                version=1,
+                effective_at__lte=request.effective_at,
+                recorded_at__lte=request.evaluated_at,
+            ).first()
+            if content is None or not content.name.strip() or not content.purpose.strip():
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.PHASE_CONDITION_UNMET,
+                    facts={"p": "founding content (name and purpose)"},
+                )
+        else:
+            configuration = _effective_version(
+                self.database_alias,
+                organism,
+                OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                request.effective_at,
+                request.evaluated_at,
+            )
+            if configuration is None:
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.PHASE_CONDITION_UNMET,
+                    facts={"p": "an effective governance configuration"},
+                )
+            if configuration.governance_enabled is None:
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.PHASE_CONDITION_UNMET,
+                    facts={"p": "GOVERNANCE choice"},
+                )
+            if configuration.governance_enabled:
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.SB_IL_GOVCONST,
+                    facts={"p": f"{from_phase}->{to_phase}"},
+                )
+
+        return self._qualified(request, {
+            "kind": "PHASE_ADVANCE",
+            "c": "-" if configuration is None else str(configuration.version_uuid),
+            "o": str(office.assignment_uuid),
+            "f": "FORMATION_RULES:PLATFORM_DEFAULT@v1",
+            "p": f"{from_phase}->{to_phase}",
+        })
 
     def _lo_capacity(self, organism: LivingOrganism, request: S015AuthorityRequest) -> bool:
         founding = LivingOrganismEvent.objects.using(self.database_alias).filter(

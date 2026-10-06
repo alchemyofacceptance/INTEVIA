@@ -201,6 +201,61 @@ class LawfulRecordWithParts(TransactionTestCase):
             cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) "
                         "VALUES (%s, 'ufund2-0024', 'FOUNDING_PENDING', now(), %s, %s, %s, 'ufund2:spine', false) RETURNING id", (lo_uuid, T0, T0, self._empty_fp(cur, "core_livingorganism", lo_uuid)))
             lo = cur.fetchone()[0]
+            cur.execute(
+                "SELECT to_regclass('public.core_platformtermsversion'), "
+                "to_regclass('public.core_platformtermsacceptance')"
+            )
+            terms_version_table, terms_acceptance_table = cur.fetchone()
+            if (terms_version_table is None) != (terms_acceptance_table is None):
+                raise RuntimeError("fixture platform-terms tables are only partially installed")
+            if terms_version_table is not None:
+                cur.execute(
+                    "SELECT id, is_fixture, published_by_authority_reference "
+                    "FROM public.core_platformtermsversion "
+                    "WHERE version_label = %s ORDER BY id LIMIT 1",
+                    ("FIXTURE-DEV-1",),
+                )
+                terms_version = cur.fetchone()
+                if terms_version is None:
+                    terms_body = "Labelled development-only fixture terms for disposable tests."
+                    cur.execute(
+                        "INSERT INTO public.core_platformtermsversion "
+                        "(terms_version_uuid, version_label, text_commitment, text_body, cited_rulings, "
+                        "published_by_authority_reference, is_fixture, effective_from) "
+                        "VALUES (%s, 'FIXTURE-DEV-1', %s, %s, '[]'::jsonb, "
+                        "'fixture:development', TRUE, %s) RETURNING id",
+                        (
+                            str(uuid.uuid5(uuid.NAMESPACE_URL, "urn:u21g:test:platform-terms-version:FIXTURE-DEV-1")),
+                            "s015r1:" + self._hx(terms_body),
+                            terms_body,
+                            T0,
+                        ),
+                    )
+                    terms_version_id = cur.fetchone()[0]
+                else:
+                    terms_version_id, is_fixture, publisher_reference = terms_version
+                    if not is_fixture or publisher_reference != "fixture:development":
+                        raise RuntimeError("FIXTURE-DEV-1 must remain a labelled fixture terms version")
+                cur.execute("SELECT access_epoch FROM public.core_identity WHERE id = %s", (actor,))
+                founder_access_epoch = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO public.core_platformtermsacceptance "
+                    "(acceptance_uuid, terms_version_id, acceptance_kind, subject_reference, "
+                    "accepted_by_identity_id, accepted_by_access_epoch, accepted_at, received_at, "
+                    "acceptance_commitment) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:u21g:test:platform-terms-acceptance:{lo_uuid}")),
+                        terms_version_id,
+                        "FOUNDING",
+                        f"living-organism:{lo_uuid}",
+                        actor,
+                        founder_access_epoch,
+                        T0,
+                        T0,
+                        "s015r1:" + self._hx(f"fixture-acceptance:{lo_uuid}"),
+                    ),
+                )
             event_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:ufund2:0024:core_livingorganismevent:1:{tag}"))
             expected_parts = digest("s015p1", parts_preimage("core_livingorganismevent", event_uuid, self.PARTS))
             state["expected_parts"] = expected_parts
