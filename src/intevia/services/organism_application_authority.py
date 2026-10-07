@@ -24,6 +24,7 @@ from core.models import (
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
     LOGovernanceConfigurationVersion,
+    LearnerRegistration,
     OrganismMembership,
     OrganismMembershipTransition,
     OrganismRoleDefinition,
@@ -46,6 +47,7 @@ from src.intevia.services.organism_authority import (
     S015AuthorityResult,
     authority_target_fingerprint,
     canonical_json_bytes,
+    identity_state_at,
 )
 from src.intevia.services.organism_formation_authority import founding_acceptance_uuid
 
@@ -68,6 +70,15 @@ class CoordinatorNominationEntitlementFactSource(Protocol):
     ) -> str | None: ...
 
 
+def fixture_terms_permitted(database_alias: str) -> bool:
+    database_name = connections[database_alias].settings_dict.get("NAME")
+    return (
+        type(database_name) is str
+        and database_name.startswith("test_intevia_living_organism_")
+        and database_name != "test_intevia_living_organism_"
+    )
+
+
 class ProductionBirthingFactSource:
     """S3-IL-BIRTH: no governed Birthing representation is installed in this release."""
 
@@ -76,10 +87,23 @@ class ProductionBirthingFactSource:
 
 
 class ProductionGovernedRegistrationFactSource:
-    """S3-IL-REG: identity rows and PROVISION transitions are not governed registration."""
+    """S3-IL-REG: only a registration record proves the governed origin event."""
 
-    def reference_at(self, _identity_id: UUID, _effective_at: datetime, _evaluated_at: datetime) -> None:
-        return None
+    def reference_at(
+        self,
+        identity_id: UUID,
+        effective_at: datetime,
+        evaluated_at: datetime,
+    ) -> str | None:
+        registration = LearnerRegistration.objects.filter(
+            identity__identity_id=identity_id,
+            effective_at__lte=effective_at,
+            received_at__lte=evaluated_at,
+            recorded_at__lte=evaluated_at,
+        ).first()
+        if registration is None:
+            return None
+        return f"learner-registration:{registration.registration_uuid}"
 
 
 class ProductionCoordinatorNominationEntitlementFactSource:
@@ -348,7 +372,10 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.DENIED,
             )
 
-        if not self._identity_active(request):
+        if (
+            request.action is not OrganismAction.SUBMIT_APPLICATION
+            and not self._identity_active(request)
+        ):
             return self._refuse(
                 request,
                 S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
@@ -394,13 +421,6 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
                 S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
             )
-        if not self._identity_active(request):
-            return self._refuse(
-                request,
-                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
-                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
-            )
-
         rule_reference = target.get("founding_rule_reference")
         if type(rule_reference) is not str or not rule_reference.startswith("platform-terms-version:"):
             return self._refuse(
@@ -443,31 +463,37 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED,
                 S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED,
             )
-        if requested_version.is_fixture:
-            database_name = connections[self.database_alias].settings_dict.get("NAME")
-            if (
-                type(database_name) is not str
-                or not database_name.startswith("test_intevia_living_organism_")
-                or database_name == "test_intevia_living_organism_"
-            ):
-                return self._refuse(
-                    request,
-                    S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
-                    S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
-                )
+        if requested_version.is_fixture and not fixture_terms_permitted(
+            self.database_alias
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+                S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
+            )
 
         registration_reference = self.registration_source.reference_at(
             request.actor_identity_id,
             request.effective_at,
             request.evaluated_at,
         )
-        if type(registration_reference) is not str or not registration_reference.startswith(
-            "learner-registration:"
-        ):
+        registration_uuid = self._registered_reference_uuid(
+            request.actor_identity_id,
+            registration_reference,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        if registration_uuid is None:
             return self._refuse(
                 request,
                 S015AuthorityRefusalCode.E_NOT_REGISTERED,
                 S015AuthorityRefusalCode.E_NOT_REGISTERED,
+            )
+        if not self._identity_active_at(request):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
             )
         try:
             registration_uuid = UUID(registration_reference.removeprefix("learner-registration:"))
@@ -921,6 +947,53 @@ class ProductionApplicationAuthorityProvider:
             identity = identity.filter(credential_id=credential_pk)
         return identity.exists()
 
+    def _identity_active_at(self, request: S015AuthorityRequest) -> bool:
+        identity = Identity.objects.using(self.database_alias).filter(
+            pk=request.actor_pk,
+            identity_id=request.actor_identity_id,
+        ).first()
+        if identity is None:
+            return False
+        credential_pk = getattr(request, "actor_credential_pk", None)
+        if credential_pk is not None and identity.credential_id != credential_pk:
+            return False
+        state = identity_state_at(
+            request.actor_identity_id,
+            state_at=request.effective_at,
+            known_at=request.evaluated_at,
+            database_alias=self.database_alias,
+        )
+        return (
+            state.access_state == Identity.AccessState.ACTIVE
+            and state.access_epoch == request.actor_access_epoch
+        )
+
+    def _registered_reference_uuid(
+        self,
+        identity_id: UUID,
+        reference: object,
+        effective_at: datetime,
+        evaluated_at: datetime,
+    ) -> UUID | None:
+        prefix = "learner-registration:"
+        if type(reference) is not str or not reference.startswith(prefix):
+            return None
+        value = reference.removeprefix(prefix)
+        try:
+            registration_uuid = UUID(value)
+        except (TypeError, ValueError):
+            return None
+        if reference != f"{prefix}{registration_uuid}":
+            return None
+        exists = LearnerRegistration.objects.using(self.database_alias).filter(
+            registration_uuid=registration_uuid,
+            identity__identity_id=identity_id,
+            effective_at__lte=effective_at,
+            received_at__lte=evaluated_at,
+            recorded_at__lte=evaluated_at,
+        ).exists()
+        return registration_uuid if exists else None
+
     def _refuse(
         self,
         request: S015AuthorityRequest,
@@ -1038,12 +1111,20 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.E_NOT_REGISTERED,
                 S015AuthorityRefusalCode.E_NOT_REGISTERED,
             )
-        try:
-            registration_id = int(registration_reference.removeprefix("identity-transition:"))
-            if registration_id < 1:
-                raise ValueError
-        except (TypeError, ValueError):
+        registration_uuid = self._registered_reference_uuid(
+            request.actor_identity_id,
+            registration_reference,
+            effective_at,
+            evaluated_at,
+        )
+        if registration_uuid is None:
             return self._refuse(request, S015AuthorityRefusalCode.E_NOT_REGISTERED)
+        if not self._identity_active_at(request):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+                S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
+            )
         membership = OrganismMembership.objects.using(self.database_alias).filter(
             identity_id=request.actor_pk,
             living_organism=organism,
@@ -1095,7 +1176,7 @@ class ProductionApplicationAuthorityProvider:
             "b": birthing_reference,
             "c": str(configuration.version_uuid),
             "q": str(question.version_uuid),
-            "r": str(registration_id),
+            "r": str(registration_uuid),
             "s": str(settings.version_uuid),
         }
         if request.predecessor_reference is not None:

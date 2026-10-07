@@ -35,6 +35,7 @@ from src.intevia.services.event_service import (
     EventParticipationWritesRetired,
     EventService,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
@@ -65,7 +66,7 @@ class EventRegistrationFoundationTests(TestCase):
     @staticmethod
     def identity(name):
         user = User.objects.create_user(username=name)
-        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
+        profile = create_test_identity(credential=user, access_state=Identity.AccessState.ACTIVE)
         role, _ = Role.objects.get_or_create(name="Event registration actor")
         ProfileRole.objects.create(identity=profile, role=role)
         return user, profile

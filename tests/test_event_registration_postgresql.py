@@ -21,6 +21,7 @@ from src.intevia.services.event_registration_service import (
     EventRegistrationService,
     InvalidEventRegistration,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
@@ -41,7 +42,7 @@ class EventRegistrationPostgreSQLTests(TransactionTestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(username="postgres-registration")
-        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
+        self.profile = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(
             pk=1_000_000,
             name="PostgreSQL registration actor",

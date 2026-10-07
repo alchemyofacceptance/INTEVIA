@@ -22,6 +22,7 @@ from src.intevia.services.education_course_read_service import (
 from src.intevia.services.education_course_service import (
     EducationCourseLineageError, EducationCourseNotFound, EducationCourseService
 )
+from tests.s015_0021_support import create_test_identity
 
 
 class _Allow:
@@ -37,9 +38,9 @@ class _Allow:
 class EducationCourseReadbackTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="course-reader")
-        self.identity = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
+        self.identity = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         self.other_user = User.objects.create_user(username="course-other")
-        Identity.objects.create(credential=self.other_user, access_state=Identity.AccessState.ACTIVE)
+        create_test_identity(credential=self.other_user, access_state=Identity.AccessState.ACTIVE)
         self.now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
         self.write = EducationCourseService(authority=EducationCourseAuthority(provider=_Allow()), clock=lambda: self.now)
         self.read = EducationCourseReadService(clock=lambda: self.now)

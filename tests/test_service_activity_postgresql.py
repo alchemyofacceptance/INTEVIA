@@ -64,6 +64,7 @@ from src.intevia.services.service_activity_read_service import (
     ServiceActivityVisibilityRequest,
     ServiceActivityVisibilityResponse,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 POSTGRESQL_ONLY = skipUnless(
@@ -132,7 +133,7 @@ def _make_identity(username, *, active=True):
     if active:
         user.is_active = True
         user.save()
-    identity = Identity.objects.create(
+    identity = create_test_identity(
         credential=user,
         access_state=Identity.AccessState.ACTIVE if active else Identity.AccessState.PENDING,
     )

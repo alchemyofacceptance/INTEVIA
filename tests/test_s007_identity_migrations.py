@@ -3,6 +3,8 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from tests.s015_0021_support import migrate_to_target_with_restore
+
 
 class IdentityMigrationRehearsalTests(TransactionTestCase):
     migrate_from = ("core", "0010_event_registration_foundation")
@@ -14,9 +16,7 @@ class IdentityMigrationRehearsalTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
-        executor = MigrationExecutor(connection)
-        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-        old_apps = self.migrate(self.migrate_from)
+        old_apps = migrate_to_target_with_restore(self, self.migrate_from)
         User = old_apps.get_model("auth", "User")
         Profile = old_apps.get_model("core", "Profile")
         Role = old_apps.get_model("core", "Role")
@@ -139,8 +139,7 @@ class IdentityMigrationRehearsalTests(TransactionTestCase):
                 self.assertEqual(getattr(row, field_name), self.profile_pk)
 
     def tearDown(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         self.assertIn(
             "core_eventattendance",
             connection.introspection.table_names(),

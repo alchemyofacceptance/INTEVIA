@@ -52,6 +52,7 @@ from src.intevia.services.library_exact_version_policy import (
     ImmutableLibraryBindingProvider,
     LibraryExactVersionPolicy,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 25, 19, 0, tzinfo=timezone.utc)
@@ -64,7 +65,7 @@ class EventResourceRelationshipPostgreSQLTests(TransactionTestCase):
         if connection.vendor != "postgresql":
             self.fail("mandatory S011-B PostgreSQL guardians require PostgreSQL")
         user = User.objects.create_user(username="s011b-postgresql")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=user,
             access_state=Identity.AccessState.ACTIVE,
             access_epoch=9,

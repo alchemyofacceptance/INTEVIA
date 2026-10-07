@@ -13,12 +13,14 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connections
+from django.db.models.functions import Coalesce
 
 from core.models import (
     Application,
     AuthorityDecision,
     AuthorityPrincipal,
     Identity,
+    IdentityTransition,
 )
 from core.organism_contract import OrganismAction, qualification_planes
 
@@ -317,6 +319,53 @@ class QualifiedS015AuthorityDecision:
     contextual_role_head_references: tuple[str, ...]
     authority_reference: str
     authority_decision_reference: str
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityStateAt:
+    access_state: str | None
+    access_epoch: int
+
+
+def identity_state_at(
+    identity_id,
+    *,
+    state_at: datetime,
+    known_at: datetime,
+    database_alias: str = "default",
+) -> IdentityStateAt:
+    eligible = (
+        IdentityTransition.objects.using(database_alias)
+        .filter(identity__identity_id=identity_id)
+        .annotate(
+            effective_coordinate=Coalesce("effective_at", "occurred_at"),
+            received_coordinate=Coalesce("received_at", "occurred_at"),
+            recorded_coordinate=Coalesce("recorded_at", "occurred_at"),
+        )
+        .filter(
+            effective_coordinate__lte=state_at,
+            received_coordinate__lte=known_at,
+            recorded_coordinate__lte=known_at,
+        )
+    )
+    latest = eligible.order_by(
+        "effective_coordinate",
+        "recorded_coordinate",
+        "pk",
+    ).last()
+    epoch = eligible.filter(
+        action__in=(
+            IdentityTransition.Action.RESTRICT,
+            IdentityTransition.Action.DEACTIVATE,
+            IdentityTransition.Action.REACTIVATE,
+            IdentityTransition.Action.REPLACE_CREDENTIAL,
+            IdentityTransition.Action.RETIRE_CREDENTIAL,
+        )
+    ).count()
+    return IdentityStateAt(
+        access_state=None if latest is None else latest.resulting_state,
+        access_epoch=epoch,
+    )
 
 
 def canonical_timestamp(value: datetime) -> str:
@@ -810,7 +859,9 @@ class S015Authority:
                     S015AuthorityRefusalCode.FOUNDING_PRINCIPAL_ABSENT,
                 )
         if type(request) is S015OwnApplicantAuthorityRequest:
-            if not Identity.objects.using(self.database_alias).filter(
+            if request.action is OrganismAction.SUBMIT_APPLICATION:
+                pass
+            elif not Identity.objects.using(self.database_alias).filter(
                 pk=request.actor_pk,
                 identity_id=request.actor_identity_id,
                 credential_id=request.actor_credential_pk,

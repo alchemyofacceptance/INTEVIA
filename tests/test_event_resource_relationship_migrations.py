@@ -5,6 +5,8 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from tests.s015_0021_support import migrate_to_target_with_restore
+
 
 class EventResourceRelationshipMigrationTests(TransactionTestCase):
     migrate_from = ("core", "0014_s008_event_attendance_foundation")
@@ -29,9 +31,7 @@ class EventResourceRelationshipMigrationTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
-        executor = MigrationExecutor(connection)
-        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-        old_apps = self.migrate(self.migrate_from)
+        old_apps = migrate_to_target_with_restore(self, self.migrate_from)
         User = old_apps.get_model("auth", "User")
         Identity = old_apps.get_model("core", "Identity")
         Event = old_apps.get_model("core", "Event")
@@ -101,8 +101,7 @@ class EventResourceRelationshipMigrationTests(TransactionTestCase):
         }
 
     def tearDown(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         for table_name in self.table_names:
             self.assertIn(table_name, connection.introspection.table_names())
         super().tearDown()

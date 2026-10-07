@@ -16,6 +16,7 @@ from core.models import (
     LibraryResource,
     LibraryResourceVersion,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
@@ -24,7 +25,7 @@ NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
 class EventResourceRelationshipModelTests(TestCase):
     def setUp(self):
         user = User.objects.create_user(username="s011b-models")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=user,
             access_state=Identity.AccessState.ACTIVE,
             access_epoch=3,

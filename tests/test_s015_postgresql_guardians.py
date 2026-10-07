@@ -32,6 +32,7 @@ from core.models import (
     ProfileEffectProposalTransition,
 )
 from s015_0021_support import T0, add_remaining_aggregates, append_event, empty_fp, found_nonroot, fresh, refresh
+from tests.s015_0021_support import create_test_identity
 
 
 class S015PostgreSQLGuardianTests(TransactionTestCase):
@@ -77,7 +78,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
     def _identity(self, label):
         username = f"{label}_{uuid4().hex[:12]}"
         user = User.objects.create_user(username=username, password="password123")
-        return Identity.objects.create(
+        return create_test_identity(
             credential=user,
             canonical_username=canonical_username_v1(username),
             display_name=f"{label} identity",
@@ -720,7 +721,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
             username=f"{label}_{uuid4().hex[:12]}",
             password="unused",
         )
-        identity = Identity.objects.create(
+        identity = create_test_identity(
             credential=user,
             canonical_username=canonical_username_v1(user.username),
             display_name=f"{label} profile effect identity",

@@ -30,6 +30,7 @@ from src.intevia.services.event_self_registration_service import (
 	EventSelfRegistrationService,
 	SelfRegistrationOutcome,
 )
+from tests.s015_0021_support import register_test_learner
 
 
 NOW = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
@@ -44,15 +45,12 @@ class S010PostgreSQLGuardianTests(TransactionTestCase):
 	reset_sequences = True
 
 	def setUp(self):
-		self.user = User.objects.create_user(
+		self.identity_record = register_test_learner(
 			username="s010-postgresql",
 			password="governed-test-password",
-		)
-		self.identity_record = Identity.objects.create(
-			credential=self.user,
 			display_name="S010 PostgreSQL",
-			access_state=Identity.AccessState.ACTIVE,
 		)
+		self.user = self.identity_record.credential
 		role = Role.objects.create(pk=1_000_010, name="S010 PostgreSQL actor")
 		ProfileRole.objects.create(identity=self.identity_record, role=role)
 		self.event_record = Event.objects.create(

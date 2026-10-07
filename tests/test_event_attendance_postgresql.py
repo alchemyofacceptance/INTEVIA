@@ -32,6 +32,7 @@ from src.intevia.services.event_registration_service import (
     EventRegistrationService,
 )
 from src.intevia.services.event_service import EventService
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -76,19 +77,19 @@ class EventAttendancePostgreSQLTests(TransactionTestCase):
 
     def setUp(self):
         self.actor_user = User.objects.create_user(username="pg-attendance-actor")
-        self.actor = Identity.objects.create(
+        self.actor = create_test_identity(
             credential=self.actor_user,
             access_state=Identity.AccessState.ACTIVE,
         )
         self.other_actor_user = User.objects.create_user(
             username="pg-attendance-other-actor"
         )
-        self.other_actor = Identity.objects.create(
+        self.other_actor = create_test_identity(
             credential=self.other_actor_user,
             access_state=Identity.AccessState.ACTIVE,
         )
         self.subject_user = User.objects.create_user(username="pg-attendance-subject")
-        self.subject = Identity.objects.create(
+        self.subject = create_test_identity(
             credential=self.subject_user,
             access_state=Identity.AccessState.ACTIVE,
         )

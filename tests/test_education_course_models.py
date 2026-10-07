@@ -9,12 +9,13 @@ from django.db import models
 from django.test import TestCase
 
 from core.models import Course, CourseVersion, Identity
+from tests.s015_0021_support import create_test_identity
 
 
 class EducationCourseModelTests(TestCase):
     def setUp(self):
         user = User.objects.create_user(username="course-model")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=user, access_state=Identity.AccessState.ACTIVE
         )
         self.now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)

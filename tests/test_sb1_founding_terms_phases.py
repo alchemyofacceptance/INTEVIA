@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Callable, TypeVar
 from unittest.mock import Mock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase, override_settings
@@ -17,6 +17,8 @@ from core.models import (
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
     Identity,
+    IdentityTransition,
+    LearnerRegistration,
     LivingOrganism,
     LivingOrganismEvent,
     LOFoundingContentVersion,
@@ -45,6 +47,7 @@ from tests.s015_0021_support import (
     refresh,
     seed_fixture_substitute_authority,
     seed_identity,
+    register_test_learner,
     u,
 )
 from src.intevia.services.organism_application_authority import ProductionGovernedRegistrationFactSource
@@ -64,6 +67,7 @@ from src.intevia.services.organism_authority import (
     authority_target_fingerprint,
     canonical_json_bytes,
 )
+from src.intevia.services.identity_service import IdentityLifecycleService
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_formation_service import (
     FoundLivingOrganismCommand,
@@ -1354,27 +1358,42 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         self.assertFalse(hasattr(failed.exception, "refusal_code"))
 
 
-class _FoundingRegistrationFixture:
-    def __init__(self, identity_id, registration_uuid):
-        self.identity_id = identity_id
-        self.registration_uuid = registration_uuid
-
-    def reference_at(self, identity_id, effective_at, evaluated_at):
-        if identity_id != self.identity_id or effective_at > evaluated_at:
-            return None
-        return f"learner-registration:{self.registration_uuid}"
-
-
 class SB1FoundingServiceTests(TransactionTestCase):
-    def _prepare_founder(self, tag, *, with_principal=True):
+    def _founding_counts(self):
+        tables = (
+            "core_identityresolution",
+            "core_identitytransition",
+            "core_learnerregistration",
+            *SB1FoundingDatabaseInvariantTests._FOUNDING_TABLES,
+        )
+        counts = {}
+        with connection.cursor() as cursor:
+            for table in tables:
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                counts[table] = cursor.fetchone()[0]
+        return counts
+
+    def _prepare_founder(
+        self, tag, *, with_principal=True, registered=True
+    ):
         with transaction.atomic(), connection.cursor() as cursor:
-            identity_pk = seed_identity(cursor, f"sb1-service-founder-{tag}")
             principal = (
                 seed_fixture_substitute_authority(cursor, f"sb1-service-{tag}")
                 if with_principal
                 else None
             )
-        founder = Identity.objects.select_related("credential").get(pk=identity_pk)
+        if registered:
+            founder = register_test_learner(
+                username=f"sb1-service-founder-{tag}",
+                password="governed-test-password",
+                display_name=f"Founder {tag}",
+            )
+        else:
+            with transaction.atomic(), connection.cursor() as cursor:
+                identity_pk = seed_identity(cursor, f"sb1-service-founder-{tag}")
+            founder = Identity.objects.select_related("credential").get(
+                pk=identity_pk
+            )
         terms_body = f"Labelled founding fixture terms for {tag}."
         terms = PlatformTermsVersion.objects.create(
             terms_version_uuid=UUID(u(f"sb1-service-terms:{tag}")),
@@ -1386,14 +1405,18 @@ class SB1FoundingServiceTests(TransactionTestCase):
             is_fixture=True,
             effective_from=_database_clock() - timedelta(days=1),
         )
-        registration_uuid = UUID(u(f"sb1-service-registration:{tag}"))
-        registration_source = _FoundingRegistrationFixture(founder.identity_id, registration_uuid)
         provider = ProductionApplicationAuthorityProvider(
-            registration_source=registration_source,
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         service = OrganismFormationService(
             clock=timezone.now,
             authority=S015Authority(provider=provider),
+        )
+        registration = LearnerRegistration.objects.filter(
+            identity=founder
+        ).order_by("recorded_at", "pk").first()
+        registration_uuid = (
+            uuid4() if registration is None else registration.registration_uuid
         )
         return founder, terms, principal, service, registration_uuid
 
@@ -1424,7 +1447,10 @@ class SB1FoundingServiceTests(TransactionTestCase):
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_missing_registration_with_authored_message(self):
         tag = fresh()
-        founder, terms, _, _, _ = self._prepare_founder(tag)
+        founder, terms, _, _, _ = self._prepare_founder(
+            tag, registered=False
+        )
+        before = self._founding_counts()
         service = OrganismFormationService(
             clock=timezone.now,
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
@@ -1441,15 +1467,23 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "(Development: the setup command's account has no registration; provision through "
             "the supported path.)",
         )
-        self.assertEqual(LivingOrganism.objects.count(), 0)
+        self.assertEqual(self._founding_counts(), before)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_inactive_account_with_authored_message(self):
         tag = fresh()
         founder, terms, _, service, _ = self._prepare_founder(tag)
-        Identity.objects.filter(pk=founder.pk).update(
-            access_state=Identity.AccessState.DEACTIVATED,
+        IdentityLifecycleService.change_access(
+            identity_id=founder.identity_id,
+            action=IdentityTransition.Action.DEACTIVATE,
+            requesting_actor=founder,
+            authority_reference=f"fixture:deactivate:{tag}",
+            technical_executor="test-suite",
+            evidence_reference=f"fixture:deactivate:{tag}",
+            reason_category=IdentityTransition.ReasonCategory.SECURITY,
+            correlation_id=uuid4(),
         )
+        before = self._founding_counts()
 
         with self.assertRaises(S015AuthorityDenied) as refused:
             service.found_living_organism(self._command(founder, terms, tag))
@@ -1460,7 +1494,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "The LO was not founded and nothing was saved: your account is not active at the time "
             "of this act.",
         )
-        self.assertEqual(LivingOrganism.objects.count(), 0)
+        self.assertEqual(self._founding_counts(), before)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_absent_and_unpermitted_founding_principal(self):
@@ -1469,6 +1503,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             absent_tag,
             with_principal=False,
         )
+        before_absent = self._founding_counts()
         with override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=False):
             with self.assertRaises(S015AuthorityDenied) as absent:
                 absent_service.found_living_organism(
@@ -1481,9 +1516,11 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "on this database (the GENESIS principal, act 1 of the bootstrap). Register it (or, in "
             "development, seed it labelled), then found.",
         )
+        self.assertEqual(self._founding_counts(), before_absent)
 
         substitute_tag = fresh()
         founder, terms, _, service, _ = self._prepare_founder(substitute_tag)
+        before_substitute = self._founding_counts()
         with override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=False):
             with self.assertRaises(S015AuthorityDenied) as substitute:
                 service.found_living_organism(self._command(founder, terms, substitute_tag))
@@ -1495,21 +1532,30 @@ class SB1FoundingServiceTests(TransactionTestCase):
             str(substitute.exception),
             "the labelled development substitute is not permitted in this environment",
         )
-        self.assertEqual(LivingOrganism.objects.count(), 0)
+        self.assertEqual(self._founding_counts(), before_substitute)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_founding_name_gateway_question_and_phase_journey_use_services(self):
         tag = fresh()
-        founder, terms, _, founding_service, _ = self._prepare_founder(tag)
-        now = timezone.now()
-        start = now - timedelta(seconds=10)
+        founder, terms, _, founding_service, registration_uuid = self._prepare_founder(tag)
+        registration = LearnerRegistration.objects.get(
+            registration_uuid=registration_uuid
+        )
+        registration_known_at = max(
+            registration.effective_at,
+            registration.recorded_at,
+        )
+        founding_at = max(
+            timezone.now(),
+            registration_known_at + timedelta(microseconds=1),
+        )
         name = f"Founding Journey {tag}"
         found_command = self._command(
             founder,
             terms,
             tag,
             name=name,
-            effective_at=start,
+            effective_at=founding_at,
         )
         found_result = _expect_service_success(
             self,
@@ -1520,6 +1566,12 @@ class SB1FoundingServiceTests(TransactionTestCase):
         founding_content = LOFoundingContentVersion.objects.get(
             living_organism=organism,
             version=1,
+        )
+        self.assertLess(registration.effective_at, founding_content.effective_at)
+        self.assertLess(registration.recorded_at, founding_content.effective_at)
+        self.assertLessEqual(
+            founding_content.effective_at,
+            founding_content.received_at,
         )
         self.assertEqual(founding_content.name, name)
 
@@ -1540,6 +1592,11 @@ class SB1FoundingServiceTests(TransactionTestCase):
         )
 
         phase_service = OrganismPhaseAdvanceService(clock=_database_clock)
+        first_phase_at = max(
+            founding_content.effective_at,
+            founding_content.received_at,
+            _database_clock(),
+        )
         first_phase = PhaseAdvanceCommand(
             credential=founder.credential,
             living_organism_uuid=organism.organism_id,
@@ -1547,7 +1604,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             to_phase="GERMINATING",
             request_reference=f"sb1:journey:phase-one:{tag}",
             idempotency_key=f"sb1:journey:phase-one:key:{tag}",
-            effective_at=start + timedelta(seconds=1),
+            effective_at=first_phase_at,
         )
         first_phase_result = _expect_service_success(
             self,
@@ -1561,7 +1618,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         )
 
         gateway = OrganismApplicationService(clock=_database_clock)
-        governance_at = start + timedelta(seconds=2)
+        governance_at = _database_clock()
         governance = _expect_service_success(
             self,
             "governance-configuration gateway draft",
@@ -1605,7 +1662,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             governance_result.authority_decision_reference,
         )
 
-        question_at = start + timedelta(seconds=3)
+        question_at = _database_clock()
         question = _expect_service_success(
             self,
             "application-question gateway draft",
@@ -1646,6 +1703,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             question_result.authority_decision_reference,
         )
 
+        final_phase_at = _database_clock()
         final_phase = PhaseAdvanceCommand(
             credential=founder.credential,
             living_organism_uuid=organism.organism_id,
@@ -1653,7 +1711,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             to_phase="BIRTHING",
             request_reference=f"sb1:journey:phase-two:{tag}",
             idempotency_key=f"sb1:journey:phase-two:key:{tag}",
-            effective_at=start + timedelta(seconds=4),
+            effective_at=final_phase_at,
         )
         final_phase_result = _expect_service_success(
             self,
@@ -1807,6 +1865,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         tag = fresh()
         prepared = self._prepare_founder(tag)
         founder, terms, service = prepared[0], prepared[1], prepared[3]
+        before_missing_name = self._founding_counts()
         with self.assertRaises(S015AuthorityDenied) as missing_name:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-no-name", name="")
@@ -1819,6 +1878,8 @@ class SB1FoundingServiceTests(TransactionTestCase):
             str(missing_name.exception),
             "The LO was not founded and nothing was saved: a name (and a purpose) is required.",
         )
+        self.assertEqual(self._founding_counts(), before_missing_name)
+        before_missing_purpose = self._founding_counts()
         with self.assertRaises(S015AuthorityDenied) as missing_purpose:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-no-purpose", purpose="")
@@ -1831,6 +1892,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             str(missing_purpose.exception),
             "The LO was not founded and nothing was saved: a name (and a purpose) is required.",
         )
+        self.assertEqual(self._founding_counts(), before_missing_purpose)
 
         _expect_service_success(
             self,
@@ -1839,6 +1901,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 self._command(founder, terms, f"{tag}-first")
             ),
         )
+        before_duplicate = self._founding_counts()
         with self.assertRaises(S015AuthorityDenied) as duplicate:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-duplicate")
@@ -1852,13 +1915,14 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "The LO was not founded and nothing was saved: that name is already taken by another LO. "
             "Choose a different name.",
         )
-        self.assertEqual(LivingOrganism.objects.count(), 1)
+        self.assertEqual(self._founding_counts(), before_duplicate)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_missing_and_superseded_terms_without_writes(self):
         tag = fresh()
         founder, terms, *prepared = self._prepare_founder(tag)
         service = prepared[1]
+        before_missing = self._founding_counts()
 
         with self.assertRaises(S015AuthorityDenied) as missing:
             service.found_living_organism(
@@ -1874,6 +1938,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "version every founder accepts, and no acceptance of the version in force was received. "
             "Read the terms shown and confirm them, then found again.",
         )
+        self.assertEqual(self._founding_counts(), before_missing)
 
         newer_body = f"Superseding fixture terms for {tag}."
         PlatformTermsVersion.objects.create(
@@ -1887,6 +1952,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             effective_from=_database_clock() - timedelta(seconds=1),
             supersedes=terms,
         )
+        before_superseded = self._founding_counts()
         with self.assertRaises(S015AuthorityDenied) as superseded:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-superseded")
@@ -1900,14 +1966,14 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "The LO was not founded and nothing was saved. The terms version you accepted is no "
             "longer the version in force. Reload to see the current terms and confirm them.",
         )
-        self.assertEqual(LivingOrganism.objects.count(), 0)
-        self.assertEqual(PlatformTermsAcceptance.objects.count(), 0)
+        self.assertEqual(self._founding_counts(), before_superseded)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_fixture_terms_on_non_disposable_database_name(self):
         tag = fresh()
         founder, terms, *prepared = self._prepare_founder(tag)
         service = prepared[1]
+        before = self._founding_counts()
         with patch.dict(connection.settings_dict, {"NAME": "intevia_production"}):
             with self.assertRaises(S015AuthorityDenied) as refused:
                 service.found_living_organism(self._command(founder, terms, tag))
@@ -1915,5 +1981,4 @@ class SB1FoundingServiceTests(TransactionTestCase):
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
         )
-        self.assertEqual(LivingOrganism.objects.count(), 0)
-        self.assertEqual(PlatformTermsAcceptance.objects.count(), 0)
+        self.assertEqual(self._founding_counts(), before)

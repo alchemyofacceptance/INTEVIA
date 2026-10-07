@@ -12,6 +12,7 @@ from src.intevia.services.service_service import (
     GovernedService,
     InvalidServiceTransition,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -30,7 +31,7 @@ class Capability:
 class ServiceLifecycleTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="service-lifecycle")
-        profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
+        profile = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Service lifecycle participant")
         ProfileRole.objects.create(identity=profile, role=role)
         self.foundation = GovernedService(

@@ -2,9 +2,8 @@ import inspect
 import os
 from datetime import datetime, timezone
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from django.contrib.auth.models import User
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -15,6 +14,7 @@ from core.models import (
 	EventRegistrationEvidenceReference,
 	EventRegistrationTransition,
 	Identity,
+	IdentityTransition,
 	ProfileRole,
 	Role,
 )
@@ -35,6 +35,8 @@ from src.intevia.services.event_self_registration_service import (
 	EventSelfRegistrationService,
 	SelfRegistrationOutcome,
 )
+from src.intevia.services.identity_service import IdentityLifecycleService
+from tests.s015_0021_support import register_test_learner
 
 
 NOW = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
@@ -42,19 +44,39 @@ NOW = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
 
 class S010Fixtures:
 	def identity(self, username, *, state=Identity.AccessState.ACTIVE):
-		user = User.objects.create_user(
+		identity = register_test_learner(
 			username=username,
 			password="governed-test-password",
-			is_active=state != Identity.AccessState.DEACTIVATED,
-		)
-		identity = Identity.objects.create(
-			credential=user,
 			display_name=username.title(),
-			access_state=state,
 		)
+		if state == Identity.AccessState.RESTRICTED:
+			action = IdentityTransition.Action.RESTRICT
+			reason = IdentityTransition.ReasonCategory.ACCESS_REVIEW
+		elif state == Identity.AccessState.DEACTIVATED:
+			action = IdentityTransition.Action.DEACTIVATE
+			reason = IdentityTransition.ReasonCategory.SECURITY
+		elif state == Identity.AccessState.ACTIVE:
+			self.assign_role(identity)
+			return identity.credential, identity
+		else:
+			raise ValueError(f"unsupported S010 fixture access state: {state}")
+		IdentityLifecycleService.change_access(
+			identity_id=identity.identity_id,
+			action=action,
+			requesting_actor=identity,
+			authority_reference=f"fixture:s010-access:{identity.identity_id}",
+			technical_executor="test-suite",
+			evidence_reference=f"fixture:s010-access:{identity.identity_id}",
+			reason_category=reason,
+			correlation_id=uuid4(),
+		)
+		identity.refresh_from_db()
+		self.assign_role(identity)
+		return identity.credential, identity
+
+	def assign_role(self, identity):
 		role, _ = Role.objects.get_or_create(name="S010 internal pre-alpha actor")
 		ProfileRole.objects.create(identity=identity, role=role)
-		return user, identity
 
 	def event(self, owner, suffix, *, state=Event.State.PUBLISHED):
 		return Event.objects.create(
@@ -139,7 +161,13 @@ class S010PolicyTests(S010Fixtures, TestCase):
 
 class S010HttpGuardianTests(S010Fixtures, TestCase):
 	def setUp(self):
-		self.user, self.identity_record = self.identity("s010-http")
+		self.identity_record = register_test_learner(
+			username="s010-http",
+			password="governed-test-password",
+			display_name="S010 Http",
+		)
+		self.user = self.identity_record.credential
+		self.assign_role(self.identity_record)
 		self.other_user, self.other = self.identity("s010-other")
 		self.event_record = self.event(self.identity_record, "http")
 		self.path = reverse("event-register-self", args=[self.event_record.event_id])

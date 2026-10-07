@@ -13,7 +13,21 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
-from tests.s015_0021_support import T0, add_remaining_aggregates, append_event, append_second_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_0021_support import (
+    T0,
+    add_remaining_aggregates,
+    append_event,
+    append_second_event,
+    current_core_leaf,
+    empty_fp,
+    found_nonroot,
+    fresh,
+    migrate_to_target_with_restore,
+    refresh,
+    seed_identity,
+    seed_test_gateway,
+    u,
+)
 from tests.test_s015_0024_commitment_preimages import canonical_value, digest, l1_preimage, parts_preimage
 from tests.s015_0034_support import emit_guard_catalogue
 from verification.isolation.state import REQUIRED_TRIGGER_COUNT
@@ -41,7 +55,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0042_sb1_founding_terms_phases"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0043_p1_governed_registration"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -550,12 +564,14 @@ def snapshot(cursor, event_id, membership_id):
 @POSTGRESQL_ONLY
 class HistoricalActorBytes(TransactionTestCase):
     def setUp(self):
-        MigrationExecutor(connection).migrate([("core", "0024_s015_compact_commitment_preimages")])
+        migrate_to_target_with_restore(
+            self, ("core", "0024_s015_compact_commitment_preimages")
+        )
         self.at_0024 = True
 
     def tearDown(self):
+        self.restore_received_migrations()
         head = current_core_leaf(connection)
-        MigrationExecutor(connection).migrate(head)
         self.assertIn(head[0], MigrationRecorder(connection).applied_migrations())
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_get_functiondef('public.s3_terminal_lock()'::regprocedure)")

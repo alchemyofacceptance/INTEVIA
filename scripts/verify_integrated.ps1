@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0042_sb1_founding_terms_phases"
+$expectedCoreHead = "0043_p1_governed_registration"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",
@@ -74,6 +74,9 @@ $teardown = [ordered]@{
     destroyed_oid = $null
     oids_match = $false
     confirmed_absent = $false
+    database_count = 0
+    databases = @()
+    failure_reasons = @()
 }
 
 function Add-Failure {
@@ -95,6 +98,236 @@ function Protect-OutputText {
         }
     }
     return $protected
+}
+
+function Get-RunDatabaseReconciliation {
+    param(
+        [Parameter(Mandatory = $true)][string]$ReceiptPath,
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$RunNonce,
+        [Parameter(Mandatory = $true)][string]$PrimaryDatabase,
+        [Parameter(Mandatory = $true)][int]$TeardownLines,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$IsolationVerdict
+    )
+
+    $failureReasons = [System.Collections.Generic.List[string]]::new()
+    $receiptRecords = @()
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        $failureReasons.Add("database receipt file is absent")
+    }
+    else {
+        $receiptRecords = @(Get-Content -LiteralPath $ReceiptPath -ErrorAction Stop |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop })
+    }
+
+    $logLines = @()
+    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        $failureReasons.Add("test run log is absent")
+    }
+    else {
+        $logLines = @(Get-Content -LiteralPath $LogPath -ErrorAction Stop)
+    }
+
+    $creationMarkers = @($logLines | Where-Object { $_ -match "Creating test database for alias" })
+    $destructionMarkers = @($logLines | Where-Object { $_ -match "Destroying test database for alias" })
+    $createdLogEvents = @()
+    $destroyedLogEvents = @()
+    foreach ($line in $logLines) {
+        if ($line -match "Creating test database for alias '([^']+)' \('([^']+)'\)") {
+            $createdLogEvents += [PSCustomObject]@{ alias = $Matches[1]; name = $Matches[2] }
+        }
+        elseif ($line -match "Creating test database for alias") {
+            $failureReasons.Add("a test database creation log line could not be parsed")
+        }
+        if ($line -match "Destroying test database for alias '([^']+)' \('([^']+)'\)") {
+            $destroyedLogEvents += [PSCustomObject]@{ alias = $Matches[1]; name = $Matches[2] }
+        }
+        elseif ($line -match "Destroying test database for alias") {
+            $failureReasons.Add("a test database teardown log line could not be parsed")
+        }
+    }
+    if ($creationMarkers.Count -ne $createdLogEvents.Count) {
+        $failureReasons.Add("not every test database creation log line could be parsed")
+    }
+    if ($destructionMarkers.Count -ne $destroyedLogEvents.Count) {
+        $failureReasons.Add("not every test database teardown log line could be parsed")
+    }
+
+    $createdRecords = @($receiptRecords | Where-Object {
+        $_.event -eq "created" -and $_.run_nonce -eq $RunNonce
+    })
+    $destroyedRecords = @($receiptRecords | Where-Object {
+        $_.event -eq "destroyed" -and $_.run_nonce -eq $RunNonce
+    })
+    $testCreatedWitnessPattern = '^test_intevia_living_organism_tt1_witness_[0-9a-f]+$'
+    $regularCreatedRecords = @($createdRecords | Where-Object {
+        ([string]$_.name) -ceq $PrimaryDatabase -or
+        ([string]$_.name) -cnotmatch $testCreatedWitnessPattern
+    })
+    $regularCreatedLogEvents = @($createdLogEvents | Where-Object {
+        $_.name -ceq $PrimaryDatabase -or $_.name -cnotmatch $testCreatedWitnessPattern
+    })
+    $regularDestroyedLogEvents = @($destroyedLogEvents | Where-Object {
+        $_.name -ceq $PrimaryDatabase -or $_.name -cnotmatch $testCreatedWitnessPattern
+    })
+    $witnessDestroyLogEvents = @($destroyedLogEvents | Where-Object {
+        $_.name -cne $PrimaryDatabase -and $_.name -cmatch $testCreatedWitnessPattern
+    })
+    $regularTeardownLines = $TeardownLines - $witnessDestroyLogEvents.Count
+    $createdNames = @($createdRecords | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    $regularCreatedNames = @($regularCreatedRecords | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    $createdLogNames = @($regularCreatedLogEvents | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    $destroyedLogNames = @($regularDestroyedLogEvents | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+
+    if ($createdRecords.Count -eq 0) {
+        $failureReasons.Add("no database creation receipt belongs to this run")
+    }
+    if ($createdNames.Count -ne $createdRecords.Count) {
+        $failureReasons.Add("database creation receipts contain duplicate or empty names")
+    }
+    if ($createdRecords.Count -lt 1 -or
+        $regularCreatedLogEvents.Count -ne $regularCreatedRecords.Count) {
+        $failureReasons.Add("database creation log lines do not match owned non-witness creation receipts")
+    }
+    if ($regularDestroyedLogEvents.Count -ne $regularCreatedRecords.Count -or
+        $regularTeardownLines -ne $regularCreatedRecords.Count) {
+        $failureReasons.Add("streamed database teardown lines do not match the owned database count")
+    }
+    if (($regularCreatedNames -join "`n") -cne ($createdLogNames -join "`n")) {
+        $failureReasons.Add("a database touched by this run is absent from its ownership receipts")
+    }
+    if (($regularCreatedNames -join "`n") -cne ($destroyedLogNames -join "`n")) {
+        $failureReasons.Add("database creation and teardown log names do not match")
+    }
+    $primaryCreateLogs = @($createdLogEvents | Where-Object {
+        $_.alias -ceq "default" -and $_.name -ceq $PrimaryDatabase
+    })
+    $primaryDestroyLogs = @($destroyedLogEvents | Where-Object {
+        $_.alias -ceq "default" -and $_.name -ceq $PrimaryDatabase
+    })
+    if ($primaryCreateLogs.Count -ne 1 -or $primaryDestroyLogs.Count -ne 1) {
+        $failureReasons.Add("the primary test database was not created and torn down exactly once")
+    }
+
+    $secondaryPattern = "^" + [regex]::Escape($PrimaryDatabase) + "_[a-z0-9_]+$"
+    $databaseNames = @()
+    $databaseNames += @($createdRecords | ForEach-Object { [string]$_.name })
+    $databaseNames += @($destroyedRecords | ForEach-Object { [string]$_.name })
+    $databaseNames += @($createdLogEvents | ForEach-Object { [string]$_.name })
+    $databaseNames += @($destroyedLogEvents | ForEach-Object { [string]$_.name })
+    $databaseNames = @($databaseNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    if ($databaseNames.Count -eq 0) {
+        $failureReasons.Add("the run did not account for any database")
+    }
+
+    $databaseReports = @()
+    foreach ($name in $databaseNames) {
+        $databaseFailures = [System.Collections.Generic.List[string]]::new()
+        $isTestCreatedWitness = $name -cne $PrimaryDatabase -and
+            $name -cmatch $testCreatedWitnessPattern
+        $databaseCreated = @($createdRecords | Where-Object { [string]$_.name -ceq $name })
+        $databaseDestroyed = @($destroyedRecords | Where-Object { [string]$_.name -ceq $name })
+        $databaseCreateLogs = @($createdLogEvents | Where-Object { $_.name -ceq $name })
+        $databaseDestroyLogs = @($destroyedLogEvents | Where-Object { $_.name -ceq $name })
+
+        if (-not $isTestCreatedWitness) {
+            if ($name -ceq $PrimaryDatabase) {
+                if ($databaseCreateLogs.Count -ne 1 -or $databaseCreateLogs[0].alias -cne "default" -or
+                    $databaseDestroyLogs.Count -ne 1 -or $databaseDestroyLogs[0].alias -cne "default") {
+                    $databaseFailures.Add("primary log events do not identify the default alias")
+                }
+            }
+            elseif ($name -cnotmatch $secondaryPattern) {
+                $databaseFailures.Add("secondary database name does not belong to the primary")
+            }
+        }
+        if ($databaseCreated.Count -ne 1) {
+            $databaseFailures.Add("database does not have exactly one owned creation receipt")
+        }
+        if ($databaseDestroyed.Count -ne 1) {
+            $databaseFailures.Add("database does not have exactly one owned destruction receipt")
+        }
+        if (-not $isTestCreatedWitness) {
+            if ($databaseCreateLogs.Count -ne 1 -or $databaseDestroyLogs.Count -ne 1) {
+                $databaseFailures.Add("database does not have exactly one creation and teardown log pair")
+            }
+            elseif ($databaseCreateLogs[0].alias -cne $databaseDestroyLogs[0].alias) {
+                $databaseFailures.Add("database creation and teardown aliases do not match")
+            }
+        }
+
+        $createdOid = $null
+        $destroyedOid = $null
+        $oidsMatch = $false
+        if ($databaseCreated.Count -eq 1 -and $databaseDestroyed.Count -eq 1) {
+            $createdOid = $databaseCreated[0].oid
+            $destroyedOid = $databaseDestroyed[0].oid
+            if ($null -eq $createdOid -or [long]$createdOid -le 0) {
+                $databaseFailures.Add("database creation receipt has no valid OID")
+            }
+            if ($null -eq $destroyedOid -or [long]$destroyedOid -le 0) {
+                $databaseFailures.Add("database destruction receipt has no valid OID")
+            }
+            $oidsMatch = $null -ne $createdOid -and $null -ne $destroyedOid -and
+                [string]$createdOid -ceq [string]$destroyedOid
+            if (-not $oidsMatch) {
+                $databaseFailures.Add("database creation and destruction OIDs do not match")
+            }
+            if ($databaseDestroyed[0].confirmed_absent -ne $true) {
+                $databaseFailures.Add("database destruction receipt does not confirm absence")
+            }
+        }
+        $confirmedAbsent = $databaseDestroyed.Count -eq 1 -and
+            $databaseDestroyed[0].confirmed_absent -eq $true
+        foreach ($problem in $databaseFailures) {
+            $failureReasons.Add("database $name`: $problem")
+        }
+        $databaseIsolation = if ($name -ceq $PrimaryDatabase) {
+            [ordered]@{ status = "checked"; instrument_verdict = $IsolationVerdict }
+        }
+        else {
+            [ordered]@{ status = "unavailable" }
+        }
+        $databaseReport = [ordered]@{
+            name = $name
+            created_oid = $createdOid
+            destroyed_oid = $destroyedOid
+            creation_receipts = @($databaseCreated)
+            destruction_receipts = @($databaseDestroyed)
+            result = if ($databaseFailures.Count -eq 0) { "RECONCILED" } else { "REFUSED" }
+            oids_match = $oidsMatch
+            confirmed_absent = $confirmedAbsent
+            isolation = $databaseIsolation
+        }
+        if ($isTestCreatedWitness) {
+            $databaseReport["kind"] = "test_created_witness"
+        }
+        $databaseReports += [PSCustomObject]$databaseReport
+    }
+
+    if (@($destroyedRecords | Where-Object {
+        ([string]$_.name) -notin $createdNames
+    }).Count -gt 0) {
+        $failureReasons.Add("a database destruction receipt has no matching owned creation receipt")
+    }
+
+    $primaryCreated = @($createdRecords | Where-Object { ([string]$_.name) -ceq $PrimaryDatabase })
+    $primaryDestroyed = @($destroyedRecords | Where-Object { ([string]$_.name) -ceq $PrimaryDatabase })
+    $badOidRows = @($databaseReports | Where-Object { $_.oids_match -ne $true })
+    $badAbsentRows = @($databaseReports | Where-Object { $_.confirmed_absent -ne $true })
+    return [PSCustomObject][ordered]@{
+        database = $PrimaryDatabase
+        created = $createdRecords.Count
+        destroyed = $destroyedRecords.Count
+        created_oid = if ($primaryCreated.Count -eq 1) { $primaryCreated[0].oid } else { $null }
+        destroyed_oid = if ($primaryDestroyed.Count -eq 1) { $primaryDestroyed[0].oid } else { $null }
+        oids_match = $databaseReports.Count -gt 0 -and $badOidRows.Count -eq 0
+        confirmed_absent = $databaseReports.Count -gt 0 -and $badAbsentRows.Count -eq 0
+        database_count = $databaseReports.Count
+        databases = @($databaseReports)
+        failure_reasons = @($failureReasons.ToArray())
+    }
 }
 
 function Get-Sha256Bytes {
@@ -377,7 +610,72 @@ try {
         "tests.test_s015_test_harness",
         "tests.test_tt1_identity",
         "tests.test_tt1_ownership",
-        "tests.test_tt1_template_lifecycle"
+        "tests.test_tt1_template_lifecycle",
+        "tests.test_sb1_founding_terms_phases",
+        "tests.test_p1_registration_service",
+        "tests.test_p1_identity_guardian",
+        "tests.test_p1_migration_restore",
+        "tests.test_s007_authentication_shell",
+        "tests.test_s007_identity_foundation",
+        "tests.test_s007_postgresql",
+        "tests.test_s007_provision_first_human",
+        "tests.test_s010_direct_self_registration",
+        "tests.test_s010_direct_self_registration_postgresql",
+        "tests.test_education_course_migrations",
+        "tests.test_event_attendance_migrations",
+        "tests.test_event_registration_postgresql",
+        "tests.test_event_resource_relationship_migrations",
+        "tests.test_profile_effect_migrations",
+        "tests.test_profile_effect_postgresql",
+        "tests.test_s007_identity_migrations",
+        "tests.test_service_activity_migrations",
+        "tests.test_service_activity_models",
+        "tests.test_care_foundation",
+        "tests.test_contribution_archive",
+        "tests.test_contribution_authority",
+        "tests.test_contribution_correction",
+        "tests.test_contribution_models",
+        "tests.test_contribution_postgresql",
+        "tests.test_contribution_privacy",
+        "tests.test_contribution_service",
+        "tests.test_education_course_models",
+        "tests.test_education_course_postgresql",
+        "tests.test_education_course_readback",
+        "tests.test_education_course_service",
+        "tests.test_event_attendance_foundation",
+        "tests.test_event_attendance_postgresql",
+        "tests.test_event_registration_foundation",
+        "tests.test_event_resource_relationship_models",
+        "tests.test_event_resource_relationship_policy",
+        "tests.test_event_resource_relationship_postgresql",
+        "tests.test_event_resource_relationship_readback",
+        "tests.test_event_resource_relationship_service",
+        "tests.test_events_authority",
+        "tests.test_events_evidence",
+        "tests.test_events_lifecycle",
+        "tests.test_events_models",
+        "tests.test_events_observation",
+        "tests.test_library_exact_version_contract",
+        "tests.test_library_exact_version_policy",
+        "tests.test_library_exact_version_postgresql",
+        "tests.test_library_exact_version_transaction_boundary",
+        "tests.test_library_foundation",
+        "tests.test_library_postgresql",
+        "tests.test_observation_integration",
+        "tests.test_profile_effect_models",
+        "tests.test_profile_effect_service",
+        "tests.test_s009_personal_event_home",
+        "tests.test_service_activity_postgresql",
+        "tests.test_service_activity_qualification",
+        "tests.test_service_activity_readback",
+        "tests.test_service_activity_service",
+        "tests.test_service_delivery_evidence",
+        "tests.test_service_event_association",
+        "tests.test_service_library_association",
+        "tests.test_service_lifecycle",
+        "tests.test_service_models",
+        "tests.test_service_postgresql",
+        "tests.test_service_versions"
     )
 
     $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()
@@ -471,41 +769,18 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
         Add-Failure "isolation evidence file is absent"
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($receiptPath) -and
-        (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
-        try {
-            $receiptRecords = @(Get-Content -LiteralPath $receiptPath |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop })
-            $created = @($receiptRecords | Where-Object {
-                $_.event -eq "created" -and $_.name -eq $testDatabase -and $_.run_nonce -eq $runNonce
-            })
-            $destroyed = @($receiptRecords | Where-Object {
-                $_.event -eq "destroyed" -and $_.name -eq $testDatabase -and
-                $_.run_nonce -eq $runNonce -and $_.confirmed_absent -eq $true
-            })
-            $teardown.created = $created.Count
-            $teardown.destroyed = $destroyed.Count
-            if ($created.Count -eq 1) { $teardown.created_oid = $created[0].oid }
-            if ($destroyed.Count -eq 1) { $teardown.destroyed_oid = $destroyed[0].oid }
-            $teardown.database = $testDatabase
-            $teardown.oids_match = $created.Count -eq 1 -and $destroyed.Count -eq 1 -and
-                $created[0].oid -eq $destroyed[0].oid
-            $teardown.confirmed_absent = $destroyed.Count -eq 1 -and $destroyed[0].confirmed_absent -eq $true
-            if ($created.Count -ne 1 -or $destroyed.Count -ne 1 -or
-                -not $teardown.oids_match -or -not $teardown.confirmed_absent) {
-                Add-Failure "test database creation and confirmed teardown receipts do not match"
-            }
-            if ($script:teardownLines -ne 1) {
-                Add-Failure "expected one streamed test database teardown line; observed $script:teardownLines"
-            }
-        }
-        catch {
-            Add-Failure ("database receipts could not be read: " + (Protect-OutputText -Text $_.Exception.Message))
+    try {
+        $teardown = Get-RunDatabaseReconciliation `
+            -ReceiptPath $receiptPath -LogPath $logPath -RunNonce $runNonce `
+            -PrimaryDatabase $testDatabase -TeardownLines $script:teardownLines `
+            -IsolationVerdict $isolationVerdict
+        foreach ($problem in $teardown.failure_reasons) {
+            Add-Failure $problem
         }
     }
-    else {
-        Add-Failure "database receipt file is absent"
+    catch {
+        Add-Failure ("database receipts or reconciliation could not be read: " +
+            (Protect-OutputText -Text $_.Exception.Message))
     }
 
     if ($null -eq $ordinary) {
@@ -545,8 +820,9 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
     }
 
     $verdict = if ($failureReasons.Count -eq 0 -and $sourceKind -in @("CANDIDATE", "COMMITTED") -and
-        $isolationVerdict -eq "PASS" -and $cp0Met -and $teardown.created -eq 1 -and
-        $teardown.destroyed -eq 1 -and $teardown.oids_match -and $teardown.confirmed_absent) {
+        $isolationVerdict -eq "PASS" -and $cp0Met -and $teardown.created -ge 1 -and
+        $teardown.destroyed -eq $teardown.created -and $teardown.oids_match -and
+        $teardown.confirmed_absent) {
         "PASS"
     }
     else {
@@ -592,6 +868,10 @@ Write-Output "TEARDOWN_CREATED=$($teardown.created)"
 Write-Output "TEARDOWN_DESTROYED=$($teardown.destroyed)"
 Write-Output "TEARDOWN_OIDS_MATCH=$($teardown.oids_match)"
 Write-Output "TEARDOWN_CONFIRMED_ABSENT=$($teardown.confirmed_absent)"
+Write-Output "DATABASE_COUNT=$($teardown.database_count)"
+foreach ($database in $teardown.databases) {
+    Write-Output ("DATABASE_RECONCILIATION=" + ($database | ConvertTo-Json -Depth 8 -Compress))
+}
 if ($failureReasons.Count -gt 0) {
     foreach ($reason in $failureReasons) {
         Write-Output "FAILURE=$reason"

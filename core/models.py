@@ -213,6 +213,9 @@ class IdentityTransition(models.Model):
     )
     correlation_id = models.UUIDField(unique=True)
     occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
     previous_transition = models.OneToOneField(
         "self",
         on_delete=models.PROTECT,
@@ -5328,6 +5331,46 @@ class PlatformTermsAcceptance(_S015AppendOnly):
     received_at = models.DateTimeField()
     recorded_at = models.DateTimeField(null=True, editable=False)
     acceptance_commitment = models.CharField(max_length=71)
+
+
+class RegistrationReceipt(_S015AppendOnly):
+    received_at = models.DateTimeField(editable=False)
+    transaction_id = models.PositiveBigIntegerField(editable=False)
+
+
+class LearnerRegistration(_S015AppendOnly):
+    class EntryMode(models.TextChoices):
+        SELF = "SELF", "Self"
+        SUPPORTED = "SUPPORTED", "Supported"
+
+    registration_uuid = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+    )
+    identity = models.OneToOneField(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="learner_registration",
+    )
+    actor_access_epoch = models.PositiveBigIntegerField()
+    entry_mode = models.CharField(max_length=9, choices=EntryMode.choices)
+    enterer_executor = models.CharField(max_length=120)
+    authority_reference = models.CharField(max_length=255)
+    evidence_reference = models.CharField(max_length=255)
+    registration_receipt = models.OneToOneField(
+        RegistrationReceipt,
+        on_delete=models.PROTECT,
+        related_name="learner_registration",
+    )
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+    registration_commitment = models.CharField(
+        max_length=71,
+        null=True,
+        editable=False,
+    )
 
 
 class LOFoundingContentVersion(_S015AppendOnly):

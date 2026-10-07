@@ -90,7 +90,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0039_s2b_role_suspension_settings": 405,
                           "0040_s2b_role_actor_nullable_state": 405,
                           "0041_r4s2_assign_current_membership": 406,
-                          "0042_sb1_founding_terms_phases": 418}
+                          "0042_sb1_founding_terms_phases": 418,
+                          "0043_p1_governed_registration": 429}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 

@@ -75,13 +75,26 @@ class _Provider:
 @POSTGRES
 class ApplicationDecisionTests(TransactionTestCase):
     def setUp(self):
-        _register_no_other_sessions_cleanup(self)
         if self._testMethodName in {
             "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
             "test_g1_withdrawal_witness_on_both_schemas",
             "test_g2_ending_witness_on_both_schemas",
         }:
-            MigrationExecutor(connection).migrate([("core", "0041_r4s2_assign_current_membership")])
+            executor = MigrationExecutor(connection)
+            self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
+            self.addCleanup(executor.migrate, self.received_leaf_targets)
+        _register_no_other_sessions_cleanup(self)
+        transition_model = IdentityTransition
+        if self._testMethodName in {
+            "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
+            "test_g1_withdrawal_witness_on_both_schemas",
+            "test_g2_ending_witness_on_both_schemas",
+        }:
+            target = [("core", "0041_r4s2_assign_current_membership")]
+            executor.migrate(target)
+            old_apps = executor.loader.project_state(target).apps
+            transition_model = old_apps.get_model("core", "IdentityTransition")
+            transition_identity_model = old_apps.get_model("core", "Identity")
         self.tag = f"s3-decision-{fresh()}"
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
@@ -90,21 +103,36 @@ class ApplicationDecisionTests(TransactionTestCase):
             self.organism_uuid = cursor.fetchone()[0]
         self.applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
         self.coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+        if self._testMethodName in {
+            "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
+            "test_g1_withdrawal_witness_on_both_schemas",
+            "test_g2_ending_witness_on_both_schemas",
+        }:
+            transition_identity = transition_identity_model.objects.get(
+                pk=applicant_pk
+            )
+        else:
+            transition_identity = self.applicant
         self.provider = _Provider()
-        IdentityTransition.objects.create(
-            identity=self.applicant, action=IdentityTransition.Action.PROVISION,
+        transition_model.objects.create(
+            identity=transition_identity,
+            action=IdentityTransition.Action.PROVISION,
             prior_state=None, resulting_state="pending", authority_reference="s3:test:provision",
             technical_executor="S3_TEST", evidence_reference="s3:test:history",
             reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
             correlation_id=uuid4(), occurred_at=T0,
         )
-        IdentityTransition.objects.create(
-            identity=self.applicant, action=IdentityTransition.Action.ACTIVATE,
+        transition_model.objects.create(
+            identity=transition_identity,
+            action=IdentityTransition.Action.ACTIVATE,
             prior_state="pending", resulting_state="active", authority_reference="s3:test:activate",
             technical_executor="S3_TEST", evidence_reference="s3:test:history",
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1),
-            previous_transition=IdentityTransition.objects.get(identity=self.applicant, action="provision"),
+            previous_transition=transition_model.objects.get(
+                identity=transition_identity,
+                action="provision",
+            ),
         )
 
     def service(self, provider=None, clock=None):

@@ -6,6 +6,8 @@ from django.db.migrations.loader import MigrationLoader
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from tests.s015_0021_support import migrate_to_target_with_restore
+
 
 class S012MigrationStructureTests(TransactionTestCase):
     """Validate migration 0016 structure without live application."""
@@ -166,9 +168,7 @@ class S012MigrationRehearsalTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
-        executor = MigrationExecutor(connection)
-        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-        old_apps = self.migrate(self.migrate_from)
+        old_apps = migrate_to_target_with_restore(self, self.migrate_from)
 
         User = old_apps.get_model("auth", "User")
         Identity = old_apps.get_model("core", "Identity")
@@ -216,8 +216,7 @@ class S012MigrationRehearsalTests(TransactionTestCase):
         self.event_pk = event.pk
 
     def tearDown(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         super().tearDown()
 
     def _assert_pre_existing_preserved(self, apps):
@@ -266,14 +265,13 @@ class S012MigrationRehearsalTests(TransactionTestCase):
         self.migrate(self.migrate_to)
         self.migrate(self.migrate_from)
         self.migrate(self.migrate_to)
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         final_tables = connection.introspection.table_names()
         self.assertIn("core_serviceactivity", final_tables)
 
 
 class IdentityFKCatalogueTests(TransactionTestCase):
-    """Live catalogue: 34 base + 7 S012 + 4 S013 + 2 S014 + 9 S015 = 56."""
+    """Model FK catalogue derived from the declared migration operations."""
 
     # Base 34 from the existing S007 PostgreSQL catalogue. Identity-internal
     # and originating-provisioning relations are deliberately out of scope.
@@ -379,6 +377,61 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("organismmembership", "identity"),
     }
 
+    S015_POST_0019_ADDITIONS = {
+        ("authorityinvalidationevent", "actor"),
+        ("circlestateevent", "actor"),
+        ("contextualroleassignmentstateevent", "actor"),
+        ("coverageassessment", "actor"),
+        ("determinationcontestevent", "actor"),
+        ("livingorganismevent", "actor"),
+        ("membershipconditionstateevent", "actor"),
+        ("obligationstateevent", "actor"),
+        ("organismmembershiptransition", "actor"),
+        ("planningclassificationevent", "actor"),
+        ("restrictedcontinuityevent", "accountable_actor"),
+        ("restrictedcontinuityevent", "actor"),
+        ("visibilitygrantstateevent", "actor"),
+        ("application", "actor"),
+        ("application", "applicant"),
+        ("application", "enterer"),
+        ("applicationdecision", "enterer"),
+        ("applicationdecision", "executor"),
+        ("applicationdecision", "responsible_coordinator"),
+        ("applicationengagement", "actor"),
+        ("applicationengagement", "enterer"),
+        ("applicationwithdrawal", "actor"),
+        ("applicationwithdrawal", "enterer"),
+        ("csaassignment", "actor"),
+        ("csaassignment", "enterer"),
+        ("csaassignmentend", "actor"),
+        ("csaassignmentend", "enterer"),
+        ("applicationlineageevent", "actor"),
+        ("loapplicationquestionversion", "actor"),
+        ("loapplicationquestionversion", "enterer"),
+        ("loapplicationsettingsversion", "actor"),
+        ("loapplicationsettingsversion", "enterer"),
+        ("logovernanceconfigurationversion", "actor"),
+        ("logovernanceconfigurationversion", "enterer"),
+        ("authoritydecision", "actor"),
+        ("officeappointmentconsent", "actor"),
+        ("officeappointmentconsent", "enterer"),
+    }
+
+    SB1_ADDITIONS = {
+        ("lofoundingcontentversion", "actor_identity"),
+        ("platformtermsacceptance", "accepted_by_identity"),
+    }
+
+    P1_ADDITIONS = {
+        ("learnerregistration", "identity"),
+    }
+
+    EXCLUDED_INTERNAL_FKS = {
+        ("identitytransition", "identity"),
+        ("identitytransition", "requesting_actor"),
+        ("originatingmembershipprovisioningrequest", "identity"),
+    }
+
     def test_catalogue_34_base_plus_7_plus_4_plus_2_plus_9_equals_56(self):
         self.assertEqual(len(self.BASE_IDENTITY_FKS), 34)
         self.assertEqual(len(self.S012_ADDITIONS), 7)
@@ -393,6 +446,37 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.S015_ADDITIONS
         )
         self.assertEqual(len(combined), 56)
+
+    def test_later_migration_slices_match_declared_catalogue(self):
+        declared_sets = (
+            self.BASE_IDENTITY_FKS,
+            self.S012_ADDITIONS,
+            self.S013_ADDITIONS,
+            self.S014_ADDITIONS,
+            self.S015_ADDITIONS,
+            self.S015_POST_0019_ADDITIONS,
+            self.SB1_ADDITIONS,
+            self.P1_ADDITIONS,
+        )
+        self.assertEqual(len(self.S015_POST_0019_ADDITIONS), 37)
+        self.assertEqual(len(self.SB1_ADDITIONS), 2)
+        self.assertEqual(len(self.P1_ADDITIONS), 1)
+        self.assertEqual(
+            len(
+                self.BASE_IDENTITY_FKS
+                | self.S012_ADDITIONS
+                | self.S013_ADDITIONS
+                | self.S014_ADDITIONS
+                | self.S015_ADDITIONS
+                | self.S015_POST_0019_ADDITIONS
+                | self.SB1_ADDITIONS
+                | self.P1_ADDITIONS
+            ),
+            96,
+        )
+        for index, left in enumerate(declared_sets):
+            for right in declared_sets[index + 1:]:
+                self.assertTrue(left.isdisjoint(right))
 
     def test_live_schema_matches_catalogue(self):
         from django.apps import apps
@@ -413,6 +497,7 @@ class IdentityFKCatalogueTests(TransactionTestCase):
                     and hasattr(field, "column")
                 ):
                     live_fks.add((model._meta.model_name, field.name))
+        live_fks -= self.EXCLUDED_INTERNAL_FKS
 
         expected = (
             self.BASE_IDENTITY_FKS
@@ -420,6 +505,9 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.S013_ADDITIONS
             | self.S014_ADDITIONS
             | self.S015_ADDITIONS
+            | self.S015_POST_0019_ADDITIONS
+            | self.SB1_ADDITIONS
+            | self.P1_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 56)
+        self.assertEqual(len(live_fks), 96)

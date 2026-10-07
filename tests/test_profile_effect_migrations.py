@@ -8,6 +8,8 @@ from django.db.migrations.loader import MigrationLoader
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from tests.s015_0021_support import migrate_to_target_with_restore
+
 
 class S013MigrationStructureTests(TransactionTestCase):
     def _get_migration(self):
@@ -127,9 +129,7 @@ class S013MigrationRehearsalTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
-        executor = MigrationExecutor(connection)
-        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-        apps = self.migrate(self.migrate_from)
+        apps = migrate_to_target_with_restore(self, self.migrate_from)
         User = apps.get_model("auth", "User")
         Identity = apps.get_model("core", "Identity")
         Service = apps.get_model("core", "Service")
@@ -197,8 +197,7 @@ class S013MigrationRehearsalTests(TransactionTestCase):
         self.activity_pk = activity.pk
 
     def tearDown(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         super().tearDown()
 
     def test_forward_reverse_reapply_preserves_s012_rows(self):

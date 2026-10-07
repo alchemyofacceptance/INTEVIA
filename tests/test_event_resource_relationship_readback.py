@@ -75,6 +75,7 @@ from src.intevia.services.library_exact_version_policy import (
     ImmutableLibraryBindingProvider,
     LibraryExactVersionPolicy,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 25, 20, 0, tzinfo=timezone.utc)
@@ -83,7 +84,7 @@ NOW = datetime(2026, 7, 25, 20, 0, tzinfo=timezone.utc)
 class EventResourceRelationshipReadbackTests(TestCase):
     def setUp(self):
         credential = User.objects.create_user(username="s011b-readback")
-        self.viewer = Identity.objects.create(
+        self.viewer = create_test_identity(
             credential=credential,
             display_name="S011-B reader",
             access_state=Identity.AccessState.ACTIVE,
@@ -804,7 +805,7 @@ class EventResourceRelationshipReadbackTests(TestCase):
         self.assertEqual(presented.resources, ())
 
         other_user = User.objects.create_user(username="s011b-hidden-reader")
-        other = Identity.objects.create(
+        other = create_test_identity(
             credential=other_user,
             access_state=Identity.AccessState.ACTIVE,
         )

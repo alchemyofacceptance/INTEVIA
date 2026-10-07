@@ -10,6 +10,7 @@ from unittest import skipUnless
 
 from core.identity import canonical_username_v1
 from core.models import Identity
+from tests.s015_0021_support import create_test_identity
 
 
 # Corrections under Human Governor Option 1 (UFUND-2, 16 Sep 2026), each citing designated design
@@ -37,7 +38,7 @@ class S0150022ContractTests(TransactionTestCase):
     def _identity(self, label: str) -> Identity:
         username = f"{label}_{uuid.uuid4().hex[:12]}"
         user = User.objects.create_user(username=username, password="password123")
-        return Identity.objects.create(
+        return create_test_identity(
             credential=user,
             canonical_username=canonical_username_v1(username),
             display_name=f"{label} identity",
@@ -45,6 +46,13 @@ class S0150022ContractTests(TransactionTestCase):
 
     def _insert_resolution(self, identity: Identity, *, display_name: str | None = None) -> None:
         with connection.cursor() as cursor:
+            if display_name is None:
+                cursor.execute(
+                    "SELECT 1 FROM public.core_identityresolution WHERE identity_id = %s",
+                    [identity.pk],
+                )
+                if cursor.fetchone() is not None:
+                    return
             cursor.execute(
                 """
                 INSERT INTO public.core_identityresolution (
@@ -168,7 +176,9 @@ class S0150022ContractTests(TransactionTestCase):
                 LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
                 WHERE c.relname IN (
                     'core_identityresolution',
-                    'core_identityresolutionsevered'
+                    'core_identityresolutionsevered',
+                    'core_learnerregistration',
+                    'core_registrationreceipt'
                 )
                 GROUP BY c.relname
                 ORDER BY c.relname
@@ -183,6 +193,28 @@ class S0150022ContractTests(TransactionTestCase):
         self.assertEqual(
             tables["core_identityresolutionsevered"],
             ["identity_id", "severed_at"],
+        )
+        self.assertEqual(
+            tables["core_learnerregistration"],
+            [
+                "id",
+                "registration_uuid",
+                "actor_access_epoch",
+                "entry_mode",
+                "enterer_executor",
+                "authority_reference",
+                "evidence_reference",
+                "effective_at",
+                "received_at",
+                "recorded_at",
+                "registration_commitment",
+                "identity_id",
+                "registration_receipt_id",
+            ],
+        )
+        self.assertEqual(
+            tables["core_registrationreceipt"],
+            ["id", "received_at", "transaction_id"],
         )
 
         with connection.cursor() as cursor:
@@ -211,19 +243,49 @@ class S0150022ContractTests(TransactionTestCase):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT t.tgname, t.tgtype
+                SELECT t.tgname, t.tgtype, t.tgdeferrable, t.tginitdeferred,
+                       p.proname, pg_get_functiondef(p.oid)
                 FROM pg_trigger t
                 JOIN pg_class c ON c.oid = t.tgrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+                JOIN pg_proc p ON p.oid = t.tgfoid
                 WHERE c.relname = 'core_identity' AND t.tgname = 's015_0022_guard_identity_resolution'
                 """
             )
             row = cursor.fetchone()
 
-        # FU-B1 (UFUND-2 Change C; A1 review O-1): these assertions check only that the trigger exists, that its type
-        # includes INSERT and that it excludes UPDATE. They do not check its timing, deferral or the exclusion of DELETE.
-        # The guardian's body is a no-op (0022 IDENTITY_GUARD_BODY; ILC Datacron: not delivered; kept under PKT-B by the
-        # Q-F1 ruling). Passing this test does not establish the insert-only protection.
         self.assertIsNotNone(row)
         self.assertTrue(row[1] & 4)
         self.assertFalse(row[1] & 16)
+        self.assertTrue(row[2])
+        self.assertTrue(row[3])
+        self.assertEqual(row[4], "s015_0022_guard_identity_resolution")
+        self.assertIn("identity-resolution row at commit", row[5])
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tgname, tgdeferrable, tginitdeferred
+                  FROM pg_trigger
+                 WHERE tgrelid = 'public.core_identity'::regclass
+                   AND tgname = 'p1_identity_username_equal'
+                """
+            )
+            equality_trigger = cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT column_name
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'core_identitytransition'
+                   AND column_name IN ('effective_at', 'received_at', 'recorded_at')
+                 ORDER BY column_name
+                """
+            )
+            transition_columns = [row[0] for row in cursor.fetchall()]
+
+        self.assertEqual(equality_trigger, ("p1_identity_username_equal", True, True))
+        self.assertEqual(
+            transition_columns,
+            ["effective_at", "received_at", "recorded_at"],
+        )

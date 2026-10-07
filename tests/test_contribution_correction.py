@@ -6,6 +6,7 @@ from django.test import TestCase
 from core.models import ContributionDecision, Identity, ProfileRole, Role
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.contribution_service import ContributionService
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -19,7 +20,7 @@ class Capability:
 class ContributionCorrectionTests(TestCase):
     def identity(self, name):
         user = User.objects.create_user(username=name)
-        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
+        profile = create_test_identity(credential=user, access_state=Identity.AccessState.ACTIVE)
         role, _ = Role.objects.get_or_create(name="Correction participant")
         ProfileRole.objects.create(identity=profile, role=role)
         return user

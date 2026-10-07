@@ -28,6 +28,7 @@ from src.intevia.services.service_activity_read_service import (
     ServiceActivityReadLineageError,
     ServiceActivityReadService,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 27, 12, 0, 0, tzinfo=timezone.utc)
@@ -40,7 +41,7 @@ def _make_identity(username: str) -> Identity:
     user = User.objects.create_user(username=username)
     user.is_active = True
     user.save()
-    return Identity.objects.create(
+    return create_test_identity(
         credential=user,
         access_state=Identity.AccessState.ACTIVE,
     )

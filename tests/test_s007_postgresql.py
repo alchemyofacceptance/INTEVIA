@@ -2,6 +2,7 @@ from threading import Barrier, Lock, Thread
 from unittest import skipUnless
 from uuid import uuid4
 
+from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.test import Client, TransactionTestCase
@@ -19,10 +20,15 @@ from core.models import (
 from src.intevia.services.event_read_service import EventNotVisible, EventReadService
 from src.intevia.services.identity_service import (
     CredentialService,
+    CredentialServiceRefused,
     IdentityLifecycleService,
     InvalidIdentityTransition,
     OriginatingMembershipProvisioningService,
     ProvisioningConflict,
+)
+from tests.s015_0021_support import (
+    create_test_identity,
+    register_test_learner,
 )
 
 
@@ -184,6 +190,74 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             ("core_livingorganism", "founder_identity_id"),
             ("core_organismcommandreceipt", "actor_id"),
             ("core_organismmembership", "identity_id"),
+            ("core_authorityinvalidationevent", "actor_id"),
+            ("core_circlestateevent", "actor_id"),
+            ("core_contextualroleassignmentstateevent", "actor_id"),
+            ("core_coverageassessment", "actor_id"),
+            ("core_determinationcontestevent", "actor_id"),
+            ("core_livingorganismevent", "actor_id"),
+            ("core_membershipconditionstateevent", "actor_id"),
+            ("core_obligationstateevent", "actor_id"),
+            ("core_organismmembershiptransition", "actor_id"),
+            ("core_planningclassificationevent", "actor_id"),
+            ("core_restrictedcontinuityevent", "accountable_actor_id"),
+            ("core_restrictedcontinuityevent", "actor_id"),
+            ("core_visibilitygrantstateevent", "actor_id"),
+            ("core_application", "actor_id"),
+            ("core_application", "applicant_id"),
+            ("core_application", "enterer_id"),
+            ("core_applicationdecision", "enterer_id"),
+            ("core_applicationdecision", "executor_id"),
+            ("core_applicationdecision", "responsible_coordinator_id"),
+            ("core_applicationengagement", "actor_id"),
+            ("core_applicationengagement", "enterer_id"),
+            ("core_applicationwithdrawal", "actor_id"),
+            ("core_applicationwithdrawal", "enterer_id"),
+            ("core_csaassignment", "actor_id"),
+            ("core_csaassignment", "enterer_id"),
+            ("core_csaassignmentend", "actor_id"),
+            ("core_csaassignmentend", "enterer_id"),
+            ("core_applicationlineageevent", "actor_id"),
+            ("core_applicationlineageevent", "enterer_identity_id"),
+            ("core_applicationlineageevent", "composer_identity_id"),
+            ("core_loapplicationquestionversion", "actor_id"),
+            ("core_loapplicationquestionversion", "enterer_id"),
+            ("core_loapplicationsettingsversion", "actor_id"),
+            ("core_loapplicationsettingsversion", "enterer_id"),
+            ("core_logovernanceconfigurationversion", "actor_id"),
+            ("core_logovernanceconfigurationversion", "enterer_id"),
+            ("core_authoritydecision", "actor_id"),
+            ("core_officeappointmentconsent", "actor_id"),
+            ("core_officeappointmentconsent", "enterer_id"),
+            ("core_lofoundingcontentversion", "actor_identity_id"),
+            ("core_platformtermsacceptance", "accepted_by_identity_id"),
+            ("core_learnerregistration", "identity_id"),
+            ("core_livingorganismevent", "enterer_identity_id"),
+            ("core_livingorganismevent", "composer_identity_id"),
+            ("core_circlestateevent", "enterer_identity_id"),
+            ("core_circlestateevent", "composer_identity_id"),
+            ("core_organismmembershiptransition", "enterer_identity_id"),
+            ("core_organismmembershiptransition", "composer_identity_id"),
+            ("core_contextualroleassignmentstateevent", "enterer_identity_id"),
+            ("core_contextualroleassignmentstateevent", "composer_identity_id"),
+            ("core_membershipconditionstateevent", "enterer_identity_id"),
+            ("core_membershipconditionstateevent", "composer_identity_id"),
+            ("core_authorityinvalidationevent", "enterer_identity_id"),
+            ("core_authorityinvalidationevent", "composer_identity_id"),
+            ("core_determinationcontestevent", "enterer_identity_id"),
+            ("core_determinationcontestevent", "composer_identity_id"),
+            ("core_coverageassessment", "enterer_identity_id"),
+            ("core_coverageassessment", "composer_identity_id"),
+            ("core_restrictedcontinuityevent", "enterer_identity_id"),
+            ("core_restrictedcontinuityevent", "composer_identity_id"),
+            ("core_visibilitygrantstateevent", "enterer_identity_id"),
+            ("core_visibilitygrantstateevent", "composer_identity_id"),
+            ("core_obligationstateevent", "enterer_identity_id"),
+            ("core_obligationstateevent", "composer_identity_id"),
+            ("core_planningclassificationevent", "enterer_identity_id"),
+            ("core_planningclassificationevent", "composer_identity_id"),
+            ("core_identityresolution", "identity_id"),
+            ("core_identityresolutionsevered", "identity_id"),
         }
         with connection.cursor() as cursor:
             cursor.execute(
@@ -209,11 +283,11 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             )
             observed = set(cursor.fetchall())
         self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 56)
+        self.assertEqual(len(observed), 124)
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")
-        identity = Identity.objects.create(credential=credential)
+        identity = create_test_identity(credential=credential)
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 Identity.objects.filter(pk=identity.pk).update(
@@ -275,6 +349,14 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
             correlation_id=uuid4(),
         )
 
+    @staticmethod
+    def registered_learner(username):
+        return register_test_learner(
+            username=username,
+            password="governed-test-password",
+            display_name="PostgreSQL registered identity",
+        )
+
     def test_concurrent_canonical_username_has_one_complete_winner(self):
         def provision(username):
             return lambda: CredentialService.provision(
@@ -306,7 +388,7 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
         credential = User.objects.create_user(username="single-credential")
 
         def bind():
-            return Identity.objects.create(
+            return create_test_identity(
                 credential_id=credential.pk,
                 display_name="Bound Identity",
                 canonical_username="single-credential",
@@ -354,7 +436,7 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
 
     def test_concurrent_provisioning_intent_and_supersession(self):
         credential = User.objects.create_user(username="provisioning-race")
-        identity = Identity.objects.create(credential=credential)
+        identity = create_test_identity(credential=credential)
 
         def request():
             return OriginatingMembershipProvisioningService.request(
@@ -394,6 +476,7 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
         )
 
     def test_concurrent_credential_replacements_leave_one_usable_binding(self):
+        """W-PC4 concurrent case: one same-epoch password change succeeds exactly once."""
         identity, request = self.provision("replacement-race")
         self.fulfil(request)
         IdentityLifecycleService.activate(
@@ -404,47 +487,76 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
             technical_executor="postgres-guardian",
             correlation_id=uuid4(),
         )
+        identity.refresh_from_db()
         original_pk = identity.pk
         original_uuid = identity.identity_id
+        original_credential_id = identity.credential_id
+        original_username = identity.credential.username
+        starting_epoch = identity.access_epoch
+        user_count_before = User.objects.count()
+        passwords = (
+            "replacement-one-governed-password",
+            "replacement-two-governed-password",
+        )
 
-        def replace(username):
-            return lambda: CredentialService.replace(
-                identity_id=identity.identity_id,
-                replacement_username=username,
-                replacement_password="replacement-governed-password",
-                requesting_actor=None,
-                authority_reference="authority:replace",
-                evidence_reference="evidence:replace",
-                correlation_id=uuid4(),
-                technical_executor="postgres-guardian",
-            )
+        def change_password(password):
+            def operation():
+                try:
+                    result = CredentialService.change_password(
+                        identity_id=identity.identity_id,
+                        new_password=password,
+                        requesting_actor=identity,
+                        session_access_epoch=starting_epoch,
+                        correlation_id=uuid4(),
+                    )
+                except CredentialServiceRefused as error:
+                    return password, error
+                return password, result
+
+            return operation
 
         results = self.run_concurrently(
-            [replace("replacement-one"), replace("replacement-two")]
+            [change_password(password) for password in passwords]
         )
-        accepted = sum(
-            isinstance(result, IdentityTransition) for result in results
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(isinstance(result, tuple) for result in results), results)
+        successes = [
+            result for result in results if isinstance(result[1], IdentityTransition)
+        ]
+        refusals = [
+            result
+            for result in results
+            if isinstance(result[1], CredentialServiceRefused)
+        ]
+        self.assertEqual(len(successes), 1, results)
+        self.assertEqual(len(refusals), 1, results)
+        self.assertEqual(
+            refusals[0][1].code,
+            "PASSWORD_CHANGE_SESSION_STALE",
+            results,
         )
-        self.assertIn(accepted, {1, 2}, results)
         identity.refresh_from_db()
+        identity.credential.refresh_from_db()
         self.assertEqual(identity.pk, original_pk)
         self.assertEqual(identity.identity_id, original_uuid)
-        self.assertEqual(identity.access_epoch, accepted, results)
-        self.assertEqual(User.objects.filter(is_active=True).count(), 1)
-        self.assertEqual(User.objects.count(), accepted + 1, results)
-        self.assertEqual(identity.credential_id, User.objects.get(is_active=True).pk)
-        for retired in User.objects.exclude(pk=identity.credential_id):
-            self.assertFalse(retired.has_usable_password())
+        self.assertEqual(identity.credential_id, original_credential_id)
+        self.assertEqual(identity.credential.username, original_username)
+        self.assertEqual(identity.access_epoch, starting_epoch + 1, results)
+        self.assertEqual(User.objects.count(), user_count_before)
+        successful_password = successes[0][0]
+        refused_password = refusals[0][0]
+        self.assertTrue(identity.credential.check_password(successful_password))
+        self.assertFalse(identity.credential.check_password(refused_password))
         self.assertEqual(
             identity.access_transitions.filter(
                 action=IdentityTransition.Action.REPLACE_CREDENTIAL
             ).count(),
-            accepted,
+            1,
         )
 
     def test_committed_restriction_denies_stale_event_projection(self):
         credential = User.objects.create_user(username="restricted-reader")
-        identity = Identity.objects.create(
+        identity = create_test_identity(
             credential=credential,
             access_state=Identity.AccessState.ACTIVE,
         )
@@ -470,15 +582,8 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
             EventReadService.list_visible(stale_identity)
 
     def test_login_racing_deactivation_has_no_usable_product_session(self):
-        identity, request = self.provision("login-deactivation-race")
-        self.fulfil(request)
-        IdentityLifecycleService.activate(
-            identity_id=identity.identity_id,
-            fulfilment_evidence_reference="evidence:membership-fulfilled",
-            requesting_actor=None,
-            authority_reference="authority:activate",
-            technical_executor="postgres-guardian",
-            correlation_id=uuid4(),
+        identity = self.registered_learner(
+            "login-deactivation-race"
         )
         client = Client()
 
@@ -516,16 +621,7 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
         )
 
     def test_reactivation_does_not_revive_flushed_session(self):
-        identity, request = self.provision("reactivation-session")
-        self.fulfil(request)
-        IdentityLifecycleService.activate(
-            identity_id=identity.identity_id,
-            fulfilment_evidence_reference="evidence:membership-fulfilled",
-            requesting_actor=None,
-            authority_reference="authority:activate",
-            technical_executor="postgres-guardian",
-            correlation_id=uuid4(),
-        )
+        identity = self.registered_learner("reactivation-session")
         client = Client()
         client.post(
             reverse("login"),
@@ -556,22 +652,15 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
             evidence_reference="evidence:membership-fulfilled",
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             correlation_id=uuid4(),
+            proof_password="governed-test-password",
         )
         self.assertTrue(
             client.get(reverse("shell")).url.startswith(reverse("login"))
         )
 
     def test_credential_replacement_invalidates_existing_session(self):
-        identity, request = self.provision("replacement-session")
-        self.fulfil(request)
-        IdentityLifecycleService.activate(
-            identity_id=identity.identity_id,
-            fulfilment_evidence_reference="evidence:membership-fulfilled",
-            requesting_actor=None,
-            authority_reference="authority:activate",
-            technical_executor="postgres-guardian",
-            correlation_id=uuid4(),
-        )
+        """W-PC3(iii): the operation invalidates the session that made the change."""
+        identity = self.registered_learner("replacement-session")
         old_credential = identity.credential
         client = Client()
         client.post(
@@ -581,22 +670,44 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
                 "password": "governed-test-password",
             },
         )
-        CredentialService.replace(
+        identity.refresh_from_db()
+        original_credential_id = identity.credential_id
+        original_username = identity.credential.username
+        starting_epoch = identity.access_epoch
+        transition = CredentialService.change_password(
             identity_id=identity.identity_id,
-            replacement_username="replacement-session-new",
-            replacement_password="new-governed-test-password",
-            requesting_actor=None,
-            authority_reference="authority:replace",
-            evidence_reference="evidence:replace",
+            new_password="new-governed-test-password",
+            requesting_actor=identity,
+            session_access_epoch=starting_epoch,
             correlation_id=uuid4(),
-            technical_executor="postgres-guardian",
         )
         self.assertTrue(
             client.get(reverse("shell")).url.startswith(reverse("login"))
         )
         old_credential.refresh_from_db()
-        self.assertFalse(old_credential.is_active)
-        self.assertFalse(old_credential.has_usable_password())
+        identity.refresh_from_db()
+        self.assertEqual(identity.credential_id, original_credential_id)
+        self.assertEqual(identity.credential.username, original_username)
+        self.assertEqual(identity.access_epoch, starting_epoch + 1)
+        self.assertTrue(old_credential.is_active)
+        self.assertTrue(old_credential.check_password("new-governed-test-password"))
+        self.assertIsNone(
+            authenticate(
+                username=original_username,
+                password="governed-test-password",
+            )
+        )
+        self.assertEqual(
+            authenticate(
+                username=original_username,
+                password="new-governed-test-password",
+            ).pk,
+            original_credential_id,
+        )
+        self.assertEqual(
+            transition.action,
+            IdentityTransition.Action.REPLACE_CREDENTIAL,
+        )
 
     def test_profilerole_does_not_grant_shell_or_lifecycle_access(self):
         self.assertEqual(ProfileRole.objects.count(), 0)

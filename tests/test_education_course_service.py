@@ -30,6 +30,7 @@ from src.intevia.services.education_course_service import (
     EducationCourseStaleHeadConflict,
     EducationCourseValidationError,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 class _Allow:
@@ -71,7 +72,7 @@ class _MalformedEqualEcho:
 class EducationCourseServiceTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="course-service")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=self.user, access_state=Identity.AccessState.ACTIVE
         )
         self.now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
@@ -257,7 +258,7 @@ class EducationCourseServiceTests(TestCase):
         for number, (existing_id, requested_id) in enumerate(orderings):
             with self.subTest(existing_id=existing_id, requested_id=requested_id):
                 user = User.objects.create_user(username=f"course-order-{number}")
-                Identity.objects.create(
+                create_test_identity(
                     credential=user, access_state=Identity.AccessState.ACTIVE
                 )
                 service = EducationCourseService(
@@ -332,7 +333,7 @@ class EducationCourseServiceTests(TestCase):
 
         first = self.service.create(self.create_command())
         other_user = User.objects.create_user(username="course-other-author")
-        Identity.objects.create(
+        create_test_identity(
             credential=other_user, access_state=Identity.AccessState.ACTIVE
         )
         command = self.append_command(first, credential=other_user)

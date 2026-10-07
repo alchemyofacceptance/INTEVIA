@@ -22,6 +22,7 @@ from src.intevia.services.event_resource_relationship_policy import (
     ImmutableEventAuthorityBindingProvider,
     ImmutableRelationshipDisclosureBindingProvider,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
@@ -30,7 +31,7 @@ NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
 class EventResourceRelationshipPolicyTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="s011b-policy")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=self.user,
             access_state=Identity.AccessState.ACTIVE,
             access_epoch=5,

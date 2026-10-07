@@ -44,6 +44,8 @@ S015_TRUNCATE_GUARDIANS = {
     ),
     "core_platformtermsversion": "s015_platformtermsversion_truncate_immutable",
     "core_platformtermsacceptance": "s015_platformtermsacceptance_truncate_immutable",
+    "core_learnerregistration": "s015_learnerregistration_truncate_immutable",
+    "core_registrationreceipt": "s015_registrationreceipt_truncate_immutable",
 }
 
 # Tables created by migrations in raw SQL, with no Django model, that a test can write.

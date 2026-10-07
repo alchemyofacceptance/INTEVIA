@@ -20,6 +20,8 @@ from unittest import skipUnless
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 
+from tests.s015_0021_support import create_test_identity
+
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 commitment preimages are PostgreSQL functions")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 T0 = dt.datetime(2026, 9, 5, 10, 0, 0, tzinfo=dt.timezone.utc)
@@ -184,12 +186,11 @@ class LawfulRecordWithParts(TransactionTestCase):
         state = {}
 
         def found(cur):
-            cur.execute("INSERT INTO auth_user (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) "
-                        "VALUES ('!unusable', false, 'ufund2_0024', '', '', '', false, true, now()) RETURNING id")
-            user = cur.fetchone()[0]
-            cur.execute("INSERT INTO core_identity (display_name, created_at, credential_id, identity_id, canonical_username, access_state, access_epoch, updated_at) "
-                        "VALUES ('UFUND2 0024', now(), %s, %s, 'ufund2_0024', 'active', 0, now()) RETURNING id", (user, str(uuid.uuid4())))
-            actor = cur.fetchone()[0]
+            actor = create_test_identity(
+                username="ufund2_0024",
+                display_name="UFUND2 0024",
+                access_state="active",
+            ).pk
             cur.execute("INSERT INTO core_authorityprincipal (principal_uuid, canonical_governed_source_id, governed_source_namespace, display_label, recorded_at) "
                         "VALUES (%s, 'urn:intevia:governed-source:ufund2:0024', 'UFUND2_THROWAWAY', 'UFUND2 0024', now()) RETURNING id", (str(uuid.uuid4()),))
             principal = cur.fetchone()[0]

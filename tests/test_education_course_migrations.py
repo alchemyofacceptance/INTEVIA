@@ -5,6 +5,7 @@ from django.db.migrations.loader import MigrationLoader
 from django.test import TransactionTestCase
 
 from core.models import Identity
+from tests.s015_0021_support import create_test_identity
 
 
 class EducationCourseMigrationStructureTests(TransactionTestCase):
@@ -80,7 +81,7 @@ class EducationCourseMigrationRehearsalTests(TransactionTestCase):
 
     def test_pre_existing_rows_survive_forward_reverse_reapply(self):
         user = User.objects.create_user(username="s014-migration-preserved")
-        identity = Identity.objects.create(
+        identity = create_test_identity(
             credential=user, access_state=Identity.AccessState.ACTIVE
         )
         executor = MigrationExecutor(connection)

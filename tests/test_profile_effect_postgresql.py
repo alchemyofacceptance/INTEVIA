@@ -11,6 +11,8 @@ from django.db.models import F
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from tests.s015_0021_support import migrate_to_target_with_restore
+
 from core.models import (
     Identity,
     ProfileEffectProjectionDisposition,
@@ -1159,9 +1161,7 @@ class ProfileEffectPostgreSQLMigrationRehearsalTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
-        executor = MigrationExecutor(connection)
-        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-        apps = self.migrate(self.migrate_from)
+        apps = migrate_to_target_with_restore(self, self.migrate_from)
         User = apps.get_model("auth", "User")
         Identity = apps.get_model("core", "Identity")
         Service = apps.get_model("core", "Service")
@@ -1229,8 +1229,7 @@ class ProfileEffectPostgreSQLMigrationRehearsalTests(TransactionTestCase):
         self.activity_pk = activity.pk
 
     def tearDown(self):
-        executor = MigrationExecutor(connection)
-        executor.migrate(self.received_leaf_targets)
+        self.restore_received_migrations()
         super().tearDown()
 
     def test_forward_reverse_reapply_preserves_preexisting_s012_rows(self):

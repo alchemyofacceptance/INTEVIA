@@ -29,6 +29,7 @@ from src.intevia.services.event_read_service import (
     EventNotVisible,
     EventReadService,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -55,17 +56,17 @@ class AsyncCapability:
 class EventAttendanceFoundationTests(TestCase):
     def setUp(self):
         self.actor_user = User.objects.create_user(username="attendance-actor")
-        self.actor = Identity.objects.create(
+        self.actor = create_test_identity(
             credential=self.actor_user,
             access_state=Identity.AccessState.ACTIVE,
         )
         self.subject_user = User.objects.create_user(username="attendance-subject")
-        self.subject = Identity.objects.create(
+        self.subject = create_test_identity(
             credential=self.subject_user,
             access_state=Identity.AccessState.ACTIVE,
         )
         self.other_user = User.objects.create_user(username="attendance-other")
-        self.other = Identity.objects.create(
+        self.other = create_test_identity(
             credential=self.other_user,
             access_state=Identity.AccessState.ACTIVE,
         )
@@ -590,7 +591,7 @@ class EventAttendanceFoundationTests(TestCase):
             is_staff=True,
             is_superuser=True,
         )
-        outsider = Identity.objects.create(
+        outsider = create_test_identity(
             credential=outsider_user,
             access_state=Identity.AccessState.ACTIVE,
         )

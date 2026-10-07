@@ -11,6 +11,7 @@ from src.intevia.observation.journal import (
 )
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.event_service import EventService
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -24,7 +25,7 @@ class Capability:
 class EventObservationTests(TestCase):
     def test_observation_is_derived_from_durable_transition(self):
         user = User.objects.create_user(username="event-observation")
-        profile = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
+        profile = create_test_identity(credential=user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Event observation participant")
         ProfileRole.objects.create(identity=profile, role=role)
         service = EventService(authority=ContributionAuthority(Capability()))

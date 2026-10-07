@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from django.contrib.auth.models import User
 from django.test import Client, TestCase
@@ -11,12 +12,15 @@ from core.models import (
     EventRegistrationEvidenceReference,
     EventRegistrationTransition,
     Identity,
+    IdentityTransition,
 )
 from core.session import (
     SESSION_ACCESS_EPOCH_KEY,
     SESSION_IDENTITY_KEY,
     SESSION_STARTED_AT_KEY,
 )
+from src.intevia.services.identity_service import IdentityLifecycleService
+from tests.s015_0021_support import create_test_identity, register_test_learner
 
 
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
@@ -24,17 +28,33 @@ NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
 
 class AuthenticationShellTests(TestCase):
     def identity(self, username="carmien", state=Identity.AccessState.ACTIVE):
-        credential = User.objects.create_user(
+        identity = register_test_learner(
             username=username,
             password="governed-test-password",
-            is_active=state != Identity.AccessState.DEACTIVATED,
-        )
-        identity = Identity.objects.create(
-            credential=credential,
             display_name=username.title(),
-            access_state=state,
         )
-        return credential, identity
+        if state == Identity.AccessState.RESTRICTED:
+            action = IdentityTransition.Action.RESTRICT
+            reason = IdentityTransition.ReasonCategory.ACCESS_REVIEW
+        elif state == Identity.AccessState.DEACTIVATED:
+            action = IdentityTransition.Action.DEACTIVATE
+            reason = IdentityTransition.ReasonCategory.SECURITY
+        else:
+            action = None
+            reason = None
+        if action is not None:
+            IdentityLifecycleService.change_access(
+                identity_id=identity.identity_id,
+                action=action,
+                requesting_actor=identity,
+                authority_reference="authority:authentication-shell-state",
+                technical_executor="test-suite",
+                evidence_reference="evidence:authentication-shell-state",
+                reason_category=reason,
+                correlation_id=uuid4(),
+            )
+            identity.refresh_from_db()
+        return identity.credential, identity
 
     def login(self, username="carmien"):
         return self.client.post(
@@ -128,7 +148,12 @@ class AuthenticationShellTests(TestCase):
 
 class EventReadShellTests(TestCase):
     def setUp(self):
-        self.user, self.identity = self.make_identity("reader")
+        self.identity = register_test_learner(
+            username="reader",
+            password="governed-test-password",
+            display_name="Reader",
+        )
+        self.user = self.identity.credential
         self.other_user, self.other = self.make_identity("other")
         self.client.post(
             reverse("login"),
@@ -141,7 +166,7 @@ class EventReadShellTests(TestCase):
             username=username,
             password="governed-test-password",
         )
-        identity = Identity.objects.create(
+        identity = create_test_identity(
             credential=user,
             display_name=username.title(),
             access_state=Identity.AccessState.ACTIVE,

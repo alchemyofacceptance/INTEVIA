@@ -12,6 +12,7 @@ from src.intevia.services.contribution_authority import (
     NotAuthorised,
 )
 from src.intevia.services.contribution_service import ContributionService
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -32,7 +33,7 @@ class Capability:
 class ContributionAuthorityTests(TestCase):
     def make_identity(self, name: str, *, active: bool = True):
         user = User.objects.create_user(username=name, is_active=active)
-        profile = Identity.objects.create(credential=user, display_name=name, access_state=Identity.AccessState.ACTIVE)
+        profile = create_test_identity(credential=user, display_name=name, access_state=Identity.AccessState.ACTIVE)
         return user, profile
 
     def assign_role(self, profile: Identity) -> None:

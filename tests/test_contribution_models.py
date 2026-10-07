@@ -16,6 +16,7 @@ from core.models import (
 )
 from src.intevia.services.contribution_authority import ContributionAuthority
 from src.intevia.services.contribution_service import ContributionService
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -29,7 +30,7 @@ class Capability:
 class ContributionModelTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="model-contributor")
-        self.profile = Identity.objects.create(credential=self.user, access_state=Identity.AccessState.ACTIVE)
+        self.profile = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
         role = Role.objects.create(name="Model participant")
         ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = ContributionService(

@@ -26,6 +26,7 @@ from src.intevia.services.library_exact_version_policy import (
     LibraryExactVersionPolicy,
     VIEWER_SCOPE,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 23, 18, 30, tzinfo=timezone.utc)
@@ -34,7 +35,7 @@ NOW = datetime(2026, 7, 23, 18, 30, tzinfo=timezone.utc)
 class TransactionBoundaryTests(TransactionTestCase):
     def setUp(self):
         user = User.objects.create_user(username="s011a-transaction")
-        self.identity = Identity.objects.create(credential=user, access_state=Identity.AccessState.ACTIVE)
+        self.identity = create_test_identity(credential=user, access_state=Identity.AccessState.ACTIVE)
         self.resource = LibraryResource.objects.create(
             resource_id="lib.resource~transaction",
             created_by=self.identity,

@@ -1,6 +1,9 @@
+import logging
+
 from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
+from django.db import connection
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -18,6 +21,9 @@ from src.intevia.services.event_self_registration_service import (
 	EventSelfRegistrationService,
 	SelfRegistrationOutcome,
 )
+from src.intevia.services.organism_application_authority import (
+	ProductionGovernedRegistrationFactSource,
+)
 
 
 REGISTRATION_OUTCOME_MESSAGES = {
@@ -32,6 +38,38 @@ REGISTRATION_NOT_COMPLETED = (
 REGISTRATION_INDETERMINATE = (
 	"We could not confirm the result. Return to the Event page to check the current registration record."
 )
+SIGNIN_UNAVAILABLE = "Unable to sign in with those credentials."
+SIGNIN_REGISTRATION_INCOMPLETE_MESSAGE = (
+	"Sign-in was refused because no governed registration effective and known at "
+	"sign-in was found for this identity. Check how the account was created and "
+	"whether registration completed. Resolve it through the supported registration "
+	"process; do not bypass the registration check."
+)
+signin_logger = logging.getLogger("intevia.signin")
+
+
+def _registration_missing_at_signin(identity: Identity) -> bool:
+	if identity.access_state not in {
+		Identity.AccessState.ACTIVE,
+		Identity.AccessState.RESTRICTED,
+	}:
+		return False
+	with connection.cursor() as cursor:
+		cursor.execute("SELECT clock_timestamp()")
+		known_at = cursor.fetchone()[0]
+	if ProductionGovernedRegistrationFactSource().reference_at(
+		identity.identity_id,
+		known_at,
+		known_at,
+	) is not None:
+		return False
+	signin_logger.warning(
+		"%s | %s | %s",
+		"SIGNIN_REGISTRATION_INCOMPLETE",
+		SIGNIN_REGISTRATION_INCOMPLETE_MESSAGE,
+		identity.identity_id,
+	)
+	return True
 
 
 @require_http_methods(["GET", "POST"])
@@ -53,13 +91,15 @@ def product_login(request: HttpRequest) -> HttpResponse:
 		try:
 			identity = Identity.objects.get(credential=credential)
 		except (Identity.DoesNotExist, Identity.MultipleObjectsReturned):
-			form.add_error(None, "Unable to sign in with those credentials.")
+			form.add_error(None, SIGNIN_UNAVAILABLE)
 		else:
 			if identity.access_state not in {
 				Identity.AccessState.ACTIVE,
 				Identity.AccessState.RESTRICTED,
 			}:
-				form.add_error(None, "Unable to sign in with those credentials.")
+				form.add_error(None, SIGNIN_UNAVAILABLE)
+			elif _registration_missing_at_signin(identity):
+				form.add_error(None, SIGNIN_UNAVAILABLE)
 			else:
 				login(request, credential)
 				bind_identity_session(request, identity)

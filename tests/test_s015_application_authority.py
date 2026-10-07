@@ -25,6 +25,7 @@ from uuid import uuid4
 
 from django.db import DatabaseError, connection, transaction
 from django.test import TransactionTestCase
+from django.utils import timezone as django_timezone
 
 from core.models import (
     Application,
@@ -46,6 +47,7 @@ from core.organism_contract import OrganismAction
 from src.intevia.services.organism_application_authority import (
     _assignment_term_in_effect,
     ProductionApplicationAuthorityProvider,
+    ProductionGovernedRegistrationFactSource,
 )
 from src.intevia.services.organism_application_service import (
     ApplicationCommandResult,
@@ -62,6 +64,7 @@ from src.intevia.services.organism_application_service import (
     SubmitApplicationCommand,
     WithdrawApplicationCommand,
 )
+from src.intevia.services.identity_service import IdentityLifecycleService
 from src.intevia.services.organism_authority import (
     S015Authority,
     S015AuthorityDenied,
@@ -82,9 +85,11 @@ from tests.s015_0034_support import emit_guard_catalogue
 from tests.s015_0021_support import (
     T0,
     append_event,
+    create_test_identity,
     empty_fp,
     found_nonroot,
     fresh,
+    register_test_learner,
     refresh,
     seed_identity,
     seed_test_gateway,
@@ -166,25 +171,6 @@ class _HistoricalReferenceAuthorityProvider:
         )
 
 
-class TestFixtureGovernedRegistrationFactSource:
-    """TEST FIXTURE ONLY: maps a labelled ACTIVATE row to the absent registration fixture contract."""
-
-    def reference_at(self, identity_id, effective_at, evaluated_at):
-        transitions = IdentityTransition.objects.filter(
-            identity__identity_id=identity_id,
-            occurred_at__lte=evaluated_at,
-        )
-        latest = transitions.order_by("-occurred_at", "-pk").first()
-        if latest is None or latest.resulting_state != Identity.AccessState.ACTIVE:
-            return None
-        fixture = transitions.filter(
-            action=IdentityTransition.Action.ACTIVATE,
-            authority_reference="TEST_FIXTURE:REGISTRATION",
-            occurred_at__lte=effective_at,
-        ).order_by("-occurred_at", "-pk").first()
-        return None if fixture is None else f"identity-transition:{fixture.pk}"
-
-
 class TestFixtureCoordinatorNominationEntitlementFactSource:
     """TEST FIXTURE ONLY: supplies a labelled subscription entitlement reference."""
 
@@ -205,37 +191,15 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             self.ids = found_nonroot(cursor, tag=self.tag)
             seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
-            applicant_pk = seed_identity(cursor, f"applicant-{self.tag}")
             cursor.execute(
                 "SELECT organism_id FROM core_livingorganism WHERE id = %s",
                 [self.ids["lo"]],
             )
             self.organism_uuid = cursor.fetchone()[0]
-        self.applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
-        provision = IdentityTransition.objects.create(
-            identity=self.applicant,
-            action=IdentityTransition.Action.PROVISION,
-            prior_state=None,
-            resulting_state=Identity.AccessState.PENDING,
-            authority_reference="TEST_FIXTURE:PROVISION",
-            technical_executor="TEST_FIXTURE",
-            evidence_reference="TEST_FIXTURE:IDENTITY_HISTORY",
-            reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
-            correlation_id=uuid4(),
-            occurred_at=T0,
-        )
-        IdentityTransition.objects.create(
-            identity=self.applicant,
-            action=IdentityTransition.Action.ACTIVATE,
-            prior_state=Identity.AccessState.PENDING,
-            resulting_state=Identity.AccessState.ACTIVE,
-            authority_reference="TEST_FIXTURE:REGISTRATION",
-            technical_executor="TEST_FIXTURE",
-            evidence_reference="TEST_FIXTURE:IDENTITY_HISTORY",
-            reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
-            correlation_id=uuid4(),
-            occurred_at=T0 + timedelta(hours=1),
-            previous_transition=provision,
+        self.applicant = register_test_learner(
+            username=f"applicant-{self.tag}",
+            password="governed-test-password",
+            display_name=f"Applicant {self.tag}",
         )
         self._capture_database_now()
 
@@ -263,12 +227,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             clock=lambda: self.now,
         )
 
-    def _submit(self, service, suffix, applicant=None):
+    def _submit(self, service, suffix, applicant=None, organism_uuid=None):
         self._capture_database_now()
         applicant = self.applicant if applicant is None else applicant
+        organism_uuid = self.organism_uuid if organism_uuid is None else organism_uuid
         return service.submit_application(SubmitApplicationCommand(
             credential=applicant.credential,
-            living_organism_id=self.organism_uuid,
+            living_organism_id=organism_uuid,
             request_reference=f"aa-r1:submit:{suffix}:{self.tag}",
             idempotency_key=f"aa-r1:submit:key:{suffix}:{self.tag}",
             occurred_at=self.now,
@@ -474,7 +439,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def _qualified_submission_record(self, suffix):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         result = self._submit(service, suffix)
         return AuthorityDecision.objects.get(decision_reference=result.authority_decision_reference)
@@ -514,7 +479,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         ))
 
     def test_production_sources_fail_closed_without_governed_birthing(self):
-        service = self._service(registration_source=TestFixtureGovernedRegistrationFactSource())
+        service = self._service(registration_source=ProductionGovernedRegistrationFactSource())
         before = self._public_row_counts()
         with self.assertRaises(S015AuthorityDenied) as denied:
             self._submit(service, "no-birthing")
@@ -537,14 +502,104 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertIsNone(birthing_fact["reference"])
 
     def test_production_registration_source_fails_closed(self):
-        service = self._service(birthing_source=TestFixtureBirthingFactSource(self.organism_uuid))
+        unregistered = create_test_identity(
+            username=f"unregistered-{fresh()}",
+            access_state=Identity.AccessState.ACTIVE,
+        )
+        observed_at = django_timezone.now()
+        source = ProductionGovernedRegistrationFactSource()
+        self.assertIsNone(
+            source.reference_at(
+                unregistered.identity_id,
+                observed_at,
+                observed_at,
+            )
+        )
+
+    def test_submit_refuses_unregistered_applicant(self):
+        service = self._service(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid)
+        )
+        unregistered = create_test_identity(
+            username=f"unregistered-submit-{fresh()}",
+            access_state=Identity.AccessState.ACTIVE,
+        )
         with self.assertRaises(S015AuthorityDenied) as denied:
-            self._submit(service, "no-registration")
+            self._submit(service, "no-registration", applicant=unregistered)
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_REGISTERED)
         record = AuthorityDecision.objects.get(
             decision_reference=denied.exception.authority_decision_reference,
         )
         self.assertEqual(record.refusal_code, "E_NOT_REGISTERED")
+
+    def test_inactive_registered_actor_is_refused_by_command_lock(self):
+        service = self._service(
+            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid)
+        )
+        inactive = register_test_learner(
+            username=f"inactive-applicant-{self.tag}",
+            password="governed-test-password",
+            display_name="Inactive Registered Applicant",
+        )
+        IdentityLifecycleService.change_access(
+            identity_id=inactive.identity_id,
+            action=IdentityTransition.Action.DEACTIVATE,
+            requesting_actor=inactive,
+            authority_reference="authority:application-inactive",
+            technical_executor="test-suite",
+            evidence_reference="evidence:application-inactive",
+            reason_category=IdentityTransition.ReasonCategory.SECURITY,
+            correlation_id=uuid4(),
+        )
+        with self.assertRaisesMessage(
+            S015ApplicationAuthorityUnavailable,
+            "actor Identity is not active",
+        ):
+            self._submit(service, "inactive-registration", applicant=inactive)
+
+    def test_fixture_and_legacy_registration_references_are_refused_unchanged(self):
+        class FixedRegistrationReference:
+            def __init__(self, reference):
+                self.reference = reference
+
+            def reference_at(self, _identity_id, _effective_at, _evaluated_at):
+                return self.reference
+
+        legacy = IdentityTransition.objects.create(
+            identity=self.applicant,
+            action=IdentityTransition.Action.ACTIVATE,
+            prior_state=Identity.AccessState.PENDING,
+            resulting_state=Identity.AccessState.ACTIVE,
+            authority_reference="identity-transition:legacy-fixture",
+            technical_executor="test-suite",
+            evidence_reference="legacy-registration-reference",
+            reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            correlation_id=uuid4(),
+            occurred_at=self.now - timedelta(minutes=1),
+        )
+        legacy_before = IdentityTransition.objects.filter(pk=legacy.pk).values().get()
+        references = (
+            "fixture-registration:00000000-0000-4000-8000-000000000001",
+            f"identity-transition:{legacy.pk}",
+        )
+        for index, reference in enumerate(references):
+            with self.subTest(reference_kind=index):
+                service = self._service(
+                    birthing_source=TestFixtureBirthingFactSource(
+                        self.organism_uuid
+                    ),
+                    registration_source=FixedRegistrationReference(reference),
+                )
+                with self.assertRaises(S015AuthorityDenied) as refused:
+                    self._submit(service, f"legacy-registration-{index}")
+                self.assertEqual(
+                    refused.exception.refusal_code,
+                    S015AuthorityRefusalCode.E_NOT_REGISTERED,
+                )
+                self.assertEqual(
+                    IdentityTransition.objects.filter(pk=legacy.pk).values().get(),
+                    legacy_before,
+                )
 
     def test_absent_governance_configuration_refuses_at_submission_and_coordinator_route(self):
         with transaction.atomic(), connection.cursor() as cursor:
@@ -552,12 +607,14 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             gateway = seed_test_gateway(cursor, ids)
             cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", [ids["lo"]])
             organism_uuid = cursor.fetchone()[0]
-            applicant_pk = seed_identity(cursor, f"no-configuration-applicant-{self.tag}")
-        applicant = Identity.objects.get(pk=applicant_pk)
-        self._add_fixture_access_history(applicant, "no-configuration")
+        applicant = register_test_learner(
+            username=f"no-configuration-applicant-{self.tag}",
+            password="governed-test-password",
+            display_name="No Configuration Applicant",
+        )
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         with self.assertRaises(S015AuthorityDenied) as submission_denied:
             self._capture_database_now()
@@ -624,7 +681,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_decided_application_cannot_be_withdrawn(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "decided-withdrawal")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -683,7 +740,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_another_person_cannot_withdraw_an_application(self):
         submission = self._submit(self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         ), "other-withdraw")
         application = Application.objects.get(application_uuid=submission.application_uuid)
         actor = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
@@ -706,7 +763,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_second_open_application_is_refused(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         self._submit(service, "open-first")
         with self.assertRaises(S015AuthorityDenied) as denied:
@@ -716,7 +773,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_closed_gateway_refuses_submission(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         self._capture_database_now()
@@ -1128,7 +1185,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_applicant_cannot_claim_own_application(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         result = self._submit(service, "applicant-claim")
         application = Application.objects.get(application_uuid=result.application_uuid)
@@ -1196,7 +1253,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         }
         provider = ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         member_request = self._post_request(member, OrganismAction.CLAIM_APPLICATION, target, suffix="disclosure-member")
         outsider_request = self._post_request(outsider, OrganismAction.CLAIM_APPLICATION, target, suffix="disclosure-outsider")
@@ -1270,14 +1327,38 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
 
     def test_current_member_cannot_submit_an_application(self):
-        member = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
-        self._add_fixture_access_history(member, "member-registration")
+        member = register_test_learner(
+            username=f"current-member-{self.tag}",
+            password="governed-test-password",
+            display_name="Current Member",
+        )
+        with transaction.atomic(), connection.cursor() as cursor:
+            member_ids = found_nonroot(
+                cursor,
+                tag=f"registered-current-member-{self.tag}",
+                identity_id=member.pk,
+            )
+            seed_test_gateway(
+                cursor,
+                member_ids,
+                include_governance_configuration=True,
+            )
+            cursor.execute(
+                "SELECT organism_id FROM core_livingorganism WHERE id = %s",
+                [member_ids["lo"]],
+            )
+            member_organism_uuid = cursor.fetchone()[0]
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            birthing_source=TestFixtureBirthingFactSource(member_organism_uuid),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         with self.assertRaises(S015AuthorityDenied) as denied:
-            self._submit(service, "current-member", applicant=member)
+            self._submit(
+                service,
+                "current-member",
+                applicant=member,
+                organism_uuid=member_organism_uuid,
+            )
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
 
     def test_coordinator_of_another_organism_is_refused(self):
@@ -1290,7 +1371,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertNotEqual(other_organism_uuid, self.organism_uuid)
         application = self._submit(self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         ), "other-lo")
         target = {
             "action": OrganismAction.CLAIM_APPLICATION.value,
@@ -1345,7 +1426,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_cq_route_refuses_coordinator_claim(self):
         submission = self._submit(self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         ), "cq-route")
         application = Application.objects.get(application_uuid=submission.application_uuid)
         configuration = LOGovernanceConfigurationVersion.objects.filter(
@@ -1409,7 +1490,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         """
         provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         ))
         service = self._service(
             authority_provider=provider,
@@ -1645,7 +1726,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         for version in ("R2.0", "R3.0", "R4.0", "R5.0"):
             delegate = ProductionApplicationAuthorityProvider(
                 birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-                registration_source=TestFixtureGovernedRegistrationFactSource(),
+                registration_source=ProductionGovernedRegistrationFactSource(),
             )
             provider = (
                 delegate
@@ -1653,13 +1734,11 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 else _HistoricalReferenceAuthorityProvider(delegate, version)
             )
             service = self._service(authority_provider=provider)
-            with transaction.atomic(), connection.cursor() as cursor:
-                applicant_pk = seed_identity(
-                    cursor,
-                    f"reference-forms-applicant-{version}-{self.tag}",
-                )
-            applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
-            self._add_fixture_access_history(applicant, f"reference-forms-{version}")
+            applicant = register_test_learner(
+                username=f"reference-forms-applicant-{version}-{self.tag}",
+                password="governed-test-password",
+                display_name=f"Reference Forms Applicant {version}",
+            )
             submission = self._submit(
                 service,
                 f"reference-forms-{version}",
@@ -1766,7 +1845,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_w_d1g_size_refusal_is_distinct_and_discloses_denied(self):
         submission_service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(submission_service, "oversize-reference")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -1841,7 +1920,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_w_d1h_reassign_records_latest_engagement_before_service_refusal(self):
         provider = ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         service = self._service(authority_provider=provider)
         submission = self._submit(service, "reassign-mismatched-engagement")
@@ -1937,7 +2016,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_nonmember_claim_refuses_without_waiting_on_register_lock(self):
         production_provider = ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         provider = _CountingAuthorityProvider(production_provider)
         service = self._service(authority_provider=provider)
@@ -1980,7 +2059,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
         provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         ))
         service = self._service(authority_provider=provider)
         submission = self._submit(service, "nonmember-withdrawal-register-lock")
@@ -2050,7 +2129,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_reassign_without_a_claim_is_refused(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "reassign-without-claim")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -2068,10 +2147,10 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             ))
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
 
-    def test_labelled_fixture_sources_qualify_and_resolve_submission(self):
+    def test_production_registration_and_labelled_birthing_sources_qualify_submission(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         result = self._submit(service, "fixture-positive")
         application = Application.objects.get(application_uuid=result.application_uuid)
@@ -2156,7 +2235,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_pre_r3_decide_receipt_reference_is_withheld_without_rewriting(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "legacy-decide-replay")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -2238,7 +2317,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
     def test_production_provider_withdraws_only_the_applicants_own_application(self):
         service = self._service(
             birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
-            registration_source=TestFixtureGovernedRegistrationFactSource(),
+            registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "withdraw")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -2265,8 +2344,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
             )
-            # 0040 contributes 405 triggers; 0041 adds one, and 0042 adds twelve.
-            self.assertEqual(cursor.fetchone()[0], 418)
+            # 0040 contributes 405 triggers; 0041 adds one, 0042 adds twelve, and 0043 adds eleven.
+            self.assertEqual(cursor.fetchone()[0], 429)
             cursor.execute(
                 "SELECT trigger.tgname, trigger.tgenabled, function.proname, "
                 "pg_get_functiondef(function.oid) "
@@ -2366,5 +2445,4 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 __all__ = [
     "ProductionApplicationAuthorityTests",
     "TestFixtureBirthingFactSource",
-    "TestFixtureGovernedRegistrationFactSource",
 ]

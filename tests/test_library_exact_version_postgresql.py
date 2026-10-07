@@ -20,6 +20,7 @@ from src.intevia.services.library_exact_version_contract import (
     POLICY_REFERENCE,
 )
 from src.intevia.services.library_exact_version_policy import ImmutableLibraryBindingProvider, LibraryExactVersionPolicy
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 23, 18, 30, tzinfo=timezone.utc)
@@ -32,13 +33,13 @@ class LibraryExactVersionPostgreSQLTests(TransactionTestCase):
         if connection.vendor != "postgresql":
             self.fail("mandatory S011-A PostgreSQL guardians require PostgreSQL")
         self.user = User.objects.create_user(username="s011a-postgresql")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=self.user,
             access_state=Identity.AccessState.ACTIVE,
             access_epoch=9,
         )
         other_user = User.objects.create_user(username="s011a-postgresql-other")
-        self.other_identity = Identity.objects.create(
+        self.other_identity = create_test_identity(
             credential=other_user,
             access_state=Identity.AccessState.ACTIVE,
         )

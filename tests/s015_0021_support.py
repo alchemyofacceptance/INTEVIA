@@ -12,8 +12,22 @@ import json
 import uuid
 
 from django.conf import settings
-from django.db import connection
+from django.contrib.auth.models import User
+from django.db import connection, connections, transaction
+from django.db.models import Q
+from django.utils import timezone
 
+from core.identity import canonical_username_v1
+from core.models import (
+    Identity,
+    LearnerRegistration,
+    PlatformTermsAcceptance,
+    PlatformTermsVersion,
+)
+from src.intevia.services.identity_service import (
+    LearnerRegistrationService,
+    RegistrationServiceRefused,
+)
 
 def current_core_leaf(connection):
     from django.db.migrations.executor import MigrationExecutor
@@ -22,6 +36,32 @@ def current_core_leaf(connection):
     if len(leaves) != 1:
         raise AssertionError(f"expected one core migration leaf, found {leaves!r}")
     return leaves
+
+
+def restore_migration_targets(connection, targets):
+    from django.db.migrations.executor import MigrationExecutor
+
+    MigrationExecutor(connection).migrate(targets)
+
+
+def migrate_to_target_with_restore(test_case, target):
+    from django.db.migrations.executor import MigrationExecutor
+
+    received_targets = tuple(
+        MigrationExecutor(connection).loader.graph.leaf_nodes()
+    )
+    restored = {"done": False}
+
+    def restore():
+        if not restored["done"]:
+            restore_migration_targets(connection, received_targets)
+            restored["done"] = True
+
+    test_case.addCleanup(restore)
+    test_case.restore_received_migrations = restore
+    executor = MigrationExecutor(connection)
+    executor.migrate([target])
+    return executor.loader.project_state([target]).apps
 
 
 T0 = dt.datetime(2026, 9, 5, 10, 0, 0, tzinfo=dt.timezone.utc)
@@ -194,12 +234,186 @@ def seed_test_gateway(cur, ids, at=T0, *, include_governance_configuration=False
 
 
 def seed_identity(cur, tag):
-    cur.execute("INSERT INTO auth_user (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) "
-                "VALUES ('!unusable', false, %s, '', '', '', false, true, now()) RETURNING id", (f"u21g_{tag}",))
-    user_id = cur.fetchone()[0]
-    cur.execute("INSERT INTO core_identity (display_name, created_at, credential_id, identity_id, canonical_username, access_state, access_epoch, updated_at) "
-                "VALUES (%s, now(), %s, %s, %s, 'active', 0, now()) RETURNING id", (f"U21g {tag}", user_id, u(f"identity:{tag}"), f"u21g_{tag}"))
-    return cur.fetchone()[0]
+    with transaction.atomic():
+        username = f"u21g_{tag}"
+        display_name = f"U21g {tag}"
+        canonical_username = canonical_username_v1(username)
+        cur.execute("INSERT INTO auth_user (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) "
+                    "VALUES ('!unusable', false, %s, '', '', '', false, true, now()) RETURNING id", (username,))
+        user_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO core_identity (display_name, created_at, credential_id, identity_id, canonical_username, access_state, access_epoch, updated_at) "
+                    "VALUES (%s, now(), %s, %s, %s, 'active', 0, now()) RETURNING id", (display_name, user_id, u(f"identity:{tag}"), canonical_username))
+        identity_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO core_identityresolution "
+            "(identity_id, display_name, canonical_username, credential_link) "
+            "VALUES (%s, %s, %s, %s)",
+            (identity_id, display_name, canonical_username, user_id),
+        )
+        return identity_id
+
+
+def create_test_identity(*, using="default", username=None, **identity_fields):
+    credential = identity_fields.pop("credential", None)
+    credential_id = identity_fields.pop("credential_id", None)
+    if credential is not None and credential_id is not None:
+        raise ValueError("provide credential or credential_id, not both")
+
+    with transaction.atomic(using=using):
+        user_manager = User.objects.db_manager(using)
+        if credential is None:
+            if credential_id is not None:
+                credential = user_manager.get(pk=credential_id)
+            else:
+                if not username:
+                    raise ValueError("username is required when creating a test credential")
+                is_active = (
+                    identity_fields.get("access_state", Identity.AccessState.ACTIVE)
+                    != Identity.AccessState.DEACTIVATED
+                )
+                credential = user_manager.create_user(
+                    username=username,
+                    password=None,
+                    is_active=is_active,
+                )
+
+        identity = Identity.objects.db_manager(using).create(
+            credential=credential,
+            **identity_fields,
+        )
+        with connections[using].cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO public.core_identityresolution "
+                "(identity_id, display_name, canonical_username, credential_link) "
+                "VALUES (%s, %s, %s, %s)",
+                (
+                    identity.pk,
+                    identity.display_name,
+                    identity.canonical_username,
+                    identity.credential_id,
+                ),
+            )
+        return identity
+
+
+def registration_terms_version_in_force(
+    *,
+    effective_at,
+    received_at,
+):
+    eligible_versions = PlatformTermsVersion.objects.filter(
+        effective_from__lte=effective_at,
+        recorded_at__lte=received_at,
+    ).filter(
+        Q(effective_until__isnull=True)
+        | Q(effective_until__gt=effective_at)
+    ).order_by("-effective_from", "-recorded_at", "-pk")
+    for candidate in eligible_versions:
+        current = LearnerRegistrationService._current_terms_version(
+            terms_version_uuid=candidate.terms_version_uuid,
+            effective_at=effective_at,
+            received_at=received_at,
+        )
+        if current is not None:
+            return current
+    return None
+
+
+def _registration_refusal_with_receipt_details(error):
+    if "Registration receipt diagnostics:" in str(error):
+        return error
+    version = error.submitted_version
+    details = (
+        f"terms_version_uuid="
+        f"{error.submitted_version_uuid}; "
+        f"effective_from={version.effective_from if version is not None else None}; "
+        f"effective_until={version.effective_until if version is not None else None}; "
+        f"recorded_at={version.recorded_at if version is not None else None}; "
+        f"effective_at={error.effective_at}; received_at={error.received_at}"
+    )
+    return RegistrationServiceRefused(
+        error.code,
+        f"{error.message}\nRegistration receipt diagnostics: {details}",
+        reason=error.reason,
+        submitted_version=version,
+        submitted_version_uuid=error.submitted_version_uuid,
+        current_version=error.current_version,
+        effective_at=error.effective_at,
+        received_at=error.received_at,
+    )
+
+
+def register_with_current_terms(**registration_kwargs):
+    if registration_kwargs.get("terms_version_uuid") is None:
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            selection_time = cursor.fetchone()[0]
+        current_terms = registration_terms_version_in_force(
+            effective_at=selection_time,
+            received_at=selection_time,
+        )
+        registration_kwargs["terms_version_uuid"] = (
+            current_terms.terms_version_uuid if current_terms is not None else None
+        )
+    try:
+        return LearnerRegistrationService.register(**registration_kwargs)
+    except RegistrationServiceRefused as error:
+        raise _registration_refusal_with_receipt_details(error) from error
+
+
+def register_test_learner(
+    *,
+    username,
+    password="governed-test-password",
+    display_name=None,
+    terms_version=None,
+    correlation_id=None,
+):
+    _require_disposable_fixture_database()
+    if terms_version is None:
+        if not PlatformTermsVersion.objects.exists():
+            now = timezone.now()
+            terms_body = "Labelled FIXTURE-DEV-1 registration terms."
+            PlatformTermsVersion.objects.create(
+                terms_version_uuid=uuid.uuid4(),
+                version_label="FIXTURE-DEV-1",
+                text_commitment="s015r1:" + hashlib.sha256(
+                    terms_body.encode("utf-8")
+                ).hexdigest(),
+                text_body=terms_body,
+                cited_rulings=[],
+                published_by_authority_reference="fixture:development",
+                is_fixture=True,
+                effective_from=now - dt.timedelta(days=1),
+            )
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            now = cursor.fetchone()[0]
+        terms_version = registration_terms_version_in_force(
+            effective_at=now,
+            received_at=now,
+        )
+    try:
+        registration = register_with_current_terms(
+        username=username,
+        password=password,
+        display_name=display_name or username,
+        terms_version_uuid=(
+            terms_version.terms_version_uuid if terms_version is not None else None
+        ),
+        terms_accepted=True,
+        correlation_id=correlation_id or uuid.uuid4(),
+        entry_mode=LearnerRegistration.EntryMode.SUPPORTED,
+        enterer_executor="test:registration_fixture",
+        )
+    except RegistrationServiceRefused as error:
+        detailed_error = _registration_refusal_with_receipt_details(error)
+        if detailed_error is error:
+            raise
+        raise detailed_error from error
+    return Identity.objects.select_related("credential").get(
+        pk=registration.identity_id
+    )
 
 
 def seed_authority(cur, tag, issuer_id):
@@ -250,6 +464,7 @@ def found_organism(
     assign_founder=None,
     assignment_states=None,
     skip_refresh=frozenset(),
+    identity_id=None,
 ):
     """Complete founding population for organism `tag`.
 
@@ -259,7 +474,11 @@ def found_organism(
     skip names limbs to omit for negative tests. assign_founder overrides whether INTEVIA_FOUNDER_STEWARD is assigned.
     """
     _require_disposable_fixture_database()
-    ids = {"identity": seed_identity(cur, tag), "events": {}, "assignment_events": {}}
+    ids = {
+        "identity": seed_identity(cur, tag) if identity_id is None else identity_id,
+        "events": {},
+        "assignment_events": {},
+    }
     ids["principal"], ids["basis"] = seed_authority(cur, tag, ids["identity"])
     lo_uuid = u(f"organism:{tag}")
     cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) "

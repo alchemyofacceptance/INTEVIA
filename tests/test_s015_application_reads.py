@@ -396,13 +396,8 @@ class S015ApplicationReadTests(TransactionTestCase):
 
     def test_rh_07_severed_applicant_is_returned_as_severed(self):
         applicant, application = self._application()
-        # TEST-ONLY resolution insertion followed by the 0022-triggered severance deletion.
+        # The shared seed creates this row; deleting it records the severance.
         with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO public.core_identityresolution "
-                "(identity_id, display_name, canonical_username, credential_link) VALUES (%s, %s, %s, %s)",
-                [applicant.pk, applicant.display_name, applicant.canonical_username, applicant.credential_id],
-            )
             cursor.execute(
                 "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
                 [applicant.pk],

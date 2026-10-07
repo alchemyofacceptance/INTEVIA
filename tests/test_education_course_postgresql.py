@@ -31,14 +31,18 @@ from src.intevia.services.education_course_service import (
     EducationCourseService,
     EducationCourseStaleHeadConflict,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 SECONDARY_ALIAS = "s014_secondary"
 if SECONDARY_ALIAS not in connections.databases:
+    primary_test_database_name = connections["default"].creation._get_test_db_name()
     secondary_database = deepcopy(connections.databases["default"])
     secondary_database["NAME"] = f"{secondary_database['NAME']}_s014_secondary"
     secondary_database["TEST"] = dict(secondary_database.get("TEST", {}))
-    secondary_database["TEST"]["NAME"] = None
+    secondary_database["TEST"]["NAME"] = (
+        f"{primary_test_database_name}_s014_secondary"
+    )
     connections.databases[SECONDARY_ALIAS] = secondary_database
 
 
@@ -129,11 +133,9 @@ class EducationCoursePostgreSQLMultiDatabaseTests(TransactionTestCase):
     reset_sequences = True
 
     def setUp(self):
-        self.default_user = User.objects.db_manager("default").create_user(
-            username="course-default-collision"
-        )
-        self.default_identity = Identity.objects.using("default").create(
-            credential=self.default_user,
+        self.default_identity = create_test_identity(
+            using="default",
+            username="course-default-collision",
             access_state=Identity.AccessState.ACTIVE,
         )
         User.objects.db_manager(SECONDARY_ALIAS).create_user(
@@ -142,7 +144,8 @@ class EducationCoursePostgreSQLMultiDatabaseTests(TransactionTestCase):
         self.secondary_user = User.objects.db_manager(SECONDARY_ALIAS).create_user(
             username="course-secondary"
         )
-        self.secondary_identity = Identity.objects.using(SECONDARY_ALIAS).create(
+        self.secondary_identity = create_test_identity(
+            using=SECONDARY_ALIAS,
             credential=self.secondary_user,
             access_state=Identity.AccessState.ACTIVE,
         )
@@ -212,7 +215,7 @@ class EducationCoursePostgreSQLRaceTests(TransactionTestCase):
             for number in range(2)
         ]
         for user in self.users:
-            Identity.objects.create(
+            create_test_identity(
                 credential=user, access_state=Identity.AccessState.ACTIVE
             )
 

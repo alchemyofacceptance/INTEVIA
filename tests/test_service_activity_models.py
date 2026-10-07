@@ -21,6 +21,7 @@ from core.models import (
     ServiceVersion,
     ServiceWorkSubmission,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=timezone.utc)
@@ -34,7 +35,7 @@ def _make_identity(username, *, active=True):
     if active:
         user.is_active = True
         user.save()
-    identity = Identity.objects.create(
+    identity = create_test_identity(
         credential=user,
         access_state=Identity.AccessState.ACTIVE if active else Identity.AccessState.PENDING,
     )
@@ -444,7 +445,7 @@ class ConstraintCatalogueTests(TestCase):
 
 
 class IdentityFKPredictionTests(TestCase):
-    """Live catalogue is exact through the nine S015 additions: 56."""
+    """Preserve historical 34/56 checkpoints and account for later slices."""
 
     EXPECTED_S012_FK_ADDITIONS = {
         ("serviceactivity", "created_by"),
@@ -480,6 +481,55 @@ class IdentityFKPredictionTests(TestCase):
         ("organismmembership", "identity"),
     }
 
+    EXPECTED_S015_POST_0019_FK_ADDITIONS = {
+        ("authorityinvalidationevent", "actor"),
+        ("circlestateevent", "actor"),
+        ("contextualroleassignmentstateevent", "actor"),
+        ("coverageassessment", "actor"),
+        ("determinationcontestevent", "actor"),
+        ("livingorganismevent", "actor"),
+        ("membershipconditionstateevent", "actor"),
+        ("obligationstateevent", "actor"),
+        ("organismmembershiptransition", "actor"),
+        ("planningclassificationevent", "actor"),
+        ("restrictedcontinuityevent", "accountable_actor"),
+        ("restrictedcontinuityevent", "actor"),
+        ("visibilitygrantstateevent", "actor"),
+        ("application", "actor"),
+        ("application", "applicant"),
+        ("application", "enterer"),
+        ("applicationdecision", "enterer"),
+        ("applicationdecision", "executor"),
+        ("applicationdecision", "responsible_coordinator"),
+        ("applicationengagement", "actor"),
+        ("applicationengagement", "enterer"),
+        ("applicationwithdrawal", "actor"),
+        ("applicationwithdrawal", "enterer"),
+        ("csaassignment", "actor"),
+        ("csaassignment", "enterer"),
+        ("csaassignmentend", "actor"),
+        ("csaassignmentend", "enterer"),
+        ("applicationlineageevent", "actor"),
+        ("loapplicationquestionversion", "actor"),
+        ("loapplicationquestionversion", "enterer"),
+        ("loapplicationsettingsversion", "actor"),
+        ("loapplicationsettingsversion", "enterer"),
+        ("logovernanceconfigurationversion", "actor"),
+        ("logovernanceconfigurationversion", "enterer"),
+        ("authoritydecision", "actor"),
+        ("officeappointmentconsent", "actor"),
+        ("officeappointmentconsent", "enterer"),
+    }
+
+    EXPECTED_SB1_FK_ADDITIONS = {
+        ("lofoundingcontentversion", "actor_identity"),
+        ("platformtermsacceptance", "accepted_by_identity"),
+    }
+
+    EXPECTED_P1_FK_ADDITIONS = {
+        ("learnerregistration", "identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -502,8 +552,6 @@ class IdentityFKPredictionTests(TestCase):
                     fk_fields.append((model._meta.model_name, field.name))
 
         scoped_fks = set(fk_fields) - self.EXCLUDED_INTERNAL_FKS
-        self.assertEqual(len(scoped_fks), 56)
-
         s012_fks = {
             (name, fname) for name, fname in scoped_fks
             if (name, fname) in self.EXPECTED_S012_FK_ADDITIONS
@@ -532,6 +580,48 @@ class IdentityFKPredictionTests(TestCase):
         self.assertEqual(s015_fks, self.EXPECTED_S015_FK_ADDITIONS)
         self.assertEqual(len(s015_fks), 9)
 
+        later_sets = (
+            self.EXPECTED_S015_POST_0019_FK_ADDITIONS,
+            self.EXPECTED_SB1_FK_ADDITIONS,
+            self.EXPECTED_P1_FK_ADDITIONS,
+        )
+        for expected in later_sets:
+            self.assertEqual(scoped_fks & expected, expected)
+
+        named_sets = (
+            self.EXPECTED_S012_FK_ADDITIONS,
+            self.EXPECTED_S013_FK_ADDITIONS,
+            self.EXPECTED_S014_FK_ADDITIONS,
+            self.EXPECTED_S015_FK_ADDITIONS,
+            *later_sets,
+        )
+        for index, left in enumerate(named_sets):
+            for right in named_sets[index + 1:]:
+                self.assertTrue(left.isdisjoint(right))
+
+        later_additions = (
+            self.EXPECTED_S015_POST_0019_FK_ADDITIONS
+            | self.EXPECTED_SB1_FK_ADDITIONS
+            | self.EXPECTED_P1_FK_ADDITIONS
+        )
+        historical_scoped = scoped_fks - later_additions
+        self.assertEqual(len(historical_scoped), 56)
+        historical_additions = (
+            self.EXPECTED_S012_FK_ADDITIONS
+            | self.EXPECTED_S013_FK_ADDITIONS
+            | self.EXPECTED_S014_FK_ADDITIONS
+            | self.EXPECTED_S015_FK_ADDITIONS
+        )
+        base_fks = scoped_fks - historical_additions - later_additions
+        self.assertEqual(len(base_fks), 34)
+        expected_scoped = (
+            base_fks
+            | historical_additions
+            | later_additions
+        )
+        self.assertEqual(scoped_fks, expected_scoped)
+        self.assertEqual(len(scoped_fks), 96)
+
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
         identity_model = apps.get_model("core", "Identity")
@@ -553,6 +643,9 @@ class IdentityFKPredictionTests(TestCase):
             - self.EXPECTED_S013_FK_ADDITIONS
             - self.EXPECTED_S014_FK_ADDITIONS
             - self.EXPECTED_S015_FK_ADDITIONS
+            - self.EXPECTED_S015_POST_0019_FK_ADDITIONS
+            - self.EXPECTED_SB1_FK_ADDITIONS
+            - self.EXPECTED_P1_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 

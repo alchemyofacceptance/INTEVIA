@@ -10,9 +10,12 @@ from threading import Barrier
 from uuid import UUID, uuid4
 from unittest import skipUnless
 
+from django.contrib.auth.models import User
 from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.test.utils import CaptureQueriesContext
+
+from tests.s015_0021_support import create_test_identity, register_test_learner
 
 from core.models import (
     AuthorityDecision,
@@ -70,7 +73,6 @@ from src.intevia.services.organism_membership_service import (
     acquire_organism_command_mutex,
 )
 from src.intevia.services.identity_service import (
-    CredentialService,
     IdentityLifecycleService,
     OriginatingMembershipProvisioningService,
 )
@@ -278,15 +280,23 @@ class S015MembershipCommandTests(TransactionTestCase):
 
     def _reader_identity(self, label):
         fulfilment_reference = f"evidence:reader-membership-fulfilled:{label}:{fresh()}"
-        identity, request = CredentialService.provision(
-            username=f"reader-{fresh()}",
-            password="governed-test-password",
+        username = f"reader-{fresh()}"
+        credential = User.objects.create_user(
+            username=username,
+            password=None,
+            is_active=False,
+        )
+        credential.set_password("governed-test-password")
+        credential.save(update_fields=("password",))
+        identity = create_test_identity(
+            credential=credential,
             display_name=f"Reader {label}",
-            human_classification="HUMAN DEVELOPMENT IDENTITY",
+        )
+        request = OriginatingMembershipProvisioningService.request(
+            identity=identity,
             authority_reference=f"TEST_ONLY:reader:{label}:provision",
             evidence_reference=f"TEST_ONLY:reader:{label}:provision-evidence",
             correlation_id=uuid4(),
-            technical_executor="TEST_ONLY",
         )
         OriginatingMembershipProvisioningService.reconcile(
             request_id=request.pk,
@@ -840,7 +850,11 @@ class S015MembershipCommandTests(TransactionTestCase):
 
     def test_reader_returns_only_own_cached_states_and_effective_offices(self):
         self._setup_organism("own-membership-reader")
-        reader, fulfilment_reference = self._reader_identity("own-membership-reader")
+        reader = register_test_learner(
+            username=f"reader-{fresh()}",
+            password="governed-test-password",
+            display_name="Own Membership Reader",
+        )
         fixtures = {}
         for label, state in (
             ("active", "ACTIVE"),
@@ -879,23 +893,26 @@ class S015MembershipCommandTests(TransactionTestCase):
         first_view = membership_reader.list_own_memberships(reader)
         initial_identity_id = reader.identity_id
         initial_access_epoch = reader.access_epoch
-        for action, evidence, reason in (
+        for action, reason in (
             (
                 IdentityTransition.Action.RESTRICT,
-                "TEST_ONLY:reader:restrict",
                 IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             ),
             (
                 IdentityTransition.Action.DEACTIVATE,
-                "TEST_ONLY:reader:deactivate",
                 IdentityTransition.ReasonCategory.SECURITY,
             ),
             (
                 IdentityTransition.Action.REACTIVATE,
-                fulfilment_reference,
                 IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             ),
         ):
+            correlation_id = uuid4()
+            evidence = (
+                f"reauthentication:password:{correlation_id}"
+                if action == IdentityTransition.Action.REACTIVATE
+                else f"TEST_ONLY:reader:{action}"
+            )
             IdentityLifecycleService.change_access(
                 identity_id=reader.identity_id,
                 action=action,
@@ -904,7 +921,12 @@ class S015MembershipCommandTests(TransactionTestCase):
                 technical_executor="TEST_ONLY",
                 evidence_reference=evidence,
                 reason_category=reason,
-                correlation_id=uuid4(),
+                correlation_id=correlation_id,
+                proof_password=(
+                    "governed-test-password"
+                    if action == IdentityTransition.Action.REACTIVATE
+                    else None
+                ),
             )
             reader.refresh_from_db()
 

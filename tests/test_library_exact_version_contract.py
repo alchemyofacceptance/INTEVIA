@@ -23,6 +23,7 @@ from src.intevia.services.library_exact_version_policy import (
     LibraryExactVersionPolicy,
     VIEWER_SCOPE,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 23, 18, 30, tzinfo=timezone.utc)
@@ -32,7 +33,7 @@ SNAPSHOT_REFERENCE = "lib-binding-snapshot:sha256:" + "a" * 64
 class LibraryExactVersionContractTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="s011a-contract")
-        self.identity = Identity.objects.create(
+        self.identity = create_test_identity(
             credential=self.user,
             access_state=Identity.AccessState.ACTIVE,
             access_epoch=7,
@@ -227,7 +228,7 @@ class LibraryExactVersionContractTests(TestCase):
 
     def test_mismatched_actor_identity_is_refused(self):
         other_user = User.objects.create_user(username="s011a-contract-other-actor")
-        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        other = create_test_identity(credential=other_user, access_state=Identity.AccessState.ACTIVE)
         envelope = self.service((self.action_binding(),)).determine_action_authority(
             actor_identity_id=other.identity_id,
             resource_id=self.resource.resource_id,
@@ -241,7 +242,7 @@ class LibraryExactVersionContractTests(TestCase):
 
     def test_mismatched_viewer_identity_is_hidden(self):
         other_user = User.objects.create_user(username="s011a-contract-other-viewer")
-        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        other = create_test_identity(credential=other_user, access_state=Identity.AccessState.ACTIVE)
         envelope = self.service((self.viewer_binding(),)).determine_disclosure(
             viewer_identity_id=other.identity_id,
             resource_id=self.resource.resource_id,
@@ -253,7 +254,7 @@ class LibraryExactVersionContractTests(TestCase):
 
     def test_viewer_substitution_changes_bound_identity_and_digest(self):
         other_user = User.objects.create_user(username="s011a-contract-substituted-viewer")
-        other = Identity.objects.create(credential=other_user, access_state=Identity.AccessState.ACTIVE)
+        other = create_test_identity(credential=other_user, access_state=Identity.AccessState.ACTIVE)
         service = self.service((self.viewer_binding(),))
         bound = service.determine_disclosure(
             viewer_identity_id=self.identity.identity_id,

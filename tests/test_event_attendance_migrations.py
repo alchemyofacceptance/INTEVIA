@@ -15,6 +15,8 @@ class EventAttendanceMigrationTests(TransactionTestCase):
         return executor.loader.project_state([target]).apps
 
     def setUp(self):
+        executor = MigrationExecutor(connection)
+        self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
         old_apps = self.migrate(self.migrate_from)
         User = old_apps.get_model("auth", "User")
         Identity = old_apps.get_model("core", "Identity")
@@ -62,7 +64,7 @@ class EventAttendanceMigrationTests(TransactionTestCase):
         self.registration_pk = registration.pk
 
     def tearDown(self):
-        self.migrate(self.migrate_to)
+        MigrationExecutor(connection).migrate(self.received_leaf_targets)
         super().tearDown()
 
     def assert_legacy_rows(self, apps):

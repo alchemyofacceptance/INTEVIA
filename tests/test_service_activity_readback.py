@@ -51,6 +51,7 @@ from src.intevia.services.service_activity_read_service import (
     ServiceWorkSubmissionDTO,
     _STATE_MESSAGES,
 )
+from tests.s015_0021_support import create_test_identity
 
 
 NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=timezone.utc)
@@ -122,7 +123,7 @@ def _make_identity(username, *, active=True):
     if active:
         user.is_active = True
         user.save()
-    identity = Identity.objects.create(
+    identity = create_test_identity(
         credential=user,
         access_state=Identity.AccessState.ACTIVE if active else Identity.AccessState.PENDING,
     )

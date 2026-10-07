@@ -2,11 +2,11 @@ from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from django.contrib import admin
-from django.contrib.auth.models import User
 from django.db import connection
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import resolve, reverse
 
@@ -17,6 +17,7 @@ from core.models import (
     EventRegistration,
     EventRegistrationTransition,
     Identity,
+    IdentityTransition,
 )
 from src.intevia.services.event_read_service import (
     ATTENDANCE_NONE,
@@ -31,6 +32,8 @@ from src.intevia.services.event_read_service import (
     EventReadService,
     visible_event_queryset,
 )
+from src.intevia.services.identity_service import IdentityLifecycleService
+from tests.s015_0021_support import register_test_learner
 
 
 NOW = datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc)
@@ -39,17 +42,33 @@ NOW = datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc)
 class S009Fixtures:
     @staticmethod
     def identity(username, *, state=Identity.AccessState.ACTIVE):
-        user = User.objects.create_user(
+        identity = register_test_learner(
             username=username,
             password="governed-test-password",
-            is_active=state != Identity.AccessState.DEACTIVATED,
-        )
-        identity = Identity.objects.create(
-            credential=user,
             display_name=username.title(),
-            access_state=state,
         )
-        return user, identity
+        if state == Identity.AccessState.RESTRICTED:
+            action = IdentityTransition.Action.RESTRICT
+            reason = IdentityTransition.ReasonCategory.ACCESS_REVIEW
+        elif state == Identity.AccessState.DEACTIVATED:
+            action = IdentityTransition.Action.DEACTIVATE
+            reason = IdentityTransition.ReasonCategory.SECURITY
+        elif state == Identity.AccessState.ACTIVE:
+            return identity.credential, identity
+        else:
+            raise ValueError(f"unsupported S009 fixture access state: {state}")
+        IdentityLifecycleService.change_access(
+            identity_id=identity.identity_id,
+            action=action,
+            requesting_actor=identity,
+            authority_reference=f"fixture:s009-access:{identity.identity_id}",
+            technical_executor="test-suite",
+            evidence_reference=f"fixture:s009-access:{identity.identity_id}",
+            reason_category=reason,
+            correlation_id=uuid4(),
+        )
+        identity.refresh_from_db()
+        return identity.credential, identity
 
     @staticmethod
     def event(owner, suffix, *, created_at=NOW):
@@ -465,7 +484,12 @@ class EventProjectionQueryTests(S009Fixtures, TestCase):
 
 class S009HttpGuardianTests(S009Fixtures, TestCase):
     def setUp(self):
-        self.user, self.identity_record = self.identity("s009-http-reader")
+        self.identity_record = register_test_learner(
+            username="s009-http-reader",
+            password="governed-test-password",
+            display_name="S009 Http Reader",
+        )
+        self.user = self.identity_record.credential
         self.other_user, self.other = self.identity("s009-http-other")
         self.event_record = self.event(self.identity_record, "http-owned")
         self.registration_record = self.registration(
@@ -607,27 +631,29 @@ class S009HttpGuardianTests(S009Fixtures, TestCase):
         restricted_user, _ = self.identity(
             "s009-restricted", state=Identity.AccessState.RESTRICTED
         )
-        self.client.post(reverse("logout"))
-        self.client.post(
+        restricted_client = Client()
+        restricted_client.post(
             reverse("login"),
             {
                 "username": restricted_user.username,
                 "password": "governed-test-password",
             },
         )
-        response = self.client.get(reverse("restricted"))
+        response = restricted_client.get(reverse("restricted"))
         self.assertEqual(response.status_code, 200)
         self.assertIn("private", response.headers["Cache-Control"])
         self.assertIn("no-store", response.headers["Cache-Control"])
         self.assertIn("Cookie", response.headers["Vary"])
         self.assertRedirects(
-            self.client.get(reverse("event-list")), reverse("restricted")
+            restricted_client.get(reverse("event-list")), reverse("restricted")
         )
         for path in self.personal_routes():
             if path == reverse("shell"):
                 continue
             with self.subTest(path=path):
-                self.assertRedirects(self.client.get(path), reverse("restricted"))
+                self.assertRedirects(
+                    restricted_client.get(path), reverse("restricted")
+                )
 
     def test_rendered_vocabulary_excludes_raw_and_combined_meaning(self):
         responses = [self.client.get(path) for path in self.personal_routes()]

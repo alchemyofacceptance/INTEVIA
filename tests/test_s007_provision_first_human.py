@@ -9,6 +9,7 @@ from django.test import TestCase
 from core.models import (
     Identity,
     IdentityTransition,
+    OriginatingMembershipProvisioningRequest,
     ProfileRole,
     ProvisioningReconciliationAttempt,
 )
@@ -27,85 +28,54 @@ class ProvisionFirstHumanCommandTests(TestCase):
             "activate": True,
         }
 
-    @patch(
-        "core.management.commands.provision_first_human.getpass.getpass",
-        side_effect=["governed-test-password", "governed-test-password"],
-    )
-    def test_command_creates_governed_active_identity_without_role(
-        self,
-        _getpass,
-    ):
+    @patch("getpass.getpass")
+    def test_command_creates_governed_active_identity_without_role(self, getpass):
         output = StringIO()
         options = self.options()
+        with self.assertRaises(CommandError) as refused:
+            call_command("provision_first_human", stdout=output, **options)
 
-        call_command("provision_first_human", stdout=output, **options)
-
-        identity = Identity.objects.select_related("credential").get()
-        self.assertEqual(identity.access_state, Identity.AccessState.ACTIVE)
-        self.assertTrue(identity.credential.is_active)
-        self.assertTrue(identity.credential.check_password("governed-test-password"))
+        self.assertEqual(
+            str(refused.exception),
+            "Nothing was created. This setup command has been retired: it "
+            "recorded a root-LO membership request that INTEVIA no longer uses. "
+            "Register the person with `provision_learner` instead.",
+        )
+        getpass.assert_not_called()
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(Identity.objects.count(), 0)
+        self.assertEqual(IdentityTransition.objects.count(), 0)
+        self.assertEqual(OriginatingMembershipProvisioningRequest.objects.count(), 0)
+        self.assertEqual(ProvisioningReconciliationAttempt.objects.count(), 0)
         self.assertEqual(ProfileRole.objects.count(), 0)
-        self.assertEqual(
-            list(identity.access_transitions.values_list("action", flat=True)),
-            [IdentityTransition.Action.PROVISION, IdentityTransition.Action.ACTIVATE],
-        )
-        self.assertEqual(
-            identity.originating_membership_requests.get()
-            .reconciliation_attempts.filter(
-                state=ProvisioningReconciliationAttempt.State.FULFILLED
-            )
-            .count(),
-            1,
-        )
-        rendered = output.getvalue()
-        self.assertIn(str(identity.identity_id), rendered)
-        self.assertNotIn(options["username"], rendered)
-        self.assertNotIn(options["authority_reference"], rendered)
-        self.assertNotIn(options["membership_fulfilment_evidence"], rendered)
-        self.assertNotIn("governed-test-password", rendered)
+        self.assertEqual(output.getvalue(), "")
 
-    @patch(
-        "core.management.commands.provision_first_human.getpass.getpass"
-    )
+    @patch("getpass.getpass")
     def test_command_requires_explicit_activation_before_password_prompt(
         self,
         getpass,
     ):
-        options = self.options()
-        options["activate"] = False
-        with self.assertRaisesMessage(CommandError, "explicit --activate"):
-            call_command("provision_first_human", **options)
+        with self.assertRaisesMessage(CommandError, "setup command has been retired"):
+            call_command("provision_first_human")
         getpass.assert_not_called()
         self.assertEqual(Identity.objects.count(), 0)
 
-    @patch(
-        "core.management.commands.provision_first_human.getpass.getpass",
-        side_effect=["first-password", "different-password"],
-    )
-    def test_password_mismatch_has_no_partial_effect(self, _getpass):
-        with self.assertRaisesMessage(CommandError, "did not match"):
+    @patch("getpass.getpass")
+    def test_password_mismatch_has_no_partial_effect(self, getpass):
+        with self.assertRaisesMessage(CommandError, "setup command has been retired"):
             call_command("provision_first_human", **self.options())
+        getpass.assert_not_called()
         self.assertEqual(Identity.objects.count(), 0)
 
-    @patch(
-        "core.management.commands.provision_first_human.getpass.getpass",
-        side_effect=[
-            "governed-test-password",
-            "governed-test-password",
-            "governed-test-password",
-            "governed-test-password",
-        ],
-    )
-    def test_duplicate_command_rolls_back_without_partial_identity(self, _getpass):
-        first_options = self.options()
-        call_command("provision_first_human", **first_options)
-        duplicate_options = self.options()
-        duplicate_options["correlation_id"] = str(uuid4())
+    @patch("getpass.getpass")
+    def test_duplicate_command_rolls_back_without_partial_identity(self, getpass):
+        with self.assertRaisesMessage(CommandError, "setup command has been retired"):
+            call_command("provision_first_human", **self.options())
 
-        with self.assertRaises(CommandError):
-            call_command("provision_first_human", **duplicate_options)
-
-        self.assertEqual(User.objects.count(), 1)
-        self.assertEqual(Identity.objects.count(), 1)
+        getpass.assert_not_called()
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(Identity.objects.count(), 0)
+        self.assertEqual(IdentityTransition.objects.count(), 0)
+        self.assertEqual(OriginatingMembershipProvisioningRequest.objects.count(), 0)
         self.assertEqual(ProfileRole.objects.count(), 0)
-        self.assertEqual(IdentityTransition.objects.count(), 2)
+        self.assertEqual(ProvisioningReconciliationAttempt.objects.count(), 0)
