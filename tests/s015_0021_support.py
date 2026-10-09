@@ -9,11 +9,12 @@ independently); l1_commitment itself is never supplied - the database assigns it
 import datetime as dt
 import hashlib
 import json
+import sys
 import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.db import connection, connections, transaction
+from django.db import DatabaseError, connection, connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -179,28 +180,57 @@ def append_event(cur, ev_table, anchor_id, seq, action, prior, result, actor_id,
 
 
 def refresh(cur, token, anchor_id, state_at=T0):
-    cur.execute("SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())", (token, anchor_id, state_at))
-    return cur.fetchone()[0]
+    caller = sys._getframe(1)
+    call_site = f"{caller.f_code.co_filename}:{caller.f_lineno} in {caller.f_code.co_name}"
+    cur.execute("SELECT clock_timestamp()")
+    known_at = cur.fetchone()[0]
+    try:
+        cur.execute(
+            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, %s)",
+            (token, anchor_id, state_at, known_at),
+        )
+        return cur.fetchone()[0]
+    except DatabaseError as exc:
+        if "coordinates must satisfy state_at <= known_at <= now" not in str(exc):
+            raise
+        raise RuntimeError(
+            "S015 refresh clock refusal: "
+            f"state_at={state_at!r}, known_at={known_at!r}, "
+            f"call_site={call_site}, original_error={exc!r}"
+        ) from exc
 
 
-def seed_test_gateway(cur, ids, at=T0, *, include_governance_configuration=False):
+def seed_test_gateway(
+    cur,
+    ids,
+    at=T0,
+    *,
+    include_governance_configuration=False,
+    include_settings=True,
+    include_question=True,
+):
     """Test-only version/effect rows with an explicitly labelled fixture name; never a production LO-name source."""
     cur.execute("INSERT INTO core_loapplicationgateway (living_organism_id) VALUES (%s) RETURNING id", [ids["lo"]])
     result = {}
     event_id = ids["events"]["core_livingorganismevent"]
-    version_specs = [
-        ("core_loapplicationsettingsversion", "EFFECT_APPLICATION_SETTINGS", "application-settings-version:",
-         {"applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO"}),
-        ("core_loapplicationquestionversion", "EFFECT_APPLICATION_QUESTION", "application-question-version:",
-         {"question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
-          "answer_format": "LONG_ANSWER", "options": None}),
-    ]
+    version_specs = []
+    if include_settings:
+        version_specs.append((
+            "core_loapplicationsettingsversion", "EFFECT_APPLICATION_SETTINGS", "application-settings-version:",
+            {"applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO"},
+        ))
     if include_governance_configuration:
         version_specs.insert(1, (
             "core_logovernanceconfigurationversion", "EFFECT_GOVERNANCE_CONFIGURATION",
             "governance-configuration-version:",
             {"cq_active": False, "inherit_portal_cq_settings": False,
              "require_cq_to_change_lo_settings": False, "require_cq_to_change_application_question": False},
+        ))
+    if include_question:
+        version_specs.append((
+            "core_loapplicationquestionversion", "EFFECT_APPLICATION_QUESTION", "application-question-version:",
+            {"question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
+             "answer_format": "LONG_ANSWER", "options": None},
         ))
     version_uuids = {}
     for table, action, prefix, values in version_specs:
@@ -223,10 +253,11 @@ def seed_test_gateway(cur, ids, at=T0, *, include_governance_configuration=False
         )
         refresh(cur, "core_livingorganism", ids["lo"], at)
     if include_governance_configuration:
-        result["settings_basis"] = (
-            f"governance-configuration-version:{version_uuids['core_logovernanceconfigurationversion']};"
-            f"application-settings-version:{version_uuids['core_loapplicationsettingsversion']}"
-        )
+        if include_settings:
+            result["settings_basis"] = (
+                f"governance-configuration-version:{version_uuids['core_logovernanceconfigurationversion']};"
+                f"application-settings-version:{version_uuids['core_loapplicationsettingsversion']}"
+            )
         cur.execute("SELECT sequence FROM core_livingorganismevent WHERE id = %s", [event_id])
         result["head_sequence"] = cur.fetchone()[0]
     result["head_event"] = event_id
@@ -465,6 +496,7 @@ def found_organism(
     assignment_states=None,
     skip_refresh=frozenset(),
     identity_id=None,
+    founding_assignment_overrides=None,
 ):
     """Complete founding population for organism `tag`.
 
@@ -545,6 +577,12 @@ def found_organism(
     if "lo_event" not in skip:
         ids["lo_event"] = append_event(cur, "core_livingorganismevent", lo, 1, "FOUND", None, "ACTIVE", act, basis, tag)[0]
         ids["events"]["core_livingorganismevent"] = ids["lo_event"]
+        cur.execute(
+            "SELECT event_uuid, authority_decision_reference "
+            "FROM public.core_livingorganismevent WHERE id = %s",
+            (ids["lo_event"],),
+        )
+        ids["founding_event_uuid"], ids["founding_authority_decision_reference"] = cur.fetchone()
     m_uuid = u(f"membership:{tag}")
     cur.execute("INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, T0, T0, empty_fp(cur, "core_organismmembership", m_uuid), act, lo))
@@ -579,9 +617,22 @@ def found_organism(
                     "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, T0, T0, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
         ids["assignments"][code] = cur.fetchone()[0]
         if "assignment_event" not in skip:
+            assignment_event_overrides = None
+            if code == "COORDINATOR":
+                if "founding_event_uuid" not in ids:
+                    raise RuntimeError(
+                        "founding Coordinator ASSIGN requires the sequence-1 FOUND event"
+                    )
+                assignment_event_overrides = {
+                    "evidence_reference": f"founding-batch:{ids['founding_event_uuid']}",
+                    "authority_decision_reference": ids[
+                        "founding_authority_decision_reference"
+                    ],
+                }
+                assignment_event_overrides.update(founding_assignment_overrides or {})
             event_id = append_event(
                 cur, "core_contextualroleassignmentstateevent", ids["assignments"][code], 1, "ASSIGN", None,
-                assignment_state, act, basis, f"{tag}:{code}"
+                assignment_state, act, basis, f"{tag}:{code}", overrides=assignment_event_overrides
             )[0]
             ids["assignment_events"][code] = event_id
             ids["events"].setdefault("core_contextualroleassignmentstateevent", event_id)

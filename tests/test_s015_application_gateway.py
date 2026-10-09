@@ -18,7 +18,7 @@ from core.models import (
     ApplicationLineage, ApplicationLineageEvent, ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent, Identity, IdentityTransition,
     LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
-    OrganismMembershipTransition,
+    OrganismMembershipTransition, LOFoundingContentVersion,
     LOApplicationQuestionVersion, LOApplicationSettingsVersion, LOGovernanceConfigurationVersion,
 )
 from core.organism_contract import OrganismAction
@@ -40,7 +40,16 @@ from src.intevia.services.organism_membership_service import (
 from src.intevia.services.organism_role_service import (
     OrganismRoleService, ProposeAssignmentCommand, TransitionAssignmentCommand,
 )
-from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.sb2_route_support import (
+    birth,
+    prepare_route,
+    route_fixture_state,
+    route_recorded_times,
+    route_test_now,
+)
+from tests.s015_0021_support import seed_test_gateway
+from tests.test_s015_application_authority import TestFixtureBirthingFactSource
 from tests.s015_concurrency_support import (
     ORGANISM_LOCK_RELATIONS,
     backend_pid,
@@ -59,6 +68,20 @@ from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
 POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 gateway requires PostgreSQL")
 
 
@@ -73,6 +96,25 @@ class _CoordinatorProvider:
         if isinstance(request, S015OwnApplicantAuthorityRequest):
             return S015OwnApplicantAuthorityResponse(**asdict(request), authority_reference="s3:test:applicant")
         return S015PostFoundingAuthorityResponse(**asdict(request), authority_reference="s3:test:gateway")
+
+
+class _FixtureBirthingCoordinatorProvider(_CoordinatorProvider):
+    def __init__(self, birthing_source):
+        super().__init__()
+        self.birthing_source = birthing_source
+        self.birthing_references = []
+
+    def evaluate_organism_authority(self, request):
+        if request.action is OrganismAction.SUBMIT_APPLICATION:
+            reference = self.birthing_source.reference_at(
+                request.living_organism_id,
+                request.effective_at,
+                request.evaluated_at,
+            )
+            if not reference:
+                raise RuntimeError("The controlled Birthing source did not label this LO")
+            self.birthing_references.append(reference)
+        return super().evaluate_organism_authority(request)
 
 
 class _PausingPostFoundingProvider:
@@ -123,30 +165,69 @@ class _TestDiscussionWelcome:
 @POSTGRES
 class ApplicationGatewayTests(TransactionTestCase):
     def setUp(self):
+        global T0, NOW
         _register_no_other_sessions_cleanup(self)
         self.tag = f"s3-gateway-{fresh()}"
-        with transaction.atomic(), connection.cursor() as cursor:
-            self.ids = found_nonroot(cursor, tag=self.tag)
-        self.actor = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
-        provision = IdentityTransition.objects.create(
-            identity=self.actor, action=IdentityTransition.Action.PROVISION,
-            prior_state=None, resulting_state="pending", authority_reference="s3:test:provision",
-            technical_executor="S3_TEST", evidence_reference="s3:test:history",
-            reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
-            correlation_id=uuid4(), occurred_at=T0,
+        if self._testMethodName == "test_four_closed_states_and_version_evidence_survives_a_change":
+            with transaction.atomic(), connection.cursor() as cursor:
+                self.ids = found_nonroot(cursor, tag=f"gateway-closed-states-{self.tag}")
+                cursor.execute(
+                    "SELECT recorded_at FROM core_livingorganismevent WHERE id = %s",
+                    [self.ids["events"]["core_livingorganismevent"]],
+                )
+                T0 = cursor.fetchone()[0]
+                cursor.execute("SELECT clock_timestamp()")
+                fixture_at = cursor.fetchone()[0]
+                self.gateway = seed_test_gateway(
+                    cursor,
+                    self.ids,
+                    at=fixture_at,
+                    include_governance_configuration=True,
+                    include_settings=False,
+                    include_question=False,
+                )
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT clock_timestamp()")
+                NOW = cursor.fetchone()[0]
+            self.route = None
+            self.route_times = None
+            self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
+            self.actor = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
+            self.fixture_birthing_source = TestFixtureBirthingFactSource(self.organism.organism_id)
+            self.provider = _FixtureBirthingCoordinatorProvider(self.fixture_birthing_source)
+            self.service = OrganismApplicationService(
+                authority=S015Authority(provider=self.provider),
+                clock=lambda: NOW,
+            )
+            return
+        if self._testMethodName == "test_name_dependency_default_draft_and_unselected_settings":
+            with transaction.atomic(), connection.cursor() as cursor:
+                self.no_name_ids = found_nonroot(cursor, tag=f"no-name-{self.tag}")
+        first_governance_configuration = (
+            self._testMethodName == "test_governance_choice_defaults_copies_and_remains_effective"
         )
-        IdentityTransition.objects.create(
-            identity=self.actor, action=IdentityTransition.Action.ACTIVATE,
-            prior_state="pending", resulting_state="active", authority_reference="s3:test:activate",
-            technical_executor="S3_TEST", evidence_reference="s3:test:history",
-            reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
-            correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1), previous_transition=provision,
+        self.route = prepare_route(
+            tag=self.tag,
+            governance_enabled=None if first_governance_configuration else False,
+            include_settings=not first_governance_configuration,
+            include_question=not first_governance_configuration,
+            to_birthing_phase=not first_governance_configuration,
         )
-        self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
+        if first_governance_configuration:
+            self.route_times = route_recorded_times(self.route)
+            self.organism = self.route.organism
+        else:
+            birth(self.route)
+            self.ids, self.gateway = route_fixture_state(self.route)
+            self.route_times = self.ids["recorded_times"]
+            self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(self.route)
+        self.actor = self.route.founder
         self.provider = _CoordinatorProvider()
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=self.provider),
-            clock=lambda: NOW, name_source=_TestFixtureLONameSource(),
+            clock=lambda: NOW,
         )
 
     def draft(self, action, fields, suffix=None):
@@ -195,7 +276,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             prior_state="pending", resulting_state="active", authority_reference="s3:test:activate",
             technical_executor="S3_TEST", evidence_reference="s3:test:history",
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
-            correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1), previous_transition=provision,
+            correlation_id=uuid4(), occurred_at=NOW, previous_transition=provision,
         )
         return applicant
 
@@ -208,8 +289,6 @@ class ApplicationGatewayTests(TransactionTestCase):
         ))
 
     def automatic_gateway(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            seed_test_gateway(cursor, self.ids)
         settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
             "applications_open": True, "automatic_acceptance": True, "processing_responsibility": "LO",
         })
@@ -224,9 +303,24 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.provider = _CoordinatorProvider()
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=self.provider), clock=lambda: NOW,
-            name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care), welcome=welcome,
+            care_executor=FakeCareExecutor(care), welcome=welcome,
         )
         return care, welcome
+
+    def _direct_cq_configuration(self, inherit, settings_required, question_required):
+        return LOGovernanceConfigurationVersion.objects.create(
+            living_organism=self.organism,
+            actor=self.actor,
+            enterer=self.actor,
+            supersedes=LOGovernanceConfigurationVersion.objects.get(living_organism=self.organism),
+            occurred_at=NOW,
+            effective_at=NOW,
+            received_at=NOW,
+            cq_active=True,
+            inherit_portal_cq_settings=inherit,
+            require_cq_to_change_lo_settings=settings_required,
+            require_cq_to_change_application_question=question_required,
+        )
 
     def open_gateway(self):
         self.automatic_gateway()
@@ -330,14 +424,15 @@ class ApplicationGatewayTests(TransactionTestCase):
                 "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
                 "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                [member_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", member_uuid),
+                [member_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", member_uuid),
                  other_pk, self.ids["lo"]],
             )
             member_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", member_id, 1, "JOIN", None,
                          "ACTIVE", other_pk, self.ids["basis"], f"gateway-second:{self.tag}",
+                         eff=T0, occ=T0, rec=NOW,
                          extra={"reason_class": "TEST"})
-            refresh(cursor, "core_organismmembership", member_id)
+            refresh(cursor, "core_organismmembership", member_id, T0)
         from core.models import OrganismRoleDefinition
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
@@ -345,7 +440,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
         role_service = OrganismRoleService(
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
-            clock=lambda: datetime.now(timezone.utc),
+            clock=self._database_now,
         )
 
         proposal_at = self._database_now()
@@ -702,7 +797,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         }
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
-            name_source=_TestFixtureLONameSource(), care_executor=FakeCareExecutor(care),
+            care_executor=FakeCareExecutor(care),
         )
         applicant = self.applicant()
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
@@ -736,8 +831,6 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.assertFalse(Application.objects.filter(applicant=applicant, living_organism=self.organism).exists())
 
     def test_automatic_off_remains_pending(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            seed_test_gateway(cursor, self.ids)
         applicant = self.applicant()
         result = self.submit(applicant)
         application = Application.objects.get(application_uuid=result.application_uuid)
@@ -751,8 +844,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             {value for value, _ in ApplicationEngagement.Route.choices},
             {"LO_CQ", "LO_CSA", "LO_AUTOMATIC", "CIRCLE_CQ", "CIRCLE_CSA"},
         )
-        with transaction.atomic(), connection.cursor() as cursor:
-            seeded = seed_test_gateway(cursor, self.ids)
+        seeded = self.gateway
         applicant = self.applicant()
         application_result = self.submit(applicant)
         application = Application.objects.get(application_uuid=application_result.application_uuid)
@@ -777,10 +869,11 @@ class ApplicationGatewayTests(TransactionTestCase):
 
         def change_then_accept(application, care, request_reference, idempotency_key, fingerprint):
             # Test-only effect fixture: interposes a later effective setting, not a concurrent race.
+            later_at = self._database_now()
             later = LOApplicationSettingsVersion.objects.create(
                 living_organism=self.organism, actor=self.actor, enterer=self.actor,
-                supersedes=setting, occurred_at=NOW + timedelta(seconds=1),
-                effective_at=NOW + timedelta(seconds=1), received_at=NOW + timedelta(seconds=1),
+                supersedes=setting, occurred_at=later_at,
+                effective_at=later_at, received_at=later_at,
                 applications_open=False, automatic_acceptance=False, processing_responsibility="LO",
             )
             with connection.cursor() as cursor:
@@ -790,13 +883,12 @@ class ApplicationGatewayTests(TransactionTestCase):
                     cursor, "core_livingorganismevent", self.organism.pk, predecessor.sequence + 1,
                     "EFFECT_APPLICATION_SETTINGS", predecessor.resulting_state, predecessor.resulting_state,
                     None, self.ids["basis"], fresh(), pred_id=predecessor.pk,
-                    eff=NOW + timedelta(seconds=1), occ=NOW + timedelta(seconds=1),
-                    rec=NOW + timedelta(seconds=1),
+                    eff=later_at, occ=later_at, rec=later_at,
                     extra={"actor_state": "LIVING_ORGANISM", "actor_access_epoch": None,
                            "enterer_identity_id": self.actor.pk,
                            "evidence_reference": f"application-settings-version:{later.version_uuid}"},
                 )
-                refresh(cursor, "core_livingorganism", self.organism.pk, NOW + timedelta(seconds=1))
+                refresh(cursor, "core_livingorganism", self.organism.pk, later_at)
             accepted = accept(application, care, request_reference, idempotency_key, fingerprint)
             self.assertEqual(gateway_version_status("default", later, datetime.now(timezone.utc)), "EFFECTIVE")
             return accepted
@@ -945,27 +1037,35 @@ class ApplicationGatewayTests(TransactionTestCase):
                 raise Rollback()
 
     def test_name_dependency_default_draft_and_unselected_settings(self):
+        no_name_organism = LivingOrganism.objects.get(pk=self.no_name_ids["lo"])
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
-            default_application_question(self.organism, FormationLONameSource())
+            default_application_question(no_name_organism, FormationLONameSource())
         self.assertEqual(refused.exception.limit_id, "S3-IL-LONAME")
         with self.assertRaises(S015OperationNotYetImplemented):
-            LOApplicationQuestionDraftForm(living_organism=self.organism)
+            LOApplicationQuestionDraftForm(living_organism=no_name_organism)
         production = OrganismApplicationService(
             authority=S015Authority(provider=_CoordinatorProvider()), clock=lambda: NOW,
         )
+        no_name_actor = Identity.objects.select_related("credential").get(
+            pk=self.no_name_ids["identity"],
+        )
         with self.assertRaises(S015OperationNotYetImplemented) as refused:
             production.save_gateway_draft(GatewayDraftCommand(
-                credential=self.actor.credential, living_organism_id=self.organism.organism_id,
+                credential=no_name_actor.credential, living_organism_id=no_name_organism.organism_id,
                 action=OrganismAction.EFFECT_APPLICATION_QUESTION,
                 request_reference=f"s3:name:{self.tag}", idempotency_key=f"s3:name:{self.tag}",
                 occurred_at=NOW, effective_at=NOW, received_at=NOW, fields={},
             ))
         self.assertEqual(refused.exception.limit_id, "S3-IL-LONAME")
         form = LOApplicationQuestionDraftForm(
-            living_organism=self.organism, name_source=_TestFixtureLONameSource(),
+            living_organism=self.organism,
         )
+        founding_name = LOFoundingContentVersion.objects.get(
+            living_organism=self.organism,
+            version=1,
+        ).name
         self.assertEqual(form.initial, {
-            "question_text": "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?",
+            "question_text": f"Why do you want to join {founding_name}?",
             "answer_format": "LONG_ANSWER",
         })
         receipts_before_draft = OrganismCommandReceipt.objects.count()
@@ -981,6 +1081,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.assertFalse(LOApplicationSettingsDraftForm(data={}).is_valid())
 
     def test_draft_effect_supersede_and_immutable_answer_text(self):
+        self.service._name_source = _TestFixtureLONameSource()
         action = OrganismAction.EFFECT_APPLICATION_QUESTION
         first = self.draft(action, {})
         self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "DRAFT")
@@ -1142,7 +1243,6 @@ class ApplicationGatewayTests(TransactionTestCase):
         service = OrganismApplicationService(
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
             clock=lambda: NOW,
-            name_source=_TestFixtureLONameSource(),
         )
         command = EffectGatewayVersionCommand(
             credential=nonmember.credential,
@@ -1354,8 +1454,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                 self.assertEqual(cursor.fetchone()[0], before[table], table)
 
     def test_effect_guard_attributes_evidence_organism_continuity_and_duplicate(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            gateway = seed_test_gateway(cursor, self.ids)
+        gateway = self.gateway
         action = OrganismAction.EFFECT_APPLICATION_SETTINGS
         for reference, message in (
             ("not-a-version", "evidence reference malformed"),
@@ -1368,11 +1467,12 @@ class ApplicationGatewayTests(TransactionTestCase):
         with self.assertRaisesMessage(IntegrityError, "already effective"):
             with transaction.atomic():
                 self.direct_effect(action, f"application-settings-version:{existing.version_uuid}")
-        with transaction.atomic(), connection.cursor() as cursor:
-            other = found_nonroot(cursor, tag=f"other-{fresh()}")
+        other = prepare_route(tag=f"other-{fresh()}")
+        other_ids, _ = route_fixture_state(other)
+        other_at = route_test_now(other)
         other_version = LOApplicationSettingsVersion.objects.create(
-            living_organism_id=other["lo"], actor=self.actor, enterer=self.actor,
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            living_organism_id=other_ids["lo"], actor=self.actor, enterer=self.actor,
+            occurred_at=other_at, effective_at=other_at, received_at=other_at,
             applications_open=True, automatic_acceptance=False, processing_responsibility="LO",
         )
         with self.assertRaisesMessage(IntegrityError, "version of another organism"):
@@ -1441,12 +1541,8 @@ class ApplicationGatewayTests(TransactionTestCase):
         ):
             with self.subTest(action=action, limit=limit), self.assertRaises(Rollback):
                 with transaction.atomic():
-                    configuration = LOGovernanceConfigurationVersion.objects.create(
-                        living_organism=self.organism, actor=self.actor, enterer=self.actor,
-                        occurred_at=NOW, effective_at=NOW, received_at=NOW,
-                        cq_active=True, inherit_portal_cq_settings=inherit,
-                        require_cq_to_change_lo_settings=settings_required,
-                        require_cq_to_change_application_question=question_required,
+                    configuration = self._direct_cq_configuration(
+                        inherit, settings_required, question_required,
                     )
                     self.direct_effect(OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
                                        f"governance-configuration-version:{configuration.version_uuid}")
@@ -1462,13 +1558,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         # establishes behaviour under it, not delivery of that route.
         with transaction.atomic(), connection.cursor() as cursor:
             self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {})
-            configuration = LOGovernanceConfigurationVersion.objects.create(
-                living_organism=self.organism, actor=self.actor, enterer=self.actor,
-                occurred_at=NOW, effective_at=NOW, received_at=NOW,
-                cq_active=True, inherit_portal_cq_settings=False,
-                require_cq_to_change_lo_settings=False,
-                require_cq_to_change_application_question=False,
-            )
+            configuration = self._direct_cq_configuration(False, False, False)
             self.direct_effect(OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
                                f"governance-configuration-version:{configuration.version_uuid}")
             refresh(cursor, "core_livingorganism", self.organism.pk, NOW)
@@ -1490,13 +1580,14 @@ class ApplicationGatewayTests(TransactionTestCase):
                 "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
                 "identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                (membership_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                (membership_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", membership_uuid),
                  other_pk, self.organism.pk),
             )
             membership_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", membership_id, 1, "JOIN", None, "ACTIVE",
-                         other_pk, self.ids["basis"], fresh(), extra={"reason_class": "FOUNDING"})
-            refresh(cursor, "core_organismmembership", membership_id)
+                         other_pk, self.ids["basis"], fresh(), eff=T0, occ=T0, rec=NOW,
+                         extra={"reason_class": "FOUNDING"})
+            refresh(cursor, "core_organismmembership", membership_id, T0)
         other = Identity.objects.select_related("credential").get(pk=other_pk)
         for action in (OrganismAction.EFFECT_APPLICATION_QUESTION, OrganismAction.EFFECT_APPLICATION_SETTINGS):
             with self.subTest(non_coordinator=action), self.assertRaisesMessage(
@@ -1526,13 +1617,31 @@ class ApplicationGatewayTests(TransactionTestCase):
                         })
                         self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
                     if mode != "no_question":
-                        question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {})
+                        question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {
+                            "question_text": "TEST FIXTURE: Why do you want to join?",
+                            "answer_format": "LONG_ANSWER",
+                            "options": None,
+                        })
                         self.effect(question, OrganismAction.EFFECT_APPLICATION_QUESTION)
                     with self.assertRaisesMessage(S015ApplicationRefused, "S3FU gateway closed"):
                         self.submit(applicant)
                     raise Rollback()
-        with transaction.atomic(), connection.cursor() as cursor:
-            gateway = seed_test_gateway(cursor, self.ids)
+        # FIFTH INTERFACE EXCEPTION (HG-authorized): the labelled controlled LO tests absent
+        # settings/question and closed states that real Birthing requires; it changes no real-LO rule.
+        settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {
+            "question_text": "TEST FIXTURE: Why do you want to join?",
+            "answer_format": "LONG_ANSWER",
+            "options": None,
+        })
+        self.effect(question, OrganismAction.EFFECT_APPLICATION_QUESTION)
+        gateway = {
+            "core_loapplicationsettingsversion": settings.pk,
+            "core_loapplicationquestionversion": question.pk,
+        }
         result = self.submit(applicant)
         application = Application.objects.get(application_uuid=result.application_uuid)
         self.assertEqual((application.settings_version_id, application.question_version_id, application.answer), (
@@ -1596,13 +1705,14 @@ class ApplicationGatewayTests(TransactionTestCase):
                 "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
                 "identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                (membership_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                (membership_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", membership_uuid),
                  other_pk, self.organism.pk),
             )
             membership_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", membership_id, 1, "JOIN", None, "ACTIVE",
-                         other_pk, self.ids["basis"], fresh(), extra={"reason_class": "FOUNDING"})
-            refresh(cursor, "core_organismmembership", membership_id)
+                         other_pk, self.ids["basis"], fresh(), eff=T0, occ=T0, rec=NOW,
+                         extra={"reason_class": "FOUNDING"})
+            refresh(cursor, "core_organismmembership", membership_id, T0)
         other = Identity.objects.select_related("credential").get(pk=other_pk)
         with self.assertRaisesMessage(S015ApplicationRefused, "effective Coordinator office is required"):
             self.service.save_gateway_draft(GatewayDraftCommand(
@@ -1616,10 +1726,13 @@ class ApplicationGatewayTests(TransactionTestCase):
         settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
             "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
         })
+        predecessor = LivingOrganismEvent.objects.get(pk=self.organism.head_event_id)
+        self.assertEqual(predecessor.resulting_state, "ACTIVE")
         with transaction.atomic(), connection.cursor() as cursor:
-            append_event(cursor, "core_livingorganismevent", self.organism.pk, 2, "CLOSE", "ACTIVE", "CLOSED",
+            append_event(cursor, "core_livingorganismevent", self.organism.pk, predecessor.sequence + 1,
+                         "CLOSE", "ACTIVE", "CLOSED",
                          self.actor.pk, self.ids["basis"], fresh(),
-                         pred_id=self.ids["events"]["core_livingorganismevent"], eff=NOW, occ=NOW, rec=NOW)
+                         pred_id=predecessor.pk, eff=NOW, occ=NOW, rec=NOW)
             refresh(cursor, "core_livingorganism", self.organism.pk, NOW)
         with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused: dissolved"):
             self.service.effect_gateway_version(EffectGatewayVersionCommand(

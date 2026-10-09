@@ -21,7 +21,12 @@ from core.models import (
     EssentialCoverageRequirement,
     Identity,
     LivingOrganism,
+    LivingOrganismEvent,
+    LOApplicationQuestionVersion,
+    LOApplicationSettingsVersion,
+    LOBirthingSnapshot,
     LOFoundingContentVersion,
+    LOGovernanceConfigurationVersion,
     OrganismCommandReceipt,
     OrganismMembership,
     OrganismRoleDefinition,
@@ -29,13 +34,19 @@ from core.models import (
     PlatformTermsVersion,
 )
 from core.organism_contract import OrganismAction
-from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+from src.intevia.services.organism_application_authority import (
+    ProductionApplicationAuthorityProvider,
+    _effective_version,
+)
 from src.intevia.services.organism_authority import (
+    SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE,
     S015Authority,
     S015AuthorityDenied,
     S015AuthorityRefusalCode,
+    S015PostFoundingAuthorityRequest,
     S015PreFoundingAuthorityRequest,
     QualifiedS015AuthorityDecision,
+    authority_target_fingerprint,
     canonical_json_bytes,
     canonical_timestamp,
 )
@@ -43,10 +54,15 @@ from src.intevia.services.organism_command_support import (
     ReplayResultType,
     ReplayViewer,
     S015CommandReplayMismatch,
+    _canonical_uuid,
     _canonical_key,
+    _command_payload,
     _empty_anchor_fingerprint,
     _lock_actor,
+    _lock_actor_membership_context,
+    _lock_registered_organism,
     _resulting_temporal_basis,
+    _validate_timestamp,
     acquire_organism_command_mutex,
     authority_atomic,
     serve_replay,
@@ -1144,6 +1160,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 "nothing was saved. Try again; if it persists, report it."
             )
 
+
         with authority_atomic(self._alias):
             actor = _lock_actor(
                 database_alias=self._alias,
@@ -1500,3 +1517,470 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
             "PHASE_ADVANCE could not be completed because of a technical problem; "
             "nothing was saved. Try again; if it persists, report it."
         )
+
+
+_BIRTHING_SUBTYPE = "TRANSITION_LIVING_ORGANISM/BIRTHING"
+_BIRTHING_COMMAND_DOMAIN = b"INTEVIA:S015:TRANSITION_LIVING_ORGANISM/BIRTHING:COMMAND:v1\x00"
+
+
+@dataclass(frozen=True, slots=True)
+class BirthingCommand:
+    credential: User
+    living_organism_uuid: UUID
+    request_reference: str
+    idempotency_key: str
+    effective_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BirthingResult:
+    living_organism_uuid: UUID
+    snapshot_uuid: UUID
+    event_uuid: UUID
+    event_sequence: int
+    lineage_reference: str
+    authority_reference: str
+    authority_decision_reference: str
+
+    def receipt_payload(self) -> dict[str, str | int]:
+            return {
+                "living_organism_uuid": str(self.living_organism_uuid),
+                "snapshot_uuid": str(self.snapshot_uuid),
+                "event_uuid": str(self.event_uuid),
+                "event_sequence": self.event_sequence,
+                "lineage_reference": self.lineage_reference,
+                "authority_reference": self.authority_reference,
+                "authority_decision_reference": self.authority_decision_reference,
+            }
+
+    @classmethod
+    def replay_field_audiences(cls, result: BirthingResult) -> dict[str, str]:
+            if type(result) is not cls:
+                raise TypeError("birthing replay result has the wrong type")
+            return {}
+
+
+def _birthing_result_from_payload(payload: object) -> BirthingResult:
+    if type(payload) is not dict:
+            raise S015CommandReplayMismatch("completed receipt does not match request")
+    try:
+            return BirthingResult(
+                living_organism_uuid=UUID(payload["living_organism_uuid"]),
+                snapshot_uuid=UUID(payload["snapshot_uuid"]),
+                event_uuid=UUID(payload["event_uuid"]),
+                event_sequence=payload["event_sequence"],
+                lineage_reference=payload["lineage_reference"],
+                authority_reference=payload["authority_reference"],
+                authority_decision_reference=payload["authority_decision_reference"],
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+            raise S015CommandReplayMismatch("completed receipt does not match request") from exc
+
+
+class S015BirthingNotFound(Exception):
+    pass
+
+
+class S015BirthingUnavailable(Exception):
+    pass
+
+
+class S015BirthingTechnicalFailure(Exception):
+    pass
+
+
+class OrganismBirthingService(_OrganismCommandService):
+    _action = OrganismAction.TRANSITION_LIVING_ORGANISM
+    _not_found = S015BirthingNotFound
+    _authority_unavailable = S015BirthingUnavailable
+
+    def __init__(
+            self,
+            *,
+            clock: Callable[[], datetime],
+            authority: S015Authority | None = None,
+            database_alias: str = "default",
+    ) -> None:
+            if not callable(clock):
+                raise TypeError("clock must be callable")
+            if type(database_alias) is not str or not database_alias:
+                raise ValueError("database_alias is required")
+            if authority is None:
+                authority = S015Authority(
+                    provider=ProductionApplicationAuthorityProvider(database_alias=database_alias),
+                    database_alias=database_alias,
+                )
+            super().__init__(authority=authority, clock=clock, database_alias=database_alias)
+
+    def _replay_result(self, payload: object) -> BirthingResult:
+            return _birthing_result_from_payload(payload)
+
+    def birth_living_organism(self, command: BirthingCommand) -> BirthingResult:
+            if connections[self._alias].in_atomic_block:
+                raise S015BirthingTechnicalFailure(
+                    "BIRTHING could not be completed because of a technical problem; "
+                    "nothing was saved. Try again; if it persists, report it."
+                )
+
+            with authority_atomic(self._alias):
+                actor = _lock_actor(
+                    database_alias=self._alias,
+                    credential=command.credential,
+                    unavailable=S015BirthingUnavailable,
+                )
+                organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+                request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+                idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+                received_at = _validate_timestamp(self._clock(), "received_at")
+                effective_at = (
+                    received_at
+                    if command.effective_at is None
+                    else _validate_timestamp(command.effective_at, "effective_at")
+                )
+                if effective_at > received_at:
+                    raise ValueError("effective_at must not be later than received_at")
+
+                command_target = {
+                    "action": self._action.value,
+                    "organism_uuid": organism_uuid,
+                }
+                fingerprint = _command_payload(
+                    domain=_BIRTHING_COMMAND_DOMAIN,
+                    schema="s015-birthing-v1",
+                    action=self._action,
+                    actor_identity_id=actor.identity_id,
+                    actor_access_epoch=actor.access_epoch,
+                    request_reference=request_reference,
+                    idempotency_key=idempotency_key,
+                    occurred_at=effective_at,
+                    target=command_target,
+                    command={
+                        "effective_at": effective_at,
+                        "received_at": received_at,
+                        "schema": "s015-birthing-v1",
+                    },
+                )
+                acquire_organism_command_mutex(
+                    database_alias=self._alias,
+                    actor_identity_id=actor.identity_id,
+                    action=self._action,
+                    idempotency_key=idempotency_key,
+                )
+                replay = self._attempt_replay(
+                    actor=actor,
+                    request_reference=request_reference,
+                    payload_fingerprint=fingerprint,
+                    idempotency_key=idempotency_key,
+                    viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
+                )
+                if replay is not None:
+                    return replay
+
+                _lock_registered_organism(
+                    database_alias=self._alias,
+                    organism_id=organism_uuid,
+                )
+                try:
+                    organism = LivingOrganism.objects.using(self._alias).select_for_update().get(
+                        organism_id=organism_uuid,
+                    )
+                except LivingOrganism.DoesNotExist as exc:
+                    raise S015BirthingNotFound("living organism not found") from exc
+                if organism.head_event_id is None or organism.founding_authority_basis_id is None:
+                    raise S015BirthingTechnicalFailure(
+                        "BIRTHING could not be completed because of a technical problem; "
+                        "nothing was saved. Try again; if it persists, report it."
+                    )
+
+                actor_membership, role_refs = _lock_actor_membership_context(
+                    database_alias=self._alias,
+                    actor_identity_id=actor.identity_id,
+                    living_organism_id=organism_uuid,
+                    unavailable=S015BirthingUnavailable,
+                )
+                snapshot_uuid = uuid4()
+                authority_target = {
+                    **command_target,
+                    "snapshot_uuid": str(snapshot_uuid),
+                }
+                request = S015PostFoundingAuthorityRequest(
+                    database_alias=self._alias,
+                    actor_pk=actor.pk,
+                    actor_identity_id=actor.identity_id,
+                    actor_access_epoch=actor.access_epoch,
+                    action=self._action,
+                    command_subtype=_BIRTHING_SUBTYPE,
+                    target_fingerprint=authority_target_fingerprint(authority_target),
+                    request_reference=request_reference,
+                    idempotency_key=idempotency_key,
+                    evaluated_at=received_at,
+                    active_membership_head_reference=actor_membership.head_transition.lineage_reference,
+                    contextual_role_head_references=role_refs,
+                    effective_at=effective_at,
+                    target=authority_target,
+                    living_organism_id=organism_uuid,
+                )
+                try:
+                    decision = self._authority.qualify(request)
+                except S015AuthorityDenied as exc:
+                    if exc.refusal_code in {
+                        S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                        S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
+                        S015AuthorityRefusalCode.SB_IL_GOVCONST,
+                        S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED,
+                        S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
+                    }:
+                        raise S015AuthorityDenied(
+                            self._authored_refusal_message(
+                                exc.refusal_code,
+                                organism,
+                                effective_at,
+                                received_at,
+                            ),
+                            refusal_code=exc.refusal_code,
+                            disclosed_refusal_code=exc.disclosed_refusal_code,
+                            authority_decision_reference=exc.authority_decision_reference,
+                        ) from exc
+                    raise
+
+                predecessor = LivingOrganismEvent.objects.using(self._alias).select_for_update().get(
+                    pk=organism.head_event_id,
+                )
+                configuration = _effective_version(
+                    self._alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                    effective_at, received_at,
+                )
+                settings_version = _effective_version(
+                    self._alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
+                    effective_at, received_at,
+                )
+                question_version = _effective_version(
+                    self._alias, organism, OrganismAction.EFFECT_APPLICATION_QUESTION,
+                    effective_at, received_at,
+                )
+                content = LOFoundingContentVersion.objects.using(self._alias).filter(
+                    living_organism=organism,
+                    version=1,
+                    effective_at__lte=effective_at,
+                    recorded_at__lte=received_at,
+                ).first()
+                founding_event = LivingOrganismEvent.objects.using(self._alias).filter(
+                    living_organism=organism,
+                    sequence=1,
+                ).first()
+                acceptance = PlatformTermsAcceptance.objects.using(self._alias).filter(
+                    acceptance_kind=PlatformTermsAcceptance.Kind.FOUNDING,
+                    subject_reference=f"living-organism:{organism.organism_id}",
+                    accepted_by_identity_id=organism.founder_identity_id,
+                    recorded_at__lte=received_at,
+                ).order_by("-recorded_at", "-pk").first()
+                if (
+                    configuration is None
+                    or settings_version is None
+                    or question_version is None
+                    or content is None
+                    or founding_event is None
+                    or acceptance is None
+                ):
+                    raise S015BirthingTechnicalFailure(
+                        "The LO was not born and nothing changed: the constitutional snapshot did not "
+                        "match the LO's settings in effect at this time. This is a record inconsistency, "
+                        "not a decision against the LO. Prepare the snapshot again and retry."
+                    )
+
+                body = {
+                    "constitutional_documents": [],
+                    "laws": [],
+                    "settings": {
+                        "governance_configuration": f"governance-configuration-version:{configuration.version_uuid}",
+                        "application_settings": f"application-settings-version:{settings_version.version_uuid}",
+                        "application_question": f"application-question-version:{question_version.version_uuid}",
+                    },
+                    "founding_content": f"founding-content:{content.content_uuid}@{content.version}",
+                    "platform_terms_acceptance": f"platform-terms-acceptance:{acceptance.acceptance_uuid}",
+                    "formation_history_reference": {
+                        "lo_chain_sequence_range": [1, predecessor.sequence],
+                    },
+                    "governance_constitution": None,
+                }
+                try:
+                    LOBirthingSnapshot.objects.using(self._alias).create(
+                        snapshot_uuid=snapshot_uuid,
+                        living_organism=organism,
+                        body=body,
+                        snapshot_commitment=None,
+                        effective_at=effective_at,
+                        received_at=received_at,
+                    )
+                    event_uuid = uuid4()
+                    temporal_kind, temporal_reference = _resulting_temporal_basis(
+                        payload_fingerprint=fingerprint,
+                        effective_at=effective_at,
+                        received_at=received_at,
+                    )
+                    lineage_reference = "s015l1:" + hashlib.sha256(
+                        _BIRTHING_COMMAND_DOMAIN + canonical_json_bytes({
+                            "event": event_uuid,
+                            "organism": organism_uuid,
+                            "fingerprint": fingerprint,
+                        })
+                    ).hexdigest()
+                    with connections[self._alias].cursor() as cursor:
+                        cursor.execute(
+                            "SELECT l1_commitment FROM public.core_livingorganismevent WHERE id = %s",
+                            [predecessor.pk],
+                        )
+                        predecessor_commitment = cursor.fetchone()
+                        if predecessor_commitment is None or predecessor_commitment[0] is None:
+                            raise S015BirthingTechnicalFailure(
+                                "BIRTHING could not be completed because of a technical problem; "
+                                "nothing was saved. Try again; if it persists, report it."
+                            )
+                        cursor.execute(
+                            "SELECT public.s015_0022_digest('s015p1', "
+                            "public.s015_0022_parts_preimage(%s, %s::uuid))",
+                            ["core_livingorganismevent", event_uuid],
+                        )
+                        parts_commitment = cursor.fetchone()[0]
+                        columns = {
+                            "event_uuid": event_uuid,
+                            "living_organism_id": organism.pk,
+                            "sequence": predecessor.sequence + 1,
+                            "predecessor_id": predecessor.pk,
+                            "predecessor_sequence": predecessor.sequence,
+                            "action": "BIRTHING",
+                            "prior_state": predecessor.resulting_state,
+                            "resulting_state": predecessor.resulting_state,
+                            "actor_id": None,
+                            "actor_state": "LIVING_ORGANISM",
+                            "actor_capacity": "STANDING",
+                            "actor_access_epoch": None,
+                            "enterer_identity_id": actor.pk,
+                            "entry_mode": "TRANSPORT",
+                            "composing_rule_state": "NA_TRANSPORT",
+                            "composing_rule_reference": None,
+                            "composer_state": "NA_TRANSPORT",
+                            "composer_identity_id": None,
+                            "effective_until": None,
+                            "effective_until_state": "NONE",
+                            "authority_basis_id": organism.founding_authority_basis_id,
+                            "authority_decision_reference": decision.authority_decision_reference,
+                            "evidence_reference": f"birthing-snapshot:{snapshot_uuid}",
+                            "request_reference": request_reference,
+                            "idempotency_key": idempotency_key,
+                            "payload_fingerprint": fingerprint,
+                            "lineage_reference": lineage_reference,
+                            "temporal_basis_kind": temporal_kind,
+                            "temporal_basis_reference": temporal_reference,
+                            "occurred_at": effective_at,
+                            "effective_at": effective_at,
+                            "received_at": received_at,
+                            "predecessor_l1_commitment": predecessor_commitment[0],
+                            "parts_commitment": parts_commitment,
+                        }
+                        cursor.execute(
+                            f"INSERT INTO public.core_livingorganismevent ({', '.join(columns)}) "
+                            f"VALUES ({', '.join(['%s'] * len(columns))}) RETURNING id",
+                            list(columns.values()),
+                        )
+                        event_id = cursor.fetchone()[0]
+                        cursor.execute(
+                            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                            ["core_livingorganism", organism.pk, effective_at],
+                        )
+                except IntegrityError as exc:
+                    if "BIRTHING_SNAPSHOT_INVALID" not in str(exc):
+                        raise
+                    raise S015BirthingTechnicalFailure(
+                        "The LO was not born and nothing changed: the constitutional snapshot did not "
+                        "match the LO's settings in effect at this time. This is a record inconsistency, "
+                        "not a decision against the LO. Prepare the snapshot again and retry."
+                    ) from exc
+
+                event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
+                result = BirthingResult(
+                    living_organism_uuid=organism_uuid,
+                    snapshot_uuid=snapshot_uuid,
+                    event_uuid=event.event_uuid,
+                    event_sequence=event.sequence,
+                    lineage_reference=lineage_reference,
+                    authority_reference=decision.authority_reference,
+                    authority_decision_reference=decision.authority_decision_reference,
+                )
+                return self._finalise(
+                    actor=actor,
+                    request_reference=request_reference,
+                    idempotency_key=idempotency_key,
+                    payload_fingerprint=fingerprint,
+                    result=result,
+                )
+
+    def _authored_refusal_message(
+            self,
+            code: S015AuthorityRefusalCode,
+            organism: LivingOrganism,
+            effective_at: datetime,
+            received_at: datetime,
+    ) -> str:
+            if code is S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY:
+                return SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE
+            if code is S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED:
+                event = LivingOrganismEvent.objects.using(self._alias).filter(
+                    living_organism=organism,
+                    action="BIRTHING",
+                    effective_at__lte=effective_at,
+                    received_at__lte=received_at,
+                    recorded_at__lte=received_at,
+                ).order_by("-effective_at", "-recorded_at", "-sequence", "-event_uuid").first()
+                born_date = "an earlier date" if event is None else event.effective_at.date().isoformat()
+                return (
+                    f"The LO was not born again and nothing changed: it was born on {born_date}. "
+                    "An LO is born once."
+                )
+            if code is S015AuthorityRefusalCode.SB_IL_GOVCONST:
+                return (
+                    "The LO was not born and nothing changed. Its GOVERNANCE choice in effect is Yes, "
+                    "so Birthing needs its GOVERNANCE Circle and that Circle's constitutional admission "
+                    "route to be established, and those records cannot be made in this release. This is "
+                    "a known limit of the current build, not a refusal of the LO's choice; it lifts when "
+                    "GOVERNANCE formation is delivered."
+                )
+            if code is S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED:
+                return (
+                    "This LO's electorate has more than one member, so this act needs the electorate's "
+                    "qualified decision, and no CQ route is operative in this release (S3-IL-CQ). "
+                    "Nothing changed. This is a known limit, not a refusal of the act; it lifts when "
+                    "DISCUSSION's CQ is delivered."
+                )
+            missing = "a reviewed application question"
+            phase = LivingOrganismEvent.objects.using(self._alias).filter(
+                living_organism=organism,
+                action="PHASE_ADVANCE",
+                effective_at__lte=effective_at,
+                received_at__lte=received_at,
+                recorded_at__lte=received_at,
+            ).order_by(
+                "-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid",
+            ).values_list("evidence_reference", flat=True).first()
+            if phase != "formation-phase:GERMINATING->BIRTHING":
+                missing = "the phase to read Birthing"
+            elif _effective_version(
+                self._alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                effective_at, received_at,
+            ) is None:
+                missing = "an effective governance configuration"
+            else:
+                settings_version = _effective_version(
+                    self._alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
+                    effective_at, received_at,
+                )
+                if (
+                    settings_version is None
+                    or settings_version.applications_open is None
+                    or settings_version.automatic_acceptance is None
+                ):
+                    missing = "both application settings chosen"
+            return (
+                "The LO was not born and nothing changed. Birthing needs "
+                f"{missing}, which is not yet in place. Complete it, then birth the LO."
+            )

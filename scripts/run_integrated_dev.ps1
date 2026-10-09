@@ -37,6 +37,7 @@ $fullSuiteParityLabels = @(
     "tests.test_tt1_ownership",
     "tests.test_tt1_template_lifecycle",
     "tests.test_sb1_founding_terms_phases",
+    "tests.test_sb2_birthing",
     "tests.test_p1_registration_service",
     "tests.test_p1_identity_guardian",
     "tests.test_p1_migration_restore",
@@ -151,6 +152,7 @@ function Protect-OutputText {
 }
 
 function Get-RunDatabaseReconciliation {
+    # P1-F5: ^test_intevia_living_organism_tt1_witness_[0-9a-f]+$ is the only naming exemption.
     param(
         [Parameter(Mandatory = $true)][string]$ReceiptPath,
         [Parameter(Mandatory = $true)][string]$LogPath,
@@ -418,7 +420,7 @@ try {
         if ($Labels.Count -ne $fullSuiteParityLabels.Count -or
             @($Labels | Where-Object { $_ -cnotin $fullSuiteParityLabels }).Count -gt 0 -or
             @($fullSuiteParityLabels | Where-Object { $_ -cnotin $Labels }).Count -gt 0) {
-            throw "full-suite parity mode requires exactly the commissioned 88 verification entries"
+            throw "full-suite parity mode requires exactly the commissioned 89 verification entries"
         }
     }
     else {
@@ -509,7 +511,7 @@ try {
     $env:VERIFICATION_RUN_NONCE = $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0043_p1_governed_registration"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0044_sb2_birthing_snapshot"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore

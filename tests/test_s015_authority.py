@@ -15,6 +15,7 @@ from core.organism_contract import (
 from src.intevia.services.organism_authority import (
     S015Authority,
     S015AuthorityMalformed,
+    S015AuthorityRefusalCode,
     S015PreFoundingAuthorityRequest,
     S015PreFoundingAuthorityResponse,
 )
@@ -53,8 +54,15 @@ class S015AuthorityContractTests(TestCase):
             evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
 
+    def test_empty_electorate_refusal_code_is_catalogued(self):
+        self.assertEqual(
+            S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY.value,
+            "SB_BIRTHING_ELECTORATE_EMPTY",
+        )
+
     def test_matrix_has_36_complete_noninheriting_rows(self):
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 36)
+        # SB-1's PHASE_ADVANCE row gave 36; commission section 6.3's BIRTHING row adds one, giving 37.
+        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 37)
         self.assertTrue(all(len(row) == 4 for row in QUALIFICATION_PLANE_MATRIX.values()))
         ordinary = QUALIFICATION_PLANE_MATRIX[OrganismAction.SUBMIT_APPLICATION.value]
         for action in (

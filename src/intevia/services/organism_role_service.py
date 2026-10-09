@@ -31,7 +31,7 @@ Order inside the transaction (as S1 at d6af911): the atomic block; canonical inp
 (including refusal of an undecided or unused action or state token); the actor lock; the mutex;
 target resolution so the fingerprint can be built (a missing target is not-found); replay; then
 authority; then every state-reading refusal — the nominee's current membership on ASSIGN (R4
-slice 2), IL-4, the decided edge set, IL-3, IL-7 — then the
+slice 2), IL-4, the decided edge set, IL-3, PE-04 — then the
 event write with every chain-contract column (TRANSPORT, actor PARTY/STANDING, enterer = actor),
 the cache refresh with `clock_timestamp()`, and the receipt.
 
@@ -49,21 +49,12 @@ Implementation limits in force — temporary refusals, not office or membership 
   rule-composed act (actor NONE, the term-end rule). No command is exposed for it in S2.
   Effective expiry is a read rule (`assignment_in_effect`); the ending is a record.
 - IL-6 (S4): a Circle-scoped office (`circle` not NULL, or a CIRCLE-scoped role definition); refused on propose and on every transition.
-- IL-7 (SB — the Birthing slice): an END or REASSIGN of the founder's original founding
-  COORDINATOR assignment by an executor who is not the LO's founder (the Human Governor's ruling
-  of 29 September 2026: refuse until Birthing can be determined from governed records; this limit
-  is not a determination that the LO has not birthed). Provenance is established from landed data
-  as the founding transaction itself, read from the office's first EVENT (events are immutable
-  under s015_refuse_row_mutation, so its xmin is permanently its inserting transaction; the
-  anchor's xmin is not — every head advance and cache refresh replaces it): the sequence-1 event's
-  writing transaction equals the LO's founding_insert_xid (xmin = founding_insert_xid::xid — the
-  only cast direction PostgreSQL provides, so a 32-bit comparison; a 32-bit xid repeats after
-  about four billion transactions, which would over-protect by withholding an ending and never
-  record anything false) — with the anchor held by the founder's own membership for the
-  COORDINATOR role (see _founding_provenance_assignment_id's docstring for the fact and its
-  limits). A later appointment held by the founder is not protected. The founder's own ending
-  remains available, subject to authority and the other checks. When Birthing (SB) lands, this
-  limit is replaced by PE-04's rule evaluated at the attempted ending's effective time (⟨E1.019⟩).
+- PE-04 (SB — the Birthing slice): an END or REASSIGN of only the founder's original LO-scope
+  COORDINATOR appointment is refused for a non-founder enterer only while no Birthing event is
+  eligible at the attempted act's coordinates. The founder's own ending, later appointments,
+  non-founder appointments and Circle-scope appointments are not protected by PE-04. Provenance
+  is established by the founding-transaction test or the durable record rule in
+  `_founding_appointment_by_record`; the latter reads no transaction ids or timestamps.
 - IL-8 (SR): appointment to, or any transition of, an office whose role definition is not COORDINATOR. The landed schema lets an
   organism define offices of its own, beyond COORDINATOR and the root's reserved five (which exist
   only on the platform root, `s015_platform_root_unset_ck` shipping FALSE-only, D-39); SR's row
@@ -124,6 +115,11 @@ from src.intevia.services.organism_command_support import (
 )
 from src.intevia.services.organism_membership_service import (
     S015OperationNotYetImplemented,
+)
+from src.intevia.services.organism_authority import (
+    C_FOUNDER_PROTECTED_MESSAGE,
+    S015AuthorityDenied,
+    S015AuthorityRefusalCode,
 )
 
 
@@ -1084,7 +1080,23 @@ class OrganismRoleService(_OrganismCommandService):
                     assignment_id=assignment.pk,
                     living_organism_id=organism.pk,
                 ) is not None:
-                    raise S015OperationNotYetImplemented("end_founder_original_office", "IL-7", "SB")
+                    from src.intevia.services.organism_application_authority import (
+                        ProductionBirthingFactSource,
+                    )
+
+                    birthing_reference = ProductionBirthingFactSource(
+                        database_alias=self._alias,
+                    ).reference_at(
+                        organism.organism_id,
+                        effective_at,
+                        received_at,
+                    )
+                    if birthing_reference is None:
+                        raise S015AuthorityDenied(
+                            C_FOUNDER_PROTECTED_MESSAGE,
+                            refusal_code=S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
+                            disclosed_refusal_code=S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
+                        )
 
         basis_id = organism.founding_authority_basis_id
         if basis_id is None:
@@ -1154,7 +1166,13 @@ class OrganismRoleService(_OrganismCommandService):
         with connections[self._alias].cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
             record_time = cursor.fetchone()[0]
-        if proposal.actor_id == assignment.membership.identity_id:
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT actor_id FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
+                [proposal.pk],
+            )
+            proposal_actor_id, = cursor.fetchone()
+        if proposal_actor_id == assignment.membership.identity_id:
             withdrawn = OfficeAppointmentConsent.objects.using(self._alias).filter(
                 assignment=assignment,
                 proposal_event=proposal,

@@ -23,7 +23,7 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision, S015Authority, S015AuthorityDenied,
-    S015OwnApplicantAuthorityRequest, authority_target_fingerprint,
+    S015AuthorityRefusalCode, S015OwnApplicantAuthorityRequest, authority_target_fingerprint,
     canonical_json_bytes, canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import (
@@ -54,7 +54,14 @@ class S015ApplicationAuthorityUnavailable(S015ApplicationError):
 
 
 class S015ApplicationRefused(S015ApplicationError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        refusal_code: S015AuthorityRefusalCode | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.refusal_code = refusal_code
 
 
 @contextmanager
@@ -908,6 +915,38 @@ class OrganismApplicationService:
                 raise S015OperationNotYetImplemented("circle_application_processing", "S3-IL-CIRCLE", "DISCUSSION")
             _lock_owning_organism(self._alias, organism.organism_id)
             organism = LivingOrganism.objects.using(self._alias).select_for_update().get(pk=organism.pk)
+            if (
+                isinstance(version, LOGovernanceConfigurationVersion)
+                and version.governance_enabled is True
+            ):
+                previous_configuration = _effective_gateway_version(
+                    self._alias,
+                    organism,
+                    OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+                    gateway_at,
+                )
+                born = LivingOrganismEvent.objects.using(self._alias).filter(
+                    living_organism=organism,
+                    action="BIRTHING",
+                    effective_at__lte=effective_at,
+                    received_at__lte=gateway_at,
+                    recorded_at__lte=gateway_at,
+                ).exists()
+                if (
+                    previous_configuration is not None
+                    and previous_configuration.governance_enabled is False
+                    and born
+                ):
+                    raise S015ApplicationRefused(
+                        "SB-IL-GOVENABLE: GOVERNANCE was not switched on and nothing changed: "
+                        "this LO's recorded choice remains No. Switching GOVERNANCE on after "
+                        "Birthing needs the GOVERNANCE Circle, its constitutional admission route "
+                        "and its first participants to be established, and the route that does this "
+                        "is not yet available in this release. This is a known limit of the current "
+                        "build, not a refusal of the LO's choice; the LO's other settings can still "
+                        "be changed.",
+                        refusal_code=S015AuthorityRefusalCode.SB_IL_GOVENABLE,
+                    )
             predecessor = LivingOrganismEvent.objects.using(self._alias).filter(pk=organism.head_event_id).first()
             if predecessor is None or effective_at < predecessor.effective_at:
                 raise S015ApplicationRefused("gateway effect requires a current LO chain")

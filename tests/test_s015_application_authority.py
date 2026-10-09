@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import skipUnless
 from uuid import uuid4
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone as django_timezone
 
@@ -41,6 +41,7 @@ from core.models import (
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
     OrganismMembership,
+    OrganismRoleDefinition,
     OrganismCommandReceipt,
 )
 from core.organism_contract import OrganismAction
@@ -94,6 +95,7 @@ from tests.s015_0021_support import (
     seed_identity,
     seed_test_gateway,
 )
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 from tests.test_s015_role_command import (
     _register_no_other_sessions_cleanup,
     _run_with_external_locks,
@@ -171,6 +173,38 @@ class _HistoricalReferenceAuthorityProvider:
         )
 
 
+class _HistoricalOfficeAuthorityProvider:
+    provider_identity = ProductionApplicationAuthorityProvider.provider_identity
+
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.provider_version = delegate.provider_version
+        self.responses = []
+
+    def evaluate_organism_authority(self, request):
+        result = self.delegate.evaluate_organism_authority(request)
+        if (
+            request.action in {
+                OrganismAction.RECORD_OFFICE_CONSENT,
+                OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+            }
+            and getattr(result, "refusal_code", None) is None
+        ):
+            facts = json.loads(result.authority_reference[len("s015a1:"):])
+            assignment_uuid = request.target["assignment_uuid"]
+            assignment_id = ContextualRoleAssignment.objects.get(
+                assignment_uuid=assignment_uuid,
+            ).pk
+            facts["a"] = str(assignment_id)
+            facts["e"] = str(assignment_id)
+            result = replace(
+                result,
+                authority_reference="s015a1:" + canonical_json_bytes(facts).decode("utf-8"),
+            )
+        self.responses.append(result)
+        return result
+
+
 class TestFixtureCoordinatorNominationEntitlementFactSource:
     """TEST FIXTURE ONLY: supplies a labelled subscription entitlement reference."""
 
@@ -183,19 +217,46 @@ class TestFixtureCoordinatorNominationEntitlementFactSource:
         return living_organism_id.hex
 
 
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
+
+
 @POSTGRES_ONLY
 class ProductionApplicationAuthorityTests(TransactionTestCase):
     def setUp(self):
         _register_no_other_sessions_cleanup(self)
+        if self._testMethodName == "test_0034_reversal_succeeds_when_empty":
+            return
         self.tag = f"aa-r1-authority-{fresh()}"
-        with transaction.atomic(), connection.cursor() as cursor:
-            self.ids = found_nonroot(cursor, tag=self.tag)
-            seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
-            cursor.execute(
-                "SELECT organism_id FROM core_livingorganism WHERE id = %s",
-                [self.ids["lo"]],
-            )
-            self.organism_uuid = cursor.fetchone()[0]
+        if self._testMethodName == "test_absent_governance_configuration_refuses_at_submission_and_coordinator_route":
+            with transaction.atomic(), connection.cursor() as cursor:
+                self.no_configuration_ids = found_nonroot(cursor, tag=f"no-configuration-{self.tag}")
+                self.no_configuration_gateway = seed_test_gateway(cursor, self.no_configuration_ids)
+                cursor.execute(
+                    "SELECT organism_id FROM core_livingorganism WHERE id = %s",
+                    [self.no_configuration_ids["lo"]],
+                )
+                self.no_configuration_organism_uuid = cursor.fetchone()[0]
+        self.route = prepare_route(tag=self.tag)
+        if self._testMethodName != "test_production_sources_fail_closed_without_governed_birthing":
+            birth(self.route)
+        self.ids, self.gateway = route_fixture_state(self.route)
+        self.route_times = self.ids["recorded_times"]
+        global T0, NOW
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(self.route)
+        self.organism_uuid = self.ids["organism_uuid"]
         self.applicant = register_test_learner(
             username=f"applicant-{self.tag}",
             password="governed-test-password",
@@ -315,16 +376,17 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "(membership_uuid, state, created_at, current_state_effective_at, state_known_at, "
                 "state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                [membership_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                [membership_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", membership_uuid),
                  identity_pk, self.ids["lo"]],
             )
             membership_pk = cursor.fetchone()[0]
             append_event(
                 cursor, "core_organismmembershiptransition", membership_pk, 1, "JOIN", None,
                 "ACTIVE", identity_pk, self.ids["basis"], f"{self.tag}:{suffix}:membership",
+                eff=T0, occ=T0, rec=NOW,
                 extra={"reason_class": "TEST_FIXTURE"},
             )
-            refresh(cursor, "core_organismmembership", membership_pk)
+            refresh(cursor, "core_organismmembership", membership_pk, T0)
         identity = Identity.objects.select_related("credential").get(pk=identity_pk)
         if include_office:
             founder = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
@@ -390,7 +452,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             evidence_reference="TEST_FIXTURE:IDENTITY_HISTORY",
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             correlation_id=uuid4(),
-            occurred_at=T0 + timedelta(hours=1),
+            occurred_at=NOW,
             previous_transition=provision,
         )
         self._capture_database_now()
@@ -438,7 +500,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def _qualified_submission_record(self, suffix):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         result = self._submit(service, suffix)
@@ -518,7 +579,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_submit_refuses_unregistered_applicant(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid)
         )
         unregistered = create_test_identity(
             username=f"unregistered-submit-{fresh()}",
@@ -534,7 +594,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_inactive_registered_actor_is_refused_by_command_lock(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid)
         )
         inactive = register_test_learner(
             username=f"inactive-applicant-{self.tag}",
@@ -585,9 +644,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         for index, reference in enumerate(references):
             with self.subTest(reference_kind=index):
                 service = self._service(
-                    birthing_source=TestFixtureBirthingFactSource(
-                        self.organism_uuid
-                    ),
                     registration_source=FixedRegistrationReference(reference),
                 )
                 with self.assertRaises(S015AuthorityDenied) as refused:
@@ -602,11 +658,9 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 )
 
     def test_absent_governance_configuration_refuses_at_submission_and_coordinator_route(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            ids = found_nonroot(cursor, tag=f"no-configuration-{self.tag}")
-            gateway = seed_test_gateway(cursor, ids)
-            cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", [ids["lo"]])
-            organism_uuid = cursor.fetchone()[0]
+        ids = self.no_configuration_ids
+        gateway = self.no_configuration_gateway
+        organism_uuid = self.no_configuration_organism_uuid
         applicant = register_test_learner(
             username=f"no-configuration-applicant-{self.tag}",
             password="governed-test-password",
@@ -667,7 +721,9 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             "organism_uuid": organism_uuid,
             "application_uuid": application.application_uuid,
         }
-        provider = ProductionApplicationAuthorityProvider()
+        provider = ProductionApplicationAuthorityProvider(
+            birthing_source=TestFixtureBirthingFactSource(organism_uuid),
+        )
         with transaction.atomic():
             coordinator_refusal = provider.evaluate_organism_authority(self._post_request(
                 coordinator, OrganismAction.CLAIM_APPLICATION, target,
@@ -680,7 +736,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_decided_application_cannot_be_withdrawn(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "decided-withdrawal")
@@ -739,7 +794,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_another_person_cannot_withdraw_an_application(self):
         submission = self._submit(self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         ), "other-withdraw")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -762,7 +816,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_second_open_application_is_refused(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         self._submit(service, "open-first")
@@ -772,7 +825,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_closed_gateway_refuses_submission(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
@@ -1184,7 +1236,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_applicant_cannot_claim_own_application(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         result = self._submit(service, "applicant-claim")
@@ -1252,7 +1303,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             "application_uuid": uuid4(),
         }
         provider = ProductionApplicationAuthorityProvider(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         member_request = self._post_request(member, OrganismAction.CLAIM_APPLICATION, target, suffix="disclosure-member")
@@ -1332,24 +1382,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             password="governed-test-password",
             display_name="Current Member",
         )
-        with transaction.atomic(), connection.cursor() as cursor:
-            member_ids = found_nonroot(
-                cursor,
-                tag=f"registered-current-member-{self.tag}",
-                identity_id=member.pk,
-            )
-            seed_test_gateway(
-                cursor,
-                member_ids,
-                include_governance_configuration=True,
-            )
-            cursor.execute(
-                "SELECT organism_id FROM core_livingorganism WHERE id = %s",
-                [member_ids["lo"]],
-            )
-            member_organism_uuid = cursor.fetchone()[0]
+        member_route = prepare_route(
+            tag=f"registered-current-member-{self.tag}",
+            founder=member,
+        )
+        birth(member_route)
+        member_organism_uuid = member_route.organism.organism_id
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(member_organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         with self.assertRaises(S015AuthorityDenied) as denied:
@@ -1362,15 +1401,11 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
 
     def test_coordinator_of_another_organism_is_refused(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            other_ids = found_nonroot(cursor, tag=f"other-lo-{self.tag}")
-            seed_test_gateway(cursor, other_ids, include_governance_configuration=True)
-            cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", [other_ids["lo"]])
-            other_organism_uuid = cursor.fetchone()[0]
-        other_coordinator = Identity.objects.get(pk=other_ids["identity"])
+        other = prepare_route(tag=f"other-lo-{self.tag}")
+        other_organism_uuid = other.organism.organism_id
+        other_coordinator = other.founder
         self.assertNotEqual(other_organism_uuid, self.organism_uuid)
         application = self._submit(self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         ), "other-lo")
         target = {
@@ -1425,7 +1460,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_cq_route_refuses_coordinator_claim(self):
         submission = self._submit(self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         ), "cq-route")
         application = Application.objects.get(application_uuid=submission.application_uuid)
@@ -1489,7 +1523,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         SHA-256 aa7cb26c3d09ccb20f88adcf510ade7843b5a23e0cf6f8029360e7ccb5e1f907.
         """
         provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         ))
         service = self._service(
@@ -1552,7 +1585,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         )
         reassigned = service.reassign_application(reassign_command)
         self.assertEqual(reassigned.action, OrganismAction.REASSIGN_APPLICATION)
-        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R5.0")
+        self.assertEqual(ProductionApplicationAuthorityProvider.provider_version, "R6.0")
         replacement = CSAAssignment.objects.get(application=application, replaces__isnull=False)
         original_claim = CSAAssignment.objects.get(application=application, replaces__isnull=True)
         first_engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
@@ -1563,7 +1596,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         reassign_reference = reassign_record.authority_reference
         reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
         self.assertEqual((reassign_record.outcome, reassign_record.refusal_code), ("QUALIFIED", None))
-        self.assertEqual(reassign_record.provider_version, "R5.0")
+        self.assertEqual(reassign_record.provider_version, "R6.0")
         self.assertEqual(set(reassign_facts), {"a", "c", "e", "m", "o", "s"})
         self.assertEqual(reassign_facts["a"], str(original_claim.assignment_uuid))
         self.assertEqual(type(reassign_facts["e"]), int)
@@ -1634,7 +1667,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decide_reference = decide_record.authority_reference
         decide_facts = json.loads(decide_reference[len("s015a1:"):])
         self.assertEqual((decide_record.outcome, decide_record.refusal_code), ("QUALIFIED", None))
-        self.assertEqual(decide_record.provider_version, "R5.0")
+        self.assertEqual(decide_record.provider_version, "R6.0")
         self.assertEqual(set(decide_facts), {"a", "c", "e", "m", "o", "s"})
         self.assertEqual(decide_facts["a"], str(replacement.assignment_uuid))
         self.assertEqual(type(decide_facts["e"]), int)
@@ -1722,15 +1755,18 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_w_d1d_and_w_d1f_historical_reference_forms_coexist_without_rewriting(self):
         """W-D1d/W-D1f: R2, interim R3 and D1 records pass the installed guards side by side."""
+        from core.models import ApplicationLineageEvent
+
         coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
-        for version in ("R2.0", "R3.0", "R4.0", "R5.0"):
+        historical_decision_rows = []
+        historical_lineage_forms = []
+        for version in ("R2.0", "R3.0", "R4.0", "R5.0", "R6.0"):
             delegate = ProductionApplicationAuthorityProvider(
-                birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
                 registration_source=ProductionGovernedRegistrationFactSource(),
             )
             provider = (
                 delegate
-                if version == "R5.0"
+                if version == "R6.0"
                 else _HistoricalReferenceAuthorityProvider(delegate, version)
             )
             service = self._service(authority_provider=provider)
@@ -1777,21 +1813,26 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             reassign_record = AuthorityDecision.objects.get(
                 decision_reference=reassigned.authority_decision_reference,
             )
+            historical_decision_rows.append((
+                reassign_record.pk,
+                reassign_record.decision_reference,
+                reassign_record.authority_reference,
+            ))
             reassign_reference = reassign_record.authority_reference
             self.assertEqual(reassign_record.provider_version, version)
             self.assertEqual(reassign_record.outcome, "QUALIFIED")
             self.assertEqual(reassigned.authority_reference, (
-                reassign_reference if version == "R5.0"
+                reassign_reference if version == "R6.0"
                 else WithheldField("authority_reference", "SUBJECT")
             ))
             self.assertEqual(service.reassign_application(reassign_command), reassigned)
             self.assertEqual(service.reassign_application(reassign_command).authority_reference, (
-                reassign_reference if version == "R5.0"
+                reassign_reference if version == "R6.0"
                 else WithheldField("authority_reference", "SUBJECT")
             ))
             reassign_record.refresh_from_db()
             self.assertEqual(reassign_record.authority_reference.encode("utf-8"), reassign_reference.encode("utf-8"))
-            if version != "R5.0":
+            if version != "R6.0":
                 reassign_facts = json.loads(reassign_reference[len("s015a1:"):])
                 self.assertIsInstance(reassign_facts["a"], str)
                 self.assertTrue(reassign_facts["a"].isdecimal())
@@ -1813,23 +1854,36 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             decide_record = AuthorityDecision.objects.get(
                 decision_reference=decided.authority_decision_reference,
             )
+            historical_decision_rows.append((
+                decide_record.pk,
+                decide_record.decision_reference,
+                decide_record.authority_reference,
+            ))
             decide_reference = decide_record.authority_reference
             self.assertEqual(decide_record.provider_version, version)
             self.assertEqual(decide_record.outcome, "QUALIFIED")
             expected = (
-                decide_reference if version == "R5.0"
+                decide_reference if version == "R6.0"
                 else WithheldField("authority_reference", "SUBJECT")
             )
             self.assertEqual(decided.authority_reference, expected)
             self.assertEqual(service.decide_application(decide_command).authority_reference, expected)
             decide_record.refresh_from_db()
             self.assertEqual(decide_record.authority_reference.encode("utf-8"), decide_reference.encode("utf-8"))
-            if version != "R5.0":
+            if version != "R6.0":
                 decide_facts = json.loads(decide_reference[len("s015a1:"):])
                 self.assertIsInstance(decide_facts["a"], str)
                 self.assertTrue(decide_facts["a"].isdecimal())
                 self.assertIsInstance(decide_facts["e"], str)
                 self.assertTrue(decide_facts["e"].isdecimal())
+            historical_lineage_forms.append((
+                application.application_uuid,
+                tuple(
+                    ApplicationLineageEvent.objects.filter(
+                        application_lineage__application=application,
+                    ).order_by("sequence").values_list("event_uuid", "evidence_reference"),
+                ),
+            ))
 
         self.assertEqual(
             AuthorityDecision.objects.filter(
@@ -1839,12 +1893,414 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 },
                 outcome="QUALIFIED",
             ).count(),
-            8,
+            10,
         )
 
+        from core.models import ContextualRoleAssignmentStateEvent
+        from src.intevia.services.organism_office_consent_service import (
+            OfficeAppointmentConsentService,
+            RecordOfficeConsentCommand,
+        )
+        from src.intevia.services.organism_role_service import (
+            OrganismRoleService,
+            ProposeAssignmentCommand,
+            TransitionAssignmentCommand,
+            _TARGET_SCHEMA,
+        )
+
+        legacy_provider = _HistoricalOfficeAuthorityProvider(
+            ProductionApplicationAuthorityProvider(),
+        )
+        legacy_role_service = OrganismRoleService(
+            authority=S015Authority(provider=legacy_provider),
+            clock=lambda: self.now,
+        )
+
+        def end_with_historical_reference(nominee, action, suffix):
+            assignment = ContextualRoleAssignment.objects.get(
+                membership__identity=nominee,
+                role_definition_id=self.ids["roles"]["COORDINATOR"],
+            )
+            self._capture_database_now()
+            result = legacy_role_service.transition_assignment(TransitionAssignmentCommand(
+                credential=coordinator.credential,
+                request_reference=f"aa-r4s4:{suffix}:{self.tag}",
+                idempotency_key=f"aa-r4s4:{suffix}:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+                assignment_uuid=assignment.assignment_uuid,
+                action=action,
+                resulting_state="ENDED",
+            ))
+            event = ContextualRoleAssignmentStateEvent.objects.filter(
+                assignment=assignment,
+            ).latest("sequence")
+            decision = AuthorityDecision.objects.get(
+                decision_reference=result.authority_decision_reference,
+            )
+            self.assertEqual(
+                event.authority_decision_reference,
+                decision.decision_reference,
+                msg=(
+                    f"{action} stored decision reference mismatch: event="
+                    f"{event.authority_decision_reference!r}, decision={decision.decision_reference!r}"
+                ),
+            )
+            self.assertEqual(
+                event.evidence_reference,
+                decision.authority_reference,
+                msg=(
+                    f"{action} stored evidence/authority reference mismatch: "
+                    f"evidence={event.evidence_reference!r}, "
+                    f"authority_reference={decision.authority_reference!r}"
+                ),
+            )
+            self.assertTrue(
+                decision.decision_reference.startswith("s015d1:"),
+                msg=f"{action} stored decision_reference={decision.decision_reference!r}",
+            )
+            facts = json.loads(decision.authority_reference[len("s015a1:"):])
+            self.assertTrue(
+                facts["a"].isdecimal(),
+                msg=f"{action} stored authority_reference={decision.authority_reference!r}; facts.a={facts['a']!r}",
+            )
+            self.assertTrue(
+                facts["e"].isdecimal(),
+                msg=f"{action} stored authority_reference={decision.authority_reference!r}; facts.e={facts['e']!r}",
+            )
+            self.assertEqual(
+                decision.outcome,
+                "QUALIFIED",
+                msg=f"{action} stored outcome={decision.outcome!r}; expected='QUALIFIED'",
+            )
+
+        end_nominee = self._add_second_coordinator("r4s4-end")
+        reassign_nominee = self._add_second_coordinator("r4s4-reassign")
+        end_with_historical_reference(end_nominee, "END", "end")
+        end_with_historical_reference(reassign_nominee, "REASSIGN", "reassign")
+
+        mismatch_nominee = self._add_second_coordinator("r4s4-evidence")
+        mismatch_assignment = ContextualRoleAssignment.objects.get(
+            membership__identity=mismatch_nominee,
+            role_definition_id=self.ids["roles"]["COORDINATOR"],
+        )
+        mismatch_actor_membership = OrganismMembership.objects.get(
+            identity=mismatch_nominee,
+            living_organism_id=self.ids["lo"],
+        )
+        actor_role_heads = tuple(
+            ContextualRoleAssignment.objects.filter(
+                membership=mismatch_actor_membership,
+                state="ACTIVE",
+                head_state_event__isnull=False,
+            ).order_by("pk").values_list("head_state_event__lineage_reference", flat=True)
+        )
+        mismatch_target = {
+            "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            "assignment_uuid": str(mismatch_assignment.assignment_uuid),
+            "event_action": "END",
+            "living_organism_id": str(self.organism_uuid),
+            "resulting_state": "ENDED",
+            "schema": _TARGET_SCHEMA,
+        }
+        qualified = None
+        mismatch_sequence = mismatch_assignment.head_state_event.sequence + 1
+        mismatch_evidence_reference = f"u21g:evidence:r4s4:{self.tag}"
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "S2B office attribution refused: governed decision does not match event",
+            msg=(
+                "expected the 0036 office-attribution guard to refuse the deliberately mismatched "
+                f"stored form: assignment={mismatch_assignment.pk!r}, "
+                f"sequence={mismatch_sequence!r}, evidence_reference={mismatch_evidence_reference!r}"
+            ),
+        ):
+            with transaction.atomic():
+                self._capture_database_now()
+                qualified = legacy_role_service._evaluate_authority(
+                    actor=mismatch_nominee,
+                    actor_membership=mismatch_actor_membership,
+                    actor_role_refs=actor_role_heads,
+                    request_reference=f"aa-r4s4:evidence-mismatch:{self.tag}",
+                    idempotency_key=f"aa-r4s4:evidence-mismatch:key:{self.tag}",
+                    target_fingerprint=authority_target_fingerprint(mismatch_target),
+                    received_at=self.now,
+                    effective_at=self.now,
+                    target=mismatch_target,
+                    living_organism_id=self.organism_uuid,
+                    assignment_uuid=mismatch_assignment.assignment_uuid,
+                )
+                with connection.cursor() as cursor:
+                    append_event(
+                        cursor,
+                        "core_contextualroleassignmentstateevent",
+                        mismatch_assignment.pk,
+                        mismatch_sequence,
+                        "END",
+                        "ACTIVE",
+                        "ENDED",
+                        mismatch_nominee.pk,
+                        self.ids["basis"],
+                        f"r4s4-evidence-mismatch:{self.tag}",
+                        pred_id=mismatch_assignment.head_state_event_id,
+                        eff=self.now,
+                        occ=self.now,
+                        rec=self.now,
+                        overrides={
+                            "actor_state": "LIVING_ORGANISM",
+                            "actor_id": None,
+                            "actor_access_epoch": None,
+                            "actor_capacity": "STANDING",
+                            "enterer_identity_id": mismatch_nominee.pk,
+                            "entry_mode": "TRANSPORT",
+                            "composing_rule_state": "NA_TRANSPORT",
+                            "composer_state": "NA_TRANSPORT",
+                            "authority_decision_reference": qualified.authority_decision_reference,
+                            "evidence_reference": mismatch_evidence_reference,
+                        },
+                    )
+        self.assertIsNotNone(
+            qualified,
+            msg=f"qualified decision was {qualified!r}; expected the recorded mismatch decision",
+        )
+        self.assertTrue(
+            qualified.authority_decision_reference.startswith("s015d1:"),
+            msg=f"stored authority_decision_reference={qualified.authority_decision_reference!r}",
+        )
+        mismatch_facts = json.loads(qualified.authority_reference[len("s015a1:"):])
+        self.assertTrue(
+            mismatch_facts["a"].isdecimal(),
+            msg=(
+                f"stored authority_reference={qualified.authority_reference!r}; "
+                f"facts.a={mismatch_facts['a']!r}"
+            ),
+        )
+        self.assertTrue(
+            mismatch_facts["e"].isdecimal(),
+            msg=(
+                f"stored authority_reference={qualified.authority_reference!r}; "
+                f"facts.e={mismatch_facts['e']!r}"
+            ),
+        )
+        self.assertFalse(
+            ContextualRoleAssignmentStateEvent.objects.filter(
+                assignment=mismatch_assignment,
+                sequence=mismatch_sequence,
+            ).exists(),
+            msg=(
+                "refused event unexpectedly persisted; the u21g:evidence form was supplied only to "
+                "this refused ContextualRoleAssignmentStateEvent write, not ApplicationLineageEvent: "
+                f"assignment={mismatch_assignment.pk!r}, "
+                f"sequence={mismatch_sequence!r}, attempted evidence_reference="
+                f"{mismatch_evidence_reference!r}, authority_decision_reference="
+                f"{qualified.authority_decision_reference!r}, authority_reference="
+                f"{qualified.authority_reference!r}"
+            ),
+        )
+
+        consent_nominee = self._add_second_coordinator(
+            "r4s4-consent",
+            include_office=False,
+        )
+        nominee_membership = OrganismMembership.objects.get(
+            identity=consent_nominee,
+            living_organism_id=self.ids["lo"],
+        )
+        coordinator_role = OrganismRoleDefinition.objects.get(
+            pk=self.ids["roles"]["COORDINATOR"],
+        )
+        production_role_service = OrganismRoleService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: self.now,
+        )
+        self._capture_database_now()
+        proposal_at = self.now
+        proposal = production_role_service.propose_assignment(ProposeAssignmentCommand(
+            credential=coordinator.credential,
+            request_reference=f"aa-r4s4:consent-proposal:{self.tag}",
+            idempotency_key=f"aa-r4s4:consent-proposal:key:{self.tag}",
+            occurred_at=proposal_at,
+            effective_at=proposal_at,
+            received_at=proposal_at,
+            membership_uuid=nominee_membership.membership_uuid,
+            role_definition_uuid=coordinator_role.role_uuid,
+            effective_until_state="NONE",
+            effective_until=None,
+        ))
+        proposal_event = ContextualRoleAssignmentStateEvent.objects.get(
+            assignment__assignment_uuid=proposal.assignment_uuid,
+            sequence=1,
+        )
+        historical_consent_provider = _HistoricalOfficeAuthorityProvider(
+            ProductionApplicationAuthorityProvider(),
+        )
+        historical_consent_service = OfficeAppointmentConsentService(
+            authority=S015Authority(provider=historical_consent_provider),
+            clock=lambda: self.now,
+        )
+        self._capture_database_now()
+        historical_consent_command = RecordOfficeConsentCommand(
+            credential=consent_nominee.credential,
+            request_reference=f"aa-r4s4:consent-historical:{self.tag}",
+            idempotency_key=f"aa-r4s4:consent-historical:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+            assignment_uuid=proposal.assignment_uuid,
+            proposal_event_uuid=proposal_event.event_uuid,
+            action="CONSENT",
+        )
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "S2B office consent governed references refused",
+            msg=(
+                "expected 0037 office-consent refusal for the historical s015a1: authority-reference "
+                f"form, assignment={proposal.assignment_uuid!r}"
+            ),
+        ):
+            historical_consent_service.record_office_consent(historical_consent_command)
+        historical_consent_reference = historical_consent_provider.responses[-1].authority_reference
+        consent_facts = json.loads(
+            historical_consent_reference[len("s015a1:"):]
+        )
+        self.assertTrue(
+            consent_facts["a"].isdecimal(),
+            msg=(
+                f"historical office-consent authority_reference={historical_consent_reference!r}; "
+                f"facts.a={consent_facts['a']!r}"
+            ),
+        )
+        self.assertTrue(
+            historical_consent_reference.startswith("s015a1:"),
+            msg=f"historical office-consent authority_reference={historical_consent_reference!r}",
+        )
+
+        self._capture_database_now()
+        accepted_consent = OfficeAppointmentConsentService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
+            clock=lambda: self.now,
+        ).record_office_consent(RecordOfficeConsentCommand(
+            credential=consent_nominee.credential,
+            request_reference=f"aa-r4s4:consent-current:{self.tag}",
+            idempotency_key=f"aa-r4s4:consent-current:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+            assignment_uuid=proposal.assignment_uuid,
+            proposal_event_uuid=proposal_event.event_uuid,
+            action="CONSENT",
+        ))
+        self.assertIsNotNone(
+            accepted_consent.consent_uuid,
+            msg=f"current consent stored consent_uuid={accepted_consent.consent_uuid!r}",
+        )
+
+        self._capture_database_now()
+        historical_assign_command = TransitionAssignmentCommand(
+            credential=coordinator.credential,
+            request_reference=f"aa-r4s4:assign-historical:{self.tag}",
+            idempotency_key=f"aa-r4s4:assign-historical:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            received_at=self.now,
+            assignment_uuid=proposal.assignment_uuid,
+            action="ASSIGN",
+            resulting_state="ACTIVE",
+            effective_until_state="NONE",
+            effective_until=None,
+        )
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "S2B assignment consent fact disclosure refused",
+            msg=(
+                "expected 0037 ASSIGN-consent refusal for the historical s015a1: authority-reference "
+                f"form, assignment={proposal.assignment_uuid!r}"
+            ),
+        ):
+            legacy_role_service.transition_assignment(historical_assign_command)
+        historical_assign_reference = legacy_provider.responses[-1].authority_reference
+        assign_facts = json.loads(
+            historical_assign_reference[len("s015a1:"):]
+        )
+        self.assertTrue(
+            assign_facts["a"].isdecimal(),
+            msg=(
+                f"historical ASSIGN authority_reference={historical_assign_reference!r}; "
+                f"facts.a={assign_facts['a']!r}"
+            ),
+        )
+        self.assertTrue(
+            historical_assign_reference.startswith("s015a1:"),
+            msg=f"historical ASSIGN authority_reference={historical_assign_reference!r}",
+        )
+
+        self._capture_database_now()
+        accepted_assignment = production_role_service.transition_assignment(
+            TransitionAssignmentCommand(
+                credential=coordinator.credential,
+                request_reference=f"aa-r4s4:assign-current:{self.tag}",
+                idempotency_key=f"aa-r4s4:assign-current:key:{self.tag}",
+                occurred_at=self.now,
+                effective_at=self.now,
+                received_at=self.now,
+                assignment_uuid=proposal.assignment_uuid,
+                action="ASSIGN",
+                resulting_state="ACTIVE",
+                effective_until_state="NONE",
+                effective_until=None,
+            )
+        )
+        accepted_assignment_decision = AuthorityDecision.objects.get(
+            decision_reference=accepted_assignment.authority_decision_reference,
+        )
+        self.assertEqual(
+            accepted_assignment_decision.outcome,
+            "QUALIFIED",
+            msg=(
+                f"current ASSIGN stored outcome={accepted_assignment_decision.outcome!r}; "
+                f"decision_reference={accepted_assignment_decision.decision_reference!r}"
+            ),
+        )
+        self.assertTrue(
+            accepted_assignment_decision.decision_reference.startswith("s015d1:"),
+            msg=f"current ASSIGN stored decision_reference={accepted_assignment_decision.decision_reference!r}",
+        )
+
+        for row_id, decision_reference, authority_reference in historical_decision_rows:
+            historical_row = AuthorityDecision.objects.get(pk=row_id)
+            self.assertEqual(
+                historical_row.decision_reference,
+                decision_reference,
+                msg=(
+                    f"historical decision row {row_id!r} reference changed: "
+                    f"stored={historical_row.decision_reference!r}, original={decision_reference!r}"
+                ),
+            )
+            self.assertEqual(
+                historical_row.authority_reference,
+                authority_reference,
+                msg=(
+                    f"historical decision row {row_id!r} authority reference changed: "
+                    f"stored={historical_row.authority_reference!r}, original={authority_reference!r}"
+                ),
+            )
+        for application_uuid, original_forms in historical_lineage_forms:
+            current_forms = tuple(
+                ApplicationLineageEvent.objects.filter(
+                    application_lineage__application__application_uuid=application_uuid,
+                ).order_by("sequence").values_list("event_uuid", "evidence_reference"),
+            )
+            self.assertEqual(
+                current_forms,
+                original_forms,
+                msg=(
+                    f"application lineage forms changed for {application_uuid!r}: "
+                    f"stored={current_forms!r}, original={original_forms!r}"
+                ),
+            )
     def test_w_d1g_size_refusal_is_distinct_and_discloses_denied(self):
         submission_service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(submission_service, "oversize-reference")
@@ -1919,7 +2375,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_w_d1h_reassign_records_latest_engagement_before_service_refusal(self):
         provider = ProductionApplicationAuthorityProvider(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         service = self._service(authority_provider=provider)
@@ -1985,7 +2440,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             )
             fact_refs = {(fact["relation"], fact["reference"]) for fact in provider_record.facts_read}
             self.assertEqual(provider_record.outcome, "QUALIFIED")
-            self.assertEqual(provider_record.provider_version, "R5.0")
+            self.assertEqual(provider_record.provider_version, "R6.0")
             self.assertEqual(facts["a"], str(first_assignment.assignment_uuid))
             self.assertEqual(type(facts["e"]), int)
             self.assertEqual(facts["e"], resolved_engagement.engagement_ordinal)
@@ -2015,7 +2470,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_nonmember_claim_refuses_without_waiting_on_register_lock(self):
         production_provider = ProductionApplicationAuthorityProvider(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         provider = _CountingAuthorityProvider(production_provider)
@@ -2058,7 +2512,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         from time import monotonic, sleep
 
         provider = _CountingAuthorityProvider(ProductionApplicationAuthorityProvider(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         ))
         service = self._service(authority_provider=provider)
@@ -2128,7 +2581,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_reassign_without_a_claim_is_refused(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "reassign-without-claim")
@@ -2205,7 +2657,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         decision = service.decide_application(decide_command)
         decision_record = AuthorityDecision.objects.get(decision_reference=decision.authority_decision_reference)
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R5.0")
+        self.assertEqual(decision_record.provider_version, "R6.0")
         self.assertEqual(decision.authority_reference, decision_record.authority_reference)
         self.assertIsInstance(decision.authority_reference, str)
         self.assertLessEqual(len(decision_record.authority_reference), 255)
@@ -2234,7 +2686,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_pre_r3_decide_receipt_reference_is_withheld_without_rewriting(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "legacy-decide-replay")
@@ -2316,7 +2767,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
 
     def test_production_provider_withdraws_only_the_applicants_own_application(self):
         service = self._service(
-            birthing_source=TestFixtureBirthingFactSource(self.organism_uuid),
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         submission = self._submit(service, "withdraw")
@@ -2344,8 +2794,8 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
             )
-            # 0040 contributes 405 triggers; 0041 adds one, 0042 adds twelve, and 0043 adds eleven.
-            self.assertEqual(cursor.fetchone()[0], 429)
+            # 0040 contributes 405 triggers; 0041 adds one, 0042 adds twelve, 0043 adds eleven, and 0044 adds four.
+            self.assertEqual(cursor.fetchone()[0], 433)
             cursor.execute(
                 "SELECT trigger.tgname, trigger.tgenabled, function.proname, "
                 "pg_get_functiondef(function.oid) "

@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0043_p1_governed_registration"
+$expectedCoreHead = "0044_sb2_birthing_snapshot"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",
@@ -101,6 +101,7 @@ function Protect-OutputText {
 }
 
 function Get-RunDatabaseReconciliation {
+    # P1-F5: ^test_intevia_living_organism_tt1_witness_[0-9a-f]+$ is the only naming exemption.
     param(
         [Parameter(Mandatory = $true)][string]$ReceiptPath,
         [Parameter(Mandatory = $true)][string]$LogPath,
@@ -612,6 +613,7 @@ try {
         "tests.test_tt1_ownership",
         "tests.test_tt1_template_lifecycle",
         "tests.test_sb1_founding_terms_phases",
+        "tests.test_sb2_birthing",
         "tests.test_p1_registration_service",
         "tests.test_p1_identity_guardian",
         "tests.test_p1_migration_restore",

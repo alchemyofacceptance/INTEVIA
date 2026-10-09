@@ -13,12 +13,13 @@ from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 
 from core.models import (
-    Application, ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal,
+    Application, ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal, AuthorityDecision,
     Identity, IdentityTransition,
     OrganismCommandReceipt, OrganismMembership,
 )
 from core.organism_contract import OrganismAction
-from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_0021_support import T0, append_event, empty_fp, fresh, refresh, seed_identity, u
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 from src.intevia.services.organism_application_service import (
     OrganismApplicationService, S015ApplicationRefused, SubmitApplicationCommand,
     WithdrawApplicationCommand,
@@ -32,6 +33,20 @@ from src.intevia.services.organism_membership_service import S015OperationNotYet
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3 applicant commands require PostgreSQL")
 
 
@@ -55,21 +70,25 @@ class _ApplicantProvider:
 class S015ApplicantCommandTests(TransactionTestCase):
     def setUp(self):
         self.tag = f"application-{fresh()}"
+        self.route = prepare_route(tag=self.tag)
+        birth(self.route)
+        self.ids, self.gateway = route_fixture_state(self.route)
+        self.route_times = self.ids["recorded_times"]
+        global T0, NOW
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(self.route)
         with transaction.atomic(), connection.cursor() as cursor:
-            self.ids = found_nonroot(cursor, tag=self.tag)
-            self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
             self.applicant_pk = seed_identity(cursor, f"app-{self.tag}")
-            cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", (self.ids["lo"],))
-            self.organism_uuid = cursor.fetchone()[0]
+        self.organism_uuid = self.ids["organism_uuid"]
         self.applicant = Identity.objects.select_related("credential").get(pk=self.applicant_pk)
         self.provider = _ApplicantProvider()
 
     def service(self, provider=None):
         return OrganismApplicationService(
-            authority=S015Authority(provider=provider or self.provider), clock=lambda: datetime.now(timezone.utc),
+            authority=S015Authority(provider=provider or self.provider), clock=lambda: NOW,
         )
 
-    def history(self, *, provision=True, active=True, identity=None):
+    def history(self, *, provision=True, active=True, identity=None, activation_at=None):
         subject = identity or self.applicant
         prior = None
         if provision:
@@ -85,10 +104,11 @@ class S015ApplicantCommandTests(TransactionTestCase):
             prior_state="pending" if provision else "active", resulting_state="active" if active else "restricted",
             authority_reference="s3:test:access", technical_executor="S3_TEST",
             evidence_reference="s3:test:history", reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
-            correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1), previous_transition=prior,
+            correlation_id=uuid4(), occurred_at=activation_at or NOW, previous_transition=prior,
         )
 
-    def submit(self, *, actor=None, organism_uuid=None, predecessor=None, request=None, key=None, effective_at=NOW):
+    def submit(self, *, actor=None, organism_uuid=None, predecessor=None, request=None, key=None, effective_at=None):
+        effective_at = NOW if effective_at is None else effective_at
         return SubmitApplicationCommand(
             credential=(actor or self.applicant).credential,
             living_organism_id=organism_uuid or self.organism_uuid,
@@ -143,13 +163,14 @@ class S015ApplicantCommandTests(TransactionTestCase):
                 "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
                 "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id",
-                (membership_uuid, state, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                (membership_uuid, state, T0, NOW, empty_fp(cursor, "core_organismmembership", membership_uuid),
                  self.applicant.pk, self.ids["lo"]),
             )
             membership_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", membership_id, 1, "JOIN", None, state,
-                         self.applicant.pk, self.ids["basis"], f"member-{self.tag}", extra={"reason_class": "TEST"})
-            refresh(cursor, "core_organismmembership", membership_id)
+                         self.applicant.pk, self.ids["basis"], f"member-{self.tag}",
+                         eff=T0, occ=T0, rec=NOW, extra={"reason_class": "TEST"})
+            refresh(cursor, "core_organismmembership", membership_id, T0)
         return OrganismMembership.objects.get(pk=membership_id)
 
     def test_submit_writes_applicant_record_and_receipt(self):
@@ -183,10 +204,11 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.assertFalse(OrganismCommandReceipt.objects.filter(actor=self.applicant).exists())
 
     def test_clock_before_activation_does_not_refuse_eligible_submission(self):
-        self.history()
+        activation_at = self.route_times.latest_recorded_at
+        self.history(activation_at=activation_at)
         service = OrganismApplicationService(
             authority=S015Authority(provider=self.provider),
-            clock=lambda: T0 + timedelta(minutes=30),
+            clock=lambda: activation_at - timedelta(minutes=30),
         )
         result = service.submit_application(self.submit())
         application = Application.objects.get(application_uuid=result.application_uuid)
@@ -368,27 +390,59 @@ class S015ApplicantCommandTests(TransactionTestCase):
 
     def test_predecessor_of_another_organism_refused(self):
         self.history()
-        with transaction.atomic(), connection.cursor() as cursor:
-            other_ids = found_nonroot(cursor, tag=f"other-lo-{self.tag}")
-            other_gateway = seed_test_gateway(cursor, other_ids)
+        other = prepare_route(tag=f"other-lo-{self.tag}")
+        other_ids, other_gateway = route_fixture_state(other)
+        other_at = route_test_now(other)
         previous = Application.objects.create(
             applicant=self.applicant, living_organism_id=other_ids["lo"], actor=self.applicant, enterer=self.applicant,
             settings_version_id=other_gateway["core_loapplicationsettingsversion"],
             question_version_id=other_gateway["core_loapplicationquestionversion"], answer="Test-only applicant answer",
             authority_decision_reference="s015d1:" + "a" * 64,
             authority_reference="s3:test:fixture", actor_access_epoch=self.applicant.access_epoch,
-            occurred_at=T0, effective_at=T0, received_at=T0,
+            occurred_at=other_at, effective_at=other_at, received_at=other_at,
         )
         with self.assertRaises(S015ApplicationRefused):
             self.service().submit_application(self.submit(predecessor=previous.application_uuid))
 
     def test_replay_returns_original_and_changed_request_mismatches(self):
-        first, _ = self.submitted()
-        self.assertEqual(self.service().submit_application(self.submit()), first)
+        self.history()
+        command = self.submit()
+        before = (
+            Application.objects.count(),
+            ApplicationLineageEvent.objects.count(),
+            OrganismCommandReceipt.objects.count(),
+            AuthorityDecision.objects.count(),
+        )
+        first = self.service().submit_application(command)
+        application = Application.objects.get(application_uuid=first.application_uuid)
+        receipt = OrganismCommandReceipt.objects.get(idempotency_key=command.idempotency_key)
+        decision = AuthorityDecision.objects.get(decision_reference=first.authority_decision_reference)
+        self.assertEqual(receipt.actor_id, self.applicant.pk)
+        self.assertEqual(receipt.authority_decision_reference, first.authority_decision_reference)
+        self.assertEqual(decision.outcome, "QUALIFIED")
+        self.assertEqual(
+            ApplicationLineageEvent.objects.filter(application_lineage__application=application).count(),
+            1,
+        )
+        after_first = (
+            Application.objects.count(),
+            ApplicationLineageEvent.objects.count(),
+            OrganismCommandReceipt.objects.count(),
+            AuthorityDecision.objects.count(),
+        )
+        self.assertEqual(after_first, tuple(count + 1 for count in before))
+        self.assertEqual(self.service().submit_application(command), first)
         with self.assertRaises(S015CommandReplayMismatch):
-            self.service().submit_application(replace(self.submit(), request_reference="s3:changed"))
-        self.assertEqual(Application.objects.count(), 1)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
+            self.service().submit_application(replace(command, request_reference="s3:changed"))
+        self.assertEqual(
+            (
+                Application.objects.count(),
+                ApplicationLineageEvent.objects.count(),
+                OrganismCommandReceipt.objects.count(),
+                AuthorityDecision.objects.count(),
+            ),
+            after_first,
+        )
 
     def test_withdrawal_replay_returns_original(self):
         _, application = self.submitted()

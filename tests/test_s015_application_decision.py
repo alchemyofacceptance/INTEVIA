@@ -1,9 +1,11 @@
 """S3 2b PostgreSQL Coordinator route and admission witnesses (Human Governor executes)."""
 
+import io
 import importlib
 import json
 import threading
 import time
+import unittest
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from queue import Queue
@@ -37,7 +39,19 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_command_support import _command_payload
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
-from tests.s015_0021_support import T0, append_event, current_core_leaf, empty_fp, found_nonroot, fresh, refresh, seed_identity, seed_test_gateway, u
+from tests.s015_0021_support import (
+    T0,
+    append_event,
+    current_core_leaf,
+    empty_fp,
+    fresh,
+    found_nonroot,
+    migrate_to_target_with_restore,
+    refresh,
+    seed_identity,
+    seed_test_gateway,
+    u,
+)
 from tests.s015_concurrency_support import (
     ORGANISM_LOCK_RELATIONS,
     backend_pid,
@@ -50,11 +64,91 @@ from tests.test_s015_role_command import (
     _set_local_concurrency_timeouts,
 )
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
+from verification.isolation import state as isolation_state
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+FIXTURE_T0 = T0
+FIXTURE_NOW = NOW
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
+
+
+def database_now():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        return cursor.fetchone()[0]
+
+
 POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 2b requires PostgreSQL")
 LEGACY_SETTINGS = "DEFAULT (no settings store): cq_active=No, application_sole_participant_delegation=No"
+
+LEGACY_TARGET = ("core", "0041_r4s2_assign_current_membership")
+LEGACY_EMPTY_TABLES = (
+    "core_lobirthingsnapshot",
+    "core_learnerregistration",
+    "core_registrationreceipt",
+    "core_platformtermsversion",
+    "core_platformtermsacceptance",
+    "core_lofoundingcontentversion",
+)
+
+
+def _assert_catalog_restored(test_case, reference):
+    after = isolation_state.capture()
+    _, protection = isolation_state.compare(reference, after)
+    test_case.assertEqual(protection, [], f"installed objects not restored: {protection}")
+    test_case.assertEqual(after["migrations"], reference["migrations"], "migration ledger not restored")
+    test_case.assertEqual(
+        set(after["row_counts"]),
+        set(reference["row_counts"]),
+        "table set not restored",
+    )
+    head = current_core_leaf(connection)[0][1]
+    test_case.assertEqual(head, "0044_sb2_birthing_snapshot")
+    test_case.assertEqual(len(after["triggers"]), 433)
+    test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
+
+
+def _legacy_schema_setup(test_case, *, tag):
+    reference = isolation_state.capture()
+    head = current_core_leaf(connection)[0][1]
+    test_case.assertEqual(head, "0044_sb2_birthing_snapshot")
+    test_case.assertEqual(len(reference["triggers"]), 433)
+    ignored_tables = (
+        isolation_state.FRAMEWORK_TABLES
+        + isolation_state.SEED_TABLES
+        + isolation_state.LEDGER_TABLES
+    )
+    nonempty = {
+        table: count
+        for table, count in reference["row_counts"].items()
+        if count and table not in ignored_tables
+    }
+    test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
+    for table in LEGACY_EMPTY_TABLES:
+        test_case.assertIn(table, reference["row_counts"])
+        test_case.assertEqual(reference["row_counts"][table], 0, f"{table} must be empty before downgrade")
+    test_case.addCleanup(_assert_catalog_restored, test_case, reference)
+    old_apps = migrate_to_target_with_restore(test_case, LEGACY_TARGET)
+    with transaction.atomic(), connection.cursor() as cursor:
+        ids = found_nonroot(cursor, tag=tag)
+        cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", [ids["lo"]])
+        organism_uuid = cursor.fetchone()[0]
+    return ids, organism_uuid, old_apps
 class _Provider:
     """TEST-ONLY provider substitute; does not establish production permission."""
 
@@ -75,32 +169,34 @@ class _Provider:
 @POSTGRES
 class ApplicationDecisionTests(TransactionTestCase):
     def setUp(self):
-        if self._testMethodName in {
+        if self._testMethodName == "test_legacy_schema_setup_failure_restores_head_schema":
+            _register_no_other_sessions_cleanup(self)
+            return
+        legacy_schema = self._testMethodName in {
             "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
             "test_g1_withdrawal_witness_on_both_schemas",
             "test_g2_ending_witness_on_both_schemas",
-        }:
-            executor = MigrationExecutor(connection)
-            self.received_leaf_targets = tuple(executor.loader.graph.leaf_nodes())
-            self.addCleanup(executor.migrate, self.received_leaf_targets)
+        }
         _register_no_other_sessions_cleanup(self)
         transition_model = IdentityTransition
-        if self._testMethodName in {
-            "test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence",
-            "test_g1_withdrawal_witness_on_both_schemas",
-            "test_g2_ending_witness_on_both_schemas",
-        }:
-            target = [("core", "0041_r4s2_assign_current_membership")]
-            executor.migrate(target)
-            old_apps = executor.loader.project_state(target).apps
+        self.tag = f"s3-decision-{fresh()}"
+        global T0, NOW
+        if legacy_schema:
+            T0 = FIXTURE_T0
+            NOW = FIXTURE_NOW
+            self.ids, self.organism_uuid, old_apps = _legacy_schema_setup(self, tag=self.tag)
             transition_model = old_apps.get_model("core", "IdentityTransition")
             transition_identity_model = old_apps.get_model("core", "Identity")
-        self.tag = f"s3-decision-{fresh()}"
+        else:
+            self.route = prepare_route(tag=self.tag)
+            birth(self.route)
+            self.ids, self.gateway = route_fixture_state(self.route)
+            self.route_times = self.ids["recorded_times"]
+            T0 = self.route_times.founding_recorded_at
+            NOW = route_test_now(self.route)
+            self.organism_uuid = self.ids["organism_uuid"]
         with transaction.atomic(), connection.cursor() as cursor:
-            self.ids = found_nonroot(cursor, tag=self.tag)
             applicant_pk = seed_identity(cursor, f"applicant-{self.tag}")
-            cursor.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", [self.ids["lo"]])
-            self.organism_uuid = cursor.fetchone()[0]
         self.applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
         self.coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
         if self._testMethodName in {
@@ -114,6 +210,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         else:
             transition_identity = self.applicant
         self.provider = _Provider()
+        activation_at = T0 + timedelta(hours=1) if legacy_schema else NOW
         transition_model.objects.create(
             identity=transition_identity,
             action=IdentityTransition.Action.PROVISION,
@@ -128,7 +225,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             prior_state="pending", resulting_state="active", authority_reference="s3:test:activate",
             technical_executor="S3_TEST", evidence_reference="s3:test:history",
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
-            correlation_id=uuid4(), occurred_at=T0 + timedelta(hours=1),
+            correlation_id=uuid4(), occurred_at=activation_at,
             previous_transition=transition_model.objects.get(
                 identity=transition_identity,
                 action="provision",
@@ -142,9 +239,6 @@ class ApplicationDecisionTests(TransactionTestCase):
         )
 
     def submit(self):
-        if not hasattr(self, "gateway"):
-            with transaction.atomic(), connection.cursor() as cursor:
-                self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
         return self.service().submit_application(SubmitApplicationCommand(
             credential=self.applicant.credential, living_organism_id=self.organism_uuid,
             request_reference=f"s3:submit:{self.tag}", idempotency_key=f"s3:submit:key:{self.tag}",
@@ -177,14 +271,15 @@ class ApplicationDecisionTests(TransactionTestCase):
                 "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
                 "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
-                [member_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", member_uuid),
+                [member_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", member_uuid),
                  other_pk, self.ids["lo"]],
             )
             member_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", member_id, 1, "JOIN", None,
                          "ACTIVE", other_pk, self.ids["basis"], f"second:{self.tag}",
+                         eff=T0, occ=T0, rec=NOW,
                          extra={"reason_class": "TEST"})
-            refresh(cursor, "core_organismmembership", member_id)
+            refresh(cursor, "core_organismmembership", member_id, T0)
         from src.intevia.services.organism_role_service import (
             OrganismRoleService,
             ProposeAssignmentCommand,
@@ -233,10 +328,53 @@ class ApplicationDecisionTests(TransactionTestCase):
         ))
         return other
 
+    def test_legacy_schema_setup_failure_restores_head_schema(self):
+        reference = isolation_state.capture()
+        head = current_core_leaf(connection)[0][1]
+        self.assertEqual(head, "0044_sb2_birthing_snapshot")
+        self.assertEqual(len(reference["triggers"]), 433)
+        ignored_tables = (
+            isolation_state.FRAMEWORK_TABLES
+            + isolation_state.SEED_TABLES
+            + isolation_state.LEDGER_TABLES
+        )
+        nonempty = {
+            table: count
+            for table, count in reference["row_counts"].items()
+            if count and table not in ignored_tables
+        }
+        self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")
+        for table in LEGACY_EMPTY_TABLES:
+            self.assertIn(table, reference["row_counts"])
+            self.assertEqual(reference["row_counts"][table], 0, f"{table} must be empty before downgrade")
+        self.addCleanup(_assert_catalog_restored, self, reference)
+        global T0, NOW
+        T0, NOW = FIXTURE_T0, FIXTURE_NOW
+        tag = f"legacy-witness-{fresh()}"
+
+        class _FailingLegacyCase(unittest.TestCase):
+            def setUp(self):
+                _legacy_schema_setup(self, tag=tag)
+                raise RuntimeError("intentional set-up failure")
+
+            def test_never_reached(self):
+                self.fail("the test body must not run")
+
+        result = unittest.TextTestRunner(stream=io.StringIO()).run(
+            unittest.defaultTestLoader.loadTestsFromTestCase(_FailingLegacyCase)
+        )
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(len(result.errors), 1, result.errors)
+        self.assertIn("intentional set-up failure", result.errors[0][1])
+
     def test_a26_pre_cutover_legacy_decision_remains_authorized_and_reversal_preserves_evidence(self):
         head = current_core_leaf(connection)
         with transaction.atomic(), connection.cursor() as cursor:
-            self.gateway = seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
+            self.gateway = seed_test_gateway(
+                cursor,
+                self.ids,
+                include_governance_configuration=True,
+            )
         MigrationExecutor(connection).migrate([("core", "0032_s015_register_cleanup_nonblocking")])
         try:
             application_uuid = uuid4()
@@ -555,6 +693,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         decision = ApplicationDecision.objects.get(application=application)
 
         def repeat_decision(effective_at):
+            event_time = min(effective_at, database_now())
             with transaction.atomic():
                 _append_application_event(
                     database_alias="default", application=application,
@@ -563,8 +702,8 @@ class ApplicationDecisionTests(TransactionTestCase):
                     authority_decision_reference=decided.authority_decision_reference,
                     evidence_reference=f"application-decision:{decision.decision_uuid}",
                     request_reference=f"s3:guard:{self.tag}", idempotency_key=f"s3:guard:{self.tag}",
-                    payload_fingerprint="0" * 64, occurred_at=effective_at,
-                    effective_at=effective_at, received_at=effective_at,
+                    payload_fingerprint="0" * 64, occurred_at=event_time,
+                    effective_at=effective_at, received_at=event_time,
                 )
 
         with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused: no founding record"):
@@ -580,7 +719,7 @@ class ApplicationDecisionTests(TransactionTestCase):
                            "'public.core_livingorganism'::regclass AND NOT tgisinternal AND tgenabled <> 'O'")
             self.assertEqual(cursor.fetchone()[0], 0)
         application.refresh_from_db()
-        dormant_at = NOW + timedelta(minutes=1)
+        dormant_at = database_now()
         with transaction.atomic(), connection.cursor() as cursor:
             dormant_id, _ = append_event(
                 cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1, "DORMANT",
@@ -591,7 +730,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             refresh(cursor, "core_livingorganism", self.ids["lo"], dormant_at)
         with self.assertRaisesMessage(IntegrityError, "S3FU LO admission not permitted"):
             repeat_decision(dormant_at + timedelta(seconds=1))
-        closed_at = NOW + timedelta(minutes=2)
+        closed_at = max(database_now(), dormant_at)
         with transaction.atomic(), connection.cursor() as cursor:
             append_event(
                 cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 2, "CLOSE",
@@ -729,15 +868,16 @@ class ApplicationDecisionTests(TransactionTestCase):
         )
         membership = admission.membership
         # TEST-ONLY prior-state construction: ACTIVE -> PROBATIONARY is not an operational probation route.
+        probation_at = database_now()
         with transaction.atomic(), connection.cursor() as cursor:
             probation_id, _ = append_event(
                 cursor, "core_organismmembershiptransition", membership.pk, admission.sequence + 1,
                 "TRANSITION_MEMBERSHIP", "ACTIVE", "PROBATIONARY", self.applicant.pk,
                 self.ids["basis"], "s1fu-prior", pred_id=admission.pk,
-                eff=NOW + timedelta(seconds=1), occ=NOW + timedelta(seconds=1),
-                rec=NOW + timedelta(seconds=1), extra={"reason_class": "TEST"},
+                eff=probation_at, occ=probation_at, rec=probation_at,
+                extra={"reason_class": "TEST"},
             )
-            refresh(cursor, "core_organismmembership", membership.pk, NOW + timedelta(seconds=1))
+            refresh(cursor, "core_organismmembership", membership.pk, probation_at)
             cursor.execute("SELECT l1_commitment FROM core_organismmembershiptransition WHERE id = %s",
                            [probation_id])
             predecessor_commitment = cursor.fetchone()[0]
@@ -750,6 +890,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         with self.assertRaisesMessage(IntegrityError, "S1FU admission refused: no mapped probation route"):
             with transaction.atomic(), connection.cursor() as cursor:
                 event_uuid = str(uuid4())
+                attempted_at = max(database_now(), probation_at)
                 values = {
                     "event_uuid": ("%s", event_uuid), "sequence": ("%s", admission.sequence + 2),
                     "predecessor_id": ("%s", probation_id),
@@ -761,9 +902,9 @@ class ApplicationDecisionTests(TransactionTestCase):
                         "public.s015_0022_digest('s015p1', public.s015_0022_parts_preimage("
                         "'core_organismmembershiptransition', %s::uuid))", event_uuid),
                     "lineage_reference": ("%s", f"s015l1:{'b' * 64}"),
-                    "effective_at": ("%s", NOW + timedelta(seconds=2)),
-                    "occurred_at": ("%s", NOW + timedelta(seconds=2)),
-                    "received_at": ("%s", NOW + timedelta(seconds=2)),
+                    "effective_at": ("%s", attempted_at),
+                    "occurred_at": ("%s", attempted_at),
+                    "received_at": ("%s", attempted_at),
                 }
                 expressions = []
                 parameters = []
@@ -777,15 +918,16 @@ class ApplicationDecisionTests(TransactionTestCase):
                     f"SELECT {', '.join(expressions)} FROM core_organismmembershiptransition t WHERE t.id = %s",
                     [*parameters, admission.pk],
                 )
+        departure_at = max(database_now(), probation_at)
         with transaction.atomic(), connection.cursor() as cursor:
             departed_id, _ = append_event(
                 cursor, "core_organismmembershiptransition", membership.pk, admission.sequence + 2,
                 "TRANSITION_MEMBERSHIP", "PROBATIONARY", "ENDED", self.applicant.pk,
                 self.ids["basis"], "s1fu-departure", pred_id=probation_id,
-                eff=NOW + timedelta(seconds=2), occ=NOW + timedelta(seconds=2),
-                rec=NOW + timedelta(seconds=2), extra={"reason_class": "TEST"},
+                eff=departure_at, occ=departure_at, rec=departure_at,
+                extra={"reason_class": "TEST"},
             )
-            refresh(cursor, "core_organismmembership", membership.pk, NOW + timedelta(seconds=2))
+            refresh(cursor, "core_organismmembership", membership.pk, departure_at)
         self.assertEqual(OrganismMembershipTransition.objects.get(pk=departed_id).resulting_state, "ENDED")
 
     def test_admission_lineage_reaches_both_authorities(self):
@@ -848,14 +990,15 @@ class ApplicationDecisionTests(TransactionTestCase):
                 "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
                 "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
                 "VALUES (%s, 'PROPOSED', now(), %s, %s, %s, %s, %s) RETURNING id",
-                [member_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", member_uuid),
+                [member_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", member_uuid),
                  self.applicant.pk, self.ids["lo"]],
             )
             member_id = cursor.fetchone()[0]
             append_event(cursor, "core_organismmembershiptransition", member_id, 1,
                          "JOIN", None, "PROPOSED", self.applicant.pk, self.ids["basis"],
-                         f"proposed:{self.tag}", extra={"reason_class": "APPLICATION"})
-            refresh(cursor, "core_organismmembership", member_id)
+                         f"proposed:{self.tag}", eff=T0, occ=T0, rec=NOW,
+                         extra={"reason_class": "APPLICATION"})
+            refresh(cursor, "core_organismmembership", member_id, T0)
         self.service().decide_application(self.command(application, kind="decide"))
         self.assertEqual(list(OrganismMembershipTransition.objects.filter(membership_id=member_id)
                               .values_list("resulting_state", flat=True)), ["PROPOSED", "ACTIVE"])
@@ -926,9 +1069,11 @@ class ApplicationDecisionTests(TransactionTestCase):
             actor=other, enterer=other, occurred_at=NOW, effective_at=NOW, received_at=NOW,
         )
         self.assertEqual(service.application_status(application, future, future), "PENDING")
+        decision_at = database_now()
+        self.assertGreater(decision_at, NOW)
         service.decide_application(replace(
             self.command(application, actor=other, kind="decide"),
-            effective_at=NOW + timedelta(minutes=1),
+            effective_at=decision_at,
         ))
         self.assertEqual(service.application_status(application, NOW, future), "PENDING")
         self.assertEqual(service.application_status(application, future, future), "DECIDED")

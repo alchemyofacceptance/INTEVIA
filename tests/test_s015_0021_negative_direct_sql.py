@@ -13,7 +13,7 @@ from django.test import TransactionTestCase
 
 from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
-    drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_root, fresh, predecessor_l1,
+    drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_organism, found_root, fresh, predecessor_l1,
     refresh, restore_unset_check, seed_authority, seed_identity, u,
 )
 
@@ -561,6 +561,60 @@ class FoundingCompleteness(_S015NegativeBase):
         with connection.cursor() as cur:
             cur.execute("SELECT count(*) FROM core_livingorganism"); self.assertEqual(cur.fetchone()[0], before)
             cur.execute("SELECT count(*) FROM core_organismroledefinition"); self.assertEqual(cur.fetchone()[0], 0)
+
+
+class FoundingCoordinatorBinding(_S015NegativeBase):
+    def _other_founding_references(self, cur, tag):
+        other = found_nonroot(cur, f"{tag}-other")
+        cur.execute(
+            "SELECT event_uuid, authority_decision_reference "
+            "FROM public.core_livingorganismevent WHERE id = %s",
+            (other["lo_event"],),
+        )
+        return cur.fetchone()
+
+    def test_neg_founding_coordinator_must_name_its_own_founding_act(self):
+        other_event_uuid, _ = self.commits(
+            lambda cur: self._other_founding_references(cur, f"binding-act-{fresh()}"),
+        )
+
+        def attempt(cur):
+            found_organism(
+                cur,
+                f"binding-target-{fresh()}",
+                root=False,
+                founding_assignment_overrides={
+                    "evidence_reference": f"founding-batch:{other_event_uuid}",
+                },
+            )
+
+        self.refuses(
+            attempt,
+            contains="S2B office attribution refused: the founding appointment must name this LO's founding act",
+        )
+
+    def test_neg_founding_coordinator_must_carry_its_own_authority_decision(self):
+        _, other_decision_reference = self.commits(
+            lambda cur: self._other_founding_references(cur, f"binding-decision-{fresh()}"),
+        )
+
+        def attempt(cur):
+            found_organism(
+                cur,
+                f"binding-target-{fresh()}",
+                root=False,
+                founding_assignment_overrides={
+                    "authority_decision_reference": other_decision_reference,
+                },
+            )
+
+        self.refuses(
+            attempt,
+            contains=(
+                "S2B office attribution refused: the founding appointment must carry "
+                "that founding act's authority decision"
+            ),
+        )
 
 
 # ------------------------------------------------------------------ §5.5.1 — the five reserved names

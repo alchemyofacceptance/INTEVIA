@@ -80,10 +80,29 @@ def fixture_terms_permitted(database_alias: str) -> bool:
 
 
 class ProductionBirthingFactSource:
-    """S3-IL-BIRTH: no governed Birthing representation is installed in this release."""
+    """Read the eligible recorded Birthing event at the supplied coordinates."""
 
-    def reference_at(self, _living_organism_id: UUID, _effective_at: datetime, _evaluated_at: datetime) -> None:
-        return None
+    def __init__(self, *, database_alias: str = "default") -> None:
+        if type(database_alias) is not str or not database_alias:
+            raise ValueError("database_alias is required")
+        self.database_alias = database_alias
+
+    def reference_at(
+        self,
+        living_organism_id: UUID,
+        effective_at: datetime,
+        evaluated_at: datetime,
+    ) -> str | None:
+        event_uuid = LivingOrganismEvent.objects.using(self.database_alias).filter(
+            living_organism__organism_id=living_organism_id,
+            action="BIRTHING",
+            effective_at__lte=effective_at,
+            received_at__lte=evaluated_at,
+            recorded_at__lte=evaluated_at,
+        ).order_by(
+            "-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid",
+        ).values_list("event_uuid", flat=True).first()
+        return None if event_uuid is None else f"living-organism-event:{event_uuid}"
 
 
 class ProductionGovernedRegistrationFactSource:
@@ -236,7 +255,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R5.0"
+    provider_version = "R6.0"
 
     def __init__(
         self,
@@ -249,7 +268,7 @@ class ProductionApplicationAuthorityProvider:
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
-        self.birthing_source = birthing_source or ProductionBirthingFactSource()
+        self.birthing_source = birthing_source or ProductionBirthingFactSource(database_alias=database_alias)
         self.registration_source = registration_source or ProductionGovernedRegistrationFactSource()
         self.nomination_entitlement_source = (
             nomination_entitlement_source or ProductionCoordinatorNominationEntitlementFactSource()
@@ -268,9 +287,10 @@ class ProductionApplicationAuthorityProvider:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
 
         phase_advance_subtype = f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
+        birthing_subtype = f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/BIRTHING"
         if request.command_subtype != request.action.value and not (
             request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
-            and request.command_subtype == phase_advance_subtype
+            and request.command_subtype in {phase_advance_subtype, birthing_subtype}
         ):
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
         if request.action is OrganismAction.TRANSITION_MEMBERSHIP and (
@@ -335,16 +355,24 @@ class ProductionApplicationAuthorityProvider:
                 except (KeyError, TypeError, ValueError):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action is OrganismAction.TRANSITION_LIVING_ORGANISM:
-                if (
-                    request.command_subtype != (
-                        f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
+                if request.command_subtype == phase_advance_subtype:
+                    valid_target = (
+                        set(request.target) == {"action", "organism_uuid", "from_phase", "to_phase"}
+                        and type(request.target.get("from_phase")) is str
+                        and type(request.target.get("to_phase")) is str
                     )
-                    or set(request.target) != {
-                        "action", "organism_uuid", "from_phase", "to_phase",
-                    }
-                    or type(request.target.get("from_phase")) is not str
-                    or type(request.target.get("to_phase")) is not str
-                ):
+                else:
+                    try:
+                        snapshot_uuid = UUID(request.target["snapshot_uuid"])
+                        valid_snapshot_uuid = str(snapshot_uuid) == request.target["snapshot_uuid"]
+                    except (KeyError, TypeError, ValueError):
+                        valid_snapshot_uuid = False
+                    valid_target = (
+                        request.command_subtype == birthing_subtype
+                        and set(request.target) == {"action", "organism_uuid", "snapshot_uuid"}
+                        and valid_snapshot_uuid
+                    )
+                if not valid_target:
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action in _VERSION_SPECS:
                 if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
@@ -795,7 +823,13 @@ class ProductionApplicationAuthorityProvider:
             facts["o"] = str(office.head_state_event.event_uuid)
         if event_action == "ASSIGN":
             facts["p"] = str(proposal.event_uuid)
-            self_proposal = proposal.actor_id == nominee.identity_id
+            with connections[self.database_alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT actor_id FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
+                    [proposal.pk],
+                )
+                proposal_actor_id, = cursor.fetchone()
+            self_proposal = proposal_actor_id == nominee.identity_id
             consent_rows = list(OfficeAppointmentConsent.objects.using(self.database_alias).filter(
                 assignment=assignment,
                 proposal_event=proposal,
@@ -910,7 +944,13 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.DENIED,
                 facts=decision_facts,
             )
-        self_proposal = proposal.actor_id == nominee.identity_id
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT actor_id FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
+                [proposal.pk],
+            )
+            proposal_actor_id, = cursor.fetchone()
+        self_proposal = proposal_actor_id == nominee.identity_id
         if self_proposal:
             permitted = event_action == "WITHDRAW" and prior_action is None
         elif prior_action is None:
@@ -1278,6 +1318,10 @@ class ProductionApplicationAuthorityProvider:
             f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
         ):
             return self._qualify_phase_advance(request, organism, office)
+        if request.command_subtype == (
+            f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/BIRTHING"
+        ):
+            return self._qualify_birthing(request, organism, office)
         if request.action in _VERSION_SPECS:
             return self._qualify_gateway_change(request, organism, membership, office)
         return self._qualify_application_processing(request, organism, membership, office)
@@ -1393,6 +1437,125 @@ class ProductionApplicationAuthorityProvider:
             "f": "FORMATION_RULES:PLATFORM_DEFAULT@v1",
             "p": f"{from_phase}->{to_phase}",
         })
+
+    def _qualify_birthing(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+        office: ContextualRoleAssignment,
+    ) -> S015AuthorityResult:
+        effective_at = request.effective_at
+        evaluated_at = request.evaluated_at
+        if not self._lo_capacity(organism, request) or self._lo_state(organism, request) != "ACTIVE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
+
+        if LivingOrganismEvent.objects.using(self.database_alias).filter(
+            living_organism=organism,
+            action="BIRTHING",
+            effective_at__lte=effective_at,
+            received_at__lte=evaluated_at,
+            recorded_at__lte=evaluated_at,
+        ).exists():
+            return self._refuse(request, S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED)
+
+        phase_reference = LivingOrganismEvent.objects.using(self.database_alias).filter(
+            living_organism=organism,
+            action="PHASE_ADVANCE",
+            effective_at__lte=effective_at,
+            received_at__lte=evaluated_at,
+            recorded_at__lte=evaluated_at,
+        ).order_by(
+            "-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid",
+        ).values_list("evidence_reference", flat=True).first()
+        if phase_reference != "formation-phase:GERMINATING->BIRTHING":
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                facts={"p": "phase"},
+            )
+
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM public.core_organismmembership m "
+                "WHERE m.living_organism_id = %s "
+                "AND public.s015_fold_effective_state("
+                "'core_organismmembership', m.id, %s, %s) = 'ACTIVE'",
+                [organism.pk, effective_at, evaluated_at],
+            )
+            electorate_count = cursor.fetchone()[0]
+        if electorate_count == 0:
+            return self._refuse(request, S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY)
+        if electorate_count > 1:
+            return self._refuse(request, S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED)
+
+        configuration = _effective_version(
+            self.database_alias,
+            organism,
+            OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            effective_at,
+            evaluated_at,
+        )
+        if configuration is None:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                facts={"p": "an effective governance configuration"},
+            )
+        if configuration.governance_enabled is None:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                facts={"p": "an effective governance configuration"},
+            )
+        if configuration.governance_enabled:
+            return self._refuse(request, S015AuthorityRefusalCode.SB_IL_GOVCONST)
+
+        settings = _effective_version(
+            self.database_alias,
+            organism,
+            OrganismAction.EFFECT_APPLICATION_SETTINGS,
+            effective_at,
+            evaluated_at,
+        )
+        if (
+            settings is None
+            or settings.applications_open is None
+            or settings.automatic_acceptance is None
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                facts={"p": "both application settings chosen"},
+            )
+        question = _effective_version(
+            self.database_alias,
+            organism,
+            OrganismAction.EFFECT_APPLICATION_QUESTION,
+            effective_at,
+            evaluated_at,
+        )
+        if question is None:
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
+                facts={"p": "a reviewed application question"},
+            )
+
+        target = request.target
+        if target is None:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        snapshot_uuid = target["snapshot_uuid"]
+        facts = {
+            "kind": "BIRTHING",
+            "c": str(configuration.version_uuid),
+            "s": str(settings.version_uuid),
+            "q": str(question.version_uuid),
+            "o": str(office.assignment_uuid),
+            "n": snapshot_uuid,
+        }
+        if len("s015a1:") + len(canonical_json_bytes(facts)) > 255:
+            return self._refuse(request, S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE)
+        return self._qualified(request, facts)
 
     def _lo_capacity(self, organism: LivingOrganism, request: S015AuthorityRequest) -> bool:
         founding = LivingOrganismEvent.objects.using(self.database_alias).filter(

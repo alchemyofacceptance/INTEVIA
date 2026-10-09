@@ -70,8 +70,12 @@ class S015AuthorityRefusalCode(str, Enum):
     LO_NAME_UNAVAILABLE = "LO_NAME_UNAVAILABLE"
     PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
     PHASE_CONDITION_UNMET = "PHASE_CONDITION_UNMET"
+    BIRTHING_PREREQUISITE_MISSING = "BIRTHING_PREREQUISITE_MISSING"
+    BIRTHING_ALREADY_RECORDED = "BIRTHING_ALREADY_RECORDED"
     SB_IL_GOVCONST = "SB-IL-GOVCONST"
+    SB_IL_GOVENABLE = "SB-IL-GOVENABLE"
     INV_CQ_ROUTE_REQUIRED = "INV_CQ_ROUTE_REQUIRED"
+    SB_BIRTHING_ELECTORATE_EMPTY = "SB_BIRTHING_ELECTORATE_EMPTY"
     C_GATEWAY_NOT_OPEN = "C_GATEWAY_NOT_OPEN"
     C_ROUTE_IS_CQ = "C_ROUTE_IS_CQ"
     C_CONFIGURATION_NOT_ESTABLISHED = "C_CONFIGURATION_NOT_ESTABLISHED"
@@ -81,6 +85,7 @@ class S015AuthorityRefusalCode(str, Enum):
     C_LO_PAUSED = "C_LO_PAUSED"
     C_LO_CLOSED = "C_LO_CLOSED"
     C_LO_NO_CAPACITY = "C_LO_NO_CAPACITY"
+    C_FOUNDER_PROTECTED = "C_FOUNDER_PROTECTED"
     C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED = "C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED"
     C_REFERENCE_UNREPRESENTABLE = "C_REFERENCE_UNREPRESENTABLE"
     E_NOMINATION_POLICY_NOT_ENTITLED = "E_NOMINATION_POLICY_NOT_ENTITLED"
@@ -89,6 +94,21 @@ class S015AuthorityRefusalCode(str, Enum):
     C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED = "C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED"
     UNRECOGNISED_ACTION = "UNRECOGNISED_ACTION"
     UNRECOGNISED_ROUTE = "UNRECOGNISED_ROUTE"
+
+
+C_FOUNDER_PROTECTED_MESSAGE = (
+    "The office was not ended or reassigned, and nothing changed. Until this LO is born, "
+    "the founder's original Coordinator appointment can be ended or reassigned only by the "
+    "founder. This is a governed protection of the LO's founding, not a technical fault. "
+    "After Birthing it no longer applies: the appointment can then be ended or reassigned "
+    "under the LO's ordinary governed rules."
+)
+
+SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE = (
+    "The LO was not born, and nothing changed. On this sole-founder route, Birthing needs exactly "
+    "one active member of the LO's electorate at the moment of Birthing, and this LO has none. "
+    "This is a governed requirement of the route, not a technical fault."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +617,10 @@ def _facts_read(
         request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
         and content.get("kind") == "PHASE_ADVANCE"
     )
+    birthing_reference = (
+        request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
+        and content.get("kind") == "BIRTHING"
+    )
     if request.action is OrganismAction.FOUND_LIVING_ORGANISM and content.get("kind") == "FOUNDING":
         rule_reference = content.get("rule")
         if type(rule_reference) is str and rule_reference.startswith("platform-terms-version:"):
@@ -670,10 +694,14 @@ def _facts_read(
             "g": ("core_organismroledefinition", None),
             "p": ("core_contextualroleassignmentstateevent", None),
         })
-    if phase_advance_reference:
+    if phase_advance_reference or birthing_reference:
         prefix["o"] = ("core_contextualroleassignment", None)
+    if birthing_reference:
+        prefix["n"] = ("core_lobirthingsnapshot", None)
     for key, value in content.items():
         if phase_advance_reference and key in {"kind", "f", "p"}:
+            continue
+        if birthing_reference and key == "kind":
             continue
         if request.action is OrganismAction.FOUND_LIVING_ORGANISM and key in {
             "kind", "rule", "registration", "terms",
@@ -929,6 +957,8 @@ class S015Authority:
                 message = "membership transition is not yet implemented"
             elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED:
                 message = "leaving while holding an office is not yet implemented (IL-2)"
+            elif disclosed_refusal_code is S015AuthorityRefusalCode.C_FOUNDER_PROTECTED:
+                message = C_FOUNDER_PROTECTED_MESSAGE
             else:
                 message = "organism authority denied"
             raise S015AuthorityDenied(
@@ -978,6 +1008,8 @@ class S015Authority:
 
 
 __all__ = [
+    "C_FOUNDER_PROTECTED_MESSAGE",
+    "SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE",
     "QualifiedS015AuthorityDecision",
     "S015Authority",
     "S015AuthorityDenied",

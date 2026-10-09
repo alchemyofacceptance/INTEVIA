@@ -55,7 +55,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0043_p1_governed_registration"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0044_sb2_birthing_snapshot"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -101,6 +101,7 @@ class ApplicationLineageSchema(TransactionTestCase):
         admission = importlib.import_module("core.migrations.0031_s1fu_admission_actor_requirement")
         authority = importlib.import_module("core.migrations.0033_s015_application_authority")
         sb1 = importlib.import_module("core.migrations.0042_sb1_founding_terms_phases")
+        birthing = importlib.import_module("core.migrations.0044_sb2_birthing_snapshot")
         declared = {
             name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
             for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
@@ -127,7 +128,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s1fu_guard_admission_route": admission.ADMISSION_ROUTE_SQL,
             "s3_guard_lo_actor": sb1.NEW_S3_GUARD_LO_ACTOR_BODY,
             "s1fu_guard_admission_route": sb1.NEW_S1FU_GUARD_ADMISSION_ROUTE_BODY,
-            "s3fu_guard_gateway_effect": sb1.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
+            "s3fu_guard_gateway_effect": birthing.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
         })
         declared_triggers = {}
 
@@ -251,6 +252,22 @@ class ApplicationLineageSchema(TransactionTestCase):
              "CREATE TRIGGER sb_lofoundingcontentversion_commitment BEFORE INSERT "
              "ON public.core_lofoundingcontentversion FOR EACH ROW "
              "EXECUTE FUNCTION public.sb_assign_founding_content_commitment()"),
+            ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_record_time",
+             "CREATE TRIGGER sb_lobirthingsnapshot_record_time BEFORE INSERT "
+             "ON public.core_lobirthingsnapshot FOR EACH ROW "
+             "EXECUTE FUNCTION public.s3_assign_record_time()"),
+            ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_immutable",
+             "CREATE TRIGGER sb_lobirthingsnapshot_immutable BEFORE UPDATE OR DELETE "
+             "ON public.core_lobirthingsnapshot FOR EACH ROW "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_lobirthingsnapshot", "s015_lobirthingsnapshot_truncate_immutable",
+             "CREATE TRIGGER s015_lobirthingsnapshot_truncate_immutable BEFORE TRUNCATE "
+             "ON public.core_lobirthingsnapshot FOR EACH STATEMENT "
+             "EXECUTE FUNCTION public.s015_refuse_row_mutation()"),
+            ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_commitment",
+             "CREATE TRIGGER sb_lobirthingsnapshot_commitment BEFORE INSERT "
+             "ON public.core_lobirthingsnapshot FOR EACH ROW "
+             "EXECUTE FUNCTION public.sb_assign_lobirthingsnapshot_commitment()"),
             ("core_livingorganism", "sb_livingorganism_terms_acceptance",
              "CREATE CONSTRAINT TRIGGER sb_livingorganism_terms_acceptance "
              "AFTER UPDATE OF founding_authority_basis_id ON public.core_livingorganism "
@@ -305,7 +322,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid) "
                 "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = 'public' AND t.tgname ~ '^(s3_|s3fu_|s1fu_|sb_|s015_(platformtermsversion|platformtermsacceptance|lofoundingcontentversion)_truncate_immutable$)' "
+                "WHERE n.nspname = 'public' AND t.tgname ~ '^(s3_|s3fu_|s1fu_|sb_|s015_(platformtermsversion|platformtermsacceptance|lofoundingcontentversion|lobirthingsnapshot)_truncate_immutable$)' "
                 "AND NOT t.tgisinternal"
             )
             installed_triggers = {(table, name): definition for table, name, definition in cursor.fetchall()}

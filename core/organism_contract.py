@@ -157,6 +157,9 @@ _plane_rows: dict[str, Mapping[QualificationPlane, QualificationPlaneBinding]] =
     "TRANSITION_LIVING_ORGANISM/PHASE_ADVANCE": _planes(
         _NO_LEGAL, _C_REQUIRED, _E_REQUIRED, _P_FORBIDDEN
     ),
+    "TRANSITION_LIVING_ORGANISM/BIRTHING": _planes(
+        _NO_LEGAL, _C_REQUIRED, _E_REQUIRED, _P_FORBIDDEN
+    ),
     "SUBMIT_APPLICATION": _ordinary_planes(),
     "WITHDRAW_APPLICATION": _ordinary_planes(),
     "CLAIM_APPLICATION": _ordinary_planes(),

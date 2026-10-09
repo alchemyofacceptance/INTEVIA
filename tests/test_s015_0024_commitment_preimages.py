@@ -261,6 +261,11 @@ class LawfulRecordWithParts(TransactionTestCase):
             expected_parts = digest("s015p1", parts_preimage("core_livingorganismevent", event_uuid, self.PARTS))
             state["expected_parts"] = expected_parts
             lo_event, _ = self._event(cur, "core_livingorganismevent", "living_organism_id", lo, 1, "FOUND", None, "ACTIVE", actor, basis, tag, parts_commitment=expected_parts)
+            cur.execute(
+                "SELECT authority_decision_reference FROM public.core_livingorganismevent WHERE id = %s",
+                [lo_event],
+            )
+            founding_decision_reference, = cur.fetchone()
             for p in self.PARTS:
                 cur.execute("INSERT INTO public.core_governedeventpart (event_table, event_uuid, part_ordinal, part_class, posture, ground, office) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                             ("core_livingorganismevent", event_uuid, p["part_ordinal"], p["part_class"], p["posture"], p["ground"], p["office"]))
@@ -275,7 +280,23 @@ class LawfulRecordWithParts(TransactionTestCase):
             cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
                         "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, T0, T0, self._empty_fp(cur, "core_contextualroleassignment", a_uuid), membership, role))
             assignment = cur.fetchone()[0]
-            self._event(cur, "core_contextualroleassignmentstateevent", "assignment_id", assignment, 1, "ASSIGN", None, "ACTIVE", actor, basis, tag)
+            self._event(
+                cur,
+                "core_contextualroleassignmentstateevent",
+                "assignment_id",
+                assignment,
+                1,
+                "ASSIGN",
+                None,
+                "ACTIVE",
+                actor,
+                basis,
+                tag,
+                extra={
+                    "evidence_reference": f"founding-batch:{event_uuid}",
+                    "authority_decision_reference": founding_decision_reference,
+                },
+            )
             cur.execute("INSERT INTO core_essentialcoveragerequirement (requirement_uuid, roster_version, responsibility_domain_code, qualifying_role_code, minimum_active_occupants, scope, effective_from, effective_until, living_organism_id) "
                         "VALUES (%s, 1, 'GOVERNANCE', 'COORDINATOR', 1, 'LIVING_ORGANISM', %s, NULL, %s)", (str(uuid.uuid4()), T0 - dt.timedelta(days=1), lo))
             cur.execute("INSERT INTO core_essentialcoveragecase (case_uuid, living_organism_id) VALUES (%s, %s) RETURNING id", (str(uuid.uuid4()), lo))

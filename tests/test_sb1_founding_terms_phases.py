@@ -647,8 +647,24 @@ class SB1GovernancePhaseTests(TransactionTestCase):
             phase_planes[QualificationPlane.LEGAL].reason,
             "NO_LEGAL_CONCLUSION",
         )
+        birthing_subtype = "TRANSITION_LIVING_ORGANISM/BIRTHING"
+        birthing_planes = qualification_planes(birthing_subtype)
+        self.assertEqual(birthing_planes, QUALIFICATION_PLANE_MATRIX[birthing_subtype])
+        self.assertEqual(
+            {plane: binding.state for plane, binding in birthing_planes.items()},
+            {
+                QualificationPlane.LEGAL: QualificationPlaneState.NOT_APPLICABLE_WITH_REASON,
+                QualificationPlane.CONSTITUTIONAL: QualificationPlaneState.PREREQUISITE_REQUIRED,
+                QualificationPlane.EXECUTION: QualificationPlaneState.PREREQUISITE_REQUIRED,
+                QualificationPlane.PROPAGATION: QualificationPlaneState.FORBIDDEN,
+            },
+        )
+        self.assertEqual(
+            birthing_planes[QualificationPlane.LEGAL].reason,
+            "NO_LEGAL_CONCLUSION",
+        )
         with self.assertRaises(QualificationApplicabilityUnknown):
-            qualification_planes("TRANSITION_LIVING_ORGANISM/BIRTHING")
+            qualification_planes("TRANSITION_LIVING_ORGANISM/UNRECOGNISED")
 
         ids = self._prepared_organism()
         with self.assertRaisesMessage(
@@ -658,19 +674,26 @@ class SB1GovernancePhaseTests(TransactionTestCase):
             self._attempt_birthing(ids)
         self.assertEqual(self._current_phase(ids, BIRTHING_AT), "GERMINATING")
 
-        for action in ("BIRTHING", "UNMAPPED_SAME_STATE"):
+        for action, expected_message in (
+            ("BIRTHING", "BIRTHING_PREREQUISITE_MISSING: the phase to read Birthing"),
+            ("UNMAPPED_SAME_STATE", "same-state event without effect action"),
+        ):
             with self.subTest(action=action):
                 with transaction.atomic(), connection.cursor() as cursor:
                     with self.assertRaisesMessage(
                         IntegrityError,
-                        "same-state event without effect action",
+                        expected_message,
                     ):
                         with transaction.atomic():
                             self._append_lo_event(
                                 cursor,
                                 ids,
                                 action,
-                                f"witness:{action}",
+                                (
+                                    f"birthing-snapshot:{uuid4()}"
+                                    if action == "BIRTHING"
+                                    else f"witness:{action}"
+                                ),
                                 BIRTHING_AT,
                             )
 
@@ -1106,18 +1129,18 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         reference_facts = json.loads(result.authority_reference.removeprefix("s015a1:"))
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT actor_state, actor_capacity, enterer_identity_id, entry_mode "
+                "SELECT actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id, entry_mode "
                 "FROM public.core_livingorganismevent WHERE id = %s",
                 [event.pk],
             )
-            actor_state, actor_capacity, enterer_identity_id, entry_mode = cursor.fetchone()
+            actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id, entry_mode = cursor.fetchone()
 
         self.assertEqual(event.action, "PHASE_ADVANCE")
         self.assertEqual((event.prior_state, event.resulting_state), ("ACTIVE", "ACTIVE"))
-        self.assertIsNone(event.actor_id)
+        self.assertIsNone(actor_id)
         self.assertEqual(actor_state, "LIVING_ORGANISM")
         self.assertEqual(actor_capacity, "STANDING")
-        self.assertIsNone(event.actor_access_epoch)
+        self.assertIsNone(actor_access_epoch)
         self.assertEqual(enterer_identity_id, actor.pk)
         self.assertEqual(entry_mode, "TRANSPORT")
         self.assertEqual(event.authority_basis_id, organism.founding_authority_basis_id)
@@ -1125,7 +1148,7 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         self.assertEqual(event.evidence_reference, "formation-phase:CONCEIVING->GERMINATING")
         self.assertIsNone(event.temporal_basis_kind)
         self.assertIsNone(event.temporal_basis_reference)
-        self.assertEqual(decision.provider_version, "R5.0")
+        self.assertEqual(decision.provider_version, "R6.0")
         self.assertLessEqual(len(result.authority_reference), 255)
         self.assertEqual(
             decision.command_subtype,
@@ -1792,7 +1815,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         self.assertEqual(assignment_event.action, "ASSIGN")
         self.assertEqual(assignment_event.resulting_state, "ACTIVE")
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R5.0")
+        self.assertEqual(decision_record.provider_version, "R6.0")
         self.assertEqual(decision_record.authority_reference, result.authority_reference)
         self.assertLessEqual(len(result.authority_reference), 255)
         maximum_reference_length = len("s015a1:") + len(canonical_json_bytes({

@@ -28,8 +28,9 @@ from core.models import (
     ProvisioningReconciliationAttempt,
 )
 from core.organism_contract import OrganismAction
-from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, found_nonroot, found_root, fresh, refresh, seed_identity
+from s015_0021_support import T0, append_event, drop_unset_check, empty_fp, found_root, fresh, refresh, seed_identity
 from tests.s015_concurrency_support import cleanup_workers, exact_wait, start_worker, wait_until_locked
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 from tests.test_s015_role_command import (
     _CountingProvider,
     _PausedProductionProvider,
@@ -79,6 +80,33 @@ from src.intevia.services.identity_service import (
 from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
+
+
+def _snapshot_tables(*table_names):
+    snapshots = {}
+    with connection.cursor() as cursor:
+        for table_name in table_names:
+            table = connection.ops.quote_name(table_name)
+            cursor.execute(
+                f"SELECT to_jsonb(row_data) FROM public.{table} AS row_data "
+                "ORDER BY row_data.id"
+            )
+            snapshots[table_name] = tuple(row[0] for row in cursor.fetchall())
+    return snapshots
 FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "membership command slice is PostgreSQL-only")
 
@@ -184,34 +212,38 @@ class S015MembershipCommandTests(TransactionTestCase):
         print(f"{label}.stored_refusal={stored!r}", flush=True)
 
     def _setup_organism(self, label: str = "membership"):
-        with transaction.atomic():
-            with connection.cursor() as cur:
-                ids = found_root(cur, label)
-                target_pk = seed_identity(cur, f"{label}-target")
+        route = prepare_route(tag=label)
+        birth(route)
+        ids, _gateway = route_fixture_state(route)
+        self.route_times = ids["recorded_times"]
+        global T0, NOW
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(route)
+        with transaction.atomic(), connection.cursor() as cur:
+            target_pk = seed_identity(cur, f"{label}-target")
         actor = Identity.objects.get(pk=ids["identity"])
         target = Identity.objects.get(pk=target_pk)
-        with connection.cursor() as cur:
-            cur.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", (ids["lo"],))
-            organism_id = cur.fetchone()[0]
-        ids["organism_uuid"] = UUID(str(organism_id))
         return ids, actor, target
 
-    def _fixture_membership(self, ids, target, state, label, at=T0):
+    def _fixture_membership(self, ids, target, state, label, at=None):
         # TEST-ONLY founding-style setup (NULL -> ACTIVE), or probation prior-state construction;
         # neither is an operational founding or probation route.
+        times = ids["recorded_times"]
+        at = times.latest_effective_at if at is None else at
+        known_at = max(NOW, at, times.latest_recorded_at)
         membership_uuid = uuid4()
         with transaction.atomic(), connection.cursor() as cur:
             cur.execute(
                 "INSERT INTO core_organismmembership (membership_uuid, identity_id, living_organism_id, "
                 "state, created_at, current_state_effective_at, state_known_at, "
                 "state_source_event_set_fingerprint) VALUES (%s, %s, %s, %s, now(), %s, %s, %s) RETURNING id",
-                [membership_uuid, target.pk, ids["lo"], state, at, at,
+                [membership_uuid, target.pk, ids["lo"], state, at, known_at,
                  empty_fp(cur, "core_organismmembership", membership_uuid)],
             )
             membership_id = cur.fetchone()[0]
             append_event(cur, "core_organismmembershiptransition", membership_id, 1, "JOIN",
                          None, state, ids["identity"], ids["basis"], label,
-                         eff=at, occ=at, rec=at, extra={"reason_class": "FOUNDING"})
+                         eff=at, occ=at, rec=known_at, extra={"reason_class": "FOUNDING"})
             refresh(cur, "core_organismmembership", membership_id, at)
         return OrganismMembership.objects.get(pk=membership_id)
 
@@ -222,6 +254,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         membership,
         role_definition_id,
         tag,
+        at=None,
         effective_until_state="NONE",
         effective_until=None,
     ):
@@ -235,6 +268,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         proposer = Identity.objects.select_related("credential").get(pk=membership.identity_id)
         keying_actor = Identity.objects.select_related("credential").get(pk=ids["identity"])
         role = OrganismRoleDefinition.objects.get(pk=role_definition_id)
+        proposed_at = NOW if at is None else at
 
         def database_now():
             with connection.cursor() as cursor:
@@ -243,11 +277,10 @@ class S015MembershipCommandTests(TransactionTestCase):
 
         service = OrganismRoleService(
             authority=S015Authority(provider=_ExactProvider(), database_alias="default"),
-            clock=lambda: NOW,
+            clock=lambda: NOW if at is None else max(NOW, proposed_at),
             database_alias="default",
         )
         # TEST-ONLY authority fixture supplies the office state needed by membership witnesses; it is not production permission.
-        proposed_at = NOW
         proposal_received_at = database_now()
         proposal = service.propose_assignment(ProposeAssignmentCommand(
             credential=proposer.credential,
@@ -261,7 +294,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             effective_until_state=effective_until_state,
             effective_until=effective_until,
         ))
-        assigned_at = NOW
+        assigned_at = proposed_at
         assignment_received_at = database_now()
         service.transition_assignment(TransitionAssignmentCommand(
             credential=keying_actor.credential,
@@ -317,9 +350,11 @@ class S015MembershipCommandTests(TransactionTestCase):
         return identity, fulfilment_reference
 
     def _reader_membership_fixture(self, reader, state, label):
-        with transaction.atomic(), connection.cursor() as cursor:
-            ids = found_nonroot(cursor, f"reader-{label}-{fresh()}")
-        membership = self._fixture_membership(ids, reader, state, f"reader-{label}", at=NOW)
+        reader_route = prepare_route(tag=f"reader-{label}-{fresh()}")
+        ids, _ = route_fixture_state(reader_route)
+        membership = self._fixture_membership(
+            ids, reader, state, f"reader-{label}", at=route_test_now(reader_route),
+        )
         return ids, membership
 
     def _transition_reader_membership_fixture(self, ids, membership, resulting_state, label):
@@ -327,7 +362,12 @@ class S015MembershipCommandTests(TransactionTestCase):
             membership=membership,
         ).order_by("-sequence").first()
         self.assertIsNotNone(previous)
-        effective_at = NOW + timedelta(hours=1)
+        times = ids["recorded_times"]
+        effective_at = max(
+            self._database_now(),
+            times.latest_effective_at,
+            times.latest_recorded_at,
+        )
         with transaction.atomic(), connection.cursor() as cursor:
             transition_id, _ = append_event(
                 cursor,
@@ -366,7 +406,10 @@ class S015MembershipCommandTests(TransactionTestCase):
             for locktype, mode in locks
         ))
 
-    def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=NOW, effective_at=NOW, received_at=NOW):
+    def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None, received_at=None):
+        occurred_at = NOW if occurred_at is None else occurred_at
+        effective_at = NOW if effective_at is None else effective_at
+        received_at = NOW if received_at is None else received_at
         return OpenMembershipCommand(
             credential=actor.credential,
             request_reference=request_reference,
@@ -379,7 +422,10 @@ class S015MembershipCommandTests(TransactionTestCase):
             reason_class=reason_class,
         )
 
-    def _transition_command(self, *, actor, membership_uuid, resulting_state, request_reference, idempotency_key, reason_class, occurred_at=NOW, effective_at=NOW, received_at=NOW):
+    def _transition_command(self, *, actor, membership_uuid, resulting_state, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None, received_at=None):
+        occurred_at = NOW if occurred_at is None else occurred_at
+        effective_at = NOW if effective_at is None else effective_at
+        received_at = NOW if received_at is None else received_at
         return TransitionMembershipCommand(
             credential=actor.credential,
             request_reference=request_reference,
@@ -435,7 +481,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         return ids, actor, target, service, open_result, transition_result
 
     def test_open_then_transition_to_active_is_refused_without_write(self):
-        ids, actor, target = self._setup_organism("admission-refused")
+        ids, actor, target = self._setup_organism(fresh())
         service = self._service(_ExactProvider())
         open_result = service.open_membership(self._open_command(
             actor=actor, organism_id=ids["organism_uuid"], target_identity_id=target.identity_id,
@@ -590,7 +636,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual([transition.resulting_state for transition in transitions], ["PROBATIONARY", "ENDED"])
 
     def test_production_provider_records_own_active_and_probationary_departures(self):
-        ids, _, active_member = self._setup_organism("production-leave")
+        ids, _, active_member = self._setup_organism(fresh())
         with transaction.atomic(), connection.cursor() as cur:
             probationary_pk = seed_identity(cur, "production-leave-probationary")
         probationary_member = Identity.objects.get(pk=probationary_pk)
@@ -869,11 +915,13 @@ class S015MembershipCommandTests(TransactionTestCase):
 
         active_ids, active_membership = fixtures["active"]
         term_end = self._database_now() + timedelta(days=30)
+        active_times = active_ids["recorded_times"]
         self._assign_office(
             ids=active_ids,
             membership=active_membership,
             role_definition_id=active_ids["roles"]["COORDINATOR"],
             tag="own-membership-reader-fixed-term",
+            at=max(active_times.latest_effective_at, active_times.latest_recorded_at),
             effective_until_state="FIXED",
             effective_until=term_end,
         )
@@ -1119,6 +1167,13 @@ class S015MembershipCommandTests(TransactionTestCase):
     def test_replay_returns_first_result(self):
         ids, actor, target = self._setup_organism("replay")
         service = self._service(_ExactProvider())
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
         command = self._open_command(
             actor=actor,
             organism_id=ids["organism_uuid"],
@@ -1128,10 +1183,24 @@ class S015MembershipCommandTests(TransactionTestCase):
             reason_class="TEST_ONLY_REASON_REPLAY",
         )
         first = service.open_membership(command)
+        after_first = _snapshot_tables(*tables)
+        self.assertEqual(len(after_first[tables[0]]), len(before[tables[0]]) + 1)
+        self.assertEqual(len(after_first[tables[1]]), len(before[tables[1]]) + 1)
+        self.assertEqual(len(after_first[tables[2]]), len(before[tables[2]]) + 1)
+        self.assertEqual(after_first[tables[3]], before[tables[3]])
+        membership = _membership_for_result(first)
+        transition = OrganismMembershipTransition.objects.get(
+            membership=membership, sequence=1,
+        )
+        receipt = OrganismCommandReceipt.objects.get(idempotency_key="idem:replay:open")
+        self.assertEqual(transition.membership_id, membership.pk)
+        self.assertEqual(receipt.actor_id, actor.pk)
+        self.assertFalse(AuthorityDecision.objects.filter(
+            decision_reference=transition.authority_decision_reference,
+        ).exists())
         second = service.open_membership(command)
         self.assertEqual(first, second)
-        self.assertEqual(OrganismMembership.objects.count(), 2)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
+        self.assertEqual(_snapshot_tables(*tables), after_first)
 
     def test_open_existing_membership_raises_exists_without_writing(self):
         ids, actor, target = self._setup_organism("exists")
@@ -1146,9 +1215,13 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_EXISTS",
             )
         )
-        membership_count = OrganismMembership.objects.count()
-        receipt_count = OrganismCommandReceipt.objects.count()
-        transition_count = OrganismMembershipTransition.objects.count()
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before_refusal = _snapshot_tables(*tables)
 
         with self.assertRaises(S015MembershipExists):
             service.open_membership(
@@ -1163,13 +1236,18 @@ class S015MembershipCommandTests(TransactionTestCase):
             )
 
         self.assertIsInstance(first, MembershipCommandResult)
-        self.assertEqual(OrganismMembership.objects.count(), membership_count)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
-        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
+        self.assertEqual(_snapshot_tables(*tables), before_refusal)
 
     def test_replay_mismatch_on_reason_change(self):
         ids, actor, target = self._setup_organism("replay-mismatch")
         service = self._service(_ExactProvider())
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
         first = service.open_membership(
             self._open_command(
                 actor=actor,
@@ -1180,6 +1258,19 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_ONE",
             )
         )
+        after_first = _snapshot_tables(*tables)
+        self.assertEqual(len(after_first[tables[0]]), len(before[tables[0]]) + 1)
+        self.assertEqual(len(after_first[tables[1]]), len(before[tables[1]]) + 1)
+        self.assertEqual(len(after_first[tables[2]]), len(before[tables[2]]) + 1)
+        self.assertEqual(after_first[tables[3]], before[tables[3]])
+        membership = _membership_for_result(first)
+        transition = OrganismMembershipTransition.objects.get(
+            membership=membership, sequence=1,
+        )
+        self.assertEqual(transition.membership_id, membership.pk)
+        self.assertFalse(AuthorityDecision.objects.filter(
+            decision_reference=transition.authority_decision_reference,
+        ).exists())
         with self.assertRaises(S015CommandReplayMismatch):
             service.open_membership(
                 self._open_command(
@@ -1191,6 +1282,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_TWO",
                 )
             )
+        self.assertEqual(_snapshot_tables(*tables), after_first)
         with self.assertRaises(S015CommandReplayMismatch):
             service.open_membership(
                 self._open_command(
@@ -1203,8 +1295,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     effective_at=NOW + timedelta(minutes=1),
                 )
             )
-        self.assertEqual(OrganismMembership.objects.count(), 2)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
+        self.assertEqual(_snapshot_tables(*tables), after_first)
         self.assertIsInstance(first, MembershipCommandResult)
 
     def test_authority_failures_refuse_without_write(self):
@@ -1224,10 +1315,17 @@ class S015MembershipCommandTests(TransactionTestCase):
         ]:
             with self.subTest(exc_type=exc_type.__name__):
                 service = self._service(provider)
+                tables = (
+                    "core_organismmembership",
+                    "core_organismmembershiptransition",
+                    "core_organismcommandreceipt",
+                    "core_authoritydecision",
+                )
+                before = _snapshot_tables(*tables)
                 with self.assertRaises(exc_type):
                     service.open_membership(command)
-        self.assertEqual(OrganismMembership.objects.count(), 1)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 0)
+                after = _snapshot_tables(*tables)
+                self.assertEqual(after, before)
 
     def test_denied_authority_preempts_edge_and_exists_refusals(self):
         ids, actor, target = self._setup_organism("authority-order")
@@ -1242,9 +1340,12 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_AUTHORITY",
             )
         )
-        membership_count = OrganismMembership.objects.count()
-        receipt_count = OrganismCommandReceipt.objects.count()
-        transition_count = OrganismMembershipTransition.objects.count()
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+        )
+        before_refusal = _snapshot_tables(*tables)
 
         denied_service = self._service(_DeniedProvider())
         with self.assertRaises(S015AuthorityDenied):
@@ -1258,9 +1359,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_AUTHORITY",
                 )
             )
-        self.assertEqual(OrganismMembership.objects.count(), membership_count)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
-        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
+        self.assertEqual(_snapshot_tables(*tables), before_refusal)
 
         with self.assertRaises(S015AuthorityDenied):
             denied_service.open_membership(
@@ -1273,9 +1372,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_AUTHORITY",
                 )
             )
-        self.assertEqual(OrganismMembership.objects.count(), membership_count)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
-        self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
+        self.assertEqual(_snapshot_tables(*tables), before_refusal)
 
     def test_reason_token_does_not_change_refusal_paths(self):
         reason_token = "TEST_ONLY_REASON_REMOVAL"
@@ -1428,6 +1525,13 @@ class S015MembershipCommandTests(TransactionTestCase):
     def test_insert_time_refusal_rolls_back(self):
         ids, actor, target = self._setup_organism("atomic-failure")
         service = self._service(_ExactProvider())
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
         future = FAR_FUTURE
         with self.assertRaises(IntegrityError):
             service.open_membership(
@@ -1442,11 +1546,17 @@ class S015MembershipCommandTests(TransactionTestCase):
                     received_at=future,
                 )
             )
-        self.assertEqual(OrganismMembership.objects.count(), 1)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 0)
+        self.assertEqual(_snapshot_tables(*tables), before)
 
     def test_concurrent_same_request_replays_once(self):
         ids, actor, target = self._setup_organism("concurrency")
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
         command_kwargs = dict(
             organism_id=ids["organism_uuid"],
             target_identity_id=target.identity_id,
@@ -1482,9 +1592,21 @@ class S015MembershipCommandTests(TransactionTestCase):
         collected = [results.get(timeout=5) for _ in range(2)]
         self.assertTrue(all(kind == "ok" for kind, _ in collected))
         self.assertEqual(collected[0][1], collected[1][1])
-        self.assertEqual(OrganismMembership.objects.count(), 2)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
-        self.assertEqual(OrganismMembershipTransition.objects.count(), 2)
+        after = _snapshot_tables(*tables)
+        self.assertEqual(len(after[tables[0]]), len(before[tables[0]]) + 1)
+        self.assertEqual(len(after[tables[1]]), len(before[tables[1]]) + 1)
+        self.assertEqual(len(after[tables[2]]), len(before[tables[2]]) + 1)
+        self.assertEqual(after[tables[3]], before[tables[3]])
+        membership = _membership_for_result(collected[0][1])
+        transition = OrganismMembershipTransition.objects.get(
+            membership=membership, sequence=1,
+        )
+        receipt = OrganismCommandReceipt.objects.get(idempotency_key="idem:concurrency:open")
+        self.assertEqual(transition.membership_id, membership.pk)
+        self.assertEqual(receipt.actor_id, actor.pk)
+        self.assertFalse(AuthorityDecision.objects.filter(
+            decision_reference=transition.authority_decision_reference,
+        ).exists())
 
     def test_loi_x1_s1_departure_and_registered_session_complete_without_cycle(self):
         """The pre-0032 deadlock is historical and preserved by the LOI evidence.
@@ -1606,6 +1728,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             ProposeAssignmentCommand,
         )
 
+        global NOW
         label = "r4s1-b-nonself"
         ids, _founder, member = self._setup_organism(f"{label}-target-lo")
         target_membership = self._fixture_membership(
@@ -1627,8 +1750,11 @@ class S015MembershipCommandTests(TransactionTestCase):
         )
 
         # Correction: this tried to create a second platform-root LO; it should use the existing root for departure and a non-root LO for M's act.
+        other_route = prepare_route(tag=f"{label}-member-act-lo")
+        other_ids, _ = route_fixture_state(other_route)
+        other_at = route_test_now(other_route)
+        NOW = other_at
         with transaction.atomic(), connection.cursor() as cursor:
-            other_ids = found_nonroot(cursor, f"{label}-member-act-lo")
             other_nominee_pk = seed_identity(cursor, f"{label}-member-act-nominee")
         other_nominee = Identity.objects.get(pk=other_nominee_pk)
         member_membership = self._fixture_membership(
@@ -1636,12 +1762,14 @@ class S015MembershipCommandTests(TransactionTestCase):
             member,
             "ACTIVE",
             f"{label}-member-act-membership",
+            at=other_at,
         )
         nominee_membership = self._fixture_membership(
             other_ids,
             other_nominee,
             "ACTIVE",
             f"{label}-member-act-nominee",
+            at=other_at,
         )
         coordinator_role = OrganismRoleDefinition.objects.get(
             pk=other_ids["roles"]["COORDINATOR"],

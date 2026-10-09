@@ -1,7 +1,7 @@
 """PKT-B slice S2 — office appointments and authorised endings. PostgreSQL, disposable test database.
 
 Commission: COPILOT_COMMISSION_PKT_B_S2_v1_1.md with the Human Governor's rulings of 29 September
-2026 (IL-7 provenance, IL-8, no reason input, COORDINATOR-only). Test ids R1–R19 map to the
+2026 (founding provenance, IL-8, no reason input, COORDINATOR-only). Test ids R1–R19 map to the
 commission's §5 table plus the ruling's additions; R16 is S1's own suite, run unchanged by the
 Human Governor — this slice edits no S1 behaviour, only the shared-helper move of §2.
 
@@ -40,9 +40,10 @@ from core.models import (
 )
 from core.organism_contract import OrganismAction
 from s015_0021_support import (
-    T0, append_event, drop_unset_check, empty_fp, found_nonroot, refresh, seed_identity, u,
+    T0, append_event, drop_unset_check, empty_fp, found_nonroot, fresh, refresh, seed_identity, u,
 )
 from src.intevia.services.organism_authority import (
+    C_FOUNDER_PROTECTED_MESSAGE,
     S015Authority,
     S015AuthorityDenied,
     S015AuthorityMalformed,
@@ -58,6 +59,7 @@ from src.intevia.services.organism_command_support import (
     S015CommandReplayMismatch,
     WithheldField,
     _authority_request,
+    _founding_appointment_by_record,
     authority_target_fingerprint,
     serve_replay,
     withheld_fields,
@@ -79,9 +81,37 @@ from src.intevia.services.organism_role_service import (
     TransitionAssignmentCommand,
     _validate_assignment_edge,
 )
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 from tests.s015_concurrency_support import backend_pid, exact_wait
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
+
+
+def _snapshot_tables(*table_names):
+    snapshots = {}
+    with connection.cursor() as cursor:
+        for table_name in table_names:
+            table = connection.ops.quote_name(table_name)
+            cursor.execute(
+                f"SELECT to_jsonb(row_data) FROM public.{table} AS row_data "
+                "ORDER BY row_data.id"
+            )
+            snapshots[table_name] = tuple(row[0] for row in cursor.fetchall())
+    return snapshots
 FAR_FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)  # later than any real recorded_at, so the four-time check refuses it on every run
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "role command slice is PostgreSQL-only")
 
@@ -535,9 +565,15 @@ class _ExactProvider:
                 assignment=assignment,
                 action="CONSENT",
             ).order_by("-ordinal").first()
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT actor_id FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
+                    [proposal.pk],
+                )
+                proposal_actor_id, = cursor.fetchone()
             consent_reference = (
                 "e:" + str(proposal.event_uuid)
-                if proposal.actor_id == assignment.membership.identity_id
+                if proposal_actor_id == assignment.membership.identity_id
                 else "c:" + str(consent.consent_uuid)
             )
             facts = {
@@ -596,19 +632,23 @@ class _MalformedProvider:
 def _add_member(cur, ids, tag, state="ACTIVE"):
     """A second member of the LO with its own identity and a sequence-1 membership chain.
     Test-only fixture; the landed admission routes are S3's."""
+    times = ids["recorded_times"]
+    effective_at = times.latest_effective_at
+    known_at = max(NOW, times.latest_recorded_at)
     member_pk = seed_identity(cur, tag)
     m_uuid = u(f"membership:{tag}")
     cur.execute(
         "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
         "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id",
-        (m_uuid, state, T0, T0, empty_fp(cur, "core_organismmembership", m_uuid), member_pk, ids["lo"]),
+        (m_uuid, state, effective_at, known_at, empty_fp(cur, "core_organismmembership", m_uuid), member_pk, ids["lo"]),
     )
     membership_id = cur.fetchone()[0]
     append_event(
         cur, "core_organismmembershiptransition", membership_id, 1, "JOIN", None, state,
         member_pk, ids["basis"], tag, extra={"reason_class": "TEST_ONLY_ADMISSION"},
+        eff=effective_at, occ=effective_at, rec=known_at,
     )
-    refresh(cur, "core_organismmembership", membership_id)
+    refresh(cur, "core_organismmembership", membership_id, effective_at)
     return membership_id, member_pk, UUID(m_uuid)
 
 
@@ -625,6 +665,9 @@ def _add_role_definition(cur, ids, tag, code, scope="LIVING_ORGANISM"):
 
 def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag):
     """A test office built through governed proposal, consent, and LO assignment records."""
+    times = ids["recorded_times"]
+    effective_at = times.latest_effective_at
+    known_at = max(NOW, times.latest_recorded_at)
     assignment_uuid = UUID(u(f"assignment:{tag}"))
     actor = Identity.objects.get(pk=ids["identity"])
     actor_membership = OrganismMembership.objects.select_related("head_transition").get(pk=ids["membership"])
@@ -634,7 +677,7 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
             cur.execute(
                 "INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
                 "VALUES (%s, 'PROPOSED', now(), %s, %s, %s, %s, %s) RETURNING id",
-                (str(assignment_uuid), T0, T0, empty_fp(cur, "core_contextualroleassignment", str(assignment_uuid)), membership_id, role_definition_id),
+                (str(assignment_uuid), effective_at, known_at, empty_fp(cur, "core_contextualroleassignment", str(assignment_uuid)), membership_id, role_definition_id),
             )
             assignment_id = cur.fetchone()[0]
             cur.execute(
@@ -663,9 +706,9 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
                 action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
                 request_reference=f"request:{tag}:propose",
                 idempotency_key=f"idem:{tag}:propose",
-                received_at=T0,
+                received_at=known_at,
                 target_fingerprint=authority_target_fingerprint(propose_target),
-                effective_at=T0,
+                effective_at=effective_at,
                 target=propose_target,
                 living_organism_id=UUID(str(organism_uuid)),
             ))
@@ -680,19 +723,22 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
                 actor.pk,
                 ids["basis"],
                 tag,
+                eff=effective_at,
+                occ=effective_at,
+                rec=known_at,
                 overrides={
                     "authority_decision_reference": propose_decision.authority_decision_reference,
                     "evidence_reference": propose_decision.authority_reference,
                 },
             )
-            refresh(cur, "core_contextualroleassignment", assignment_id)
+            refresh(cur, "core_contextualroleassignment", assignment_id, effective_at)
 
     test_case._record_test_consent(
         provider=_ExactProvider(),
         actor=Identity.objects.get(pk=nominee.identity_id),
         assignment_uuid=assignment_uuid,
         label=tag,
-        effective_at=T0,
+        effective_at=effective_at,
     )
 
     with transaction.atomic():
@@ -715,9 +761,9 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
                 action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
                 request_reference=f"request:{tag}:assign",
                 idempotency_key=f"idem:{tag}:assign",
-                received_at=T0,
+                received_at=known_at,
                 target_fingerprint=authority_target_fingerprint(assignment_target),
-                effective_at=T0,
+                effective_at=effective_at,
                 target=assignment_target,
                 living_organism_id=UUID(str(organism_uuid)),
                 assignment_uuid=assignment_uuid,
@@ -740,6 +786,9 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
                 ids["basis"],
                 tag,
                 pred_id=proposal_id,
+                eff=effective_at,
+                occ=effective_at,
+                rec=known_at,
                 overrides={
                     "actor_state": "LIVING_ORGANISM",
                     "actor_id": None,
@@ -750,7 +799,7 @@ def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag)
                     "evidence_reference": assign_decision.authority_reference,
                 },
             )
-            refresh(cur, "core_contextualroleassignment", assignment_id)
+            refresh(cur, "core_contextualroleassignment", assignment_id, effective_at)
     return assignment_id, assignment_uuid
 
 
@@ -832,28 +881,26 @@ class S015RoleCommandTests(TransactionTestCase):
         )
 
     def _setup_organism(self, label: str = "role"):
-        """A non-root LO: founder member holding the founding COORDINATOR office (IL-7's protected
-        shape: the office's first event was written by the LO's founding transaction)."""
-        with transaction.atomic():
-            with connection.cursor() as cur:
-                ids = found_nonroot(cur, label)
-        founder = Identity.objects.get(pk=ids["identity"])
-        with connection.cursor() as cur:
-            cur.execute("SELECT organism_id FROM core_livingorganism WHERE id = %s", (ids["lo"],))
-            organism_id = cur.fetchone()[0]
-            cur.execute("SELECT membership_uuid FROM core_organismmembership WHERE id = %s", (ids["membership"],))
-            founder_membership_uuid = UUID(str(cur.fetchone()[0]))
-            cur.execute(
-                "SELECT assignment_uuid FROM core_contextualroleassignment WHERE id = %s",
-                (ids["assignments"]["COORDINATOR"],),
-            )
-            founding_assignment_uuid = UUID(str(cur.fetchone()[0]))
-            cur.execute("SELECT role_uuid FROM core_organismroledefinition WHERE id = %s", (ids["roles"]["COORDINATOR"],))
-            coordinator_role_uuid = UUID(str(cur.fetchone()[0]))
-        ids["organism_uuid"] = UUID(str(organism_id))
-        ids["founder_membership_uuid"] = founder_membership_uuid
-        ids["founding_assignment_uuid"] = founding_assignment_uuid
-        ids["coordinator_role_uuid"] = coordinator_role_uuid
+        """A service-founded LO with the founder's Coordinator appointment."""
+        unborn_methods = {
+            "test_pe04_refuses_other_actors_ending_or_reassigning_original_appointment_before_birth",
+            "test_pe04_guard_refuses_other_actors_ending_or_reassigning_original_appointment",
+            "test_founder_own_ending_of_original_office_admitted",
+            "test_production_provider_allows_founder_to_end_own_founding_coordinator_office",
+            "test_production_provider_refuses_another_coordinators_end_before_birth",
+            "test_denied_authority_preempts_founder_protection",
+            "test_founder_protection_survives_anchor_updates",
+            "test_later_appointment_held_by_founder_is_not_protected",
+        }
+        route = prepare_route(tag=label)
+        if self._testMethodName not in unborn_methods:
+            birth(route)
+        ids, _gateway = route_fixture_state(route)
+        self.route_times = ids["recorded_times"]
+        global T0, NOW
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(route)
+        founder = route.founder
         return ids, founder
 
     def _database_now(self):
@@ -869,22 +916,22 @@ class S015RoleCommandTests(TransactionTestCase):
         return membership_id, member, member_membership_uuid
 
     def _counts(self):
-        return (
-            ContextualRoleAssignment.objects.count(),
-            ContextualRoleAssignmentStateEvent.objects.count(),
-            OrganismCommandReceipt.objects.count(),
+        return _snapshot_tables(
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
         )
 
     def _assert_lo_recorded_act(self, event, enterer):
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT actor_state, actor_capacity, enterer_identity_id "
+                "SELECT actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id "
                 "FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
                 [event.pk],
             )
-            actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
-        self.assertIsNone(event.actor_id)
-        self.assertIsNone(event.actor_access_epoch)
+            actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
+        self.assertIsNone(actor_id)
+        self.assertIsNone(actor_access_epoch)
         self.assertEqual(actor_state, "LIVING_ORGANISM")
         self.assertEqual(actor_capacity, "STANDING")
         self.assertEqual(enterer_identity_id, enterer.pk)
@@ -917,17 +964,14 @@ class S015RoleCommandTests(TransactionTestCase):
 
     def _enable_cq(self, ids):
         with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO core_loapplicationgateway (living_organism_id) VALUES (%s)",
-                [ids["lo"]],
-            )
             configuration = LOGovernanceConfigurationVersion.objects.create(
                 living_organism_id=ids["lo"],
                 actor_id=ids["identity"],
                 enterer_id=ids["identity"],
-                occurred_at=T0,
-                effective_at=T0,
-                received_at=T0,
+                supersedes=LOGovernanceConfigurationVersion.objects.get(living_organism_id=ids["lo"]),
+                occurred_at=NOW,
+                effective_at=NOW,
+                received_at=NOW,
                 cq_active=True,
                 inherit_portal_cq_settings=False,
                 require_cq_to_change_lo_settings=False,
@@ -951,9 +995,9 @@ class S015RoleCommandTests(TransactionTestCase):
                 ids["basis"],
                 "cq-configuration",
                 pred_id=predecessor_id,
-                eff=T0,
-                occ=T0,
-                rec=T0,
+                eff=NOW,
+                occ=NOW,
+                rec=NOW,
                 extra={
                     "actor_state": "LIVING_ORGANISM",
                     "actor_id": None,
@@ -963,24 +1007,24 @@ class S015RoleCommandTests(TransactionTestCase):
                     "evidence_reference": "governance-configuration-version:" + str(configuration.version_uuid),
                 },
             )
-            refresh(cursor, "core_livingorganism", ids["lo"], T0)
+            refresh(cursor, "core_livingorganism", ids["lo"], NOW)
 
     def test_founding_coordinator_party_assignment_is_constitutive(self):
-        ids, founder = self._setup_organism("founding-party-assignment")
+        ids, founder = self._setup_organism(fresh())
         event = ContextualRoleAssignmentStateEvent.objects.get(
             pk=ids["assignment_events"]["COORDINATOR"]
         )
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT actor_state, actor_capacity, enterer_identity_id "
+                "SELECT actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id "
                 "FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
                 [event.pk],
             )
-            actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
+            actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
         self.assertEqual(event.action, "ASSIGN")
         self.assertEqual(actor_state, "PARTY")
-        self.assertEqual(event.actor_id, founder.pk)
-        self.assertEqual(event.actor_access_epoch, founder.access_epoch)
+        self.assertEqual(actor_id, founder.pk)
+        self.assertEqual(actor_access_epoch, founder.access_epoch)
         self.assertEqual(actor_capacity, "STANDING")
         self.assertEqual(enterer_identity_id, founder.pk)
 
@@ -1093,8 +1137,14 @@ class S015RoleCommandTests(TransactionTestCase):
         proposal_decision = AuthorityDecision.objects.get(
             decision_reference=proposal.authority_decision_reference,
         )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT actor_access_epoch FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
+                [proposal_event.pk],
+            )
+            proposal_actor_access_epoch, = cursor.fetchone()
         self.assertEqual(proposal_decision.actor_identity_id, founder.identity_id)
-        self.assertEqual(proposal_event.actor_access_epoch, founder.access_epoch)
+        self.assertEqual(proposal_actor_access_epoch, founder.access_epoch)
         Identity.objects.filter(pk=nominee.pk).update(access_epoch=nominee.access_epoch + 1)
         nominee.refresh_from_db()
         with connection.cursor() as cursor:
@@ -2505,6 +2555,9 @@ class S015RoleCommandTests(TransactionTestCase):
                     ids["basis"],
                     "lo-capacity-row",
                     pred_id=ids["assignment_events"]["COORDINATOR"],
+                    eff=NOW,
+                    occ=NOW,
+                    rec=NOW,
                     overrides={
                         "actor_state": "LIVING_ORGANISM",
                         "actor_id": None,
@@ -2515,7 +2568,7 @@ class S015RoleCommandTests(TransactionTestCase):
                         "evidence_reference": decision.authority_reference,
                     },
                 )
-                refresh(cursor, "core_contextualroleassignment", ids["assignments"]["COORDINATOR"])
+                refresh(cursor, "core_contextualroleassignment", ids["assignments"]["COORDINATOR"], NOW)
                 cursor.execute(
                     "SELECT actor_state, actor_id, actor_access_epoch, actor_capacity "
                     "FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
@@ -2586,7 +2639,10 @@ class S015RoleCommandTests(TransactionTestCase):
             ("s2b_10_membership_proposed_end", "s2b_guard_membership_proposed_end_actor"),
         )
 
-    def _propose_command(self, *, actor, membership_uuid, role_definition_uuid, request_reference, idempotency_key, effective_until_state="NONE", effective_until=None, occurred_at=NOW, effective_at=NOW, received_at=NOW):
+    def _propose_command(self, *, actor, membership_uuid, role_definition_uuid, request_reference, idempotency_key, effective_until_state="NONE", effective_until=None, occurred_at=None, effective_at=None, received_at=None):
+        occurred_at = NOW if occurred_at is None else occurred_at
+        effective_at = NOW if effective_at is None else effective_at
+        received_at = NOW if received_at is None else received_at
         return ProposeAssignmentCommand(
             credential=actor.credential,
             request_reference=request_reference,
@@ -2600,13 +2656,14 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until=effective_until,
         )
 
-    def _transition_command(self, *, actor, assignment_uuid, action, resulting_state, request_reference, idempotency_key, effective_until_state=None, effective_until=None, occurred_at=None, effective_at=NOW, received_at=None):
+    def _transition_command(self, *, actor, assignment_uuid, action, resulting_state, request_reference, idempotency_key, effective_until_state=None, effective_until=None, occurred_at=None, effective_at=None, received_at=None):
         if occurred_at is None or received_at is None:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT clock_timestamp()")
                 current_time = cursor.fetchone()[0]
             occurred_at = current_time if occurred_at is None else occurred_at
             received_at = current_time if received_at is None else received_at
+        effective_at = NOW if effective_at is None else effective_at
         return TransitionAssignmentCommand(
             credential=actor.credential,
             request_reference=request_reference,
@@ -2621,7 +2678,7 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until=effective_until,
         )
 
-    def _record_test_consent(self, *, provider, actor, assignment_uuid, label, effective_at=NOW):
+    def _record_test_consent(self, *, provider, actor, assignment_uuid, label, effective_at=None):
         from src.intevia.services.organism_office_consent_service import (
             OfficeAppointmentConsentService,
             RecordOfficeConsentCommand,
@@ -2635,6 +2692,7 @@ class S015RoleCommandTests(TransactionTestCase):
         with connection.cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
             at = cursor.fetchone()[0]
+        effective_at = NOW if effective_at is None else effective_at
         service = OfficeAppointmentConsentService(
             authority=S015Authority(provider=provider, database_alias="default"),
             clock=lambda: at,
@@ -2652,8 +2710,19 @@ class S015RoleCommandTests(TransactionTestCase):
             action="CONSENT",
         ))
 
-    def _propose_then_assign(self, *, label="role", effective_until_state="NONE", effective_until=None, at=NOW):
+    def _propose_then_assign(
+        self,
+        *,
+        label="role",
+        effective_until_state="NONE",
+        effective_until=None,
+        effective_until_offset=None,
+        at=None,
+    ):
         ids, founder = self._setup_organism(label)
+        at = NOW if at is None else at
+        if effective_until_offset is not None:
+            effective_until = at + effective_until_offset
         _, member, member_membership_uuid = self._add_active_member(ids, label)
         provider = _ExactProvider()
         service = self._service(provider)
@@ -3137,7 +3206,6 @@ class S015RoleCommandTests(TransactionTestCase):
     def test_suspended_non_coordinator_fixture_reaches_il4_off_edge(self):
         ids, founder = self._setup_organism("il4-suspended-fixture")
         tag = "il4-suspended-fixture"
-        fixture_at = T0 + timedelta(hours=1)
         with transaction.atomic(), connection.cursor() as cursor:
             role_id, _ = _add_role_definition(cursor, ids, tag, "TEST_ONLY_ARCHIVIST")
             assignment_uuid = u(f"assignment:{tag}:archivist")
@@ -3168,6 +3236,8 @@ class S015RoleCommandTests(TransactionTestCase):
                 ids["basis"],
                 f"{tag}:assign",
             )[0]
+            cursor.execute("SELECT clock_timestamp()")
+            fixture_at = cursor.fetchone()[0]
             append_event(
                 cursor,
                 "core_contextualroleassignmentstateevent",
@@ -3242,10 +3312,11 @@ class S015RoleCommandTests(TransactionTestCase):
 
     # R9 — IL-3: an out-of-order office event refused; no row.
     def test_out_of_order_event_raises_il3_and_writes_nothing(self):
-        past = NOW - timedelta(hours=2)
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
-            label="out-of-order", at=past,
+            label="out-of-order",
         )
+        out_of_order_at = self.route_times.founding_effective_at + timedelta(microseconds=1)
+        self.assertLess(out_of_order_at, NOW)
         before = self._counts()
         with self.assertRaisesRegex(S015OperationNotYetImplemented, "IL-3"):
             service.transition_assignment(
@@ -3256,18 +3327,17 @@ class S015RoleCommandTests(TransactionTestCase):
                     resulting_state="ENDED",
                     request_reference="request:out-of-order:end",
                     idempotency_key="idem:out-of-order:end",
-                    occurred_at=NOW - timedelta(hours=3),
-                    effective_at=NOW - timedelta(hours=3),
-                    received_at=NOW,
+                    occurred_at=out_of_order_at,
+                    effective_at=out_of_order_at,
+                    received_at=self._database_now(),
                 )
             )
         assignment = _assignment_for_result(assign_result)
         self.assertEqual(assignment.state, "ACTIVE")
         self.assertEqual(self._counts(), before)
 
-    # R10a — the founding assignment is identified by its provenance; another authorised actor's
-    # END and REASSIGN are refused with IL-7. No row, no receipt.
-    def test_founder_original_office_protected_from_other_actors_il7(self):
+    # R10a — another actor's END and REASSIGN of the original appointment are refused before Birthing.
+    def test_pe04_refuses_other_actors_ending_or_reassigning_original_appointment_before_birth(self):
         ids, founder = self._setup_organism("founder-guard")
         _, other, _ = self._add_active_member(ids, "founder-guard")
         service = self._service(_ExactProvider())
@@ -3275,7 +3345,7 @@ class S015RoleCommandTests(TransactionTestCase):
         before = self._counts()
         for action in ("END", "REASSIGN"):
             with self.subTest(action=action):
-                with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-7, SB") as caught:
+                with self.assertRaises(S015AuthorityDenied) as caught:
                     service.transition_assignment(
                         self._transition_command(
                             actor=other,
@@ -3286,14 +3356,95 @@ class S015RoleCommandTests(TransactionTestCase):
                             idempotency_key=f"idem:founder-guard:{action.lower()}",
                         )
                     )
-                message = str(caught.exception)
-                self.assertIn("not yet built", message)
-                self.assertNotIn("not birthed", message)
+                self.assertIs(
+                    caught.exception.refusal_code,
+                    S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
+                )
+                self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
         self.assertEqual(self._counts(), before)
         assignment = ContextualRoleAssignment.objects.get(assignment_uuid=founding_uuid)
         self.assertEqual(assignment.state, "ACTIVE")
 
-    # R10b — the founder's own END of that assignment is admitted, subject to authority.
+    def test_pe04_guard_refuses_other_actors_ending_or_reassigning_original_appointment(self):
+        from core.models import AuthorityDecision
+
+        ids, _founder = self._setup_organism("founder-guard-direct")
+        other_membership_id, other, _ = self._add_active_member(ids, "founder-guard-direct")
+        other_membership = OrganismMembership.objects.select_related("head_transition").get(
+            pk=other_membership_id,
+        )
+        before = self._counts()
+        for action in ("END", "REASSIGN"):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(IntegrityError, "C_FOUNDER_PROTECTED"):
+                    with transaction.atomic():
+                        assignment_uuid = ids["founding_assignment_uuid"]
+                        request_reference = f"request:founder-guard-direct:{action.lower()}"
+                        idempotency_key = f"idem:founder-guard-direct:{action.lower()}"
+                        target = {
+                            "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+                            "assignment_uuid": str(assignment_uuid),
+                            "event_action": action,
+                            "living_organism_id": str(ids["organism_uuid"]),
+                            "resulting_state": "ENDED",
+                            "schema": "intevia.s015.organism-role-target.v1",
+                        }
+                        decision = S015Authority(
+                            provider=_ExactProvider(),
+                            database_alias="default",
+                        ).qualify(_authority_request(
+                            database_alias="default",
+                            actor=other,
+                            actor_membership=other_membership,
+                            actor_role_head_refs=(),
+                            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
+                            request_reference=request_reference,
+                            idempotency_key=idempotency_key,
+                            received_at=NOW,
+                            effective_at=NOW,
+                            target_fingerprint=authority_target_fingerprint(target),
+                            target=target,
+                            living_organism_id=ids["organism_uuid"],
+                            assignment_uuid=assignment_uuid,
+                        ))
+                        decision_record = AuthorityDecision.objects.get(
+                            decision_reference=decision.authority_decision_reference,
+                        )
+                        self.assertEqual(decision_record.outcome, "QUALIFIED")
+                        with connection.cursor() as cursor:
+                            append_event(
+                                cursor,
+                                "core_contextualroleassignmentstateevent",
+                                ids["assignments"]["COORDINATOR"],
+                                2,
+                                action,
+                                "ACTIVE",
+                                "ENDED",
+                                other.pk,
+                                ids["basis"],
+                                f"founder-guard-direct:{action.lower()}",
+                                pred_id=ids["assignment_events"]["COORDINATOR"],
+                                eff=NOW,
+                                occ=NOW,
+                                rec=NOW,
+                                overrides={
+                                    "actor_state": "LIVING_ORGANISM",
+                                    "actor_id": None,
+                                    "actor_access_epoch": None,
+                                    "actor_capacity": "STANDING",
+                                    "enterer_identity_id": other.pk,
+                                    "entry_mode": "TRANSPORT",
+                                    "composing_rule_state": "NA_TRANSPORT",
+                                    "composer_state": "NA_TRANSPORT",
+                                    "authority_decision_reference": decision.authority_decision_reference,
+                                    "evidence_reference": decision.authority_reference,
+                                    "request_reference": request_reference,
+                                    "idempotency_key": idempotency_key,
+                                },
+                            )
+        self.assertEqual(self._counts(), before)
+
+    # R10b — the founder's own END of that assignment is not blocked by PE-04.
     def test_founder_own_ending_of_original_office_admitted(self):
         ids, founder = self._setup_organism("founder-end")
         service = self._service(_ExactProvider())
@@ -3339,11 +3490,11 @@ class S015RoleCommandTests(TransactionTestCase):
         )
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT actor_state, actor_capacity, enterer_identity_id "
+                "SELECT actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id "
                 "FROM public.core_contextualroleassignmentstateevent WHERE id = %s",
                 [event.pk],
             )
-            actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
+            actor_id, actor_access_epoch, actor_state, actor_capacity, enterer_identity_id = cursor.fetchone()
 
         self.assertEqual(result.resulting_state, "ENDED")
         self.assertEqual(result.event_sequence, 2)
@@ -3356,8 +3507,8 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(event.authority_decision_reference, decision.decision_reference)
         self.assertEqual(event.prior_state, "ACTIVE")
         self.assertEqual(event.resulting_state, "ENDED")
-        self.assertIsNone(event.actor_id)
-        self.assertIsNone(event.actor_access_epoch)
+        self.assertIsNone(actor_id)
+        self.assertIsNone(actor_access_epoch)
         self.assertEqual(actor_state, "LIVING_ORGANISM")
         self.assertEqual(actor_capacity, "STANDING")
         self.assertEqual(enterer_identity_id, founder.pk)
@@ -3367,7 +3518,8 @@ class S015RoleCommandTests(TransactionTestCase):
 
         provider = ProductionApplicationAuthorityProvider()
 
-        def assert_refusal(ids, actor, label, expected_code, effective_at=NOW):
+        def assert_refusal(ids, actor, label, expected_code, effective_at=None):
+            effective_at = NOW if effective_at is None else effective_at
             before = self._counts()
             with self.assertRaises(S015AuthorityDenied) as caught:
                 self._service(provider).transition_assignment(
@@ -3390,7 +3542,7 @@ class S015RoleCommandTests(TransactionTestCase):
             founder,
             "capacity-not-founded-at-coordinate",
             S015AuthorityRefusalCode.C_LO_NO_CAPACITY,
-            effective_at=T0 - timedelta(microseconds=1),
+            effective_at=self.route_times.founding_effective_at - timedelta(microseconds=1),
         )
 
         ids, founder = self._setup_organism("capacity-closed-at-coordinate")
@@ -3428,7 +3580,7 @@ class S015RoleCommandTests(TransactionTestCase):
     def test_production_provider_reassign_records_lo_act_and_refuses_non_coordinator(self):
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
-        ids, founder, member, _, _, assigned = self._propose_then_assign(label="production-reassign")
+        ids, founder, member, _, _, assigned = self._propose_then_assign(label=fresh())
         _, bystander, _ = self._add_active_member(ids, "production-reassign-bystander")
         service = self._service(ProductionApplicationAuthorityProvider())
         before = self._counts()
@@ -3491,21 +3643,26 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(event.resulting_state, "ENDED")
         self._assert_lo_recorded_act(event, founder)
 
-    def test_production_provider_preserves_il7_for_another_coordinator(self):
+    def test_production_provider_refuses_another_coordinators_end_before_birth(self):
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
-        ids, founder, member, _, _, _ = self._propose_then_assign(label="production-il7")
+        ids, founder, member, _, _, _ = self._propose_then_assign(label="production-pe04")
         service = self._service(ProductionApplicationAuthorityProvider())
         before = self._counts()
-        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-7, SB"):
+        with self.assertRaises(S015AuthorityDenied) as caught:
             service.transition_assignment(self._transition_command(
                 actor=member,
                 assignment_uuid=ids["founding_assignment_uuid"],
                 action="END",
                 resulting_state="ENDED",
-                request_reference="request:production-il7:end",
-                idempotency_key="idem:production-il7:end",
+                request_reference="request:production-pe04:end",
+                idempotency_key="idem:production-pe04:end",
             ))
+        self.assertIs(
+            caught.exception.refusal_code,
+            S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
+        )
+        self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
         self.assertEqual(self._counts(), before)
 
     def test_cq_active_refuses_assign_for_sole_coordinator_and_other_office_end(self):
@@ -3653,7 +3810,7 @@ class S015RoleCommandTests(TransactionTestCase):
             ["PROPOSE"],
         )
 
-    # R10c — a denied authority on the same attempt gets the authority error, not IL-7.
+    # R10c — authority denial takes precedence over PE-04.
     def test_denied_authority_preempts_founder_protection(self):
         ids, founder = self._setup_organism("founder-denied")
         _, other, _ = self._add_active_member(ids, "founder-denied")
@@ -3672,9 +3829,7 @@ class S015RoleCommandTests(TransactionTestCase):
             )
         self.assertEqual(self._counts(), before)
 
-    # R10e — protection is read from the first event, so an anchor UPDATE cannot lift it: refresh
-    # the founding office's cache (which updates the anchor row), then another authorised actor's
-    # END is still refused with IL-7 and nothing is written.
+    # R10e — provenance is read from the first event, so an anchor UPDATE cannot lift PE-04.
     def test_founder_protection_survives_anchor_updates(self):
         ids, founder = self._setup_organism("founder-refresh")
         _, other, _ = self._add_active_member(ids, "founder-refresh")
@@ -3689,7 +3844,7 @@ class S015RoleCommandTests(TransactionTestCase):
         assignment = ContextualRoleAssignment.objects.get(pk=founding_assignment_id)
         self.assertEqual(assignment.state, "ACTIVE")
         before = self._counts()
-        with self.assertRaisesRegex(S015OperationNotYetImplemented, r"IL-7, SB"):
+        with self.assertRaises(S015AuthorityDenied) as caught:
             service.transition_assignment(
                 self._transition_command(
                     actor=other,
@@ -3700,6 +3855,11 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key="idem:founder-refresh:end",
                 )
             )
+        self.assertIs(
+            caught.exception.refusal_code,
+            S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
+        )
+        self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
         self.assertEqual(self._counts(), before)
 
     # R10d — a later fresh COORDINATOR appointment held by the founder is not protected.
@@ -3744,11 +3904,143 @@ class S015RoleCommandTests(TransactionTestCase):
         founding = ContextualRoleAssignment.objects.get(assignment_uuid=ids["founding_assignment_uuid"])
         self.assertEqual(founding.state, "ACTIVE")
 
+    def test_founding_recognition_does_not_recognise_a_nonfounder_coordinator(self):
+        ids, _, _, _, _, assign_result = self._propose_then_assign(
+            label="recognition-nonfounder",
+        )
+        assignment = _assignment_for_result(assign_result)
+        self.assertIsNone(
+            _founding_appointment_by_record(
+                database_alias="default",
+                assignment_id=assignment.pk,
+                living_organism_id=ids["lo"],
+            )
+        )
+
+    def test_founding_recognition_does_not_recognise_a_circle_scope_assignment(self):
+        ids, _founder = self._setup_organism("recognition-circle")
+        assignment_uuid = uuid4()
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                scoped_ids = dict(ids)
+                circle_uuid = uuid4()
+                effective_at = ids["recorded_times"].latest_effective_at
+                cursor.execute(
+                    "INSERT INTO core_circle "
+                    "(circle_uuid, state, created_at, current_state_effective_at, state_known_at, "
+                    "state_source_event_set_fingerprint, founding_reference, parent_organism_id) "
+                    "VALUES (%s, 'DORMANT', now(), %s, %s, %s, %s, %s) RETURNING id",
+                    [
+                        circle_uuid,
+                        effective_at,
+                        NOW,
+                        empty_fp(cursor, "core_circle", circle_uuid),
+                        f"circle:{circle_uuid}",
+                        ids["lo"],
+                    ],
+                )
+                scoped_ids["circle"] = cursor.fetchone()[0]
+                append_event(
+                    cursor,
+                    "core_circlestateevent",
+                    scoped_ids["circle"],
+                    1,
+                    "CREATE_DORMANT",
+                    None,
+                    "DORMANT",
+                    ids["identity"],
+                    ids["basis"],
+                    f"recognition-circle-{circle_uuid}",
+                    eff=effective_at,
+                    occ=effective_at,
+                    rec=NOW,
+                )
+                refresh(cursor, "core_circle", scoped_ids["circle"], effective_at)
+                cursor.execute(
+                    "INSERT INTO public.core_organismroledefinition "
+                    "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                    "VALUES (%s, 'COORDINATOR', 'CIRCLE', 2, FALSE, clock_timestamp(), %s) "
+                    "RETURNING id",
+                    [uuid4(), ids["lo"]],
+                )
+                circle_role_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT INTO public.core_contextualroleassignment "
+                    "(assignment_uuid, state, created_at, current_state_effective_at, state_known_at, "
+                    "state_source_event_set_fingerprint, membership_id, role_definition_id, circle_id) "
+                    "VALUES (%s, 'ACTIVE', clock_timestamp(), %s, %s, %s, %s, %s, %s) "
+                    "RETURNING id",
+                    [
+                        assignment_uuid,
+                        T0,
+                        T0,
+                        empty_fp(
+                            cursor,
+                            "core_contextualroleassignment",
+                            assignment_uuid,
+                        ),
+                        ids["membership"],
+                        circle_role_id,
+                        scoped_ids["circle"],
+                    ],
+                )
+                circle_assignment_id = cursor.fetchone()[0]
+            self.assertIsNone(
+                _founding_appointment_by_record(
+                    database_alias="default",
+                    assignment_id=circle_assignment_id,
+                    living_organism_id=ids["lo"],
+                )
+            )
+            transaction.set_rollback(True)
+
+    def test_w_sb2_r1_installed_guard_has_xmin_or_durable_provenance(self):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.prosrc
+                  FROM pg_catalog.pg_proc p
+                  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                 WHERE n.nspname = 'public'
+                   AND p.proname = 's2b_guard_office_attribution'
+                """
+            )
+            row = cursor.fetchone()
+        self.assertIsNotNone(row)
+        body = row[0]
+        self.assertIn("organism.founder_identity_id = v_membership_identity_id", body)
+        self.assertIn("v_role_code = 'COORDINATOR'", body)
+        self.assertIn("v_role_scope = 'LIVING_ORGANISM'", body)
+        self.assertRegex(
+            body,
+            r"original\.sequence = 1\s+AND original\.action = 'ASSIGN'"
+            r"\s+AND original\.prior_state IS NULL\s+AND original\.resulting_state = 'ACTIVE'"
+            r"\s+AND original\.actor_state = 'PARTY'"
+            r"\s+AND original\.actor_id = v_membership_identity_id"
+            r"\s+AND original\.enterer_identity_id = v_membership_identity_id"
+            r"\s+AND\s*\(\s*original\.xmin = founding\.xmin\s+OR\s*\("
+            r"\s*original\.authority_basis_id = founding\.authority_basis_id"
+            r"\s+AND original\.evidence_reference = 'founding-batch:'"
+            r"\s*\|\|\s*founding\.event_uuid::text"
+            r"\s+AND original\.authority_decision_reference = founding\.authority_decision_reference"
+            r"\s*\)\s*\)",
+        )
+
     # R11 — replay returns the first result; mismatch refused.
     def test_replay_returns_first_result(self):
+        from core.models import AuthorityDecision
+
         ids, founder = self._setup_organism("replay")
         _, member, member_membership_uuid = self._add_active_member(ids, "replay")
         service = self._service(_ExactProvider())
+        tables = (
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+            "core_officeappointmentconsent",
+        )
+        before_proposal = _snapshot_tables(*tables)
         propose_command = self._propose_command(
             actor=founder,
             membership_uuid=member_membership_uuid,
@@ -3757,9 +4049,21 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:replay:propose",
         )
         first = service.propose_assignment(propose_command)
+        after_proposal = _snapshot_tables(*tables)
+        self.assertEqual(len(after_proposal[tables[0]]), len(before_proposal[tables[0]]) + 1)
+        self.assertEqual(len(after_proposal[tables[1]]), len(before_proposal[tables[1]]) + 1)
+        self.assertEqual(len(after_proposal[tables[2]]), len(before_proposal[tables[2]]) + 1)
+        self.assertEqual(len(after_proposal[tables[3]]), len(before_proposal[tables[3]]) + 1)
+        self.assertEqual(after_proposal[tables[4]], before_proposal[tables[4]])
         second = service.propose_assignment(propose_command)
         self.assertIsInstance(first, AssignmentCommandResult)
         self.assertEqual(first, second)
+        self.assertEqual(_snapshot_tables(*tables), after_proposal)
+        proposal_event = _event_for_result(first)
+        self.assertEqual(
+            proposal_event.authority_decision_reference,
+            first.authority_decision_reference,
+        )
         self.assertIsInstance(first.event_uuid, UUID)
         self.assertEqual(first.resulting_state, _subject_marker("resulting_state"))
         self.assertFalse(hasattr(first, "assignment_id"))
@@ -3772,14 +4076,24 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertNotIn("assignment_id", proposal_receipt.result_payload)
         self.assertNotIn("event_id", proposal_receipt.result_payload)
         self.assertIn("event_uuid", proposal_receipt.result_payload)
-        self.assertEqual(ContextualRoleAssignment.objects.count(), 2)
         self._record_test_consent(
             provider=service._authority.provider,
             actor=member,
             assignment_uuid=first.assignment_uuid,
             label="replay",
         )
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 2)
+        after_consent = _snapshot_tables(*tables)
+        self.assertEqual(after_consent[tables[0]], after_proposal[tables[0]])
+        self.assertEqual(after_consent[tables[1]], after_proposal[tables[1]])
+        self.assertEqual(len(after_consent[tables[2]]), len(after_proposal[tables[2]]) + 1)
+        self.assertEqual(len(after_consent[tables[3]]), len(after_proposal[tables[3]]) + 1)
+        self.assertEqual(len(after_consent[tables[4]]), len(after_proposal[tables[4]]) + 1)
+        consent = OfficeAppointmentConsent.objects.get(
+            assignment=_assignment_for_result(first),
+            action="CONSENT",
+        )
+        self.assertEqual(consent.proposal_event_id, proposal_event.pk)
+        self.assertEqual(consent.nominee_membership_id, member.pk)
         assign_command = self._transition_command(
             actor=founder,
             assignment_uuid=first.assignment_uuid,
@@ -3790,7 +4104,23 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:replay:assign",
         )
         first_assign = service.transition_assignment(assign_command)
+        after_assignment = _snapshot_tables(*tables)
+        self.assertEqual(len(after_assignment[tables[0]]), len(after_consent[tables[0]]))
+        self.assertEqual(len(after_assignment[tables[1]]), len(after_consent[tables[1]]) + 1)
+        self.assertEqual(len(after_assignment[tables[2]]), len(after_consent[tables[2]]) + 1)
+        self.assertEqual(len(after_assignment[tables[3]]), len(after_consent[tables[3]]) + 1)
+        self.assertEqual(after_assignment[tables[4]], after_consent[tables[4]])
+        assign_event = _event_for_result(first_assign)
+        self.assertEqual(assign_event.assignment_id, _assignment_for_result(first).pk)
+        self.assertEqual(assign_event.sequence, 2)
+        self.assertEqual(
+            AuthorityDecision.objects.get(
+                decision_reference=assign_event.authority_decision_reference,
+            ).outcome,
+            "QUALIFIED",
+        )
         second_assign = service.transition_assignment(assign_command)
+        self.assertEqual(_snapshot_tables(*tables), after_assignment)
         self.assertEqual(first_assign, second_assign)
         expected_withheld = {
             _subject_marker("resulting_state"),
@@ -3805,7 +4135,6 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(set(withheld_fields(first_assign)), expected_withheld)
         self.assertEqual(first_assign.resulting_state, _subject_marker("resulting_state"))
         self.assertEqual(first_assign.event_uuid, _subject_marker("event_uuid"))
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 3)
         self.assertEqual(
             ContextualRoleAssignmentStateEvent.objects.filter(assignment=_assignment_for_result(first)).count(),
             2,
@@ -3873,8 +4202,18 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(self._counts(), before)
 
     def test_concurrent_same_request_replays_once(self):
+        from core.models import AuthorityDecision
+
         ids, founder = self._setup_organism("concurrency")
         _, member, member_membership_uuid = self._add_active_member(ids, "concurrency")
+        tables = (
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+            "core_officeappointmentconsent",
+        )
+        before = _snapshot_tables(*tables)
         command_kwargs = dict(
             membership_uuid=member_membership_uuid,
             role_definition_uuid=ids["coordinator_role_uuid"],
@@ -3911,9 +4250,24 @@ class S015RoleCommandTests(TransactionTestCase):
         collected = [results.get(timeout=5) for _ in range(2)]
         self.assertTrue(all(kind == "ok" for kind, _ in collected))
         self.assertEqual(collected[0][1], collected[1][1])
-        self.assertEqual(ContextualRoleAssignment.objects.count(), 2)
-        self.assertEqual(ContextualRoleAssignmentStateEvent.objects.count(), 2)
-        self.assertEqual(OrganismCommandReceipt.objects.count(), 1)
+        after = _snapshot_tables(*tables)
+        self.assertEqual(len(after[tables[0]]), len(before[tables[0]]) + 1)
+        self.assertEqual(len(after[tables[1]]), len(before[tables[1]]) + 1)
+        self.assertEqual(len(after[tables[2]]), len(before[tables[2]]) + 1)
+        self.assertEqual(len(after[tables[3]]), len(before[tables[3]]) + 1)
+        self.assertEqual(after[tables[4]], before[tables[4]])
+        result = collected[0][1]
+        assignment = _assignment_for_result(result)
+        event = ContextualRoleAssignmentStateEvent.objects.get(
+            assignment=assignment, sequence=1,
+        )
+        receipt = OrganismCommandReceipt.objects.get(idempotency_key="idem:concurrency:propose")
+        decision = AuthorityDecision.objects.get(
+            decision_reference=event.authority_decision_reference,
+        )
+        self.assertEqual(event.assignment_id, assignment.pk)
+        self.assertEqual(receipt.actor_id, founder.pk)
+        self.assertEqual(decision.outcome, "QUALIFIED")
 
     def test_withdraw_and_assign_serialize_both_orders(self):
         from core.models import AuthorityDecision
@@ -4431,10 +4785,13 @@ class S015RoleCommandTests(TransactionTestCase):
     # R15 — assignment_in_effect: in effect before effective_until, not at or after it; the recorded
     # state stays ACTIVE; a NONE term stays in effect.
     def test_assignment_in_effect_reads_the_term(self):
-        until = NOW + timedelta(hours=2)
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
-            label="in-effect", effective_until_state="FIXED", effective_until=until,
+            label="in-effect", effective_until_state="FIXED",
+            effective_until_offset=timedelta(hours=2),
         )
+        until = assign_result.effective_until
+        if until is None:
+            self.fail("fixed-term assignment did not retain its effective-until coordinate")
         assignment = _assignment_for_result(assign_result)
         self.assertTrue(service.assignment_in_effect(assignment, NOW))
         self.assertFalse(service.assignment_in_effect(assignment, until))

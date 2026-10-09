@@ -37,15 +37,28 @@ from tests.s015_0021_support import (
     T0,
     append_event,
     empty_fp,
-    found_nonroot,
     fresh,
     refresh,
     seed_identity,
-    seed_test_gateway,
 )
+from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+_support_append_event = append_event
+_support_refresh = refresh
+
+
+def append_event(*args, **kwargs):
+    kwargs.setdefault("rec", NOW)
+    return _support_append_event(*args, **kwargs)
+
+
+def refresh(cur, table, aggregate_id, state_at=None):
+    return _support_refresh(
+        cur, table, aggregate_id, NOW if state_at is None else state_at
+    )
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3-FU application reads require PostgreSQL")
 
 
@@ -65,12 +78,14 @@ class S015ApplicationReadTests(TransactionTestCase):
 
     def setUp(self):
         self.tag = f"application-read-{fresh()}"
-        with transaction.atomic(), connection.cursor() as cursor:
-            # TEST-ONLY founding and gateway fixtures; these are not operational creation routes.
-            self.ids = found_nonroot(cursor, tag=self.tag)
-            seed_test_gateway(cursor, self.ids, include_governance_configuration=True)
+        self.route = prepare_route(tag=self.tag)
+        birth(self.route)
+        self.ids, self.gateway = route_fixture_state(self.route)
+        self.route_times = self.ids["recorded_times"]
+        global T0, NOW
+        T0 = self.route_times.founding_recorded_at
+        NOW = route_test_now(self.route)
         self.coordinator = Identity.objects.select_related("credential").get(pk=self.ids["identity"])
-        self._activate(self.coordinator)
         self.provider = _Provider()
         self.authority = S015Authority(provider=self.provider)
         self.service = OrganismApplicationService(authority=self.authority, clock=lambda: NOW)
@@ -101,7 +116,7 @@ class S015ApplicationReadTests(TransactionTestCase):
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             correlation_id=uuid4(),
             previous_transition=provision,
-            occurred_at=T0 + timedelta(hours=1),
+            occurred_at=NOW,
         )
 
     def _new_identity(self, label):
@@ -182,7 +197,7 @@ class S015ApplicationReadTests(TransactionTestCase):
                 "current_state_effective_at, state_known_at, state_source_event_set_fingerprint, "
                 "identity_id, living_organism_id) VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) "
                 "RETURNING id",
-                [membership_uuid, T0, T0, empty_fp(cursor, "core_organismmembership", membership_uuid),
+                [membership_uuid, T0, NOW, empty_fp(cursor, "core_organismmembership", membership_uuid),
                  identity.pk, self.ids["lo"]],
             )
             membership_id = cursor.fetchone()[0]
@@ -197,20 +212,18 @@ class S015ApplicationReadTests(TransactionTestCase):
                 identity.pk,
                 self.ids["basis"],
                 f"read-member:{self.tag}:{fresh()}",
+                eff=T0,
+                occ=T0,
+                rec=NOW,
                 extra={"reason_class": "TEST"},
             )
-            refresh(cursor, "core_organismmembership", membership_id)
+            refresh(cursor, "core_organismmembership", membership_id, T0)
         return OrganismMembership.objects.get(pk=membership_id)
 
     def _foreign_coordinator(self):
-        # TEST-ONLY second founded LO fixture supplies a Coordinator in a different audience.
         foreign_tag = f"{self.tag}-foreign-{fresh()}"
-        with transaction.atomic(), connection.cursor() as cursor:
-            ids = found_nonroot(cursor, tag=foreign_tag)
-            seed_test_gateway(cursor, ids)
-        identity = Identity.objects.select_related("credential").get(pk=ids["identity"])
-        self._activate(identity)
-        return identity
+        foreign = prepare_route(tag=foreign_tag)
+        return foreign.founder
 
     def _end_coordinator_office(self):
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
@@ -245,6 +258,9 @@ class S015ApplicationReadTests(TransactionTestCase):
     def _deactivate(self, identity):
         # TEST-ONLY identity transition used to witness the inactive-reader refusal.
         previous = IdentityTransition.objects.filter(identity=identity).order_by("-occurred_at", "-pk").first()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            deactivated_at = cursor.fetchone()[0]
         IdentityTransition.objects.create(
             identity=identity,
             action=IdentityTransition.Action.DEACTIVATE,
@@ -256,7 +272,7 @@ class S015ApplicationReadTests(TransactionTestCase):
             reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
             correlation_id=uuid4(),
             previous_transition=previous,
-            occurred_at=T0 + timedelta(days=2),
+            occurred_at=deactivated_at,
         )
 
     def test_ra_01_current_coordinator_reads_answered_version(self):

@@ -5412,3 +5412,25 @@ class LOFoundingContentVersion(_S015AppendOnly):
                 name="sb_lofoundingcontentversion_lo_version_uniq",
             ),
         ]
+
+
+class LOBirthingSnapshot(_S015AppendOnly):
+    snapshot_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="birthing_snapshots",
+    )
+    body = models.JSONField()
+    snapshot_commitment = models.CharField(max_length=71, null=True, editable=False)
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("living_organism",),
+                name="core_lobirthingsnapshot_living_organism_id_uniq",
+            ),
+        ]

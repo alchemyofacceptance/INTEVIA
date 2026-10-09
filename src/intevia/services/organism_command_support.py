@@ -28,14 +28,17 @@ from django.db import connections, transaction
 from core.models import (
     Application,
     ContextualRoleAssignment,
+    ContextualRoleAssignmentStateEvent,
     Identity,
     IdentityTransition,
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
     LOGovernanceConfigurationVersion,
     LivingOrganism,
+    LivingOrganismEvent,
     OrganismCommandReceipt,
     OrganismMembership,
+    OrganismRoleDefinition,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
@@ -620,6 +623,59 @@ class _OrganismCommandService:
         )
 
 
+def _founding_appointment_by_record(
+    *,
+    database_alias: str,
+    assignment_id: int,
+    living_organism_id: int,
+) -> int | None:
+    """Recognize the founder's original Coordinator appointment from its bound records alone."""
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT assignment.id
+            FROM public.core_livingorganism AS organism
+            JOIN public.core_organismmembership AS membership
+              ON membership.living_organism_id = organism.id
+            JOIN public.core_contextualroleassignment AS assignment
+              ON assignment.membership_id = membership.id
+            JOIN public.core_organismroledefinition AS role
+              ON role.id = assignment.role_definition_id
+            JOIN public.core_livingorganismevent AS founding
+              ON founding.living_organism_id = organism.id
+             AND founding.sequence = 1
+             AND founding.action = 'FOUND'
+            JOIN public.core_contextualroleassignmentstateevent AS founding_assignment
+              ON founding_assignment.assignment_id = assignment.id
+             AND founding_assignment.sequence = 1
+             AND founding_assignment.action = 'ASSIGN'
+            WHERE organism.id = %s
+              AND assignment.id = %s
+              AND organism.founder_identity_id IS NOT NULL
+              AND organism.founding_authority_basis_id = founding.authority_basis_id
+              AND founding.resulting_state = 'ACTIVE'
+              AND founding.actor_state = 'PARTY'
+              AND founding.actor_id = organism.founder_identity_id
+              AND founding.enterer_identity_id = organism.founder_identity_id
+              AND membership.identity_id = organism.founder_identity_id
+              AND role.code = 'COORDINATOR'
+              AND role.scope = 'LIVING_ORGANISM'
+              AND founding_assignment.prior_state IS NULL
+              AND founding_assignment.resulting_state = 'ACTIVE'
+              AND founding_assignment.actor_state = 'PARTY'
+              AND founding_assignment.actor_id = organism.founder_identity_id
+              AND founding_assignment.enterer_identity_id = organism.founder_identity_id
+              AND founding_assignment.authority_basis_id = founding.authority_basis_id
+              AND founding_assignment.evidence_reference = 'founding-batch:' || founding.event_uuid::text
+              AND founding_assignment.authority_decision_reference = founding.authority_decision_reference
+            LIMIT 1
+            """,
+            [living_organism_id, assignment_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else None
+
+
 def _founding_provenance_assignment_id(
     *,
     database_alias: str,
@@ -639,7 +695,8 @@ def _founding_provenance_assignment_id(
     permanently its inserting transaction, while xmin on the anchor is the transaction
     that wrote the row's current version — every head advance and every cache refresh
     replaces it. The anchor must also be held by the founder's own membership for the
-    COORDINATOR role. Returns the assignment id when the provenance holds, else None.
+    COORDINATOR role.     Returns the assignment id when either the transaction test or the durable record rule holds,
+    else None.
 
     Limits: PostgreSQL provides no cast from xid to xid8 (its cast catalogue holds
     only xid8 -> xid, explicit), so the comparison runs in the direction that exists —
@@ -670,6 +727,7 @@ def _founding_provenance_assignment_id(
                AND lo.founder_identity_id IS NOT NULL
                AND m.identity_id = lo.founder_identity_id
                AND lo.founding_insert_xid IS NOT NULL
+               AND r.scope = 'LIVING_ORGANISM'
                AND EXISTS (
                      SELECT 1 FROM public.core_contextualroleassignmentstateevent e
                       WHERE e.assignment_id = a.id
@@ -680,7 +738,13 @@ def _founding_provenance_assignment_id(
             [assignment_id, living_organism_id],
         )
         row = cursor.fetchone()
-    return None if row is None else int(row[0])
+    if row is not None:
+        return int(row[0])
+    return _founding_appointment_by_record(
+        database_alias=database_alias,
+        assignment_id=assignment_id,
+        living_organism_id=living_organism_id,
+    )
 
 
 __all__ = [
@@ -695,6 +759,7 @@ __all__ = [
     "_canonical_uuid",
     "_command_payload",
     "_empty_anchor_fingerprint",
+    "_founding_appointment_by_record",
     "_founding_provenance_assignment_id",
     "_lock_actor",
     "_lock_actor_membership_context",

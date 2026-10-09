@@ -9,7 +9,7 @@ from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
-from s015_0021_support import drop_unset_check, found_nonroot, found_root, fresh
+from s015_0021_support import drop_unset_check, fresh
 from tests.s015_concurrency_support import (
     cleanup_workers,
     exact_wait,
@@ -17,6 +17,7 @@ from tests.s015_concurrency_support import (
     start_worker,
     wait_until_locked,
 )
+from tests.sb2_route_support import birth, prepare_route
 from verification.isolation.state import REQUIRED_TRIGGER_COUNT
 
 
@@ -92,19 +93,14 @@ class S015RegisterCleanupTests(TransactionTestCase):
         super().tearDown()
 
     def _organism_pair(self, label):
-        with transaction.atomic(), connection.cursor() as cursor:
-            root = found_root(cursor, f"{label}-root")
-        with transaction.atomic(), connection.cursor() as cursor:
-            nonroot = found_nonroot(cursor, f"{label}-nonroot")
-        result = {}
-        with connection.cursor() as cursor:
-            for name, fixture in (("root", root), ("nonroot", nonroot)):
-                cursor.execute(
-                    "SELECT organism_id FROM public.core_livingorganism WHERE id = %s",
-                    [fixture["lo"]],
-                )
-                result[name] = {"id": fixture["lo"], "uuid": UUID(str(cursor.fetchone()[0]))}
-        return result
+        first = prepare_route(tag=f"{label}-first")
+        birth(first)
+        second = prepare_route(tag=f"{label}-second")
+        birth(second)
+        return {
+            "first": {"id": first.organism.pk, "uuid": first.organism.organism_id},
+            "second": {"id": second.organism.pk, "uuid": second.organism.organism_id},
+        }
 
     def _clear_stale_rows(self):
         with connection.cursor() as cursor:
@@ -165,13 +161,13 @@ class S015RegisterCleanupTests(TransactionTestCase):
         t1_registered = Event()
         t2_registered = Event()
         t3 = start_worker(
-            lambda: _register_and_hold(organisms["nonroot"]["uuid"], t3_registered, releases[0])
+            lambda: _register_and_hold(organisms["second"]["uuid"], t3_registered, releases[0])
         )
         workers.append(t3)
         self.assertTrue(t3_registered.wait(timeout=10))
         t1 = start_worker(
             lambda: _register_and_hold(
-                organisms["root"]["uuid"], t1_registered, releases[1], reenter=True,
+                organisms["first"]["uuid"], t1_registered, releases[1], reenter=True,
             )
         )
         workers.append(t1)
@@ -179,7 +175,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
 
         releases[0].set()
         self._assert_ok(t3)
-        t2 = start_worker(lambda: self._register(organisms["root"]["uuid"]))
+        t2 = start_worker(lambda: self._register(organisms["first"]["uuid"]))
         workers.append(t2)
         observation = self._exact_organism_wait(t2, t1)
         self._assert_exact_organism_wait(observation, t1.pid())
@@ -190,7 +186,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
 
     def test_loi_x3_cross_lo_cleanup_does_not_wait_on_another_cleanups_row(self):
         organisms = self._organism_pair(f"x3-{fresh()}")
-        self._seed_stale_row(organisms["root"]["uuid"])
+        self._seed_stale_row(organisms["first"]["uuid"])
         cleanup_module = importlib.import_module("core.migrations.0032_s015_register_cleanup_nonblocking")
         workers = []
         releases = [Event(), Event()]
@@ -207,7 +203,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
         b_registered = Event()
         b = start_worker(
             lambda: _register_and_hold(
-                organisms["nonroot"]["uuid"], b_registered, releases[1],
+                organisms["second"]["uuid"], b_registered, releases[1],
             )
         )
         workers.append(b)
@@ -237,7 +233,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
 
         def hold():
             with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organisms["root"]["uuid"]])
+                cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organisms["first"]["uuid"]])
                 cursor.execute("SELECT pg_current_xact_id()::text")
                 xids.append(cursor.fetchone()[0])
                 held.set()
@@ -253,7 +249,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
                 "INSERT INTO public.s015_transaction_register (xid, kind, organism_uuid, ordinal) VALUES (%s::xid8, 'ORGANISM_LOCK', %s, 1)",
                 [xids[0], marker],
             )
-        other = start_worker(lambda: self._register(organisms["nonroot"]["uuid"]))
+        other = start_worker(lambda: self._register(organisms["second"]["uuid"]))
         workers.append(other)
         self._assert_ok(other)
         with connection.cursor() as cursor:
@@ -261,7 +257,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
             self.assertEqual(cursor.fetchone()[0], 1, "a cleanup removed a row whose transaction is still in progress")
         releases[0].set()
         self._assert_ok(holder)
-        later = start_worker(lambda: self._register(organisms["nonroot"]["uuid"]))
+        later = start_worker(lambda: self._register(organisms["second"]["uuid"]))
         workers.append(later)
         self._assert_ok(later)
         with connection.cursor() as cursor:
@@ -270,7 +266,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
 
     def test_skipped_stale_row_is_cleaned_later(self):
         organisms = self._organism_pair(f"later-{fresh()}")
-        self._seed_stale_row(organisms["root"]["uuid"])
+        self._seed_stale_row(organisms["first"]["uuid"])
         cleanup_module = importlib.import_module("core.migrations.0032_s015_register_cleanup_nonblocking")
         workers = []
         releases = [Event()]
@@ -284,7 +280,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
         )
         workers.append(session_a)
         self.assertTrue(cleanup_complete.wait(timeout=10))
-        session_b = start_worker(lambda: self._register(organisms["nonroot"]["uuid"]))
+        session_b = start_worker(lambda: self._register(organisms["second"]["uuid"]))
         workers.append(session_b)
         self._assert_ok(session_b)
         releases[0].set()
@@ -293,23 +289,23 @@ class S015RegisterCleanupTests(TransactionTestCase):
             cursor.execute(
                 "SELECT count(*) FROM public.s015_transaction_register "
                 "WHERE kind = 'ORGANISM_LOCK' AND organism_uuid = %s::uuid",
-                [organisms["root"]["uuid"]],
+                [organisms["first"]["uuid"]],
             )
             self.assertEqual(cursor.fetchone()[0], 1)
-        session_c = start_worker(lambda: self._register(organisms["nonroot"]["uuid"]))
+        session_c = start_worker(lambda: self._register(organisms["second"]["uuid"]))
         workers.append(session_c)
         self._assert_ok(session_c)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT count(*) FROM public.s015_transaction_register "
                 "WHERE kind = 'ORGANISM_LOCK' AND organism_uuid = %s::uuid",
-                [organisms["root"]["uuid"]],
+                [organisms["first"]["uuid"]],
             )
             self.assertEqual(cursor.fetchone()[0], 0)
 
     def test_stale_rows_do_not_change_required_locking(self):
         organisms = self._organism_pair(f"required-{fresh()}")
-        self._seed_stale_row(organisms["root"]["uuid"])
+        self._seed_stale_row(organisms["first"]["uuid"])
         workers = []
         releases = [Event()]
         self.addCleanup(cleanup_workers, workers)
@@ -317,12 +313,12 @@ class S015RegisterCleanupTests(TransactionTestCase):
         holder_registered = Event()
         holder = start_worker(
             lambda: _register_and_hold(
-                organisms["root"]["uuid"], holder_registered, releases[0],
+                organisms["first"]["uuid"], holder_registered, releases[0],
             )
         )
         workers.append(holder)
         self.assertTrue(holder_registered.wait(timeout=10))
-        waiter = start_worker(lambda: self._register(organisms["root"]["uuid"]))
+        waiter = start_worker(lambda: self._register(organisms["first"]["uuid"]))
         workers.append(waiter)
         observation = self._exact_organism_wait(waiter, holder)
         self._assert_exact_organism_wait(observation, holder.pid())
@@ -330,7 +326,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
         self._assert_ok(holder)
         self._assert_ok(waiter)
 
-        organism_uuids = sorted((organisms["root"]["uuid"], organisms["nonroot"]["uuid"]))
+        organism_uuids = sorted((organisms["first"]["uuid"], organisms["second"]["uuid"]))
         lower_uuid, greater_uuid = organism_uuids
         self._seed_stale_row(lower_uuid)
         with self.assertRaises(IntegrityError) as refused:
@@ -348,21 +344,21 @@ class S015RegisterCleanupTests(TransactionTestCase):
         )
         self.assertEqual(str(refused.exception).splitlines()[0], expected)
 
-        self._seed_stale_row(organisms["root"]["uuid"])
+        self._seed_stale_row(organisms["first"]["uuid"])
         with transaction.atomic(), connection.cursor() as cursor:
             cursor.execute(
                 "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
-                [organisms["root"]["uuid"]],
+                [organisms["first"]["uuid"]],
             )
             cursor.execute(
                 "SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])",
-                [organisms["root"]["uuid"]],
+                [organisms["first"]["uuid"]],
             )
             cursor.execute(
                 "SELECT count(*) FROM public.s015_transaction_register "
                 "WHERE kind = 'ORGANISM_LOCK' AND organism_uuid = %s::uuid "
                 "AND xid = pg_current_xact_id()",
-                [organisms["root"]["uuid"]],
+                [organisms["first"]["uuid"]],
             )
             self.assertEqual(cursor.fetchone()[0], 1)
 
