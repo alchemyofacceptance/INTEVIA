@@ -1,3 +1,5 @@
+"""PKT-A authorized-path boundary guardian with commissioned later-slice exceptions."""
+
 from pathlib import Path
 from django.test import SimpleTestCase
 
@@ -21,7 +23,7 @@ class S015PacketBoundaryTests(SimpleTestCase):
         }
         self.assertEqual(len(authorized), 12)
         self.assertTrue(all((root / path).is_file() for path in authorized))
-        self.assertFalse(
-            (root / "src/intevia/services/organism_governance_service.py").exists()
-        )
+        # SB-G commission route F (commission line 322) authorizes this one later service.
+        later_packet_authorized_service = "src/intevia/services/organism_governance_service.py"
+        self.assertTrue((root / later_packet_authorized_service).is_file())
         self.assertFalse((root / "src/intevia/services/organism_queries.py").exists())

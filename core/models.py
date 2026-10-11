@@ -4388,9 +4388,21 @@ class Circle(_S015ImmutableAnchor):
         SUSPENDED = "SUSPENDED"
         CLOSED = "CLOSED"
 
-    S015_IMMUTABLE_FIELDS = ("circle_uuid", "parent_organism_id")
+    S015_IMMUTABLE_FIELDS = ("circle_uuid", "parent_organism_id", "kind")
 
     circle_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    kind = models.CharField(
+        max_length=16,
+        default="GENERIC",
+        db_default="GENERIC",
+        choices=[
+            ("GENERIC", "Generic"),
+            ("GOVERNANCE", "Governance"),
+            ("APPLICATION", "Application"),
+            ("FINANCE", "Finance"),
+            ("OPERATIONS", "Operations"),
+        ],
+    )
     parent_organism = models.ForeignKey(
         LivingOrganism,
         on_delete=models.PROTECT,
@@ -4412,7 +4424,17 @@ class Circle(_S015ImmutableAnchor):
 
     class Meta:
         # ACTIVE is excluded at the database (specification §6.1 item 4); the TextChoices entry is shipped and retained.
-        constraints = _s015_cache_anchor_constraints("circle", ["DORMANT", "ELIGIBLE", "SUSPENDED", "CLOSED"])
+        constraints = _s015_cache_anchor_constraints("circle", ["DORMANT", "ELIGIBLE", "SUSPENDED", "CLOSED"]) + [
+            models.CheckConstraint(
+                condition=models.Q(kind__in=("GENERIC", "GOVERNANCE", "APPLICATION", "FINANCE", "OPERATIONS")),
+                name="sbg_circle_kind_vocab_ck",
+            ),
+            models.UniqueConstraint(
+                fields=("parent_organism",),
+                condition=models.Q(kind="GOVERNANCE"),
+                name="s015_circle_one_governance_uidx",
+            ),
+        ]
 
 
 class OrganismMembership(_S015ImmutableAnchor):
@@ -5432,5 +5454,311 @@ class LOBirthingSnapshot(_S015AppendOnly):
             models.UniqueConstraint(
                 fields=("living_organism",),
                 name="core_lobirthingsnapshot_living_organism_id_uniq",
+            ),
+        ]
+
+
+class GovernedRule(_S015AppendOnly):
+    rule_uuid = models.UUIDField()
+    version = models.PositiveIntegerField()
+    scope_kind = models.CharField(max_length=20)
+    scope_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    scope_circle = models.ForeignKey(
+        Circle,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    code = models.CharField(max_length=64)
+    body = models.JSONField()
+    text_commitment = models.CharField(max_length=71, editable=False, null=True)
+    authority_reference = models.CharField(max_length=255)
+    source = models.CharField(max_length=32)
+    effective_from = models.DateTimeField()
+    decided_at = models.DateTimeField()
+    observations = models.JSONField(null=True, blank=True)
+    enterer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("rule_uuid", "version"),
+                name="sbg_governedrule_uuid_version_uniq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(version__gt=0),
+                name="sbg_governedrule_version_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(scope_kind__in=("PLATFORM", "LIVING_ORGANISM", "CIRCLE")),
+                name="sbg_governedrule_scope_vocab_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(code__in=("GOVERNANCE_CONSTITUTION", "U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION")),
+                name="sbg_governedrule_code_vocab_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        scope_kind="PLATFORM",
+                        scope_organism__isnull=True,
+                        scope_circle__isnull=True,
+                    )
+                    | models.Q(
+                        scope_kind="LIVING_ORGANISM",
+                        scope_organism__isnull=False,
+                        scope_circle__isnull=True,
+                    )
+                    | models.Q(
+                        scope_kind="CIRCLE",
+                        scope_organism__isnull=True,
+                        scope_circle__isnull=False,
+                    )
+                ),
+                name="sbg_governedrule_scope_target_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    source__in=(
+                        "FOUNDING_BODY_PRESCRIPTION",
+                        "LO_PRESCRIPTION",
+                        "PLATFORM_RULING",
+                    )
+                ),
+                name="sbg_governedrule_source_vocab_ck",
+            ),
+        ]
+
+
+class CircleJoinRequest(_S015AppendOnly):
+    request_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    circle = models.ForeignKey(Circle, on_delete=models.PROTECT, related_name="+")
+    membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
+    seat_rule_uuid = models.UUIDField()
+    seat_id = models.CharField(max_length=64)
+    initiated_by = models.CharField(max_length=16)
+    consent_reference = models.CharField(max_length=255)
+    enterer_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(initiated_by__in=("APPLICANT", "DECIDER")),
+                name="sbg_circlejoinrequest_initiator_ck",
+            ),
+        ]
+
+
+class CircleAdmissionDecision(_S015AppendOnly):
+    decision_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    request = models.OneToOneField(CircleJoinRequest, on_delete=models.PROTECT, related_name="+")
+    route = models.CharField(max_length=32)
+    constitutional_route = models.CharField(max_length=32)
+    deciding_party = models.CharField(max_length=64)
+    deciding_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    self_decision = models.BooleanField()
+    outcome = models.CharField(max_length=16)
+    authority_decision_reference = models.CharField(max_length=71)
+    settings_basis = models.CharField(max_length=255)
+    seat_rule_uuid = models.UUIDField()
+    seat_id = models.CharField(max_length=64)
+    actor_state = models.CharField(max_length=24)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    actor_capacity = models.CharField(max_length=24)
+    entry_mode = models.CharField(max_length=24)
+    enterer_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    composing_rule_state = models.CharField(max_length=24)
+    composing_rule_reference = models.CharField(max_length=255, null=True, blank=True)
+    composer_state = models.CharField(max_length=24)
+    composer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(route__in=("CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL")),
+                name="sbg_circledecision_route_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        route="CIRCLE_FOUNDING",
+                        constitutional_route="NOT_APPLICABLE",
+                        deciding_party="FOUNDING_BODY",
+                    )
+                    | models.Q(
+                        route="GOVERNANCE_CONSTITUTIONAL",
+                        constitutional_route="APPOINTMENT",
+                        deciding_party="office:LO_COORDINATOR",
+                    )
+                ),
+                name="sbg_circledecision_route_shape_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(outcome__in=("ACCEPT", "DECLINE")),
+                name="sbg_circledecision_outcome_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    actor_state="LIVING_ORGANISM",
+                    actor__isnull=True,
+                    actor_access_epoch__isnull=True,
+                    actor_capacity="STANDING",
+                    entry_mode="TRANSPORT",
+                    composing_rule_state="NA_TRANSPORT",
+                    composing_rule_reference__isnull=True,
+                    composer_state="NA_TRANSPORT",
+                    composer_identity__isnull=True,
+                ),
+                name="sbg_circledecision_transport_ck",
+            ),
+        ]
+
+
+class CircleParticipation(_S015AppendOnly):
+    participation_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    circle = models.ForeignKey(Circle, on_delete=models.PROTECT, related_name="+")
+    membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
+    seat_rule_uuid = models.UUIDField()
+    seat_id = models.CharField(max_length=64)
+    decision = models.OneToOneField(CircleAdmissionDecision, on_delete=models.PROTECT, related_name="+")
+    actor_state = models.CharField(max_length=24)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    actor_capacity = models.CharField(max_length=24)
+    entry_mode = models.CharField(max_length=24)
+    enterer_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    composing_rule_state = models.CharField(max_length=24)
+    composing_rule_reference = models.CharField(max_length=255, null=True, blank=True)
+    composer_state = models.CharField(max_length=24)
+    composer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    actor_state="LIVING_ORGANISM",
+                    actor__isnull=True,
+                    actor_access_epoch__isnull=True,
+                    actor_capacity="STANDING",
+                    entry_mode="TRANSPORT",
+                    composing_rule_state="NA_TRANSPORT",
+                    composing_rule_reference__isnull=True,
+                    composer_state="NA_TRANSPORT",
+                    composer_identity__isnull=True,
+                ),
+                name="sbg_circleparticipation_transport_ck",
+            ),
+        ]
+
+
+class CircleParticipationEnd(_S015AppendOnly):
+    participation = models.OneToOneField(CircleParticipation, on_delete=models.PROTECT, related_name="+")
+    actor_state = models.CharField(max_length=24)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    actor_capacity = models.CharField(max_length=24)
+    entry_mode = models.CharField(max_length=24)
+    enterer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    composing_rule_state = models.CharField(max_length=24)
+    composing_rule = models.ForeignKey(
+        GovernedRule,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    composing_rule_reference = models.CharField(max_length=255, null=True, blank=True)
+    composer_state = models.CharField(max_length=24)
+    composer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    composed_from_event_uuid = models.UUIDField(null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    actor_state="NONE",
+                    actor__isnull=True,
+                    actor_access_epoch__isnull=True,
+                    actor_capacity="NA_NO_PARTY",
+                    entry_mode="COMPOSED",
+                    composing_rule_state="REFERENCE",
+                    composing_rule__isnull=False,
+                    composing_rule_reference__isnull=False,
+                    composer_state="REFERENCE",
+                    composer_identity__isnull=False,
+                    composed_from_event_uuid__isnull=False,
+                ),
+                name="sbg_circleparticipationend_composed_ck",
             ),
         ]

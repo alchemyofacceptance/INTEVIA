@@ -455,6 +455,7 @@ def _authority_request(
     outcome: str | None = None,
     version_uuid: UUID | None = None,
     version_kind: str | None = None,
+    command_subtype: str | None = None,
 ) -> S015PostFoundingAuthorityRequest:
     return S015PostFoundingAuthorityRequest(
         database_alias=database_alias,
@@ -462,7 +463,7 @@ def _authority_request(
         actor_identity_id=actor.identity_id,
         actor_access_epoch=actor.access_epoch,
         action=action,
-        command_subtype=action.value,
+        command_subtype=action.value if command_subtype is None else command_subtype,
         target_fingerprint=target_fingerprint,
         request_reference=request_reference,
         idempotency_key=idempotency_key,

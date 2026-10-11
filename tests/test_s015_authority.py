@@ -60,10 +60,22 @@ class S015AuthorityContractTests(TestCase):
             "SB_BIRTHING_ELECTORATE_EMPTY",
         )
 
-    def test_matrix_has_36_complete_noninheriting_rows(self):
-        # SB-1's PHASE_ADVANCE row gave 36; commission section 6.3's BIRTHING row adds one, giving 37.
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 37)
+    def test_matrix_has_40_complete_noninheriting_rows(self):
+        # SB-G adds adoption, seat-request and seat-admission rows to the 37-row SB-2 matrix.
+        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 40)
         self.assertTrue(all(len(row) == 4 for row in QUALIFICATION_PLANE_MATRIX.values()))
+        adoption = QUALIFICATION_PLANE_MATRIX[
+            "ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION"
+        ]
+        self.assertEqual(adoption[QualificationPlane.LEGAL].reason, "NO_LEGAL_CONCLUSION")
+        self.assertIs(adoption[QualificationPlane.CONSTITUTIONAL].state,
+                      QualificationPlaneState.PREREQUISITE_REQUIRED)
+        admission = QUALIFICATION_PLANE_MATRIX["ADMIT_CIRCLE_PARTICIPANT"]
+        self.assertEqual(admission, QUALIFICATION_PLANE_MATRIX[OrganismAction.SUBMIT_APPLICATION.value])
+        self.assertEqual(
+            QUALIFICATION_PLANE_MATRIX["REQUEST_GOVERNANCE_SEAT"],
+            QUALIFICATION_PLANE_MATRIX[OrganismAction.SUBMIT_APPLICATION.value],
+        )
         ordinary = QUALIFICATION_PLANE_MATRIX[OrganismAction.SUBMIT_APPLICATION.value]
         for action in (
             OrganismAction.EFFECT_APPLICATION_SETTINGS,

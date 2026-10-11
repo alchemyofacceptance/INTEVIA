@@ -49,11 +49,13 @@ class S015AuthorityDenied(S015AuthorityError):
         refusal_code: "S015AuthorityRefusalCode | None" = None,
         disclosed_refusal_code: "S015AuthorityRefusalCode | None" = None,
         authority_decision_reference: str | None = None,
+        request_uuid: UUID | None = None,
     ) -> None:
         super().__init__(message)
         self.refusal_code = refusal_code
         self.disclosed_refusal_code = disclosed_refusal_code
         self.authority_decision_reference = authority_decision_reference
+        self.request_uuid = request_uuid
 
 
 class S015AuthorityRefusalCode(str, Enum):
@@ -74,6 +76,23 @@ class S015AuthorityRefusalCode(str, Enum):
     BIRTHING_ALREADY_RECORDED = "BIRTHING_ALREADY_RECORDED"
     SB_IL_GOVCONST = "SB-IL-GOVCONST"
     SB_IL_GOVENABLE = "SB-IL-GOVENABLE"
+    SBG_ARRANGEMENT_INCOMPLETE = "SBG_ARRANGEMENT_INCOMPLETE"
+    SBG_ARRANGEMENT_FIELD_UNSUPPORTED = "SBG_ARRANGEMENT_FIELD_UNSUPPORTED"
+    SBG_ELIGIBILITY_UNSUPPORTED = "SBG_ELIGIBILITY_UNSUPPORTED"
+    SBG_VERSION_DROPS_HELD_SEAT = "SBG_VERSION_DROPS_HELD_SEAT"
+    SBG_GOVERNANCE_CIRCLE_MISSING = "SBG_GOVERNANCE_CIRCLE_MISSING"
+    SBG_ARRANGEMENT_MISSING = "SBG_ARRANGEMENT_MISSING"
+    SBG_NO_INITIAL_PARTICIPATION_ROUTE = "SBG_NO_INITIAL_PARTICIPATION_ROUTE"
+    SBG_IL_GRESD = "SBG_IL_GRESD"
+    SBG_SECOND_GOVERNANCE_CIRCLE = "SBG_SECOND_GOVERNANCE_CIRCLE"
+    SBG_LO_NOT_ACTIVE = "SBG_LO_NOT_ACTIVE"
+    SBG_SEAT_ABSENT = "SBG_SEAT_ABSENT"
+    SBG_SEAT_OCCUPIED = "SBG_SEAT_OCCUPIED"
+    SBG_ALREADY_SEATED = "SBG_ALREADY_SEATED"
+    SBG_MEMBER_NOT_ELIGIBLE = "SBG_MEMBER_NOT_ELIGIBLE"
+    SBG_SEAT_ROUTE_UNAVAILABLE = "SBG_SEAT_ROUTE_UNAVAILABLE"
+    SBG_SEATING_WHILE_DISABLED = "SBG_SEATING_WHILE_DISABLED"
+    SBG_DEPARTURE_PRECEDES_PARTICIPATION = "SBG_DEPARTURE_PRECEDES_PARTICIPATION"
     INV_CQ_ROUTE_REQUIRED = "INV_CQ_ROUTE_REQUIRED"
     SB_BIRTHING_ELECTORATE_EMPTY = "SB_BIRTHING_ELECTORATE_EMPTY"
     C_GATEWAY_NOT_OPEN = "C_GATEWAY_NOT_OPEN"
@@ -547,6 +566,10 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.TRANSITION_MEMBERSHIP,
+    OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+    OrganismAction.CREATE_DORMANT_CIRCLE,
+    OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
+    OrganismAction.REQUEST_GOVERNANCE_SEAT,
 })
 
 
@@ -613,6 +636,27 @@ def _facts_read(
         raise S015AuthorityMalformed("structured authority reference is invalid") from exc
     if type(content) is not dict:
         raise S015AuthorityMalformed("structured authority reference must be an object")
+    governance_adoption = request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT
+    governance_circle_creation = request.action is OrganismAction.CREATE_DORMANT_CIRCLE
+    governance_seat_request = (
+        request.action is OrganismAction.REQUEST_GOVERNANCE_SEAT
+    )
+    governance_seating = (
+        request.action is OrganismAction.ADMIT_CIRCLE_PARTICIPANT
+        and content.get("kind") == "GOVERNANCE"
+    )
+    governance_founding_seating = (
+        governance_seating and content.get("route") == "CIRCLE_FOUNDING"
+    )
+    governance_constitutional_seating = (
+        governance_seating and content.get("route") == "GOVERNANCE_CONSTITUTIONAL"
+    )
+    if governance_seating and not (
+        governance_founding_seating or governance_constitutional_seating
+    ):
+        raise S015AuthorityMalformed("governance seating route fact is invalid")
+    if governance_seat_request and content.get("kind") != "GOVERNANCE_SEAT_REQUEST":
+        raise S015AuthorityMalformed("governance seat request fact is invalid")
     phase_advance_reference = (
         request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
         and content.get("kind") == "PHASE_ADVANCE"
@@ -681,6 +725,21 @@ def _facts_read(
         "v": (_version_relation(request.action), _version_reference_prefix(request.action)),
         "a": (_assignment_or_application_relation(request.action), None),
     }
+    if governance_adoption:
+        prefix["g"] = ("core_governedrule", None)
+    if governance_circle_creation:
+        prefix["c"] = ("core_circle", None)
+    if governance_seat_request:
+        prefix.update({
+            "c": ("core_circle", None),
+            "r": ("core_governedrule", None),
+        })
+    if governance_founding_seating or governance_constitutional_seating:
+        prefix.update({
+            "c": ("core_circle", None),
+            "r": ("core_governedrule", None),
+            "q": ("core_circlejoinrequest", None),
+        })
     if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
         prefix.update({
             "a": ("core_contextualroleassignment", None),
@@ -699,6 +758,16 @@ def _facts_read(
     if birthing_reference:
         prefix["n"] = ("core_lobirthingsnapshot", None)
     for key, value in content.items():
+        if (governance_adoption or governance_circle_creation) and key in {"kind", "source"}:
+            continue
+        if governance_seat_request and key in {"kind", "s"}:
+            continue
+        if governance_founding_seating and key in {"kind", "route", "s"}:
+            continue
+        if governance_constitutional_seating and key in {
+            "kind", "route", "constitutional_route", "s",
+        }:
+            continue
         if phase_advance_reference and key in {"kind", "f", "p"}:
             continue
         if birthing_reference and key == "kind":

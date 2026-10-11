@@ -9,7 +9,7 @@ from typing import Callable, Protocol
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
-from django.db import connections, transaction
+from django.db import IntegrityError, connections, transaction
 
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
@@ -38,11 +38,50 @@ from src.intevia.services.organism_command_support import (
 )
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from src.intevia.services.organism_role_service import OrganismRoleService
+from src.intevia.services.organism_formation_service import _sbg_readiness_message
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:APPLICATION_COMMAND:v1\x00"
 _PAIR_DOMAIN = b"INTEVIA:S015:OPEN_APPLICATION_PAIR:v1\x00"
 _DUE_SOURCE = "DEFAULT (no settings store)"
+_SBG_ENABLING_REFUSAL_CODES = {
+    S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
+    S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
+    S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
+    S015AuthorityRefusalCode.SBG_IL_GRESD,
+}
+
+
+def _governance_enabling_refusal_message(
+    *,
+    database_alias: str,
+    organism: LivingOrganism,
+    effective_at: datetime,
+    recorded_at: datetime,
+    code: S015AuthorityRefusalCode,
+) -> str:
+    if code is S015AuthorityRefusalCode.SBG_IL_GRESD:
+        return (
+            "GOVERNANCE was not switched on and nothing changed. This LO's GOVERNANCE Circle "
+            "was active before and is now dormant; its next step is the restoration route for "
+            "a dormant GOVERNANCE, which is not yet available in this release. This is a limit "
+            "of the current build, not a refusal of the LO's choice. The LO's Coordinators "
+            "continue to govern until that route is delivered."
+        )
+    message = _sbg_readiness_message(
+        code=code,
+        act="GOVERNANCE was not switched on",
+        database_alias=database_alias,
+        organism=organism,
+        effective_at=effective_at,
+        recorded_at=recorded_at,
+    )
+    if message is None:
+        raise RuntimeError("SB-G enabling refusal has no authored message")
+    return message
 
 
 class S015ApplicationError(Exception):
@@ -891,6 +930,61 @@ class OrganismApplicationService:
             return version
 
     def effect_gateway_version(self, command: EffectGatewayVersionCommand):
+        try:
+            return self._effect_gateway_version(command)
+        except S015AuthorityDenied as exc:
+            if (
+                command.action is not OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+                or exc.refusal_code not in _SBG_ENABLING_REFUSAL_CODES
+            ):
+                raise
+            organism = LivingOrganism.objects.using(self._alias).get(
+                organism_id=_canonical_uuid(command.living_organism_id, "living_organism_id"),
+            )
+            message = _governance_enabling_refusal_message(
+                database_alias=self._alias,
+                organism=organism,
+                effective_at=command.effective_at,
+                recorded_at=command.received_at,
+                code=exc.refusal_code,
+            )
+            raise S015ApplicationRefused(
+                message,
+                refusal_code=exc.refusal_code,
+            ) from exc
+        except IntegrityError as exc:
+            if command.action is not OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
+                raise
+            message_primary = getattr(
+                getattr(exc.__cause__, "diag", None),
+                "message_primary",
+                None,
+            )
+            refusal_code = next(
+                (
+                    code for code in _SBG_ENABLING_REFUSAL_CODES
+                    if message_primary == code.value
+                ),
+                None,
+            )
+            if refusal_code is None:
+                raise
+            organism = LivingOrganism.objects.using(self._alias).get(
+                organism_id=_canonical_uuid(command.living_organism_id, "living_organism_id"),
+            )
+            message = _governance_enabling_refusal_message(
+                database_alias=self._alias,
+                organism=organism,
+                effective_at=command.effective_at,
+                recorded_at=command.received_at,
+                code=refusal_code,
+            )
+            raise S015ApplicationRefused(
+                message,
+                refusal_code=refusal_code,
+            ) from exc
+
+    def _effect_gateway_version(self, command: EffectGatewayVersionCommand):
         with _authority_atomic(self._alias):
             start = self._gateway_start(command, create_head=False)
             if isinstance(start, GatewayEffectCommandResult):
@@ -915,38 +1009,6 @@ class OrganismApplicationService:
                 raise S015OperationNotYetImplemented("circle_application_processing", "S3-IL-CIRCLE", "DISCUSSION")
             _lock_owning_organism(self._alias, organism.organism_id)
             organism = LivingOrganism.objects.using(self._alias).select_for_update().get(pk=organism.pk)
-            if (
-                isinstance(version, LOGovernanceConfigurationVersion)
-                and version.governance_enabled is True
-            ):
-                previous_configuration = _effective_gateway_version(
-                    self._alias,
-                    organism,
-                    OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
-                    gateway_at,
-                )
-                born = LivingOrganismEvent.objects.using(self._alias).filter(
-                    living_organism=organism,
-                    action="BIRTHING",
-                    effective_at__lte=effective_at,
-                    received_at__lte=gateway_at,
-                    recorded_at__lte=gateway_at,
-                ).exists()
-                if (
-                    previous_configuration is not None
-                    and previous_configuration.governance_enabled is False
-                    and born
-                ):
-                    raise S015ApplicationRefused(
-                        "SB-IL-GOVENABLE: GOVERNANCE was not switched on and nothing changed: "
-                        "this LO's recorded choice remains No. Switching GOVERNANCE on after "
-                        "Birthing needs the GOVERNANCE Circle, its constitutional admission route "
-                        "and its first participants to be established, and the route that does this "
-                        "is not yet available in this release. This is a known limit of the current "
-                        "build, not a refusal of the LO's choice; the LO's other settings can still "
-                        "be changed.",
-                        refusal_code=S015AuthorityRefusalCode.SB_IL_GOVENABLE,
-                    )
             predecessor = LivingOrganismEvent.objects.using(self._alias).filter(pk=organism.head_event_id).first()
             if predecessor is None or effective_at < predecessor.effective_at:
                 raise S015ApplicationRefused("gateway effect requires a current LO chain")

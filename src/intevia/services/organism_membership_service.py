@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
-from django.db import connections, transaction
+from django.db import IntegrityError, connections, transaction
 
 from core.models import (
     AuthorityBasis,
+    CircleParticipation,
+    CircleParticipationEnd,
     ContextualRoleAssignment,
     Identity,
+    GovernedRule,
     LivingOrganism,
     OrganismCommandReceipt,
     OrganismMembership,
@@ -21,6 +25,7 @@ from core.models import (
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision,
+    S015AuthorityRefusalCode,
     S015AuthorityMalformed,
     S015AuthorityUnavailable,
     authority_target_fingerprint,
@@ -54,6 +59,7 @@ _COMMAND_DOMAIN = b"INTEVIA:S015:ORGANISM_MEMBERSHIP_COMMAND:v1\x00"
 _TARGET_SCHEMA = "intevia.s015.organism-membership-target.v1"
 _COMMAND_SCHEMA = "intevia.s015.organism-membership-command.v1"
 _LINEAGE_SCHEMA = "intevia.s015.organism-membership-lineage.v1"
+_DEPARTURE_COMPOSITION_RULE_UUID = UUID("52345b7a-2fab-45ce-954e-e3ff922a8a37")
 # Interim S1 mapping from the Human Governor (28 Sep); HD-B7 is still open and this is not final vocabulary.
 _ACTION = OrganismAction.TRANSITION_MEMBERSHIP
 _OPEN_STATE = "PROPOSED"
@@ -84,6 +90,12 @@ class S015MembershipNotFound(S015MembershipCommandError):
 
 class S015MembershipEdgeRefused(S015MembershipCommandError):
     pass
+
+
+class S015MembershipRefused(S015MembershipCommandError):
+    def __init__(self, message: str, *, refusal_code: S015AuthorityRefusalCode) -> None:
+        super().__init__(message)
+        self.refusal_code = refusal_code
 
 
 class S015MembershipStateUnused(S015MembershipCommandError):
@@ -786,12 +798,191 @@ class OrganismMembershipService(_OrganismCommandService):
         self,
         command: TransitionMembershipCommand,
     ) -> MembershipCommandResult:
-        with authority_atomic(self._alias):
-            return self._execute_transition(command)
+        departure_context: dict[str, str] = {}
+        try:
+            with authority_atomic(self._alias):
+                return self._execute_transition(command, departure_context)
+        except IntegrityError as exc:
+            message_primary = getattr(
+                getattr(exc.__cause__, "diag", None),
+                "message_primary",
+                None,
+            )
+            code = S015AuthorityRefusalCode.SBG_DEPARTURE_PRECEDES_PARTICIPATION
+            if message_primary != code.value or command.resulting_state != "ENDED":
+                raise
+            effective_at = _validate_timestamp(command.effective_at, "effective_at")
+            refusal = self._departure_precedes_participation_from_detail(
+                getattr(
+                    getattr(exc.__cause__, "diag", None),
+                    "message_detail",
+                    None,
+                ),
+                effective_at,
+                person=departure_context.get("person"),
+                organism_slug=departure_context.get("organism_slug"),
+            )
+            if refusal is None:
+                raise
+            raise refusal from exc
+
+    def _departure_precedes_participation(
+        self,
+        membership: OrganismMembership,
+        effective_at: datetime,
+    ) -> S015MembershipRefused | None:
+        participation = (
+            CircleParticipation.objects.using(self._alias)
+            .filter(
+                membership=membership,
+                effective_at__gt=effective_at,
+            )
+            .order_by("effective_at", "recorded_at", "pk")
+            .first()
+        )
+        if participation is None:
+            return None
+
+        identity = membership.identity
+        person = identity.display_name or identity.canonical_username
+        organism = membership.living_organism
+        return self._departure_precedes_participation_refusal(
+            person=person,
+            organism_slug=organism.slug,
+            seat_id=participation.seat_id,
+            departure_effective_at=canonical_timestamp(effective_at),
+            participation_effective_at=canonical_timestamp(
+                participation.effective_at
+            ),
+        )
+
+    @staticmethod
+    def _departure_precedes_participation_refusal(
+        *,
+        person: str,
+        organism_slug: str,
+        seat_id: str,
+        departure_effective_at: str,
+        participation_effective_at: str,
+    ) -> S015MembershipRefused:
+        message = (
+            f"{person} was not recorded as leaving {organism_slug}, and nothing changed. "
+            f"The leaving date given, {departure_effective_at}, is earlier than "
+            f"the start of their GOVERNANCE seat {seat_id}, which began on "
+            f"{participation_effective_at}. A member cannot leave "
+            "before a seat they took while still a member. Check the leaving date. If the "
+            "seat itself was recorded in error, it must be corrected through its own "
+            "governed route first."
+        )
+        return S015MembershipRefused(message, refusal_code=(
+            S015AuthorityRefusalCode.SBG_DEPARTURE_PRECEDES_PARTICIPATION
+        ))
+
+    @classmethod
+    def _departure_precedes_participation_from_detail(
+        cls,
+        detail: object,
+        effective_at: datetime,
+        *,
+        person: str | None,
+        organism_slug: str | None,
+    ) -> S015MembershipRefused | None:
+        if type(detail) is not str:
+            return None
+        try:
+            values = json.loads(detail)
+        except json.JSONDecodeError:
+            return None
+        if type(values) is not dict or set(values) != {"seat_id", "started_at"}:
+            return None
+        seat_id = values.get("seat_id")
+        participation_effective_at = values.get("started_at")
+        if any(
+            type(value) is not str or not value
+            for value in (
+                person,
+                organism_slug,
+                seat_id,
+                participation_effective_at,
+            )
+        ):
+            return None
+        try:
+            parsed_start = datetime.strptime(
+                participation_effective_at,
+                "%Y-%m-%dT%H:%M:%S.%fZ",
+            )
+        except ValueError:
+            return None
+        if parsed_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ") != participation_effective_at:
+            return None
+        return cls._departure_precedes_participation_refusal(
+            person=person,
+            organism_slug=organism_slug,
+            seat_id=seat_id,
+            departure_effective_at=canonical_timestamp(effective_at),
+            participation_effective_at=participation_effective_at,
+        )
+
+    def _compose_current_participation_endings(
+        self,
+        *,
+        membership: OrganismMembership,
+        transition: OrganismMembershipTransition,
+        effective_at: datetime,
+        received_at: datetime,
+    ) -> None:
+        participations = list(
+            CircleParticipation.objects.using(self._alias)
+            .select_for_update(of=("self",))
+            .filter(
+                membership=membership,
+                effective_at__lte=effective_at,
+            )
+            .order_by("pk")
+        )
+        if not participations:
+            return
+
+        existing_ending_ids = set(
+            CircleParticipationEnd.objects.using(self._alias)
+            .filter(participation_id__in=[item.pk for item in participations])
+            .values_list("participation_id", flat=True)
+        )
+        composing_rule = GovernedRule.objects.using(self._alias).get(
+            rule_uuid=_DEPARTURE_COMPOSITION_RULE_UUID,
+            version=1,
+            code="U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION",
+        )
+        composing_rule_reference = (
+            f"rule:{composing_rule.rule_uuid}@{composing_rule.version}"
+        )
+        for participation in participations:
+            if participation.pk in existing_ending_ids:
+                continue
+            CircleParticipationEnd.objects.using(self._alias).create(
+                participation=participation,
+                actor_state="NONE",
+                actor=None,
+                actor_access_epoch=None,
+                actor_capacity="NA_NO_PARTY",
+                entry_mode="COMPOSED",
+                enterer_identity=membership.identity,
+                composing_rule_state="REFERENCE",
+                composing_rule=composing_rule,
+                composing_rule_reference=composing_rule_reference,
+                composer_state="REFERENCE",
+                composer_identity=membership.identity,
+                composed_from_event_uuid=transition.event_uuid,
+                occurred_at=effective_at,
+                effective_at=effective_at,
+                received_at=received_at,
+            )
 
     def _execute_transition(
         self,
         command: TransitionMembershipCommand,
+        departure_context: dict[str, str],
     ) -> MembershipCommandResult:
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
@@ -922,7 +1113,20 @@ class OrganismMembershipService(_OrganismCommandService):
             ):
                 raise S015OperationNotYetImplemented("out_of_order_transition", "IL-3", "S5")
 
-        basis_id = membership.living_organism.founding_authority_basis_id
+            if target_state == "ENDED":
+                identity = membership.identity
+                departure_context["person"] = (
+                    identity.display_name or identity.canonical_username
+                )
+                departure_context["organism_slug"] = membership.living_organism.slug
+                refusal = self._departure_precedes_participation(
+                    membership,
+                    effective_at,
+                )
+                if refusal is not None:
+                    raise refusal
+
+            basis_id = membership.living_organism.founding_authority_basis_id
         if basis_id is None:
             raise S015MembershipAuthorityUnavailable(
                 "organism founding authority basis is required"
@@ -1002,6 +1206,14 @@ class OrganismMembershipService(_OrganismCommandService):
         membership.refresh_from_db()
         transition = OrganismMembershipTransition.objects.using(self._alias).get(pk=transition_id)
         transition.refresh_from_db()
+
+        if target_state == "ENDED":
+            self._compose_current_participation_endings(
+                membership=membership,
+                transition=transition,
+                effective_at=effective_at,
+                received_at=received_at,
+            )
 
         result = _result_from_membership(
             membership=membership,

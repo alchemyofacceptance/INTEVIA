@@ -1,4 +1,4 @@
-"""Guardians for S012 six-model schema, choices, constraints, immutability, and queryset bypass."""
+"""S012 six-model schema and Identity FK guardians through the SB-G slice."""
 
 import re
 from datetime import datetime, timezone
@@ -530,6 +530,22 @@ class IdentityFKPredictionTests(TestCase):
         ("learnerregistration", "identity"),
     }
 
+    # D-S015-PKT-A-3, rule R-d, line 528: these preserve durable referent attribution.
+    EXPECTED_SBG_FK_ADDITIONS = {
+        ("governedrule", "enterer_identity"),
+        ("circlejoinrequest", "enterer_identity"),
+        ("circleadmissiondecision", "actor"),
+        ("circleadmissiondecision", "composer_identity"),
+        ("circleadmissiondecision", "deciding_identity"),
+        ("circleadmissiondecision", "enterer_identity"),
+        ("circleparticipation", "actor"),
+        ("circleparticipation", "composer_identity"),
+        ("circleparticipation", "enterer_identity"),
+        ("circleparticipationend", "actor"),
+        ("circleparticipationend", "composer_identity"),
+        ("circleparticipationend", "enterer_identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -584,6 +600,7 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_S015_POST_0019_FK_ADDITIONS,
             self.EXPECTED_SB1_FK_ADDITIONS,
             self.EXPECTED_P1_FK_ADDITIONS,
+            self.EXPECTED_SBG_FK_ADDITIONS,
         )
         for expected in later_sets:
             self.assertEqual(scoped_fks & expected, expected)
@@ -603,6 +620,7 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_S015_POST_0019_FK_ADDITIONS
             | self.EXPECTED_SB1_FK_ADDITIONS
             | self.EXPECTED_P1_FK_ADDITIONS
+            | self.EXPECTED_SBG_FK_ADDITIONS
         )
         historical_scoped = scoped_fks - later_additions
         self.assertEqual(len(historical_scoped), 56)
@@ -620,7 +638,7 @@ class IdentityFKPredictionTests(TestCase):
             | later_additions
         )
         self.assertEqual(scoped_fks, expected_scoped)
-        self.assertEqual(len(scoped_fks), 96)
+        self.assertEqual(len(scoped_fks), 108)
 
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
@@ -646,6 +664,7 @@ class IdentityFKPredictionTests(TestCase):
             - self.EXPECTED_S015_POST_0019_FK_ADDITIONS
             - self.EXPECTED_SB1_FK_ADDITIONS
             - self.EXPECTED_P1_FK_ADDITIONS
+            - self.EXPECTED_SBG_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 

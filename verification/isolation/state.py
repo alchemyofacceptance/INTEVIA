@@ -50,6 +50,12 @@ from django.db import connection
 #         0038: 405 - adds the nullable Coordinator nomination-policy field; no triggers added [D]
 #         0039: 405 - adds two nullable role-suspension settings; no triggers added [D]
 #         0040: 405 - state-only; columns relaxed by 0022
+#         0041: 406 - one current-membership assign trigger [D]
+#         0042: 418 - eleven event/snapshot guards and one snapshot commitment trigger [D]
+#         0043: 429 - eleven registration triggers [D]
+#         0044: 433 - four Birthing snapshot/terms triggers [D]
+#         0045: 433 + 25 = 458 - Circle kind (1), governed rule (6), request (4),
+#               decision (4), participation (5), ending (4), membership-end completeness (1) [D]
 # REQ-G1  the fifteen required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -71,6 +77,9 @@ from django.db import connection
 # EVIDENCE CLAIM: equality at the compared properties only. NOT complete database-state equivalence.
 FRAMEWORK_TABLES = ("django_content_type", "auth_permission")
 SEED_TABLES = ("core_role",)
+MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
+    "0045_sbg_governance_formation": {"core_governedrule": 1},
+}
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
                           "0024_s015_compact_commitment_preimages": 322, "0025_s015_application_routes": 354,
@@ -92,7 +101,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0041_r4s2_assign_current_membership": 406,
                           "0042_sb1_founding_terms_phases": 418,
                           "0043_p1_governed_registration": 429,
-                          "0044_sb2_birthing_snapshot": 433}
+                          "0044_sb2_birthing_snapshot": 433,
+                          "0045_sbg_governance_formation": 458}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 
 
@@ -171,6 +181,24 @@ def capture():
     return s
 
 
+def unexpected_data_rows(captured):
+    """Return row-count excesses beyond framework, ledger, and declared migration seed rows."""
+    head = max(
+        (name for app, name in captured["migrations"] if app == "core"),
+        default=None,
+    )
+    allowed_seed_rows = MIGRATION_SEED_ROW_COUNTS_BY_HEAD.get(head, {})
+    excluded_tables = set(FRAMEWORK_TABLES + SEED_TABLES + LEDGER_TABLES)
+    unexpected = {}
+    for table, count in captured["row_counts"].items():
+        if table in excluded_tables:
+            continue
+        extra = count - allowed_seed_rows.get(table, 0)
+        if extra > 0:
+            unexpected[table] = extra
+    return unexpected
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
@@ -196,10 +224,17 @@ def check_requirements(s, required_guardians):
     expected = expected_seed_rows()
     if s["core_role"] != expected:
         v.append("REQ-D1 core_role rows %s, required %s" % (s["core_role"], expected))
-    nonempty = {t: c for t, c in s["row_counts"].items()
-                if c and t not in FRAMEWORK_TABLES + SEED_TABLES + LEDGER_TABLES}
-    if nonempty:
-        v.append("REQ-D2 tables holding rows: %s" % dict(list(nonempty.items())[:15]))
+    expected_migration_seeds = MIGRATION_SEED_ROW_COUNTS_BY_HEAD.get(head, {})
+    seed_mismatches = {
+        table: (s["row_counts"].get(table, 0), count)
+        for table, count in expected_migration_seeds.items()
+        if s["row_counts"].get(table, 0) != count
+    }
+    if seed_mismatches:
+        v.append("REQ-D2 migration seed rows %s" % seed_mismatches)
+    unexpected = unexpected_data_rows(s)
+    if unexpected:
+        v.append("REQ-D2 tables holding rows: %s" % dict(list(unexpected.items())[:15]))
     if not s["content_types"] or not s["permissions"]:
         v.append("REQ-D3 framework tables empty")
     if s["public_register_insert"] is not False:

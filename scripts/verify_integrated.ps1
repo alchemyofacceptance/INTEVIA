@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0044_sb2_birthing_snapshot"
+$expectedCoreHead = "0045_sbg_governance_formation"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",
@@ -677,7 +677,8 @@ try {
         "tests.test_service_lifecycle",
         "tests.test_service_models",
         "tests.test_service_postgresql",
-        "tests.test_service_versions"
+        "tests.test_service_versions",
+        "tests.test_sbg_governance"
     )
 
     $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()

@@ -1,4 +1,4 @@
-"""Guardians for S012 migration 0016: operation order, dependencies, constraint catalogue, and rehearsal."""
+"""S012 migration-0016 guardians and Identity FK catalogue through the SB-G slice."""
 
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
@@ -426,6 +426,23 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("learnerregistration", "identity"),
     }
 
+    # D-S015-PKT-A-3, rule R-d, line 528: durable Identity referent attribution;
+    # severable resolution is a separate concern.
+    SBG_ADDITIONS = {
+        ("governedrule", "enterer_identity"),
+        ("circlejoinrequest", "enterer_identity"),
+        ("circleadmissiondecision", "actor"),
+        ("circleadmissiondecision", "composer_identity"),
+        ("circleadmissiondecision", "deciding_identity"),
+        ("circleadmissiondecision", "enterer_identity"),
+        ("circleparticipation", "actor"),
+        ("circleparticipation", "composer_identity"),
+        ("circleparticipation", "enterer_identity"),
+        ("circleparticipationend", "actor"),
+        ("circleparticipationend", "composer_identity"),
+        ("circleparticipationend", "enterer_identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -457,10 +474,12 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             self.S015_POST_0019_ADDITIONS,
             self.SB1_ADDITIONS,
             self.P1_ADDITIONS,
+            self.SBG_ADDITIONS,
         )
         self.assertEqual(len(self.S015_POST_0019_ADDITIONS), 37)
         self.assertEqual(len(self.SB1_ADDITIONS), 2)
         self.assertEqual(len(self.P1_ADDITIONS), 1)
+        self.assertEqual(len(self.SBG_ADDITIONS), 12)
         self.assertEqual(
             len(
                 self.BASE_IDENTITY_FKS
@@ -471,8 +490,9 @@ class IdentityFKCatalogueTests(TransactionTestCase):
                 | self.S015_POST_0019_ADDITIONS
                 | self.SB1_ADDITIONS
                 | self.P1_ADDITIONS
+                | self.SBG_ADDITIONS
             ),
-            96,
+            108,
         )
         for index, left in enumerate(declared_sets):
             for right in declared_sets[index + 1:]:
@@ -508,6 +528,7 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.S015_POST_0019_ADDITIONS
             | self.SB1_ADDITIONS
             | self.P1_ADDITIONS
+            | self.SBG_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 96)
+        self.assertEqual(len(live_fks), 108)

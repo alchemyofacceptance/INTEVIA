@@ -4,6 +4,8 @@ import importlib
 import json
 from queue import Queue
 from threading import Event, Thread
+from types import SimpleNamespace
+import unittest
 from unittest import skipUnless
 from unittest.mock import patch
 from uuid import uuid4
@@ -296,6 +298,58 @@ def _join_workers(workers):
     alive = [worker for worker in workers if worker.is_alive()]
     if alive:
         raise AssertionError(f"{len(alive)} concurrency witness worker(s) did not stop")
+
+
+class GovernanceGuardErrorTranslationTests(unittest.TestCase):
+    def test_guard_refusal_uses_database_primary_message_only(self):
+        code = S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING
+        command = SimpleNamespace(
+            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            living_organism_id=uuid4(),
+            effective_at=None,
+            received_at=None,
+        )
+        service = object.__new__(OrganismApplicationService)
+        service._alias = "default"
+        organism = SimpleNamespace(pk=37)
+
+        matched_error = IntegrityError(
+            f"{code.value}\nCONTEXT: PL/pgSQL function s3fu_guard_gateway_effect() line 115 at RAISE",
+        )
+        matched_cause = RuntimeError("database driver exception")
+        matched_cause.diag = SimpleNamespace(message_primary=code.value)
+        matched_error.__cause__ = matched_cause
+        with (
+            patch.object(service, "_effect_gateway_version", side_effect=matched_error),
+            patch(
+                "src.intevia.services.organism_application_service.LivingOrganism.objects",
+            ) as organism_manager,
+            patch(
+                "src.intevia.services.organism_application_service."
+                "_governance_enabling_refusal_message",
+                return_value="authored readiness refusal",
+            ),
+        ):
+            organism_manager.using.return_value.get.return_value = organism
+            with self.assertRaises(S015ApplicationRefused) as mapped:
+                service.effect_gateway_version(command)
+
+        self.assertIs(mapped.exception.refusal_code, code)
+        self.assertEqual(str(mapped.exception), "authored readiness refusal")
+
+        unrelated_error = IntegrityError(
+            f"{code.value}\nCONTEXT: unrelated database failure",
+        )
+        unrelated_cause = RuntimeError("database driver exception")
+        unrelated_cause.diag = SimpleNamespace(
+            message_primary="unrelated database failure",
+        )
+        unrelated_error.__cause__ = unrelated_cause
+        with patch.object(service, "_effect_gateway_version", side_effect=unrelated_error):
+            with self.assertRaises(IntegrityError) as re_raised:
+                service.effect_gateway_version(command)
+
+        self.assertIs(re_raised.exception, unrelated_error)
 
 
 @POSTGRESQL_ONLY
@@ -987,22 +1041,23 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         before = _counts()
         with self.assertRaises(S015AuthorityDenied) as refused:
             birth(route, suffix="governance-yes")
-        self.assertIs(refused.exception.refusal_code, S015AuthorityRefusalCode.SB_IL_GOVCONST)
+        self.assertIs(
+            refused.exception.refusal_code,
+            S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+        )
         _assert_birthing_refusal_record(
             self,
             route,
             "governance-yes",
             refused.exception,
-            S015AuthorityRefusalCode.SB_IL_GOVCONST,
+            S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
             before,
         )
         self.assertEqual(
             str(refused.exception),
-            "The LO was not born and nothing changed. Its GOVERNANCE choice in effect is Yes, "
-            "so Birthing needs its GOVERNANCE Circle and that Circle's constitutional admission "
-            "route to be established, and those records cannot be made in this release. This is "
-            "a known limit of the current build, not a refusal of the LO's choice; it lifts when "
-            "GOVERNANCE formation is delivered.",
+            "The LO was not born and nothing changed. GOVERNANCE is on for this LO, so it needs "
+            "its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then try again. "
+            "Creating the Circle early in formation avoids this.",
         )
         self.assertTrue(
             LivingOrganismEvent.objects.filter(
@@ -1283,17 +1338,31 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             route.application_service.effect_gateway_version(
                 _governance_effect_command(route, draft.version_uuid, "after-birth")
             )
-        self.assertIs(refused.exception.refusal_code, S015AuthorityRefusalCode.SB_IL_GOVENABLE)
+        self.assertIs(
+            refused.exception.refusal_code,
+            S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+        )
         self.assertEqual(
             str(refused.exception),
-            "SB-IL-GOVENABLE: GOVERNANCE was not switched on and nothing changed: this LO's "
-            "recorded choice remains No. Switching GOVERNANCE on after Birthing needs the "
-            "GOVERNANCE Circle, its constitutional admission route and its first participants "
-            "to be established, and the route that does this is not yet available in this "
-            "release. This is a known limit of the current build, not a refusal of the LO's "
-            "choice; the LO's other settings can still be changed.",
+            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this LO, "
+            "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
+            "try again. Creating the Circle early in formation avoids this.",
         )
-        self.assertEqual(_counts(), before)
+        self.assertEqual(
+            _counts(),
+            (before[0], before[1], before[2], before[3] + 1, before[4]),
+        )
+        refusal_decision = AuthorityDecision.objects.get(
+            actor=route.founder,
+            request_reference=(
+                f"sb2:governance-effect:after-birth:{route.tag}"
+            ),
+        )
+        self.assertEqual(refusal_decision.outcome, "REFUSED")
+        self.assertEqual(
+            refusal_decision.refusal_code,
+            S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING.value,
+        )
 
         effect_gateway(
             route.application_service,
@@ -1363,7 +1432,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.addCleanup(restore_migrations)
         lower_targets = [
             node for node in original_targets
-            if node != ("core", "0044_sb2_birthing_snapshot")
+            if node != ("core", "0045_sbg_governance_formation")
         ]
         lower_targets.append(("core", "0043_p1_governed_registration"))
         executor.migrate(lower_targets)
@@ -1412,6 +1481,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         workers = []
         effect_entered, release_effect = Event(), Event()
         birth_entered, release_birth = Event(), Event()
+        effect_entered_after_birth, release_effect_after_birth = Event(), Event()
         try:
             first = prepare_route(governance_enabled=False)
             first_draft = _governance_draft(first, True, "concurrent-before-birth")
@@ -1442,7 +1512,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 _worker_result(birthing_thread, birthing_results)
             self.assertIs(
                 first_refusal.exception.refusal_code,
-                S015AuthorityRefusalCode.SB_IL_GOVCONST,
+                S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
             )
             self.assertFalse(
                 LivingOrganismEvent.objects.filter(
@@ -1472,7 +1542,15 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             self.assertTrue(birth_entered.wait(10))
             birth_pid = birth_pids.get(timeout=10)
             effect_thread, effect_results, effect_pids = _start_worker(
-                lambda: second.application_service.effect_gateway_version(
+                lambda: OrganismApplicationService(
+                    authority=S015Authority(
+                        provider=_PausedProductionProvider(
+                            effect_entered_after_birth,
+                            release_effect_after_birth,
+                        ),
+                    ),
+                    clock=database_now,
+                ).effect_gateway_version(
                     _governance_effect_command(second, second_draft.version_uuid, "concurrent-after-birth")
                 )
             )
@@ -1482,11 +1560,29 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 wait_until_blocked(cursor, effect_pid, birth_pid, "core_identity")
             release_birth.set()
             _worker_result(birth_thread, birth_results)
+            self.assertTrue(effect_entered_after_birth.wait(10))
+            before_second_effect = _counts()
+            release_effect_after_birth.set()
             with self.assertRaises(S015ApplicationRefused) as second_refusal:
                 _worker_result(effect_thread, effect_results)
             self.assertIs(
                 second_refusal.exception.refusal_code,
-                S015AuthorityRefusalCode.SB_IL_GOVENABLE,
+                S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+            )
+            self.assertEqual(
+                str(second_refusal.exception),
+                "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this "
+                "LO, so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, "
+                "then try again. Creating the Circle early in formation avoids this.",
+            )
+            self.assertEqual(_counts(), before_second_effect)
+            self.assertFalse(
+                AuthorityDecision.objects.filter(
+                    actor=second.founder,
+                    request_reference=(
+                        f"sb2:governance-effect:concurrent-after-birth:{second.tag}"
+                    ),
+                ).exists(),
             )
             self.assertTrue(
                 LivingOrganismEvent.objects.filter(
@@ -1495,6 +1591,13 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 ).exists()
             )
         finally:
-            for event in (effect_entered, release_effect, birth_entered, release_birth):
+            for event in (
+                effect_entered,
+                release_effect,
+                birth_entered,
+                release_birth,
+                effect_entered_after_birth,
+                release_effect_after_birth,
+            ):
                 event.set()
             _join_workers(workers)

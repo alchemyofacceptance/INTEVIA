@@ -587,14 +587,14 @@ class SB1GovernancePhaseTests(TransactionTestCase):
         self.assertEqual(self._current_phase(ids, BIRTHING_AT - timedelta(seconds=1)), "GERMINATING")
         self.assertEqual(self._current_phase(ids, BIRTHING_AT), "BIRTHING")
 
-    def test_governance_enabled_refuses_birthing_as_known_limit_without_writes(self):
+    def test_governance_enabled_without_governance_circle_refuses_birthing_without_writes(self):
         ids = self._prepared_organism(True)
         before = LivingOrganismEvent.objects.filter(
             living_organism_id=ids["lo"], action="PHASE_ADVANCE",
         ).count()
         with self.assertRaisesMessage(
             IntegrityError,
-            "SB-IL-GOVCONST: The phase was not advanced and nothing changed: the LO remains in Germinating.",
+            "SBG_GOVERNANCE_CIRCLE_MISSING",
         ):
             self._attempt_birthing(ids)
         self.assertEqual(
@@ -617,7 +617,7 @@ class SB1GovernancePhaseTests(TransactionTestCase):
         for value, error in (
             (NO_GOVERNANCE_CONFIGURATION, "PHASE_CONDITION_UNMET: an effective governance configuration"),
             (None, "PHASE_CONDITION_UNMET: GOVERNANCE choice"),
-            (True, "SB-IL-GOVCONST"),
+            (True, "SBG_GOVERNANCE_CIRCLE_MISSING"),
             (False, None),
         ):
             with self.subTest(governance_enabled=value):
@@ -1148,7 +1148,7 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         self.assertEqual(event.evidence_reference, "formation-phase:CONCEIVING->GERMINATING")
         self.assertIsNone(event.temporal_basis_kind)
         self.assertIsNone(event.temporal_basis_reference)
-        self.assertEqual(decision.provider_version, "R6.0")
+        self.assertEqual(decision.provider_version, "R7.0")
         self.assertLessEqual(len(result.authority_reference), 255)
         self.assertEqual(
             decision.command_subtype,
@@ -1265,7 +1265,7 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
             (NO_GOVERNANCE_CONFIGURATION, S015AuthorityRefusalCode.PHASE_CONDITION_UNMET),
             (None, S015AuthorityRefusalCode.PHASE_CONDITION_UNMET),
             (False, None),
-            (True, S015AuthorityRefusalCode.SB_IL_GOVCONST),
+            (True, S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING),
         )
         for governance, expected_code in cases:
             outcomes = []
@@ -1326,13 +1326,10 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
                         elif governance is True:
                             self.assertEqual(
                                 str(refused.exception),
-                                "The phase was not advanced and nothing changed: this LO has "
-                                "GOVERNANCE enabled, so moving to Birthing needs its GOVERNANCE "
-                                "Circle and that Circle's constitutional admission route, with its "
-                                "deciding body, to be prescribed, adopted and recorded. Those records "
-                                "cannot be made in this release. This is a known limit of the current "
-                                "build, not a refusal of the LO's choice; it lifts when GOVERNANCE "
-                                "formation is delivered. The LO's other formation work can continue.",
+                                "The phase was not advanced and nothing changed. GOVERNANCE is on "
+                                "for this LO, so it needs its GOVERNANCE Circle first. Create the "
+                                "LO's GOVERNANCE Circle, then try again. Creating the Circle early "
+                                "in formation avoids this.",
                             )
                         elif governance is NO_GOVERNANCE_CONFIGURATION:
                             self.assertEqual(
@@ -1815,7 +1812,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         self.assertEqual(assignment_event.action, "ASSIGN")
         self.assertEqual(assignment_event.resulting_state, "ACTIVE")
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R6.0")
+        self.assertEqual(decision_record.provider_version, "R7.0")
         self.assertEqual(decision_record.authority_reference, result.authority_reference)
         self.assertLessEqual(len(result.authority_reference), 255)
         maximum_reference_length = len("s015a1:") + len(canonical_json_bytes({

@@ -118,30 +118,21 @@ def _assert_catalog_restored(test_case, reference):
         "table set not restored",
     )
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0044_sb2_birthing_snapshot")
-    test_case.assertEqual(len(after["triggers"]), 433)
+    test_case.assertEqual(head, "0045_sbg_governance_formation")
+    test_case.assertEqual(len(after["triggers"]), 458)
     test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
 
 
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0044_sb2_birthing_snapshot")
-    test_case.assertEqual(len(reference["triggers"]), 433)
-    ignored_tables = (
-        isolation_state.FRAMEWORK_TABLES
-        + isolation_state.SEED_TABLES
-        + isolation_state.LEDGER_TABLES
-    )
-    nonempty = {
-        table: count
-        for table, count in reference["row_counts"].items()
-        if count and table not in ignored_tables
-    }
+    test_case.assertEqual(head, "0045_sbg_governance_formation")
+    test_case.assertEqual(len(reference["triggers"]), 458)
+    nonempty = isolation_state.unexpected_data_rows(reference)
     test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
     for table in LEGACY_EMPTY_TABLES:
         test_case.assertIn(table, reference["row_counts"])
-        test_case.assertEqual(reference["row_counts"][table], 0, f"{table} must be empty before downgrade")
+        test_case.assertEqual(nonempty.get(table, 0), 0, f"{table} must be empty before downgrade")
     test_case.addCleanup(_assert_catalog_restored, test_case, reference)
     old_apps = migrate_to_target_with_restore(test_case, LEGACY_TARGET)
     with transaction.atomic(), connection.cursor() as cursor:
@@ -331,22 +322,13 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
         head = current_core_leaf(connection)[0][1]
-        self.assertEqual(head, "0044_sb2_birthing_snapshot")
-        self.assertEqual(len(reference["triggers"]), 433)
-        ignored_tables = (
-            isolation_state.FRAMEWORK_TABLES
-            + isolation_state.SEED_TABLES
-            + isolation_state.LEDGER_TABLES
-        )
-        nonempty = {
-            table: count
-            for table, count in reference["row_counts"].items()
-            if count and table not in ignored_tables
-        }
+        self.assertEqual(head, "0045_sbg_governance_formation")
+        self.assertEqual(len(reference["triggers"]), 458)
+        nonempty = isolation_state.unexpected_data_rows(reference)
         self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")
         for table in LEGACY_EMPTY_TABLES:
             self.assertIn(table, reference["row_counts"])
-            self.assertEqual(reference["row_counts"][table], 0, f"{table} must be empty before downgrade")
+            self.assertEqual(nonempty.get(table, 0), 0, f"{table} must be empty before downgrade")
         self.addCleanup(_assert_catalog_restored, self, reference)
         global T0, NOW
         T0, NOW = FIXTURE_T0, FIXTURE_NOW

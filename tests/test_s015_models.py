@@ -14,19 +14,19 @@ from core.models import (
 
 
 class S015ModelContractTests(SimpleTestCase):
-    def test_guardian_23_matrix_is_exactly_eight_models_and_51_columns(self):
+    def test_guardian_23_matrix_is_exactly_eight_models_and_52_columns(self):
         expected = {
             AuthorityPrincipal: 3,
             AuthorityBasis: 13,
             EmergencyAuthorityEnvelope: 9,
             GovernedVisibilityGrant: 11,
             LivingOrganism: 6,
-            Circle: 2,
+            Circle: 3,
             OrganismMembership: 3,
             ContextualRoleAssignment: 4,
         }
         self.assertEqual(len(expected), 8)
-        self.assertEqual(sum(expected.values()), 51)
+        self.assertEqual(sum(expected.values()), 52)
         for model, count in expected.items():
             self.assertEqual(len(model.S015_IMMUTABLE_FIELDS), count)
 

@@ -1,3 +1,5 @@
+"""S007 PostgreSQL and concurrency guardians, including the Identity FK catalogue through SB-G."""
+
 from threading import Barrier, Lock, Thread
 from unittest import skipUnless
 from uuid import uuid4
@@ -258,6 +260,19 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             ("core_planningclassificationevent", "composer_identity_id"),
             ("core_identityresolution", "identity_id"),
             ("core_identityresolutionsevered", "identity_id"),
+            # D-S015-PKT-A-3, rule R-d, line 528: preserve durable referent attribution.
+            ("core_governedrule", "enterer_identity_id"),
+            ("core_circlejoinrequest", "enterer_identity_id"),
+            ("core_circleadmissiondecision", "actor_id"),
+            ("core_circleadmissiondecision", "composer_identity_id"),
+            ("core_circleadmissiondecision", "deciding_identity_id"),
+            ("core_circleadmissiondecision", "enterer_identity_id"),
+            ("core_circleparticipation", "actor_id"),
+            ("core_circleparticipation", "composer_identity_id"),
+            ("core_circleparticipation", "enterer_identity_id"),
+            ("core_circleparticipationend", "actor_id"),
+            ("core_circleparticipationend", "composer_identity_id"),
+            ("core_circleparticipationend", "enterer_identity_id"),
         }
         with connection.cursor() as cursor:
             cursor.execute(
@@ -283,7 +298,7 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             )
             observed = set(cursor.fetchall())
         self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 124)
+        self.assertEqual(len(observed), 136)
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")

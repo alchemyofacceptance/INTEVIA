@@ -55,7 +55,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0044_sb2_birthing_snapshot"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0045_sbg_governance_formation"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -101,7 +101,7 @@ class ApplicationLineageSchema(TransactionTestCase):
         admission = importlib.import_module("core.migrations.0031_s1fu_admission_actor_requirement")
         authority = importlib.import_module("core.migrations.0033_s015_application_authority")
         sb1 = importlib.import_module("core.migrations.0042_sb1_founding_terms_phases")
-        birthing = importlib.import_module("core.migrations.0044_sb2_birthing_snapshot")
+        formation = importlib.import_module("core.migrations.0045_sbg_governance_formation")
         declared = {
             name: next(sql for sql in routes.INSTALL_SQL if sql.lstrip().startswith(f"CREATE FUNCTION public.{name}()"))
             for name in ("s3_guard_lo_effect", "s3_guard_decision_effect", "s3_guard_effect",
@@ -128,7 +128,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s1fu_guard_admission_route": admission.ADMISSION_ROUTE_SQL,
             "s3_guard_lo_actor": sb1.NEW_S3_GUARD_LO_ACTOR_BODY,
             "s1fu_guard_admission_route": sb1.NEW_S1FU_GUARD_ADMISSION_ROUTE_BODY,
-            "s3fu_guard_gateway_effect": birthing.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
+            "s3fu_guard_gateway_effect": formation.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
         })
         declared_triggers = {}
 
@@ -343,6 +343,106 @@ class ApplicationLineageSchema(TransactionTestCase):
                         expected = re.sub(rf" ON (?:pg_temp(?:_\d+)?\.)?{shadow} ",
                                           f" ON public.{table} ", cursor.fetchone()[0], count=1)
                         self.assertEqual(installed_triggers[table, name], expected)
+
+    def test_sbg_0045_guard_census_matches_migration_declarations(self):
+        formation = importlib.import_module("core.migrations.0045_sbg_governance_formation")
+        declared_bodies = dict(formation.BUILT_FUNCTION_BODIES)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.proname, p.prosrc "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.proname = ANY(%s)",
+                [list(declared_bodies)],
+            )
+            installed_bodies = dict(cursor.fetchall())
+        self.assertEqual(set(installed_bodies), set(declared_bodies))
+        for name, body in declared_bodies.items():
+            with self.subTest(function=name):
+                self.assertEqual(installed_bodies[name], body)
+
+        expected_triggers = {}
+        for statement in formation.SCHEMA_SQL:
+            match = re.match(
+                r"\s*CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+(\w+).*?\bON\s+public\.(\w+)\b",
+                statement,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                name, table = match.groups()
+                expected_triggers[table, name] = statement
+        self.assertEqual(len(expected_triggers), 25)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid) "
+                "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND t.tgname = ANY(%s) "
+                "AND NOT t.tgisinternal",
+                [sorted(name for _, name in expected_triggers)],
+            )
+            installed_triggers = {
+                (table, name): definition
+                for table, name, definition in cursor.fetchall()
+            }
+        self.assertEqual(set(installed_triggers), set(expected_triggers))
+
+        with transaction.atomic(), connection.cursor() as cursor:
+            for statement in formation.FUNCTION_SQL:
+                match = re.match(
+                    r"\s*CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.(\w+)\(",
+                    statement,
+                    re.IGNORECASE,
+                )
+                self.assertIsNotNone(match, statement[:120])
+                name = match.group(1)
+                cursor.execute(statement.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
+                cursor.execute(
+                    "SELECT pg_get_functiondef(p.oid) "
+                    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                    "WHERE n.oid = pg_my_temp_schema() AND p.proname = %s",
+                    [name],
+                )
+                source_definition = re.sub(
+                    r"(?<=FUNCTION )pg_temp(?:_\d+)?\.",
+                    "public.",
+                    cursor.fetchone()[0],
+                    count=1,
+                )
+                cursor.execute(
+                    "SELECT pg_get_functiondef(p.oid) "
+                    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                    "WHERE n.nspname = 'public' AND p.proname = %s",
+                    [name],
+                )
+                self.assertEqual(cursor.fetchone()[0], source_definition)
+
+            temp_tables = {}
+            for table, name in expected_triggers:
+                shadow = temp_tables.get(table)
+                if shadow is None:
+                    shadow = f"sbg_census_{table}"
+                    cursor.execute(
+                        f"CREATE TEMP TABLE {shadow} (LIKE public.{table}) ON COMMIT DROP"
+                    )
+                    temp_tables[table] = shadow
+                ddl = expected_triggers[table, name].replace(
+                    f"ON public.{table} ",
+                    f"ON pg_temp.{shadow} ",
+                    1,
+                )
+                cursor.execute(ddl)
+                cursor.execute(
+                    "SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t "
+                    "WHERE t.tgrelid = %s::regclass AND t.tgname = %s",
+                    [f"pg_temp.{shadow}", name],
+                )
+                source_definition = re.sub(
+                    rf" ON (?:pg_temp(?:_\d+)?\.)?{shadow} ",
+                    f" ON public.{table} ",
+                    cursor.fetchone()[0],
+                    count=1,
+                )
+                self.assertEqual(installed_triggers[table, name], source_definition)
 
     def test_part_and_content_vocab_admits_new_table_only(self):
         class Rollback(Exception):
@@ -810,16 +910,16 @@ class ApplicationSchemaGuards(TransactionTestCase):
             )
             self.assertEqual(snapshot(cursor, event_id, self.member_id)[0][-1], "PARTY")
 
-    def test_c4_other_nine_chains_reject_lo_token_and_lo_requires_effect(self):
+    def test_c4_eight_other_chains_reject_lo_token_and_circle_requires_transport_capacity(self):
         with transaction.atomic(), connection.cursor() as cursor:
             add_remaining_aggregates(cursor, self.ids, self.tag)
             cursor.execute("SELECT event_table FROM public.s015_anchor_map() "
                            "WHERE event_table <> %s AND event_table NOT IN "
                            "('core_applicationlineageevent', 'core_livingorganismevent', "
-                           "'core_contextualroleassignmentstateevent')", (EVENT_TABLE,))
+                           "'core_contextualroleassignmentstateevent', 'core_circlestateevent')", (EVENT_TABLE,))
             tables = [row[0] for row in cursor.fetchall()]
-        # The former ten-chain witness included Coordinator, where LO attribution is now governed by S2B; retain the nine other vocabulary checks.
-        self.assertEqual(len(tables), 9)
+        # The former ten-chain witness included Coordinator and Circle; their LO actor vocabularies are governed separately.
+        self.assertEqual(len(tables), 8)
         for table in tables:
             with self.subTest(table=table):
                 with self.assertRaises((DatabaseError, IntegrityError)) as error:
@@ -829,6 +929,119 @@ class ApplicationSchemaGuards(TransactionTestCase):
                             "actor_state": "LIVING_ORGANISM", "actor_capacity": "NA_NO_PARTY",
                         })
                 self.assertIn("actor_state_vocab", str(error.exception))
+        circle_uuid = str(uuid.uuid4())
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO public.core_circle
+                    (circle_uuid, parent_organism_id, kind, state,
+                     current_state_effective_at, state_known_at,
+                     state_source_event_set_fingerprint, founding_reference, created_at)
+                VALUES (%s, %s, 'GENERIC', 'DORMANT', %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                [
+                    circle_uuid,
+                    self.ids["lo"],
+                    T0,
+                    T0,
+                    empty_fp(cursor, "core_circle", circle_uuid),
+                    f"s015d1:{'a' * 64}",
+                    T0,
+                ],
+            )
+            circle_id = cursor.fetchone()[0]
+            append_event(
+                cursor,
+                "core_circlestateevent",
+                circle_id,
+                1,
+                "CREATE_DORMANT",
+                None,
+                "DORMANT",
+                None,
+                self.ids["basis"],
+                f"circle-lo-actor-{self.tag}",
+                eff=T0,
+                occ=T0,
+                rec=T0,
+                overrides={
+                    "actor_state": "LIVING_ORGANISM",
+                    "actor_id": None,
+                    "actor_access_epoch": None,
+                    "actor_capacity": "STANDING",
+                    "entry_mode": "TRANSPORT",
+                    "enterer_identity_id": self.ids["identity"],
+                    "composing_rule_state": "NA_TRANSPORT",
+                    "composing_rule_reference": None,
+                    "composer_state": "NA_TRANSPORT",
+                    "composer_identity_id": None,
+                },
+            )
+            refresh(cursor, "core_circle", circle_id, state_at=T0)
+            cursor.execute(
+                "SELECT actor_state, actor_capacity, entry_mode FROM public.core_circlestateevent "
+                "WHERE circle_id = %s AND sequence = 1",
+                [circle_id],
+            )
+            self.assertEqual(
+                cursor.fetchone(),
+                ("LIVING_ORGANISM", "STANDING", "TRANSPORT"),
+            )
+        malformed_uuid = str(uuid.uuid4())
+        with self.assertRaises(IntegrityError) as capacity_error:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO public.core_circle
+                        (circle_uuid, parent_organism_id, kind, state,
+                         current_state_effective_at, state_known_at,
+                         state_source_event_set_fingerprint, founding_reference, created_at)
+                    VALUES (%s, %s, 'GENERIC', 'DORMANT', %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    [
+                        malformed_uuid,
+                        self.ids["lo"],
+                        T0,
+                        T0,
+                        empty_fp(cursor, "core_circle", malformed_uuid),
+                        f"s015d1:{'b' * 64}",
+                        T0,
+                    ],
+                )
+                malformed_circle_id = cursor.fetchone()[0]
+                append_event(
+                    cursor,
+                    "core_circlestateevent",
+                    malformed_circle_id,
+                    1,
+                    "CREATE_DORMANT",
+                    None,
+                    "DORMANT",
+                    None,
+                    self.ids["basis"],
+                    f"circle-lo-invalid-capacity-{self.tag}",
+                    eff=T0,
+                    occ=T0,
+                    rec=T0,
+                    overrides={
+                        "actor_state": "LIVING_ORGANISM",
+                        "actor_id": None,
+                        "actor_access_epoch": None,
+                        "actor_capacity": "NA_NO_PARTY",
+                        "entry_mode": "TRANSPORT",
+                        "enterer_identity_id": self.ids["identity"],
+                        "composing_rule_state": "NA_TRANSPORT",
+                        "composing_rule_reference": None,
+                        "composer_state": "NA_TRANSPORT",
+                        "composer_identity_id": None,
+                    },
+                )
+        self.assertIn(
+            "s015_0022_circlestateevent_actor_capacity_state_ck",
+            str(capacity_error.exception),
+        )
         with self.assertRaisesMessage(IntegrityError, "S3FU gateway effect: same-state event without effect action"):
             with transaction.atomic(), connection.cursor() as cursor:
                 append_event(cursor, "core_livingorganismevent", self.ids["lo"], self.gateway["head_sequence"] + 1,

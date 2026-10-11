@@ -101,7 +101,8 @@ $fullSuiteParityLabels = @(
     "tests.test_service_lifecycle",
     "tests.test_service_models",
     "tests.test_service_postgresql",
-    "tests.test_service_versions"
+    "tests.test_service_versions",
+    "tests.test_sbg_governance"
 )
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
@@ -420,7 +421,7 @@ try {
         if ($Labels.Count -ne $fullSuiteParityLabels.Count -or
             @($Labels | Where-Object { $_ -cnotin $fullSuiteParityLabels }).Count -gt 0 -or
             @($fullSuiteParityLabels | Where-Object { $_ -cnotin $Labels }).Count -gt 0) {
-            throw "full-suite parity mode requires exactly the commissioned 89 verification entries"
+            throw "full-suite parity mode requires exactly the commissioned 90 verification entries"
         }
     }
     else {
@@ -511,7 +512,7 @@ try {
     $env:VERIFICATION_RUN_NONCE = $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0044_sb2_birthing_snapshot"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0045_sbg_governance_formation"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore

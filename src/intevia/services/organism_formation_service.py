@@ -19,6 +19,7 @@ from core.models import (
     ContextualRoleAssignment,
     EssentialCoverageCase,
     EssentialCoverageRequirement,
+    GovernedRule,
     Identity,
     LivingOrganism,
     LivingOrganismEvent,
@@ -78,6 +79,176 @@ _COMMAND_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:COMMAND:v1\x00"
 _LINEAGE_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:LINEAGE:v1\x00"
 _ACTION = OrganismAction.FOUND_LIVING_ORGANISM
 _NAME_CONSTRAINT = "core_livingorganism_slug_key"
+_SBG_ROUTE_BODIES = {
+    "ELECTION": {"body:LO_MEMBERSHIP"},
+    "COOPTION": {"body:GOVERNANCE"},
+    "APPOINTMENT": {"office:LO_COORDINATOR"},
+}
+
+
+def _sbg_arrangement_condition(
+    *,
+    database_alias: str,
+    organism: LivingOrganism,
+    effective_at: datetime,
+    recorded_at: datetime,
+    code: S015AuthorityRefusalCode,
+) -> str:
+    rule = GovernedRule.objects.using(database_alias).filter(
+        scope_kind="LIVING_ORGANISM",
+        scope_organism=organism,
+        code="GOVERNANCE_CONSTITUTION",
+        effective_from__lte=effective_at,
+        recorded_at__lte=recorded_at,
+    ).order_by("-effective_from", "-recorded_at", "-version").first()
+    body = None if rule is None else rule.body
+    if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
+        if type(body) is not dict:
+            return "a field this release does not record"
+        if type(body.get("officer_roles")) is not list or body.get("officer_roles"):
+            return "officer roles"
+        if body.get("election_schedule") is not None:
+            return "an election schedule"
+        for seat in body.get("seats", []):
+            if type(seat) is dict:
+                seat_id = seat.get("seat_id", "unknown")
+                if seat.get("term") is not None:
+                    return f"a term for seat {seat_id}"
+                if seat.get("vacancy_rule") != "BY_SEAT_ROUTE":
+                    return "a vacancy rule other than filling the seat by its own route"
+        return "a field this release does not record"
+    if code is S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED:
+        if type(body) is dict and type(body.get("seats")) is list:
+            for seat in body["seats"]:
+                if type(seat) is dict and seat.get("eligibility") != "LO_MEMBER":
+                    return str(seat.get("seat_id", "the requested seat"))
+        raise RuntimeError("SB-G readiness rejected eligibility without identifying a seat")
+    if type(body) is not dict:
+        return "the arrangement has no valid body"
+    if type(body.get("seats")) is not list:
+        return "the arrangement has no valid seat list"
+    if not body["seats"]:
+        return "it has no seats"
+    seen: set[object] = set()
+    in_effect = False
+    for seat in body["seats"]:
+        if type(seat) is not dict:
+            return "a seat is incomplete"
+        seat_id = seat.get("seat_id")
+        route = seat.get("admission_route")
+        deciding_body = seat.get("deciding_body")
+        if type(seat_id) is not str:
+            return "a seat has no valid seat identifier"
+        if type(route) is not str or route not in {
+            "ELECTION", "COOPTION", "APPOINTMENT", "EX_OFFICIO",
+        }:
+            return f"seat {seat_id} names no admission route"
+        if type(deciding_body) is not str or not deciding_body:
+            return f"seat {seat_id} names no deciding body"
+        if route in _SBG_ROUTE_BODIES:
+            matching_body = deciding_body in _SBG_ROUTE_BODIES[route]
+            if route == "APPOINTMENT" and deciding_body.startswith("external:"):
+                matching_body = 0 < len(deciding_body[9:]) <= 120
+        elif route == "EX_OFFICIO" and deciding_body.startswith("office:"):
+            try:
+                role_uuid = UUID(deciding_body.removeprefix("office:"))
+                matching_body = str(role_uuid) == deciding_body.removeprefix("office:")
+            except ValueError:
+                matching_body = False
+        else:
+            matching_body = False
+        if not matching_body:
+            return f"seat {seat_id}'s deciding body does not match its admission route"
+        if seat_id in seen:
+            return "it contains duplicate seat identifiers"
+        seen.add(seat_id)
+        try:
+            seat_start = datetime.fromisoformat(seat["effective_from"].replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return f"seat {seat_id} has no valid start date"
+        if seat_start.tzinfo is None or seat_start.utcoffset() is None:
+            return f"seat {seat_id} has no valid start date"
+        in_effect = in_effect or seat_start <= effective_at
+    if not in_effect:
+        return "it has no seat in effect at this time"
+    return "the arrangement does not satisfy the requirements for a seat in effect at this time"
+
+
+def _sbg_readiness_message(
+    *,
+    code: S015AuthorityRefusalCode,
+    act: str,
+    database_alias: str,
+    organism: LivingOrganism,
+    effective_at: datetime,
+    recorded_at: datetime,
+) -> str | None:
+    opening = f"{act} and nothing changed."
+    if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
+        return (
+            f"{opening} GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first. "
+            "Create the LO's GOVERNANCE Circle, then try again. Creating the Circle early in "
+            "formation avoids this."
+        )
+    if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING:
+        return (
+            f"{opening} GOVERNANCE needs an adopted arrangement saying which seats exist, how each "
+            "is filled and who decides, and this LO has none in effect. Adopt an arrangement, then "
+            "try again. Adopting it before creating the Circle avoids this."
+        )
+    if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE:
+        condition = _sbg_arrangement_condition(
+            database_alias=database_alias,
+            organism=organism,
+            effective_at=effective_at,
+            recorded_at=recorded_at,
+            code=code,
+        )
+        return (
+            f"{opening} The arrangement is incomplete: {condition}. Adopt a corrected version, then "
+            "try again. Every seat needs an admission route and a deciding body that matches it."
+        )
+    if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
+        condition = _sbg_arrangement_condition(
+            database_alias=database_alias,
+            organism=organism,
+            effective_at=effective_at,
+            recorded_at=recorded_at,
+            code=code,
+        )
+        return (
+            f"No arrangement was adopted and nothing changed. The arrangement includes {condition}, "
+            "which this release cannot yet act on. Leave it out for now; it can be added by a later "
+            "version once the release that acts on it is delivered."
+        )
+    if code is S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED:
+        seat_id = _sbg_arrangement_condition(
+            database_alias=database_alias,
+            organism=organism,
+            effective_at=effective_at,
+            recorded_at=recorded_at,
+            code=code,
+        )
+        return (
+            f"No arrangement was adopted and nothing changed. Seat {seat_id} names an eligibility "
+            "rule this release cannot check; it can check only \"an active member of the LO\". Use "
+            "that rule for now; other eligibility rules arrive with the slices that can check them."
+        )
+    if code is S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE:
+        before_birthing = act == "The LO was not born"
+        next_step = (
+            "Take a seat before the LO is born, or adopt a version with a seat the "
+            "LO Coordinators appoint."
+            if before_birthing
+            else "Adopt a version with a seat the LO Coordinators appoint, then try again."
+        )
+        return (
+            f"{opening} Nobody holds a GOVERNANCE seat yet, and no seat in the arrangement can be "
+            "filled in this release: election seats wait for elections, co-option seats wait for an "
+            "active GOVERNANCE, and ex officio seats are not yet available. "
+            f"{next_step} The arrangement you adopted stays recorded and in effect."
+        )
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1145,12 +1316,20 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 "GOVERNANCE choice",
             )
         if configuration.governance_enabled:
-            return PhaseReadiness(
-                False,
-                current_phase,
-                S015AuthorityRefusalCode.SB_IL_GOVCONST,
-                "GOVERNANCE_CONSTITUTION",
-            )
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT public.sbg_governance_readiness(%s, %s, %s, %s)",
+                    [organism.pk, effective_at, evaluated_at, "PHASE_ADVANCE"],
+                )
+                row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("SB-G readiness function returned no row")
+            if row[0] is not None:
+                try:
+                    refusal_code = S015AuthorityRefusalCode(row[0])
+                except ValueError as exc:
+                    raise RuntimeError("SB-G readiness returned an unknown refusal code") from exc
+                return PhaseReadiness(False, current_phase, refusal_code, None)
         return PhaseReadiness(True, current_phase, None, None)
 
     def advance_phase(self, command: PhaseAdvanceCommand) -> PhaseAdvanceResult:
@@ -1258,8 +1437,12 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 if exc.refusal_code in {
                     S015AuthorityRefusalCode.PHASE_OUT_OF_ORDER,
                     S015AuthorityRefusalCode.PHASE_CONDITION_UNMET,
-                    S015AuthorityRefusalCode.SB_IL_GOVCONST,
                     S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED,
+                    S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+                    S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
+                    S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
+                    S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
+                    S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
                 }:
                     raise S015AuthorityDenied(
                         self._authored_refusal_message(
@@ -1478,15 +1661,16 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 "Nothing changed. This is a known limit, not a refusal of the act; it lifts when "
                 "DISCUSSION's CQ is delivered."
             )
-        if code is S015AuthorityRefusalCode.SB_IL_GOVCONST:
-            return (
-                "The phase was not advanced and nothing changed: this LO has GOVERNANCE enabled, so "
-                "moving to Birthing needs its GOVERNANCE Circle and that Circle's constitutional "
-                "admission route, with its deciding body, to be prescribed, adopted and recorded. "
-                "Those records cannot be made in this release. This is a known limit of the current "
-                "build, not a refusal of the LO's choice; it lifts when GOVERNANCE formation is "
-                "delivered. The LO's other formation work can continue."
-            )
+        sbg_message = _sbg_readiness_message(
+            code=code,
+            act="The phase was not advanced",
+            database_alias=self._alias,
+            organism=organism,
+            effective_at=effective_at,
+            recorded_at=evaluated_at,
+        )
+        if sbg_message is not None:
+            return sbg_message
         if to_phase == "GERMINATING":
             provision = "founding content (name and purpose)"
             return (
@@ -1726,9 +1910,14 @@ class OrganismBirthingService(_OrganismCommandService):
                     if exc.refusal_code in {
                         S015AuthorityRefusalCode.BIRTHING_PREREQUISITE_MISSING,
                         S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
-                        S015AuthorityRefusalCode.SB_IL_GOVCONST,
                         S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED,
                         S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
+                        S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+                        S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
+                        S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
+                        S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
+                        S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
+                        S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
                     }:
                         raise S015AuthorityDenied(
                             self._authored_refusal_message(
@@ -1774,6 +1963,15 @@ class OrganismBirthingService(_OrganismCommandService):
                     accepted_by_identity_id=organism.founder_identity_id,
                     recorded_at__lte=received_at,
                 ).order_by("-recorded_at", "-pk").first()
+                governance_rule = None
+                if configuration is not None and configuration.governance_enabled is True:
+                    governance_rule = GovernedRule.objects.using(self._alias).filter(
+                        scope_kind="LIVING_ORGANISM",
+                        scope_organism=organism,
+                        code="GOVERNANCE_CONSTITUTION",
+                        effective_from__lte=effective_at,
+                        recorded_at__lte=received_at,
+                    ).order_by("-effective_from", "-recorded_at", "-version").first()
                 if (
                     configuration is None
                     or settings_version is None
@@ -1801,7 +1999,11 @@ class OrganismBirthingService(_OrganismCommandService):
                     "formation_history_reference": {
                         "lo_chain_sequence_range": [1, predecessor.sequence],
                     },
-                    "governance_constitution": None,
+                    "governance_constitution": (
+                        None
+                        if governance_rule is None
+                        else f"rule:{governance_rule.rule_uuid}@{governance_rule.version}"
+                    ),
                 }
                 try:
                     LOBirthingSnapshot.objects.using(self._alias).create(
@@ -1937,14 +2139,16 @@ class OrganismBirthingService(_OrganismCommandService):
                     f"The LO was not born again and nothing changed: it was born on {born_date}. "
                     "An LO is born once."
                 )
-            if code is S015AuthorityRefusalCode.SB_IL_GOVCONST:
-                return (
-                    "The LO was not born and nothing changed. Its GOVERNANCE choice in effect is Yes, "
-                    "so Birthing needs its GOVERNANCE Circle and that Circle's constitutional admission "
-                    "route to be established, and those records cannot be made in this release. This is "
-                    "a known limit of the current build, not a refusal of the LO's choice; it lifts when "
-                    "GOVERNANCE formation is delivered."
-                )
+            sbg_message = _sbg_readiness_message(
+                code=code,
+                act="The LO was not born",
+                database_alias=self._alias,
+                organism=organism,
+                effective_at=effective_at,
+                recorded_at=received_at,
+            )
+            if sbg_message is not None:
+                return sbg_message
             if code is S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED:
                 return (
                     "This LO's electorate has more than one member, so this act needs the electorate's "

@@ -13,10 +13,13 @@ from core.models import (
     ApplicationDecision,
     ApplicationEngagement,
     ApplicationWithdrawal,
+    Circle,
+    CircleStateEvent,
     CSAAssignment,
     CSAAssignmentEnd,
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
+    CircleJoinRequest,
     Identity,
     LivingOrganism,
     LivingOrganismEvent,
@@ -159,6 +162,10 @@ _POST_ACTIONS = {
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.TRANSITION_MEMBERSHIP,
     OrganismAction.TRANSITION_LIVING_ORGANISM,
+    OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+    OrganismAction.CREATE_DORMANT_CIRCLE,
+    OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
+    OrganismAction.REQUEST_GOVERNANCE_SEAT,
 }
 
 
@@ -255,7 +262,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R6.0"
+    provider_version = "R7.0"
 
     def __init__(
         self,
@@ -288,9 +295,23 @@ class ProductionApplicationAuthorityProvider:
 
         phase_advance_subtype = f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/PHASE_ADVANCE"
         birthing_subtype = f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/BIRTHING"
+        governance_adoption_subtype = (
+            f"{OrganismAction.ADOPT_GOVERNING_INSTRUMENT.value}/GOVERNANCE_CONSTITUTION"
+        )
+        governance_circle_subtype = OrganismAction.CREATE_DORMANT_CIRCLE.value
+        governance_seating_subtype = OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
         if request.command_subtype != request.action.value and not (
             request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
             and request.command_subtype in {phase_advance_subtype, birthing_subtype}
+        ) and not (
+            request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT
+            and request.command_subtype == governance_adoption_subtype
+        ) and not (
+            request.action is OrganismAction.CREATE_DORMANT_CIRCLE
+            and request.command_subtype == governance_circle_subtype
+        ) and not (
+            request.action is OrganismAction.ADMIT_CIRCLE_PARTICIPANT
+            and request.command_subtype == governance_seating_subtype
         ):
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
         if request.action is OrganismAction.TRANSITION_MEMBERSHIP and (
@@ -373,6 +394,113 @@ class ProductionApplicationAuthorityProvider:
                         and valid_snapshot_uuid
                     )
                 if not valid_target:
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT:
+                if (
+                    request.command_subtype != governance_adoption_subtype
+                    or set(request.target) != {
+                        "action", "organism_uuid", "rule_uuid", "version", "source", "body",
+                        "effective_from",
+                    }
+                    or type(request.target.get("rule_uuid")) is not str
+                    or type(request.target.get("version")) is not int
+                    or request.target.get("version", 0) < 1
+                    or type(request.target.get("source")) is not str
+                    or type(request.target.get("body")) is not dict
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                try:
+                    rule_uuid = UUID(request.target["rule_uuid"])
+                except (TypeError, ValueError):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                if str(rule_uuid) != request.target["rule_uuid"]:
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.CREATE_DORMANT_CIRCLE:
+                if (
+                    request.command_subtype != governance_circle_subtype
+                    or set(request.target) != {"action", "organism_uuid", "circle_uuid", "kind"}
+                    or request.target.get("kind") != "GOVERNANCE"
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                try:
+                    circle_uuid = UUID(request.target["circle_uuid"])
+                except (KeyError, TypeError, ValueError):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                if str(circle_uuid) != request.target["circle_uuid"]:
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.REQUEST_GOVERNANCE_SEAT:
+                if (
+                    request.command_subtype != request.action.value
+                    or set(request.target) != {
+                        "action", "organism_uuid", "circle_uuid", "kind",
+                        "seat_rule_uuid", "seat_id", "applicant_identity_uuid",
+                    }
+                    or request.target.get("kind") != "GOVERNANCE"
+                    or type(request.target.get("seat_id")) is not str
+                    or request.target.get("applicant_identity_uuid")
+                    != str(request.actor_identity_id)
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                try:
+                    circle_uuid = UUID(request.target["circle_uuid"])
+                    rule_uuid = UUID(request.target["seat_rule_uuid"])
+                    applicant_uuid = UUID(request.target["applicant_identity_uuid"])
+                except (KeyError, TypeError, ValueError):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                if (
+                    str(circle_uuid) != request.target["circle_uuid"]
+                    or str(rule_uuid) != request.target["seat_rule_uuid"]
+                    or str(applicant_uuid) != request.target["applicant_identity_uuid"]
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.ADMIT_CIRCLE_PARTICIPANT:
+                founding_target_keys = {
+                    "action", "organism_uuid", "circle_uuid", "kind",
+                    "seat_rule_uuid", "seat_id", "route",
+                    "request_uuid", "applicant_identity_uuid",
+                }
+                constitutional_target_keys = founding_target_keys | {
+                    "constitutional_route", "request_uuid", "applicant_identity_uuid",
+                    "deciding_party", "outcome",
+                }
+                target_route = request.target.get("route")
+                if (
+                    request.command_subtype != governance_seating_subtype
+                    or request.target.get("kind") != "GOVERNANCE"
+                    or type(request.target.get("seat_id")) is not str
+                    or (
+                        target_route == "CIRCLE_FOUNDING"
+                        and set(request.target) != founding_target_keys
+                    )
+                    or (
+                        target_route == "GOVERNANCE_CONSTITUTIONAL"
+                        and (
+                            set(request.target) != constitutional_target_keys
+                            or request.target.get("constitutional_route") != "APPOINTMENT"
+                            or request.target.get("deciding_party") != "office:LO_COORDINATOR"
+                            or request.target.get("outcome") not in {"ACCEPT", "DECLINE"}
+                        )
+                    )
+                    or target_route not in {"CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL"}
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                try:
+                    circle_uuid = UUID(request.target["circle_uuid"])
+                    rule_uuid = UUID(request.target["seat_rule_uuid"])
+                    request_uuid = UUID(request.target["request_uuid"])
+                    applicant_identity_uuid = UUID(request.target["applicant_identity_uuid"])
+                    if (
+                        str(request_uuid) != request.target["request_uuid"]
+                        or str(applicant_identity_uuid)
+                        != request.target["applicant_identity_uuid"]
+                    ):
+                        raise ValueError
+                except (KeyError, TypeError, ValueError):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                if (
+                    str(circle_uuid) != request.target["circle_uuid"]
+                    or str(rule_uuid) != request.target["seat_rule_uuid"]
+                ):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action in _VERSION_SPECS:
                 if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
@@ -1275,9 +1403,23 @@ class ProductionApplicationAuthorityProvider:
     ) -> S015AuthorityResult:
         effective_at = request.effective_at
         evaluated_at = request.evaluated_at
+        lo_state = self._lo_state(organism, request)
+        if request.action is OrganismAction.REQUEST_GOVERNANCE_SEAT:
+            if lo_state in {"DORMANT", "CLOSED"}:
+                return self._refuse(request, S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE)
+            return self._qualify_governance_seat_request(request, organism)
+        if (
+            request.action in {
+                OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+                OrganismAction.CREATE_DORMANT_CIRCLE,
+                OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
+                OrganismAction.REQUEST_GOVERNANCE_SEAT,
+            }
+            and lo_state in {"DORMANT", "CLOSED"}
+        ):
+            return self._refuse(request, S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE)
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
-        lo_state = self._lo_state(organism, request)
         current_configuration = _effective_version(
             self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
             effective_at, evaluated_at,
@@ -1292,11 +1434,24 @@ class ProductionApplicationAuthorityProvider:
             and request.action in _VERSION_SPECS
             and current_configuration is not None
         )
+        formation_governance_act = (
+            lo_state == "FOUNDING_PENDING"
+            and request.action in {
+                OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+                OrganismAction.CREATE_DORMANT_CIRCLE,
+                OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
+            }
+        )
         if lo_state == "DORMANT":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state != "ACTIVE" and not first_configuration and not formation_gateway_change:
+        if (
+            lo_state != "ACTIVE"
+            and not first_configuration
+            and not formation_gateway_change
+            and not formation_governance_act
+        ):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
 
         membership = OrganismMembership.objects.using(self.database_alias).filter(
@@ -1310,6 +1465,50 @@ class ProductionApplicationAuthorityProvider:
             effective_at, evaluated_at,
         ) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+        if request.action is OrganismAction.ADMIT_CIRCLE_PARTICIPANT:
+            birthing_reference = self.birthing_source.reference_at(
+                organism.organism_id,
+                effective_at,
+                evaluated_at,
+            )
+            target = request.target or {}
+            if birthing_reference is None:
+                if (
+                    organism.founder_identity_id != request.actor_pk
+                    or lo_state in {"DORMANT", "CLOSED"}
+                ):
+                    return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+                if target.get("route") != "CIRCLE_FOUNDING":
+                    return self._refuse(
+                        request,
+                        S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE,
+                    )
+                return self._qualify_governance_founding_seating(request, organism)
+            if target.get("route") == "CIRCLE_FOUNDING":
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE,
+                )
+            office = self._effective_coordinator_office(request, membership)
+            if office is None:
+                return self._refuse(
+                    request,
+                    S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR,
+                )
+            return self._qualify_governance_constitutional_seating(request, organism)
+        if request.action in {
+            OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+            OrganismAction.CREATE_DORMANT_CIRCLE,
+        } and self.birthing_source.reference_at(
+            organism.organism_id,
+            effective_at,
+            evaluated_at,
+        ) is None:
+            if organism.founder_identity_id != request.actor_pk:
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+            if request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT:
+                return self._qualify_governance_adoption(request, organism)
+            return self._qualify_governance_circle_creation(request, organism)
         office = self._effective_coordinator_office(request, membership)
         if office is None:
             return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
@@ -1322,6 +1521,10 @@ class ProductionApplicationAuthorityProvider:
             f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/BIRTHING"
         ):
             return self._qualify_birthing(request, organism, office)
+        if request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT:
+            return self._qualify_governance_adoption(request, organism)
+        if request.action is OrganismAction.CREATE_DORMANT_CIRCLE:
+            return self._qualify_governance_circle_creation(request, organism)
         if request.action in _VERSION_SPECS:
             return self._qualify_gateway_change(request, organism, membership, office)
         return self._qualify_application_processing(request, organism, membership, office)
@@ -1424,11 +1627,14 @@ class ProductionApplicationAuthorityProvider:
                     facts={"p": "GOVERNANCE choice"},
                 )
             if configuration.governance_enabled:
-                return self._refuse(
-                    request,
-                    S015AuthorityRefusalCode.SB_IL_GOVCONST,
-                    facts={"p": f"{from_phase}->{to_phase}"},
+                readiness_refusal = self._sbg_governance_readiness(
+                    organism.pk,
+                    request.effective_at,
+                    request.evaluated_at,
+                    "PHASE_ADVANCE",
                 )
+                if readiness_refusal is not None:
+                    return self._refuse(request, readiness_refusal)
 
         return self._qualified(request, {
             "kind": "PHASE_ADVANCE",
@@ -1508,7 +1714,14 @@ class ProductionApplicationAuthorityProvider:
                 facts={"p": "an effective governance configuration"},
             )
         if configuration.governance_enabled:
-            return self._refuse(request, S015AuthorityRefusalCode.SB_IL_GOVCONST)
+            readiness_refusal = self._sbg_governance_readiness(
+                organism.pk,
+                effective_at,
+                evaluated_at,
+                "BIRTHING",
+            )
+            if readiness_refusal is not None:
+                return self._refuse(request, readiness_refusal)
 
         settings = _effective_version(
             self.database_alias,
@@ -1556,6 +1769,233 @@ class ProductionApplicationAuthorityProvider:
         if len("s015a1:") + len(canonical_json_bytes(facts)) > 255:
             return self._refuse(request, S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE)
         return self._qualified(request, facts)
+
+    def _qualify_governance_adoption(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        target = request.target
+        if target is None:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        birthing_reference = self.birthing_source.reference_at(
+            organism.organism_id,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        expected_source = (
+            "LO_PRESCRIPTION" if birthing_reference is not None else "FOUNDING_BODY_PRESCRIPTION"
+        )
+        if target.get("source") != expected_source:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        return self._qualified(request, {
+            "kind": "GOVERNANCE_CONSTITUTION",
+            "g": target["rule_uuid"],
+            "source": expected_source,
+        })
+
+    def _qualify_governance_founding_seating(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        target = request.target
+        if target is None:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if (
+            request.command_subtype
+            != OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
+            or target.get("action") != OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
+            or target.get("organism_uuid") != organism.organism_id
+            or target.get("kind") != "GOVERNANCE"
+            or target.get("route") != "CIRCLE_FOUNDING"
+            or target.get("applicant_identity_uuid") != str(request.actor_identity_id)
+        ):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if not self._governance_request_matches_target(request, organism, target):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
+            )
+        return self._qualified(request, {
+            "kind": "GOVERNANCE",
+            "route": "CIRCLE_FOUNDING",
+            "c": target["circle_uuid"],
+            "r": target["seat_rule_uuid"],
+            "s": target["seat_id"],
+            "q": target["request_uuid"],
+        })
+
+    def _governance_request_matches_target(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+        target: dict[str, object],
+    ) -> bool:
+        return CircleJoinRequest.objects.using(self.database_alias).filter(
+            request_uuid=target["request_uuid"],
+            circle__parent_organism=organism,
+            circle__circle_uuid=target["circle_uuid"],
+            membership__identity__identity_id=target["applicant_identity_uuid"],
+            seat_rule_uuid=target["seat_rule_uuid"],
+            seat_id=target["seat_id"],
+            initiated_by="APPLICANT",
+            effective_at__lte=request.effective_at,
+            received_at__lte=request.evaluated_at,
+            recorded_at__lte=request.evaluated_at,
+        ).exists()
+
+    def _qualify_governance_seat_request(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        target = request.target
+        if target is None or target.get("applicant_identity_uuid") != str(
+            request.actor_identity_id
+        ):
+            return self._refuse(request, S015AuthorityRefusalCode.E_NOT_APPLICANT)
+        membership = OrganismMembership.objects.using(self.database_alias).filter(
+            identity_id=request.actor_pk,
+            living_organism=organism,
+        ).first()
+        if (
+            membership is None
+            or not self._locked_heads_match(request, membership)
+            or _fold_state(
+                self.database_alias,
+                "core_organismmembership",
+                membership.pk,
+                request.effective_at,
+                request.evaluated_at,
+            ) != "ACTIVE"
+        ):
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
+            )
+        return self._qualified(request, {
+            "kind": "GOVERNANCE_SEAT_REQUEST",
+            "c": target["circle_uuid"],
+            "r": target["seat_rule_uuid"],
+            "s": target["seat_id"],
+        })
+
+    def _qualify_governance_constitutional_seating(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        target = request.target
+        if target is None:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if (
+            request.command_subtype != OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
+            or target.get("action") != OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
+            or target.get("organism_uuid") != organism.organism_id
+            or target.get("kind") != "GOVERNANCE"
+            or target.get("route") != "GOVERNANCE_CONSTITUTIONAL"
+            or target.get("constitutional_route") != "APPOINTMENT"
+            or target.get("deciding_party") != "office:LO_COORDINATOR"
+            or target.get("outcome") not in {"ACCEPT", "DECLINE"}
+            or not self._governance_request_matches_target(request, organism, target)
+        ):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        if CircleStateEvent.objects.using(self.database_alias).filter(
+            circle__parent_organism=organism,
+            circle__circle_uuid=target["circle_uuid"],
+            resulting_state="ACTIVE",
+            effective_at__lte=request.effective_at,
+            recorded_at__lte=request.evaluated_at,
+        ).exists():
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE,
+            )
+        return self._qualified(request, {
+            "kind": "GOVERNANCE",
+            "route": "GOVERNANCE_CONSTITUTIONAL",
+            "constitutional_route": "APPOINTMENT",
+            "c": target["circle_uuid"],
+            "r": target["seat_rule_uuid"],
+            "s": target["seat_id"],
+            "q": target["request_uuid"],
+        })
+
+    def _sbg_governance_readiness(
+        self,
+        organism_id: int,
+        effective_at: datetime,
+        recorded_at: datetime,
+        lifecycle: str,
+    ) -> S015AuthorityRefusalCode | None:
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT public.sbg_governance_readiness(%s, %s, %s, %s)",
+                [organism_id, effective_at, recorded_at, lifecycle],
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("SB-G readiness function returned no row")
+        refusal_code = row[0]
+        if refusal_code is None:
+            return None
+        try:
+            return S015AuthorityRefusalCode(refusal_code)
+        except ValueError as exc:
+            raise RuntimeError("SB-G readiness returned an unknown refusal code") from exc
+
+    def _governance_enabling_readiness(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+        candidate: LOGovernanceConfigurationVersion,
+        previous_configuration: LOGovernanceConfigurationVersion | None,
+    ) -> S015AuthorityRefusalCode | None:
+        if (
+            request.action is not OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+            or request.version_kind != "EFFECT"
+            or candidate.governance_enabled is not True
+            or (
+                previous_configuration is not None
+                and previous_configuration.governance_enabled is True
+            )
+        ):
+            return None
+        birthing_reference = self.birthing_source.reference_at(
+            organism.organism_id,
+            request.effective_at,
+            request.evaluated_at,
+        )
+        if type(birthing_reference) is not str or not birthing_reference:
+            return None
+        return self._sbg_governance_readiness(
+            organism.pk,
+            request.effective_at,
+            request.evaluated_at,
+            "ENABLING",
+        )
+
+    def _qualify_governance_circle_creation(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+    ) -> S015AuthorityResult:
+        if Circle.objects.using(self.database_alias).filter(
+            parent_organism=organism,
+            kind="GOVERNANCE",
+        ).exists():
+            return self._refuse(
+                request,
+                S015AuthorityRefusalCode.SBG_SECOND_GOVERNANCE_CIRCLE,
+            )
+        target = request.target
+        if target is None or target.get("kind") != "GOVERNANCE":
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        return self._qualified(request, {
+            "kind": "GOVERNANCE",
+            "c": target["circle_uuid"],
+        })
 
     def _lo_capacity(self, organism: LivingOrganism, request: S015AuthorityRequest) -> bool:
         founding = LivingOrganismEvent.objects.using(self.database_alias).filter(
@@ -1887,6 +2327,15 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             if request.version_kind == "EFFECT" and not self._version_complete(candidate):
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+            if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
+                readiness_refusal = self._governance_enabling_readiness(
+                    request,
+                    organism,
+                    candidate,
+                    configuration,
+                )
+                if readiness_refusal is not None:
+                    return self._refuse(request, readiness_refusal)
             if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
                 policy = candidate.coordinator_nomination_policy or "C"
                 if policy not in {"A", "B", "C"}:

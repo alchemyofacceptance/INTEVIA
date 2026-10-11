@@ -25,6 +25,11 @@ S015_TRUNCATE_GUARDIANS = {
     ),
     "core_livingorganism": "s015_livingorganism_truncate_immutable",
     "core_circle": "s015_circle_truncate_immutable",
+    "core_governedrule": "s015_governedrule_truncate_immutable",
+    "core_circlejoinrequest": "s015_circlejoinrequest_truncate_immutable",
+    "core_circleadmissiondecision": "s015_circleadmissiondecision_truncate_immutable",
+    "core_circleparticipation": "s015_circleparticipation_truncate_immutable",
+    "core_circleparticipationend": "s015_circleparticipationend_truncate_immutable",
     "core_organismmembership": "s015_organismmembership_truncate_immutable",
     "core_contextualroleassignment": (
         "s015_contextualroleassignment_truncate_immutable"
@@ -66,6 +71,7 @@ S015_RESET_EXCLUDED_TABLES = frozenset({"django_migrations"})
 # function, so the values come from the governing migration and are not copied here.
 S015_MIGRATION_SEEDS = (
     ("core.migrations.0003_seed_triad_roles", "create_triad_roles"),
+    ("core.migrations.0045_sbg_governance_formation", "restore_platform_rules"),
 )
 
 _TRUNCATE_TRIGGER_BIT = 32  # pg_trigger.tgtype TRUNCATE event bit
