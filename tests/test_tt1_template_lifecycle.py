@@ -69,7 +69,7 @@ class _FakeDatabase:
 
 
 class TemplateConnectionWitnessTests(unittest.TestCase):
-    template_name = "test_intevia_tpl_unit"
+    template_name = "test_intevia_tpl_me_" + "0" * 43
 
     def _run_witness(self, catalog_value=False, fail_control_call=None):
         database = _FakeDatabase(self.template_name, catalog_value, fail_control_call)

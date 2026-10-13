@@ -40,7 +40,17 @@ from src.intevia.services.organism_membership_service import (
 from src.intevia.services.organism_role_service import (
     OrganismRoleService, ProposeAssignmentCommand, TransitionAssignmentCommand,
 )
-from tests.s015_0021_support import T0, append_event, empty_fp, found_nonroot, fresh, refresh, seed_identity, u
+from tests.s015_0021_support import (
+    T0,
+    append_event,
+    database_now,
+    empty_fp,
+    found_nonroot,
+    fresh,
+    refresh,
+    seed_identity,
+    u,
+)
 from tests.sb2_route_support import (
     birth,
     prepare_route,
@@ -890,7 +900,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                 )
                 refresh(cursor, "core_livingorganism", self.organism.pk, later_at)
             accepted = accept(application, care, request_reference, idempotency_key, fingerprint)
-            self.assertEqual(gateway_version_status("default", later, datetime.now(timezone.utc)), "EFFECTIVE")
+            self.assertEqual(gateway_version_status("default", later, database_now()), "EFFECTIVE")
             return accepted
 
         self.service._automatic_accept = change_then_accept
@@ -1084,7 +1094,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.service._name_source = _TestFixtureLONameSource()
         action = OrganismAction.EFFECT_APPLICATION_QUESTION
         first = self.draft(action, {})
-        self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "DRAFT")
+        self.assertEqual(gateway_version_status("default", first, database_now()), "DRAFT")
         before = self.organism.state
         first_effect = self.effect(first, action)
         self.assertEqual(first_effect.version_uuid, first.version_uuid)
@@ -1095,7 +1105,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         first_event = LivingOrganismEvent.objects.get(event_uuid=first_effect.event_uuid)
         self.assertEqual(first_event.evidence_reference, f"application-question-version:{first.version_uuid}")
         self.assertEqual(first_event.prior_state, first_event.resulting_state)
-        self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "EFFECTIVE")
+        self.assertEqual(gateway_version_status("default", first, database_now()), "EFFECTIVE")
         settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
             "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
         })
@@ -1110,9 +1120,9 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.assertEqual(second.supersedes_id, first.pk)
         self.assertEqual(first.question_text, "Why do you want to join TEST-FIXTURE-NAME: Riverside Commons?")
         self.assertIn("New Riverside", second.question_text)
-        self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "EFFECTIVE")
+        self.assertEqual(gateway_version_status("default", first, database_now()), "EFFECTIVE")
         self.effect(second, action)
-        self.assertEqual(gateway_version_status("default", first, datetime.now(timezone.utc)), "SUPERSEDED")
+        self.assertEqual(gateway_version_status("default", first, database_now()), "SUPERSEDED")
         self.organism.refresh_from_db()
         self.assertEqual(self.organism.state, before)
         self.assertEqual(LOApplicationQuestionVersion.objects.get(pk=first.pk).question_text, first.question_text)
@@ -1497,7 +1507,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         with transaction.atomic(), connection.cursor() as cursor:
             self.direct_effect(action, f"application-settings-version:{valid.version_uuid}")
             refresh(cursor, "core_livingorganism", self.organism.pk, NOW)
-        self.assertEqual(gateway_version_status("default", valid, datetime.now(timezone.utc)), "EFFECTIVE")
+        self.assertEqual(gateway_version_status("default", valid, database_now()), "EFFECTIVE")
 
     def test_route_limits_and_previous_configuration(self):
         config_action = OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
@@ -1571,7 +1581,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             with self.subTest(action=action):
                 version = self.draft(action, fields)
                 self.effect(version, action)
-                self.assertEqual(gateway_version_status("default", version, datetime.now(timezone.utc)), "EFFECTIVE")
+                self.assertEqual(gateway_version_status("default", version, database_now()), "EFFECTIVE")
         with transaction.atomic(), connection.cursor() as cursor:
             other_pk = seed_identity(cursor, f"cq-other-{fresh()}")
             membership_uuid = u(f"cq-non-coordinator:{fresh()}")

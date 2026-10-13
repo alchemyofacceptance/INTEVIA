@@ -2,14 +2,29 @@
 param(
     [Parameter(Mandatory = $true)][ValidateSet("fresh", "clone")][string]$Mode,
     [Parameter(Mandatory = $true)][ValidateRange(1, 99)][int]$AttemptNumber,
+    [ValidatePattern("^[1-9][0-9]*[ab]?$")][string]$RunSuffix,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string[]]$Labels,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
     [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
     [switch]$CleanupTemplate,
-    [switch]$FullSuiteParity
+    [switch]$FullSuiteParity,
+    [switch]$FailFast,
+    [ValidateRange(1, 60)][int]$StallMinutes = 5,
+    [switch]$StallGuardSelfTest
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "integrated_guards.ps1")
+$runSuffix = if ([string]::IsNullOrEmpty($RunSuffix)) {
+    [string]$AttemptNumber
+}
+else {
+    $RunSuffix
+}
+if ($runSuffix -cnotmatch ("^{0}[ab]?$" -f [regex]::Escape([string]$AttemptNumber))) {
+    throw "run suffix must match the attempt number, optionally followed by a or b"
+}
+Write-IntegratedGuardSummary -FailFast:$FailFast -StallMinutes $StallMinutes
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
 $fullSuiteParityLabels = @(
@@ -102,7 +117,8 @@ $fullSuiteParityLabels = @(
     "tests.test_service_models",
     "tests.test_service_postgresql",
     "tests.test_service_versions",
-    "tests.test_sbg_governance"
+    "tests.test_sbg_governance",
+    "tests.test_se_entitlement"
 )
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
@@ -116,6 +132,7 @@ $environmentNames = @(
     "VERIFICATION_STEP",
     "VERIFICATION_TEMPLATE_MODE",
     "VERIFICATION_TEMPLATE_STORE",
+    "VERIFICATION_TEMPLATE_NAMESPACE",
     "VERIFICATION_TEMPLATE_CLEANUP",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
@@ -138,6 +155,12 @@ $templateBuildSeconds = $null
 $instrumentIsolationVerdict = "NOT ESTABLISHED"
 $wholeRun = $null
 $script:teardownLines = 0
+$script:discoveredTestCount = $null
+$script:testCountsSummaryReported = $false
+$script:testStartsBeforeStall = 0
+$script:testPassesBeforeStall = 0
+$script:lastTestLine = "UNAVAILABLE"
+$script:watchdogStalled = $false
 
 function Protect-OutputText {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
@@ -402,6 +425,9 @@ function Invoke-PythonAndLog {
         elseif ($lineText -match "^TT1_TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
             $script:templateBuildSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
         }
+        if ($lineText -match "^Found ([0-9]+) test\(s\)\.?$") {
+            $script:discoveredTestCount = [int]$Matches[1]
+        }
         if ($lineText -match "Destroying test database for alias") {
             $script:teardownLines++
         }
@@ -409,6 +435,18 @@ function Invoke-PythonAndLog {
     $status = $LASTEXITCODE
     return [int]$status
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 try {
     $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -421,7 +459,7 @@ try {
         if ($Labels.Count -ne $fullSuiteParityLabels.Count -or
             @($Labels | Where-Object { $_ -cnotin $fullSuiteParityLabels }).Count -gt 0 -or
             @($fullSuiteParityLabels | Where-Object { $_ -cnotin $Labels }).Count -gt 0) {
-            throw "full-suite parity mode requires exactly the commissioned 90 verification entries"
+            throw "full-suite parity mode requires exactly the commissioned 91 verification entries"
         }
     }
     else {
@@ -448,7 +486,7 @@ try {
     Write-Output "EVIDENCE_ROOT=$($authorizedState.EvidenceRoot)"
     Write-Output "DATABASE_TAG=$($authorizedState.DatabaseTag)"
     Write-Output "ME_DEV_ROOT=$($routes.DevelopmentRoot)"
-    Write-Output "ME_DATABASE=$($routes.DevelopmentDatabasePrefix)$AttemptNumber"
+    Write-Output "ME_DATABASE=$($routes.DevelopmentDatabasePrefix)$runSuffix"
 
     $missingCredentials = [System.Collections.Generic.List[string]]::new()
     foreach ($name in @(
@@ -472,11 +510,153 @@ try {
     }
 
     $stageRoot = $routes.DevelopmentRoot
-    $runDirectory = Join-Path $stageRoot ("attempt_{0}" -f $AttemptNumber)
+    if ($StallGuardSelfTest) {
+        $selfCheckLogPath = Join-Path $stageRoot ("STALL_GUARD_SELF_CHECK_{0}.log" -f $runSuffix)
+        $selfCheckDatabase = "$($routes.DevelopmentDatabasePrefix)selfcheck_1"
+        if (Test-Path -LiteralPath $selfCheckLogPath) {
+            $priorSelfCheckLines = @(Get-Content -LiteralPath $selfCheckLogPath)
+            if ($priorSelfCheckLines.Count -ne 3 -or
+                $priorSelfCheckLines[0] -cne "STALL_GUARD_SELF_CHECK=STARTED" -or
+                $priorSelfCheckLines[1] -cne "SELF_CHECK_DATABASE_NAME=$selfCheckDatabase" -or
+                $priorSelfCheckLines[2] -notmatch (
+                    "^FAILED_SETUP_ATTEMPT=Python executable selection failed; " +
+                    "no database created and no child started; recorded=\d{4}-\d{2}-\d{2} " +
+                    "\d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}$"
+                )) {
+                throw "existing self-check log does not contain only the authorized failed-setup record"
+            }
+        }
+        else {
+            New-Item -ItemType File -Path $selfCheckLogPath | Out-Null
+            Write-WatchdogLogLine `
+                -LineText "STALL_GUARD_SELF_CHECK=STARTED" `
+                -LogPath $selfCheckLogPath
+            Write-WatchdogLogLine `
+                -LineText "SELF_CHECK_DATABASE_NAME=$selfCheckDatabase" `
+                -LogPath $selfCheckLogPath
+        }
+        $presenceLines = @(Invoke-RunnerDatabasePython `
+            -Action "check-self-check" `
+            -DatabaseName $selfCheckDatabase `
+            -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
+            -Numbering "selfcheck_1")
+        $presenceMatches = @($presenceLines | Where-Object {
+            $_ -match "^SELF_CHECK_DATABASE_EXISTS=(True|False)$"
+        })
+        if ($presenceMatches.Count -ne 1) {
+            throw "stall-guard self-check database absence could not be confirmed"
+        }
+        if ($presenceMatches[0] -ceq "SELF_CHECK_DATABASE_EXISTS=True") {
+            Write-WatchdogLogLine `
+                -LineText "SELF_CHECK_DATABASE_EXISTS=True" `
+                -LogPath $selfCheckLogPath
+            Write-Output "SELF_CHECK_DATABASE_NAME=$selfCheckDatabase"
+            throw "stall-guard self-check database already exists; refusing reuse"
+        }
+        Write-WatchdogLogLine `
+            -LineText "SELF_CHECK_DATABASE_EXISTS=False" `
+            -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine `
+            -LineText ("SELF_CHECK_RUN=STARTED " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz")) `
+            -LogPath $selfCheckLogPath
+        $createLines = @(Invoke-RunnerDatabasePython `
+            -Action "create-self-check" `
+            -DatabaseName $selfCheckDatabase `
+            -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
+            -Numbering "selfcheck_1")
+        $createdOidLines = @($createLines | Where-Object {
+            $_ -match "^CREATED_OID=[0-9]+$"
+        })
+        $createdOidMatch = if ($createdOidLines.Count -eq 1) {
+            [regex]::Match($createdOidLines[0], "^CREATED_OID=([0-9]+)$")
+        }
+        if ($createdOidLines.Count -ne 1 -or -not $createdOidMatch.Success) {
+            throw "stall-guard self-check database creation was not confirmed"
+        }
+        $selfCheckOid = [long]$createdOidMatch.Groups[1].Value
+        Write-WatchdogLogLine -LineText "SELF_CHECK_DATABASE_CREATED=True" -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText "SELF_CHECK_DATABASE_OID=$selfCheckOid" -LogPath $selfCheckLogPath
+
+        $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()
+        $selfCheckCommand = (
+            "import time; print('test_stall_guard_self_check " +
+            "(tests.stall_guard.selfcheck) ...', flush=True); time.sleep(360)"
+        )
+        $selfCheckResult = Invoke-WatchedPythonAndLog `
+            -Label "Stall-guard self-check child" `
+            -Arguments @("-c", $selfCheckCommand) `
+            -LogPath $selfCheckLogPath `
+            -RunRoot $stageRoot `
+            -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
+            -Numbering "selfcheck_1" `
+            -StallThresholdMinutes $StallMinutes `
+            -DatabaseName $selfCheckDatabase `
+            -DatabaseOid $selfCheckOid `
+            -SelfCheck
+        $wholeRun.Stop()
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_STALL_DETECTED=$($selfCheckResult.Stalled)"
+        ) -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_PROCESS_ENDED=$($selfCheckResult.ProcessEnded)"
+        ) -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_DATABASE_CONFIRMED_ABSENT=$($selfCheckResult.DatabaseAbsent)"
+        ) -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_ELAPSED_SECONDS=$([Math]::Round($selfCheckResult.ElapsedSeconds, 3))"
+        ) -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_STALL_DETECTED_AFTER_SECONDS=$(
+                [Math]::Round($selfCheckResult.StallDetectedSeconds, 3)
+            )"
+        ) -LogPath $selfCheckLogPath
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_CHILD_EXIT_CODE=$($selfCheckResult.ExitCode)"
+        ) -LogPath $selfCheckLogPath
+        $stallRecorded = "SELF_CHECK_STALL_DETECTED=True" -in @(
+            Get-Content -LiteralPath $selfCheckLogPath -ErrorAction Stop
+        )
+        Write-WatchdogLogLine -LineText (
+            "SELF_CHECK_STALL_RECORDED=$stallRecorded"
+        ) -LogPath $selfCheckLogPath
+
+        $selfCheckPassed = $selfCheckResult.Stalled -and
+            $selfCheckResult.ProcessEnded -and
+            $selfCheckResult.DatabaseAbsent -and
+            $stallRecorded -and
+            $selfCheckResult.ExitCode -ne 0 -and
+            $null -ne $selfCheckResult.StallDetectedSeconds -and
+            $selfCheckResult.StallDetectedSeconds -ge ($StallMinutes * 60) -and
+            $selfCheckResult.StallDetectedSeconds -lt (($StallMinutes * 60) + 1) -and
+            $selfCheckResult.Failures.Count -eq 0
+        Write-WatchdogLogLine -LineText (
+            "STALL_GUARD_SELF_CHECK_VERDICT=$(if ($selfCheckPassed) { 'PASS' } else { 'FAIL' })"
+        ) -LogPath $selfCheckLogPath
+        if (-not $selfCheckPassed) {
+            throw "stall-guard self-check did not satisfy its required outcomes"
+        }
+
+        Write-Output "FAILURE=stall-guard self-check completed as expected"
+        Write-Output "TESTS_EXECUTED=NOT_APPLICABLE"
+        Write-Output "TESTS_DISCOVERED=NOT_APPLICABLE"
+        Write-Output "TESTS_NOT_REACHED=NOT_APPLICABLE"
+        Write-Output "SETUP_SECONDS=NOT_APPLICABLE"
+        Write-Output "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE"
+        Write-Output ("WHOLE_RUN_SECONDS={0:F6}" -f $wholeRun.Elapsed.TotalSeconds)
+        Write-Output "DEV_RUN_VERDICT=STALL"
+        Write-Output "SELF_CHECK_EXIT_CODE=$($selfCheckResult.ExitCode)"
+        Write-Output "SELF_CHECK_DATABASE_NAME=$selfCheckDatabase"
+        Write-Output "SELF_CHECK_LOG=$selfCheckLogPath"
+        $global:LASTEXITCODE = 1
+        return
+    }
+
+    $runDirectory = Join-Path $stageRoot ("attempt_{0}" -f $runSuffix)
     if (Test-Path -LiteralPath $runDirectory) {
         throw "development attempt directory already exists; refusing reuse"
     }
-    $attemptDatabase = "$($routes.DevelopmentDatabasePrefix)$AttemptNumber"
+    $attemptDatabase = "$($routes.DevelopmentDatabasePrefix)$runSuffix"
     if ($attemptDatabase.Length -gt 63 -or $attemptDatabase -in @("intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB)) {
         throw "protected or overlength test database name refused"
     }
@@ -512,10 +692,11 @@ try {
     $env:VERIFICATION_RUN_NONCE = $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0045_sbg_governance_formation"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0046_se_entitlement_foundation"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore
+    $env:VERIFICATION_TEMPLATE_NAMESPACE = "me"
     $env:VERIFICATION_TEMPLATE_CLEANUP = if ($CleanupTemplate) { "1" } else { "0" }
     $env:DJANGO_SETTINGS_MODULE = "intevia.test_settings"
     $env:PYTHONUNBUFFERED = "1"
@@ -527,6 +708,7 @@ try {
 
     Write-Output "MODE=$Mode"
     Write-Output "ATTEMPT=$AttemptNumber"
+    Write-Output "RUN_SUFFIX=$runSuffix"
     Write-Output "DATABASE=$attemptDatabase"
     Write-Output "RUN_DIRECTORY=$runDirectory"
     Write-Output "TEMPLATE_STORE=$effectiveTemplateStore"
@@ -540,15 +722,118 @@ try {
         $runProblems.Add("Django system check returned status $checkCode")
     }
     else {
-        $testArguments = @(
-            "manage.py", "test", "--settings=intevia.test_settings",
-            "--testrunner=verification.isolation.runner.IsolationRunner",
-            "--parallel", "1", "--noinput", "--verbosity=2"
-        ) + $Labels
-        $testCode = Invoke-PythonAndLog -Label "Explicit-label development run" `
-            -LogPath $logPath -Arguments $testArguments
-        if ($testCode -ne 0) {
-            $runProblems.Add("development test batch returned status $testCode")
+        $preflightCode = 0
+        if ($Mode -eq "clone") {
+            $preflightCodeSource = @'
+import os
+
+import django
+django.setup()
+
+from django.db import connections
+from verification.isolation.template import (
+    _database_record,
+    _drop_database_by_oid,
+    create_clone_database,
+    prepare_template,
+)
+from verification.ownership import read_receipts, write_receipt
+
+connection = connections["default"]
+nonce = os.environ["VERIFICATION_RUN_NONCE"]
+probe_name = "test_intevia_living_organism_tt1_witness_" + nonce[:12]
+template_receipt, rebuilt = prepare_template(
+    connection,
+    "default",
+    os.environ["VERIFICATION_TEMPLATE_STORE"],
+)
+if template_receipt is None:
+    raise RuntimeError("template preparation returned no receipt")
+
+try:
+    create_clone_database(connection, template_receipt, probe_name)
+finally:
+    records, problem = read_receipts(
+        os.environ["VERIFICATION_DB_RECEIPT"],
+        nonce,
+    )
+    if problem is not None:
+        raise RuntimeError("clone preflight receipts are untrustworthy")
+    created = [
+        record for record in records
+        if record.get("event") == "created" and record.get("name") == probe_name
+    ]
+    if len(created) > 1:
+        raise RuntimeError("clone preflight has duplicate creation receipts")
+    database = _database_record(connection, probe_name)
+    if created:
+        oid = int(created[0]["oid"])
+        if database is not None and database["oid"] != oid:
+            raise RuntimeError("clone preflight database OID differs from its receipt")
+        connection.close()
+        absent = _drop_database_by_oid(connection, probe_name, oid)
+        write_receipt(
+            "destroyed",
+            name=probe_name,
+            oid=oid,
+            confirmed_absent=absent,
+        )
+        if not absent:
+            raise RuntimeError("clone preflight cleanup was not confirmed")
+    elif database is not None:
+        raise RuntimeError("unreceipted clone preflight database left untouched")
+
+print("TEMPLATE_READY=PASS")
+print("TEMPLATE_REBUILT=" + ("YES" if rebuilt else "NO"))
+print("CLONE_PREFLIGHT=PASS")
+print("CLONE_PROBE_DATABASE=" + probe_name)
+'@
+            $previousPgOptions = $env:PGOPTIONS
+            $lockTimeoutOption = "-c lock_timeout=$($script:lockTimeoutMilliseconds / 1000)s"
+            $env:PGOPTIONS = if ([string]::IsNullOrWhiteSpace($previousPgOptions)) {
+                $lockTimeoutOption
+            }
+            else {
+                "$previousPgOptions $lockTimeoutOption"
+            }
+            try {
+                $preflightCode = Invoke-PythonAndLog `
+                    -Label "Clone template preflight" `
+                    -LogPath $logPath `
+                    -Arguments @("-c", $preflightCodeSource)
+            }
+            finally {
+                $env:PGOPTIONS = $previousPgOptions
+            }
+            if ($preflightCode -ne 0) {
+                $runProblems.Add("clone template preflight returned status $preflightCode; tests were not started")
+            }
+        }
+        if ($preflightCode -eq 0) {
+            $testArguments = @(
+                "manage.py", "test", "--settings=intevia.test_settings",
+                "--testrunner=verification.isolation.runner.IsolationRunner",
+                "--parallel", "1", "--noinput", "--verbosity=2"
+            )
+            if ($FailFast) {
+                $testArguments += "--failfast"
+            }
+            $testArguments += $Labels
+            $testRun = Invoke-WatchedPythonAndLog `
+                -Label "Explicit-label development run" `
+                -LogPath $logPath `
+                -Arguments $testArguments `
+                -RunRoot $runDirectory `
+                -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
+                -Numbering $runSuffix `
+                -StallThresholdMinutes $StallMinutes `
+                -DatabaseName $attemptDatabase `
+                -ReceiptPath $receiptPath `
+                -RunNonce $runNonce
+            $testCode = $testRun.ExitCode
+            if ($testCode -ne 0) {
+                $runProblems.Add("development test batch returned status $testCode")
+            }
         }
     }
     $wholeRun.Stop()
@@ -585,6 +870,39 @@ try {
                 Write-Output "ISOLATION_VERDICT=$($summary.isolation_verdict)"
                 Write-Output "CP0_MET=$($summary.cp0_requirements_met)"
                 Write-Output "TESTS_RUN=$($counts.tests_run)"
+                if ($null -eq $counts) {
+                    Write-Output "TESTS_EXECUTED=UNAVAILABLE"
+                    Write-Output "TESTS_DISCOVERED=UNAVAILABLE"
+                    Write-Output "TESTS_NOT_REACHED=UNAVAILABLE"
+                    $runProblems.Add("ordinary test result counts were unavailable")
+                }
+                else {
+                    Write-Output "TESTS_EXECUTED=$($counts.tests_run)"
+                    if ($null -eq $script:discoveredTestCount) {
+                        Write-Output "TESTS_DISCOVERED=UNAVAILABLE"
+                        Write-Output "TESTS_NOT_REACHED=UNAVAILABLE"
+                        $runProblems.Add("test discovery count was unavailable")
+                    }
+                    else {
+                        $discoveredCount = $script:discoveredTestCount
+                        $executedCount = [int]$counts.tests_run
+                        Write-Output "TESTS_DISCOVERED=$discoveredCount"
+                        if ($executedCount -gt $discoveredCount) {
+                            Write-Output "TESTS_NOT_REACHED=INVALID"
+                            $runProblems.Add("executed test count exceeded the discovered test count")
+                        }
+                        else {
+                            $notReachedCount = $discoveredCount - $executedCount
+                            Write-Output "TESTS_NOT_REACHED=$notReachedCount"
+                            if ($notReachedCount -gt 0) {
+                                $runProblems.Add(
+                                    "test batch stopped before all discovered tests ran; verification is incomplete"
+                                )
+                            }
+                        }
+                    }
+                }
+                $script:testCountsSummaryReported = $true
                 Write-Output "TEST_FAILURES=$($counts.failures)"
                 Write-Output "TEST_ERRORS=$($counts.errors)"
                 Write-Output "TEST_SKIPPED=$($counts.skipped)"
@@ -693,6 +1011,11 @@ finally {
     Set-Location -LiteralPath $originalLocation.Path
 }
 
+if (-not $script:testCountsSummaryReported) {
+    Write-Output "TESTS_EXECUTED=UNAVAILABLE"
+    Write-Output "TESTS_DISCOVERED=UNAVAILABLE"
+    Write-Output "TESTS_NOT_REACHED=UNAVAILABLE"
+}
 if ($null -eq $setupSeconds) {
     Write-Output "SETUP_SECONDS=UNAVAILABLE"
 }
@@ -714,7 +1037,14 @@ if ($null -eq $wholeRun) {
 else {
     Write-Output ("WHOLE_RUN_SECONDS={0:F6}" -f $wholeRun.Elapsed.TotalSeconds)
 }
-if ($null -eq $failure) {
+if ($script:watchdogStalled) {
+    foreach ($problem in $runProblems) {
+        Write-Output "FAILURE=$problem"
+    }
+    Write-Output "DEV_RUN_VERDICT=STALL"
+    $global:LASTEXITCODE = 1
+}
+elseif ($null -eq $failure) {
     foreach ($problem in $runProblems) {
         Write-Output "FAILURE=$problem"
     }

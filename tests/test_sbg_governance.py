@@ -16,7 +16,6 @@ from django.db.models import Q, QuerySet
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
-from django.utils import timezone
 from unittest.mock import Mock, patch
 
 from core.models import (
@@ -76,6 +75,9 @@ from src.intevia.services.organism_governance_service import (
 )
 from tests.s015_0021_support import (
     append_event,
+    database_now,
+    current_applied_core_head,
+    current_core_leaf,
     empty_fp,
     fresh,
     migrate_to_target_with_restore,
@@ -791,12 +793,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         self.assertEqual(self._core_tables(), expected_tables)
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertIn(self.FORMATION_MIGRATION, applied)
-        current_core_leaves = [
-            leaf
-            for leaf in MigrationExecutor(connection).loader.graph.leaf_nodes("core")
-            if leaf in applied
-        ]
-        self.assertEqual(current_core_leaves, [self.FORMATION_MIGRATION])
+        self.assertEqual(current_applied_core_head(connection), [self.FORMATION_MIGRATION])
         self._function_digests(migration.BUILT_FUNCTION_BODIES)
         with connection.cursor() as cursor:
             cursor.execute(
@@ -814,7 +811,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
     def _record_governance_arrangement(self, route):
         rule_uuid = uuid4()
         event_uuid = uuid4()
-        now = timezone.now()
+        now = database_now()
         evidence_reference = f"rule:{rule_uuid}@1"
         with connection.cursor() as cursor:
             cursor.execute(
@@ -894,7 +891,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         return rule_uuid
 
     def _create_circle(self, route, *, kind, founding_reference):
-        now = timezone.now()
+        now = database_now()
         circle_uuid = uuid4()
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -975,6 +972,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         return circle_id, circle_kind
 
     def test_w_sbg_m1_formation_installs_governance_schema_seed_and_guards(self):
+        migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         migration = importlib.import_module(
             "core.migrations.0045_sbg_governance_formation"
         )
@@ -1058,6 +1056,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
                 self.assertIn("LIVING_ORGANISM", definition, name)
 
     def test_w_sbg_m2_reverse_restores_0044_bodies_tables_and_trigger_count(self):
+        migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         migration44 = importlib.import_module(
             "core.migrations.0044_sb2_birthing_snapshot"
         )
@@ -1088,11 +1087,16 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
             self.assertEqual(cursor.fetchone()[0], 433)
 
     def test_w_sbg_m3_restore_returns_to_the_0045_head_and_bodies(self):
+        migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         expected_tables = self._core_tables()
-        original_leaves = tuple(MigrationExecutor(connection).loader.graph.leaf_nodes())
+        original_targets = tuple(
+            leaf
+            for leaf in MigrationExecutor(connection).loader.graph.leaf_nodes()
+            if leaf[0] != "core"
+        ) + (self.FORMATION_MIGRATION,)
 
         def restore():
-            MigrationExecutor(connection).migrate(list(original_leaves))
+            MigrationExecutor(connection).migrate(list(original_targets))
             self._assert_0045_state(expected_tables)
 
         self.addCleanup(restore)
@@ -1104,12 +1108,23 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         self.assertTrue(self.NEW_TABLES.isdisjoint(self._core_tables()))
 
     def test_w_sbg_m4_setup_failure_restores_the_0045_head_and_bodies(self):
+        migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         expected_tables = self._core_tables()
         target = self.PREVIOUS_MIGRATION
+        original_targets = tuple(
+            leaf
+            for leaf in MigrationExecutor(connection).loader.graph.leaf_nodes()
+            if leaf[0] != "core"
+        ) + (self.FORMATION_MIGRATION,)
 
         class SetupFailure(unittest.TestCase):
             def setUp(inner_self):
-                migrate_to_target_with_restore(inner_self, target)
+                inner_self.addCleanup(
+                    lambda: MigrationExecutor(connection).migrate(
+                        list(original_targets)
+                    )
+                )
+                MigrationExecutor(connection).migrate([target])
                 raise RuntimeError("intentional setup failure")
 
             def test_unreached(inner_self):
@@ -1122,9 +1137,15 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         self._assert_0045_state(expected_tables)
 
     def test_w_sbg_m5_reverse_refuses_when_living_organism_rule_exists(self):
+        migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         from tests.sb2_route_support import prepare_route
 
-        route = prepare_route(governance_enabled=False, to_birthing_phase=False)
+        route = prepare_route(
+            governance_enabled=None,
+            include_settings=False,
+            include_question=False,
+            to_birthing_phase=False,
+        )
         rule_uuid = self._record_governance_arrangement(route)
         with self.assertRaisesRegex(
             RuntimeError,
@@ -1182,7 +1203,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
                 ("LIVING_ORGANISM", "STANDING", "TRANSPORT"),
             )
 
-        now = timezone.now()
+        now = database_now()
         with self.assertRaises(IntegrityError) as malformed:
             with transaction.atomic():
                 with connection.cursor() as cursor:
@@ -1483,7 +1504,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             idempotency_key=f"sbg:enabling:draft:key:{tag}:{route.route.tag}",
             occurred_at=occurred_at,
             effective_at=occurred_at,
-            received_at=database_now(),
+            received_at=occurred_at,
             fields={
                 "cq_active": False,
                 "governance_enabled": enabled,
@@ -1505,7 +1526,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 idempotency_key=f"sbg:enabling:effect:key:{tag}:{route.route.tag}",
                 occurred_at=occurred_at,
                 effective_at=occurred_at,
-                received_at=database_now(),
+                received_at=occurred_at,
             )
         )
 
@@ -2469,15 +2490,16 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             request_recorded=True,
         )
 
+        second_seat_at = route_test_now(route.route)
         second_seat_body = {
             "seats": [
                 *governance_arrangement_body(
-                    effective_from=route_test_now(route.route),
+                    effective_from=second_seat_at,
                 )["seats"],
                 {
                     **governance_arrangement_body(
                         seat_id="second",
-                        effective_from=route_test_now(route.route),
+                        effective_from=second_seat_at,
                     )["seats"][0],
                 },
             ],
@@ -3100,7 +3122,7 @@ class SBGGovernancePostBirthingSeatingTests(
         *,
         admission_route="GOVERNANCE_CONSTITUTIONAL",
     ):
-        received_at = database_now()
+        received_at = effective_at
         join_request = CircleJoinRequest.objects.create(
             circle=Circle.objects.get(circle_uuid=route.circle_uuid),
             membership=membership,
@@ -3180,7 +3202,7 @@ class SBGGovernancePostBirthingSeatingTests(
             "composer_identity_id": None,
             "occurred_at": effective_at,
             "effective_at": effective_at,
-            "received_at": database_now(),
+            "received_at": effective_at,
         }
         fields = []
         parameters = []
@@ -3451,7 +3473,7 @@ class SBGGovernancePostBirthingSeatingTests(
                     enterer_identity=request_guard.founder,
                     occurred_at=guard_effective_at,
                     effective_at=guard_effective_at,
-                    received_at=database_now(),
+                    received_at=guard_effective_at,
                 )
         self.assertIn("SBG_CIRCLEJOINREQUEST_INVALID", str(request_guard_refusal.exception))
         self.assertEqual(self._record_counts(), before_request_guard)
@@ -3508,14 +3530,15 @@ class SBGGovernancePostBirthingSeatingTests(
             unavailable_routes,
         ):
             with self.subTest(admission_route=admission_route, deciding_body=deciding_body):
+                arrangement_at = database_now()
                 route_body = governance_arrangement_body(
                     admission_route=admission_route,
                     deciding_body=deciding_body,
-                    effective_from=database_now(),
+                    effective_from=arrangement_at,
                 )
                 coordinator_seat = governance_arrangement_body(
                     seat_id="coordinator",
-                    effective_from=database_now(),
+                    effective_from=arrangement_at,
                 )["seats"][0]
                 route_body["seats"].append(coordinator_seat)
                 unavailable = self._prepare_route(
@@ -4141,14 +4164,13 @@ class SBGGovernanceDepartureCascadeTests(
         )
 
     def _departure_command(self, route, membership, tag, effective_at):
-        now = database_now()
         return TransitionMembershipCommand(
             credential=membership.identity.credential,
             request_reference=f"sbg:g5:departure:{tag}",
             idempotency_key=f"sbg:g5:departure:key:{tag}",
-            occurred_at=now,
+            occurred_at=effective_at,
             effective_at=effective_at,
-            received_at=now,
+            received_at=effective_at,
             membership_uuid=membership.membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -4478,6 +4500,9 @@ class SBGGovernanceDepartureCascadeTests(
             ).exists()
         )
 
+    @unittest.skip(
+        "Human Governor ruling 13 Oct 2026: never run again (clock design; ledger H82)"
+    )
     def test_w_d3_5_departure_vacates_the_seat_for_equal_time_succession(self):
         route = self._prepare_departure_route("seat-succession")
         departing = add_active_elector(route.route, "g5-succession-departing")
@@ -4596,7 +4621,7 @@ class SBGGovernanceDepartureCascadeTests(
         )
         identity = outside_route.founder
         effective_at = route_test_now(route.route)
-        known_at = database_now()
+        known_at = effective_at
         membership_uuid = uuid4()
         with transaction.atomic(), connection.cursor() as cursor:
             cursor.execute(
@@ -4692,7 +4717,7 @@ class SBGGovernanceDepartureCascadeTests(
                     pred_id=previous.pk,
                     eff=effective_at,
                     occ=effective_at,
-                    rec=database_now(),
+                    rec=effective_at,
                     extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
                 )
                 refresh(
@@ -4732,7 +4757,7 @@ class SBGGovernanceDepartureCascadeTests(
                     pred_id=previous.pk,
                     eff=direct_departure_at,
                     occ=direct_departure_at,
-                    rec=database_now(),
+                    rec=direct_departure_at,
                     extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
                 )
                 refresh(
@@ -4790,7 +4815,7 @@ class SBGGovernanceDepartureCascadeTests(
             ending_at=None,
         ):
             leave_at = database_now()
-            received_at = database_now()
+            received_at = leave_at
             before_invalid = self._whole_departure_state(route, membership)
             with self.assertRaises(IntegrityError) as invalid:
                 with transaction.atomic(), connection.cursor() as cursor:

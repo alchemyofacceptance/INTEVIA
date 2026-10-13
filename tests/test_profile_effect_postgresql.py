@@ -9,9 +9,8 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.db.migrations.executor import MigrationExecutor
 from django.db.models import F
 from django.test import TransactionTestCase
-from django.utils import timezone
 
-from tests.s015_0021_support import migrate_to_target_with_restore
+from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 from core.models import (
     Identity,
@@ -1170,7 +1169,7 @@ class ProfileEffectPostgreSQLMigrationRehearsalTests(TransactionTestCase):
         ServiceActivityTransition = apps.get_model("core", "ServiceActivityTransition")
         ServiceActivityEvidenceReference = apps.get_model("core", "ServiceActivityEvidenceReference")
 
-        occurred_at = timezone.now()
+        occurred_at = database_now()
         credential = User.objects.create(username="s013-pg-migration", password="unused")
         identity = Identity.objects.create(credential=credential, access_state="active")
         service = Service.objects.create(

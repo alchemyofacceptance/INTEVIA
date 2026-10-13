@@ -1,4 +1,7 @@
+"""SB-2 Birthing behaviour and safeguard witnesses."""
+
 from dataclasses import asdict, replace
+from contextlib import contextmanager
 from datetime import timedelta
 import importlib
 import json
@@ -13,6 +16,7 @@ from uuid import uuid4
 from django.db import IntegrityError, close_old_connections, connection, connections, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 
 from core.models import (
     Application,
@@ -29,6 +33,9 @@ from core.models import (
     LivingOrganismEvent,
     LivingOrganism,
     OrganismCommandReceipt,
+    OrganismEntitlement,
+    OrganismEntitlementEvent,
+    OrganismEntitlementPolicyText,
     OrganismMembership,
     PlatformTermsAcceptance,
 )
@@ -74,6 +81,12 @@ from src.intevia.services.organism_formation_service import (
 )
 from tests.s015_concurrency_support import backend_pid, wait_until_blocked
 from tests.s015_0021_support import append_event, refresh, register_test_learner
+from tests.se_route_support import (
+    TEST_POLICY_SHA256,
+    TEST_POLICY_VERSION,
+    disclose_authority_refusal_code,
+    ensure_test_policy_text,
+)
 from tests.sb2_route_support import (
     SB2_TEST_PASSWORD,
     add_active_elector,
@@ -96,6 +109,55 @@ def _counts():
         AuthorityDecision.objects.count(),
         OrganismCommandReceipt.objects.count(),
     )
+
+
+def _model_state(model, **filters):
+    """Capture every concrete field in a model's current rows."""
+    rows = model.objects.filter(**filters) if filters else model.objects.all()
+    field_names = tuple(field.attname for field in model._meta.concrete_fields)
+    return tuple(rows.order_by("pk").values_list(*field_names))
+
+
+def _whole_birthing_state():
+    """Snapshot the Birthing state and SE records protected by the guard witnesses."""
+    return {
+        "living_organisms": _model_state(LivingOrganism),
+        "living_organism_events": _model_state(LivingOrganismEvent),
+        "birthing_snapshots": _model_state(LOBirthingSnapshot),
+        "authority_decisions": _model_state(AuthorityDecision),
+        "command_receipts": _model_state(OrganismCommandReceipt),
+        "entitlements": _model_state(OrganismEntitlement),
+        "entitlement_events": _model_state(OrganismEntitlementEvent),
+        "election_settings_versions": _model_state(
+            LOApplicationSettingsVersion,
+            entitlement_election_route__isnull=False,
+        ),
+        "policy_text": _model_state(OrganismEntitlementPolicyText),
+    }
+
+
+def _model_instance_state(model, instance):
+    """Return one model instance in the same field order as _model_state."""
+    return tuple(
+        getattr(instance, field.attname)
+        for field in model._meta.concrete_fields
+    )
+
+
+def _assert_only_birthing_refusal_persisted(testcase, before, refusal):
+    """Require the recorded refusal to be the sole persisted state change."""
+    after = _whole_birthing_state()
+    for key in before:
+        if key != "authority_decisions":
+            testcase.assertEqual(after[key], before[key], key)
+    decisions_before = before["authority_decisions"]
+    decisions_after = after["authority_decisions"]
+    testcase.assertEqual(len(decisions_after), len(decisions_before) + 1)
+    testcase.assertEqual(decisions_after[:-1], decisions_before)
+    decision = AuthorityDecision.objects.get(
+        decision_reference=refusal.authority_decision_reference,
+    )
+    testcase.assertEqual(decisions_after[-1], _model_instance_state(AuthorityDecision, decision))
 
 
 def _assert_birthing_refusal_record(testcase, route, suffix, refusal, expected_code, before):
@@ -213,6 +275,42 @@ class _ControlledBirthingProvider:
         )
 
 
+class _ControlledEntitlementElectionProvider:
+    """TEST-ONLY authority-provider stand-in for the E-1a gate witnesses."""
+
+    authority_reference = (
+        's015a1:{"c":"-","kind":"BIRTHING","n":"-","o":"-","q":"-","s":"-"}'
+    )
+
+    def __init__(self):
+        self.request: S015PostFoundingAuthorityRequest | None = None
+
+    def evaluate_organism_authority(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+    ) -> S015PostFoundingAuthorityResponse:
+        if request.action is not OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+            raise AssertionError("election stand-in received a non-election request")
+        self.request = request
+        return S015PostFoundingAuthorityResponse(
+            **asdict(request),
+            authority_reference=self.authority_reference,
+        )
+
+
+@contextmanager
+def _qualify_election_for_birthing_guard(route):
+    """Scope the Decision B provider stand-in to one guard witness."""
+    # Decision B: this stands in for the authority-provider interface so E-1a does not pre-empt the Birthing guard.
+    provider = _ControlledEntitlementElectionProvider()
+    with patch.object(
+        route.birthing_service._entitlement_service,
+        "_authority",
+        S015Authority(provider=provider),
+    ):
+        yield provider
+
+
 def _governance_draft(route, enabled, suffix):
     occurred_at = database_now()
     return route.application_service.save_gateway_draft(GatewayDraftCommand(
@@ -223,7 +321,7 @@ def _governance_draft(route, enabled, suffix):
         idempotency_key=f"sb2:governance-draft:key:{suffix}:{route.tag}",
         occurred_at=occurred_at,
         effective_at=occurred_at,
-        received_at=database_now(),
+        received_at=occurred_at,
         fields={
             "cq_active": False,
             "governance_enabled": enabled,
@@ -245,7 +343,7 @@ def _governance_effect_command(route, version_uuid, suffix):
         idempotency_key=f"sb2:governance-effect:key:{suffix}:{route.tag}",
         occurred_at=occurred_at,
         effective_at=occurred_at,
-        received_at=database_now(),
+        received_at=occurred_at,
     )
 
 
@@ -355,6 +453,50 @@ class GovernanceGuardErrorTranslationTests(unittest.TestCase):
 @POSTGRESQL_ONLY
 @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
 class BirthingAfterWitnessTests(TransactionTestCase):
+    """SB-2 Birthing service, authority and database-guard witnesses."""
+
+    def test_gateway_setup_ignores_python_clock_skew(self):
+        """Use one database reading for each gateway command despite clock skew."""
+        route = prepare_route()
+        for offset_ms, applications_open in ((50, False), (-50, True)):
+            with self.subTest(offset_ms=offset_ms):
+                offset = timedelta(milliseconds=offset_ms)
+
+                def skewed_clock():
+                    return database_now() + offset
+
+                with patch("django.utils.timezone.now", side_effect=skewed_clock), \
+                        patch("tests.sb2_route_support.database_now", wraps=database_now) as db_clock:
+                    observed_python_time = timezone.now()
+                    observed_database_time = database_now()
+                    self.assertAlmostEqual(
+                        (observed_python_time - observed_database_time).total_seconds(),
+                        offset.total_seconds(),
+                        delta=0.02,
+                    )
+                    effect_gateway(
+                        route.application_service,
+                        route.founder,
+                        route.organism,
+                        f"clock-skew-{offset_ms}:{route.tag}",
+                        OrganismAction.EFFECT_APPLICATION_SETTINGS,
+                        {
+                            "applications_open": applications_open,
+                            "automatic_acceptance": False,
+                            "processing_responsibility": "LO",
+                        },
+                    )
+                self.assertEqual(db_clock.call_count, 2)
+                event = LivingOrganismEvent.objects.filter(
+                    living_organism=route.organism,
+                    action=OrganismAction.EFFECT_APPLICATION_SETTINGS.value,
+                ).order_by("-sequence").first()
+                self.assertIsNotNone(event)
+                self.assertEqual(
+                    len({event.occurred_at, event.effective_at, event.received_at}),
+                    1,
+                )
+
     def test_real_route_births_then_another_registered_learner_applies_and_founder_decides(self):
         route = prepare_route()
         result = birth(route)
@@ -441,7 +583,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:submit:key:{route.tag}",
             occurred_at=submitted_at,
             effective_at=submitted_at,
-            received_at=database_now(),
+            received_at=submitted_at,
             answer="A disposable SB-2 route witness answer.",
         ))
         submission_facts = json.loads(submitted.authority_reference.removeprefix("s015a1:"))
@@ -458,17 +600,18 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:claim:key:full-route:{route.tag}",
             occurred_at=claim_occurred_at,
             effective_at=claim_occurred_at,
-            received_at=database_now(),
+            received_at=claim_occurred_at,
         )
         application_service.claim_application(claim)
+        decision_at = database_now()
         decision = DecideApplicationCommand(
             credential=route.founder.credential,
             application_uuid=application.application_uuid,
             request_reference=f"sb2:decide:full-route:{route.tag}",
             idempotency_key=f"sb2:decide:key:full-route:{route.tag}",
-            occurred_at=database_now(),
-            effective_at=database_now(),
-            received_at=database_now(),
+            occurred_at=decision_at,
+            effective_at=decision_at,
+            received_at=decision_at,
             outcome="ACCEPT",
         )
         try:
@@ -807,7 +950,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
 
     def test_empty_electorate_is_refused_at_guard_without_writes(self):
+        """The database guard rejects the attempted Birthing insert; all transaction writes roll back."""
         route = prepare_route()
+        ensure_test_policy_text()
         membership, effective_at = _set_empty_electorate(route)
         electorate_count = _birthing_electorate_count(route, effective_at, database_now())
         self.assertEqual(electorate_count, 0)
@@ -817,6 +962,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             membership.state,
             membership.head_transition_id,
         )
+        before_state = _whole_birthing_state()
         provider = _ControlledBirthingProvider()
         command = BirthingCommand(
             credential=route.founder.credential,
@@ -824,6 +970,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             request_reference=f"sb2:empty-electorate-guard:{route.tag}",
             idempotency_key=f"sb2:empty-electorate-guard:key:{route.tag}",
             effective_at=effective_at,
+            offering_choice="FREE",
+            policy_version=TEST_POLICY_VERSION,
+            policy_text_sha256=TEST_POLICY_SHA256,
         )
         with (
             patch(
@@ -831,13 +980,17 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 return_value=_controlled_membership_context(route),
             ),
             patch.object(route.birthing_service, "_authority", S015Authority(provider=provider)),
+            # Decision B: this scoped authority-provider-interface stand-in qualifies E-1a so the database guard runs.
+            _qualify_election_for_birthing_guard(route) as election_provider,
         ):
             with self.assertRaises(IntegrityError) as refused:
-                route.birthing_service.birth_living_organism(command)
+                with disclose_authority_refusal_code():
+                    route.birthing_service.birth_living_organism(command)
         guard_error = str(refused.exception)
         self.assertIn("SB_BIRTHING_ELECTORATE_EMPTY", guard_error)
         self.assertNotIn("INV_CQ_ROUTE_REQUIRED", guard_error)
         self.assertIsNotNone(provider.request)
+        self.assertIsNotNone(election_provider.request)
         membership.refresh_from_db()
         self.assertEqual(
             (
@@ -848,15 +1001,20 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             ),
             before,
         )
+        # The insert reaches the database guard; earlier transactional writes are rolled back, not absent.
+        self.assertEqual(_whole_birthing_state(), before_state)
 
     def test_service_maps_controlled_empty_electorate_refusal_to_authored_text(self):
+        """A controlled Birthing refusal persists exactly its refusal decision."""
         route = prepare_route()
-        membership, effective_at = _set_empty_electorate(route)
+        ensure_test_policy_text()
+        _, effective_at = _set_empty_electorate(route)
         self.assertEqual(
             _birthing_electorate_count(route, effective_at, database_now()),
             0,
         )
         before = _counts()
+        before_state = _whole_birthing_state()
         provider = _ControlledBirthingProvider(
             refusal_code=S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
         )
@@ -866,6 +1024,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             request_reference=f"sb2:empty-electorate:{route.tag}",
             idempotency_key=f"sb2:empty-electorate:key:{route.tag}",
             effective_at=effective_at,
+            offering_choice="FREE",
+            policy_version=TEST_POLICY_VERSION,
+            policy_text_sha256=TEST_POLICY_SHA256,
         )
         with (
             patch(
@@ -873,9 +1034,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 return_value=_controlled_membership_context(route),
             ),
             patch.object(route.birthing_service, "_authority", S015Authority(provider=provider)),
+            # Decision B's scoped authority-provider-interface stand-in is not reached; the controlled refusal occurs first.
+            _qualify_election_for_birthing_guard(route) as election_provider,
         ):
             with self.assertRaises(S015AuthorityDenied) as refused:
-                route.birthing_service.birth_living_organism(command)
+                with disclose_authority_refusal_code():
+                    route.birthing_service.birth_living_organism(command)
         self.assertIs(
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
@@ -894,15 +1058,20 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
             before,
         )
+        self.assertIsNone(election_provider.request)
+        _assert_only_birthing_refusal_persisted(self, before_state, refused.exception)
 
     def test_production_birthing_qualification_refuses_empty_electorate(self):
+        """Production Birthing qualification still independently refuses an empty electorate."""
         route = prepare_route()
+        ensure_test_policy_text()
         membership, effective_at = _set_empty_electorate(route)
         self.assertEqual(
             _birthing_electorate_count(route, effective_at, database_now()),
             0,
         )
         before = _counts()
+        before_state = _whole_birthing_state()
         provider = _ControlledBirthingProvider(
             refusal_code=S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
         )
@@ -912,6 +1081,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             request_reference=f"sb2:empty-electorate-qualification:{route.tag}",
             idempotency_key=f"sb2:empty-electorate-qualification:key:{route.tag}",
             effective_at=effective_at,
+            offering_choice="FREE",
+            policy_version=TEST_POLICY_VERSION,
+            policy_text_sha256=TEST_POLICY_SHA256,
         )
         with (
             patch(
@@ -919,9 +1091,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 return_value=_controlled_membership_context(route),
             ),
             patch.object(route.birthing_service, "_authority", S015Authority(provider=provider)),
+            # Decision B's scoped authority-provider-interface stand-in is not reached; the controlled refusal occurs first.
+            _qualify_election_for_birthing_guard(route) as election_provider,
         ):
-            with self.assertRaises(S015AuthorityDenied):
-                route.birthing_service.birth_living_organism(command)
+            with self.assertRaises(S015AuthorityDenied) as refused:
+                with disclose_authority_refusal_code():
+                    route.birthing_service.birth_living_organism(command)
         request = provider.request
         if request is None:
             self.fail("controlled provider did not capture the qualification request")
@@ -951,6 +1126,8 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             _counts(),
             (before[0], before[1], before[2], before[3] + 1, before[4]),
         )
+        self.assertIsNone(election_provider.request)
+        _assert_only_birthing_refusal_persisted(self, before_state, refused.exception)
 
     def test_missing_phase_settings_and_question_have_authored_refusals(self):
         no_phase = prepare_route(to_birthing_phase=False)
@@ -1131,6 +1308,8 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         settings = LOApplicationSettingsVersion.objects.get(
             living_organism=route.organism,
             version_uuid=settings_uuid,
+            entitlement_choice__isnull=True,
+            entitlement_election_route__isnull=True,
         )
         question = LOApplicationQuestionVersion.objects.get(
             living_organism=route.organism,
@@ -1298,7 +1477,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             qualification_planes("TRANSITION_LIVING_ORGANISM/UNRECOGNISED")
 
     def test_receipt_decision_replay_and_mismatched_retry(self):
+        """Birthing replay and mismatch checks retain the original exception evidence."""
         route = prepare_route()
+        ensure_test_policy_text()
         effective_at = database_now()
         received_at = effective_at + timedelta(microseconds=1)
         service = OrganismBirthingService(clock=lambda: received_at)
@@ -1308,8 +1489,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             request_reference=f"sb2:replay:{route.tag}",
             idempotency_key=f"sb2:replay:key:{route.tag}",
             effective_at=effective_at,
+            offering_choice="FREE",
+            policy_version=TEST_POLICY_VERSION,
+            policy_text_sha256=TEST_POLICY_SHA256,
         )
-        first = service.birth_living_organism(command)
+        with disclose_authority_refusal_code():
+            first = service.birth_living_organism(command)
         before_replay = _counts()
         decision = AuthorityDecision.objects.get(
             decision_reference=first.authority_decision_reference,
@@ -1321,12 +1506,14 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
         self.assertEqual(decision.outcome, "QUALIFIED")
         self.assertEqual(receipt.authority_decision_reference, first.authority_decision_reference)
-        self.assertEqual(service.birth_living_organism(command), first)
+        with disclose_authority_refusal_code():
+            self.assertEqual(service.birth_living_organism(command), first)
         self.assertEqual(_counts(), before_replay)
         with self.assertRaises(S015CommandReplayMismatch):
-            service.birth_living_organism(
-                replace(command, request_reference=f"sb2:replay-mismatch:{route.tag}")
-            )
+            with disclose_authority_refusal_code():
+                service.birth_living_organism(
+                    replace(command, request_reference=f"sb2:replay-mismatch:{route.tag}")
+                )
         self.assertEqual(_counts(), before_replay)
 
     def test_founder_cannot_enable_governance_after_birth_but_other_configuration_effects(self):
@@ -1386,6 +1573,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
 
     def test_open_transaction_is_a_technical_failure_without_writes(self):
+        """An already-open transaction remains a technical failure without writes."""
         route = prepare_route()
         command = BirthingCommand(
             credential=route.founder.credential,
@@ -1393,11 +1581,15 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             request_reference=f"sb2:transaction:{route.tag}",
             idempotency_key=f"sb2:transaction:key:{route.tag}",
             effective_at=database_now(),
+            offering_choice="FREE",
+            policy_version=TEST_POLICY_VERSION,
+            policy_text_sha256=TEST_POLICY_SHA256,
         )
         before = _counts()
         with self.assertRaises(S015BirthingTechnicalFailure) as technical:
             with transaction.atomic():
-                route.birthing_service.birth_living_organism(command)
+                with disclose_authority_refusal_code():
+                    route.birthing_service.birth_living_organism(command)
         self.assertEqual(
             str(technical.exception),
             "BIRTHING could not be completed because of a technical problem; nothing was saved. "
@@ -1423,6 +1615,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.assertEqual(_counts(), before)
 
     def test_reverse_refuses_a_snapshot_and_restores_the_empty_schema(self):
+        """Exercise the SB-2 reverse guard without creating SE policy data."""
         executor = MigrationExecutor(connection)
         original_targets = tuple(executor.loader.graph.leaf_nodes())
 
@@ -1432,7 +1625,11 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.addCleanup(restore_migrations)
         lower_targets = [
             node for node in original_targets
-            if node != ("core", "0045_sbg_governance_formation")
+            if node
+            not in {
+                ("core", "0045_sbg_governance_formation"),
+                ("core", "0046_se_entitlement_foundation"),
+            }
         ]
         lower_targets.append(("core", "0043_p1_governed_registration"))
         executor.migrate(lower_targets)
@@ -1470,7 +1667,13 @@ class BirthingAfterWitnessTests(TransactionTestCase):
 
         MigrationExecutor(connection).migrate(list(original_targets))
         route = prepare_route()
-        birth(route)
+        snapshot_at = database_now()
+        LOBirthingSnapshot.objects.create(
+            living_organism=route.organism,
+            body={"fixture": "SB-2 reverse-guard witness"},
+            effective_at=snapshot_at,
+            received_at=snapshot_at,
+        )
         with self.assertRaisesMessage(
             RuntimeError,
             "SB-2 reverse refused while core_lobirthingsnapshot contains rows",
@@ -1478,6 +1681,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             MigrationExecutor(connection).migrate(lower_targets)
 
     def test_governance_effect_and_birthing_serialize_in_both_lock_orders(self):
+        """Concurrent governance effects and Birthing remain serialized in both lock orders."""
         workers = []
         effect_entered, release_effect = Event(), Event()
         birth_entered, release_birth = Event(), Event()
@@ -1522,6 +1726,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             )
 
             second = prepare_route(governance_enabled=False)
+            ensure_test_policy_text()
             second_draft = _governance_draft(second, True, "concurrent-after-birth")
             birthing_service = OrganismBirthingService(
                 authority=S015Authority(
@@ -1529,15 +1734,20 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 ),
                 clock=database_now,
             )
-            birth_thread, birth_results, birth_pids = _start_worker(
-                lambda: birthing_service.birth_living_organism(BirthingCommand(
-                    credential=second.founder.credential,
-                    living_organism_uuid=second.organism.organism_id,
-                    request_reference=f"sb2:concurrent-birth:{second.tag}",
-                    idempotency_key=f"sb2:concurrent-birth:key:{second.tag}",
-                    effective_at=database_now(),
-                ))
-            )
+            def call_second_birthing():
+                with disclose_authority_refusal_code():
+                    return birthing_service.birth_living_organism(BirthingCommand(
+                        credential=second.founder.credential,
+                        living_organism_uuid=second.organism.organism_id,
+                        request_reference=f"sb2:concurrent-birth:{second.tag}",
+                        idempotency_key=f"sb2:concurrent-birth:key:{second.tag}",
+                        effective_at=database_now(),
+                        offering_choice="FREE",
+                        policy_version=TEST_POLICY_VERSION,
+                        policy_text_sha256=TEST_POLICY_SHA256,
+                    ))
+
+            birth_thread, birth_results, birth_pids = _start_worker(call_second_birthing)
             workers.append(birth_thread)
             self.assertTrue(birth_entered.wait(10))
             birth_pid = birth_pids.get(timeout=10)

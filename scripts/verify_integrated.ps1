@@ -1,14 +1,24 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
-    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
+    [switch]$StallGuardSelfTest
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
+. (Join-Path $PSScriptRoot "integrated_guards.ps1")
+$script:guardStallMinutes = 5
+$script:armedGuardLines = @(
+    "FAILFAST=ON"
+    "LOCK_TIMEOUT_MS=120000"
+    "STALL_GUARD_MINUTES=5"
+)
+Write-IntegratedGuardSummary -FailFast -StallMinutes $script:guardStallMinutes
+Write-Output ("MODE=" + $(if ($StallGuardSelfTest) { "guard-self-check" } else { "clone" }))
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0045_sbg_governance_formation"
+$expectedCoreHead = "0046_se_entitlement_foundation"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",
@@ -21,6 +31,7 @@ $environmentNames = @(
     "VERIFICATION_STEP",
     "VERIFICATION_TEMPLATE_MODE",
     "VERIFICATION_TEMPLATE_STORE",
+    "VERIFICATION_TEMPLATE_NAMESPACE",
     "VERIFICATION_TEMPLATE_CLEANUP",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
@@ -37,15 +48,34 @@ foreach ($name in $environmentNames | Sort-Object -Unique) {
 }
 
 $failureReasons = [System.Collections.Generic.List[string]]::new()
+$runProblems = $failureReasons
 $script:printedSummary = [ordered]@{
     tests_run = $null
     failures = $null
     errors = $null
     skipped = $null
+    discovered = $null
+    resolved = $null
+    skip_ids = [System.Collections.Generic.List[string]]::new()
     run_lines = 0
     result_seen = $false
     status = $null
 }
+$script:setupSeconds = $null
+$script:templateBuildSeconds = $null
+$script:preflightTemplateBuildSeconds = $null
+$script:clonePreflightSetupSeconds = $null
+$script:clonePreflightPassed = $false
+$script:discoveredTestCount = $null
+$script:testStartsBeforeStall = 0
+$script:testPassesBeforeStall = 0
+$script:lastTestLine = "UNAVAILABLE"
+$script:watchdogStalled = $false
+$script:permittedSkipIds = @(
+    "tests.test_s015_application_authority.ProductionApplicationAuthorityTests.test_ap6_non_superuser_application_role_when_present",
+    "tests.test_sbg_governance.SBGGovernanceDepartureCascadeTests.test_w_d3_5_departure_vacates_the_seat_for_equal_time_succession",
+    "tests.test_s007_authentication_shell.AuthenticationShellTests.test_stale_epoch_and_absolute_age_flush_sessions"
+)
 $script:teardownLines = 0
 $sourceKind = $null
 $head = $null
@@ -56,12 +86,23 @@ $stateHash = $null
 $bindingHash = $null
 $scriptHash = $null
 $runDirectory = $null
+$templateStorePath = $null
+# S2 run-of-record count; informational only.
+$previousVerificationTestCount = 486
 $runNonce = $null
 $testDatabase = $null
 $receiptPath = $null
 $isolationPath = $null
 $initialBinding = $null
 $counts = [ordered]@{ tests_run = $null; failures = $null; errors = $null; skipped = $null }
+$testsDiscovered = $null
+$testsExecuted = $null
+$testsResolved = $null
+$testsNotReached = $null
+$skipTestIds = @()
+$armedLinesPresent = $false
+$cloneProven = $false
+$testCountDifference = $null
 $verdict = "FAIL"
 $isolationVerdict = "NOT ESTABLISHED"
 $cp0Met = $false
@@ -360,18 +401,35 @@ function Get-SourceBinding {
         if ($authorizedState.ChangedPaths.Count -eq 0) {
             throw "verifier candidate must contain at least one authorized change"
         }
-        $diffPath = [System.IO.Path]::GetTempFileName()
+        $diffProcess = [System.Diagnostics.Process]::new()
+        $diffStream = [System.IO.MemoryStream]::new()
         try {
-            & git diff --binary $authorizedState.BaseCommit "--output=$diffPath"
-            if ($LASTEXITCODE -ne 0) {
+            $gitCommand = Get-Command git -CommandType Application -ErrorAction Stop
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $gitCommand.Source
+            $startInfo.WorkingDirectory = (Get-Location).Path
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            foreach ($argument in @("--no-pager", "diff", "--binary", $authorizedState.BaseCommit)) {
+                [void]$startInfo.ArgumentList.Add($argument)
+            }
+            $diffProcess.StartInfo = $startInfo
+            if (-not $diffProcess.Start()) {
                 throw "candidate diff calculation failed"
             }
-            $diffHash = (Get-FileHash -LiteralPath $diffPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $stderrTask = $diffProcess.StandardError.ReadToEndAsync()
+            $diffProcess.StandardOutput.BaseStream.CopyTo($diffStream)
+            $diffProcess.WaitForExit()
+            [void]$stderrTask.GetAwaiter().GetResult()
+            if ($diffProcess.ExitCode -ne 0) {
+                throw "candidate diff calculation failed"
+            }
+            $diffHash = Get-Sha256Bytes -Bytes $diffStream.ToArray()
         }
         finally {
-            if (Test-Path -LiteralPath $diffPath) {
-                Remove-Item -LiteralPath $diffPath -Force
-            }
+            $diffStream.Dispose()
+            $diffProcess.Dispose()
         }
 
         $untracked = @(& git ls-files --others --exclude-standard)
@@ -432,9 +490,160 @@ function Get-NextVerificationRunNumber {
     return $number
 }
 
+function Invoke-VerificationGuardSelfCheck {
+    param(
+        [Parameter(Mandatory = $true)][string]$VerificationRoot,
+        [Parameter(Mandatory = $true)][string]$DatabaseOwnershipRoot
+    )
+
+    $selfCheckRoot = Join-Path $VerificationRoot "guard-selfchecks"
+    New-Item -ItemType Directory -Path $selfCheckRoot -Force | Out-Null
+    $existing = @(Get-ChildItem -LiteralPath $selfCheckRoot -Directory -Filter "selfcheck_*" |
+        ForEach-Object { if ($_.Name -match "^selfcheck_(\d+)$") { [int]$Matches[1] } })
+    $number = 1
+    while ($existing -contains $number) { $number++ }
+    $numbering = "selfcheck_$number"
+    $runRoot = Join-Path $selfCheckRoot $numbering
+    if (Test-Path -LiteralPath $runRoot) {
+        throw "verification guard self-check directory already exists; refusing reuse"
+    }
+    $databaseName = "$DatabaseOwnershipRoot$numbering"
+    if ($databaseName.Length -gt 63 -or $databaseName -in @(
+        "intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB
+    )) {
+        throw "protected or overlength verification self-check database name refused"
+    }
+    New-Item -ItemType Directory -Path $runRoot | Out-Null
+    $logPath = Join-Path $runRoot "stall-guard-self-check.log"
+    New-Item -ItemType File -Path $logPath | Out-Null
+    foreach ($line in @(
+        "FAILFAST=ON"
+        "LOCK_TIMEOUT_MS=120000"
+        "STALL_GUARD_MINUTES=$script:guardStallMinutes"
+        "MODE=guard-self-check"
+        "STALL_GUARD_SELF_CHECK=STARTED"
+        "SELF_CHECK_DATABASE_NAME=$databaseName"
+    )) {
+        Write-WatchdogLogLine -LineText $line -LogPath $logPath
+    }
+
+    $presence = @(Invoke-RunnerDatabasePython `
+        -Action "check-self-check" `
+        -DatabaseName $databaseName `
+        -DatabaseOwnershipRoot $DatabaseOwnershipRoot `
+        -Numbering $numbering)
+    if ("SELF_CHECK_DATABASE_EXISTS=False" -notin $presence) {
+        throw "verification self-check database absence could not be confirmed"
+    }
+    $created = @(Invoke-RunnerDatabasePython `
+        -Action "create-self-check" `
+        -DatabaseName $databaseName `
+        -DatabaseOwnershipRoot $DatabaseOwnershipRoot `
+        -Numbering $numbering)
+    $oidLines = @($created | Where-Object { $_ -match "^CREATED_OID=[0-9]+$" })
+    if ($oidLines.Count -ne 1 -or $oidLines[0] -notmatch "^CREATED_OID=([0-9]+)$") {
+        throw "verification self-check database creation was not confirmed"
+    }
+    $databaseOid = [long]$Matches[1]
+    Write-WatchdogLogLine -LineText "SELF_CHECK_DATABASE_CREATED=True" -LogPath $logPath
+    Write-WatchdogLogLine -LineText "SELF_CHECK_DATABASE_OID=$databaseOid" -LogPath $logPath
+
+    $selfCheckCommand = (
+        "import time; print('test_stall_guard_self_check " +
+        "(verification.stall_guard.selfcheck) ...', flush=True); time.sleep(360)"
+    )
+    $result = Invoke-WatchedPythonAndLog `
+        -Label "Verification stall-guard self-check child" `
+        -Arguments @("-c", $selfCheckCommand) `
+        -LogPath $logPath `
+        -RunRoot $runRoot `
+        -DatabaseOwnershipRoot $DatabaseOwnershipRoot `
+        -Numbering $numbering `
+        -StallThresholdMinutes $script:guardStallMinutes `
+        -DatabaseName $databaseName `
+        -DatabaseOid $databaseOid `
+        -SelfCheck
+    Write-WatchdogLogLine `
+        -LineText "STALL=$($result.Stalled)" `
+        -LogPath $logPath
+    Write-WatchdogLogLine `
+        -LineText "SELF_CHECK_STALL_DETECTED=$($result.Stalled)" `
+        -LogPath $logPath
+    Write-WatchdogLogLine `
+        -LineText "SELF_CHECK_PROCESS_ENDED=$($result.ProcessEnded)" `
+        -LogPath $logPath
+    Write-WatchdogLogLine `
+        -LineText "SELF_CHECK_DATABASE_CONFIRMED_ABSENT=$($result.DatabaseAbsent)" `
+        -LogPath $logPath
+    Write-WatchdogLogLine `
+        -LineText "SELF_CHECK_STALL_DETECTED_AFTER_SECONDS=$([Math]::Round($result.StallDetectedSeconds, 3))" `
+        -LogPath $logPath
+    $stallMarkerRecorded = "STALL=TRUE" -in @(
+        Get-Content -LiteralPath $logPath -ErrorAction Stop
+    )
+    Write-WatchdogLogLine `
+        -LineText "SELF_CHECK_STALL_MARKER_RECORDED=$stallMarkerRecorded" `
+        -LogPath $logPath
+
+    $after = @(Invoke-RunnerDatabasePython `
+        -Action "check-self-check" `
+        -DatabaseName $databaseName `
+        -DatabaseOwnershipRoot $DatabaseOwnershipRoot `
+        -Numbering $numbering)
+    if (-not $result.Stalled -or -not $result.ProcessEnded -or
+        -not $result.DatabaseAbsent -or -not $stallMarkerRecorded -or
+        $result.ExitCode -ne 124 -or
+        $null -eq $result.StallDetectedSeconds -or
+        $result.StallDetectedSeconds -lt ($script:guardStallMinutes * 60) -or
+        $result.StallDetectedSeconds -ge (($script:guardStallMinutes * 60) + 1) -or
+        $result.Failures.Count -ne 0 -or
+        "SELF_CHECK_DATABASE_EXISTS=False" -notin $after) {
+        throw "verification stall-guard self-check did not prove stall termination and database removal"
+    }
+    Write-WatchdogLogLine -LineText "STALL_GUARD_SELF_CHECK=PASS" -LogPath $logPath
+    Write-Output "STALL_GUARD_SELF_CHECK=PASS"
+    Write-Output "SELF_CHECK_LOG=$logPath"
+}
+
+function Test-VerificationSuccess {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Evidence)
+
+    $skipIds = @($Evidence.SkipTestIds)
+    $permittedSkipIds = @($Evidence.PermittedSkipIds)
+    $unknownSkips = @($skipIds | Where-Object { $_ -notin $permittedSkipIds })
+    return (
+        [int]$Evidence.Failures -eq 0 -and
+        [int]$Evidence.Errors -eq 0 -and
+        [int]$Evidence.TestsNotReached -eq 0 -and
+        [int]$Evidence.TestsDiscovered -gt 0 -and
+        [int]$Evidence.TestsDiscovered -eq [int]$Evidence.TestsExecuted -and
+        [int]$Evidence.TestsExecuted -eq [int]$Evidence.TestsResolved -and
+        [int]$Evidence.Skipped -eq $skipIds.Count -and
+        (@($skipIds | Select-Object -Unique).Count -eq $skipIds.Count) -and
+        $unknownSkips.Count -eq 0 -and
+        $Evidence.IsolationVerdict -eq "PASS" -and
+        [int]$Evidence.DatabasesCreated -gt 0 -and
+        [int]$Evidence.DatabasesDestroyed -eq [int]$Evidence.DatabasesCreated -and
+        [int]$Evidence.DatabaseCount -eq [int]$Evidence.DatabasesCreated -and
+        $Evidence.DatabaseOidsMatch -eq $true -and
+        $Evidence.DatabasesConfirmedAbsent -eq $true -and
+        $Evidence.ArmedLinesPresent -eq $true -and
+        $Evidence.CloneProven -eq $true
+    )
+}
+
 function Set-PrintedSummaryFromLine {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
 
+    if ($Line -match "^Found ([0-9]+) test\(s\)\.?$") {
+        $script:printedSummary.discovered = [int]$Matches[1]
+    }
+    if ($Line -match "^TESTS_RESOLVED=([0-9]+)$") {
+        $script:printedSummary.resolved = [int]$Matches[1]
+    }
+    if ($Line -match "^test_[^\s]+\s+\((?<testId>tests\.[^)]+)\)\s+\.\.\.\s+skipped(?:\s|$)") {
+        $script:printedSummary.skip_ids.Add($Matches.testId)
+    }
     if ($Line -match "^Ran\s+(\d+)\s+tests?\s+in\b") {
         $script:printedSummary.tests_run = [int]$Matches[1]
         $script:printedSummary.run_lines++
@@ -472,12 +681,8 @@ function Invoke-PythonAndCapture {
     Add-Content -LiteralPath $LogPath -Value "COMMAND=$Label" -Encoding utf8
     & python @Arguments 2>&1 | ForEach-Object {
         $lineText = Protect-OutputText -Text ([string]$_)
-        Add-Content -LiteralPath $LogPath -Value $lineText -Encoding utf8
-        Write-Host $lineText
+        Write-WatchdogLogLine -LineText $lineText -LogPath $LogPath
         Set-PrintedSummaryFromLine -Line $lineText
-        if ($lineText -match "Destroying test database for alias") {
-            $script:teardownLines++
-        }
     }
     $status = $LASTEXITCODE
     return [int]$status
@@ -537,7 +742,46 @@ try {
 
     $verificationRoot = $routes.VerificationRoot
     New-Item -ItemType Directory -Path $verificationRoot -Force | Out-Null
+    if ($StallGuardSelfTest) {
+        $env:INTEVIA_DATABASE_ENGINE = "postgresql"
+        $env:DJANGO_SETTINGS_MODULE = "intevia.settings"
+        $env:PYTHONUNBUFFERED = "1"
+        Invoke-VerificationGuardSelfCheck `
+            -VerificationRoot $verificationRoot `
+            -DatabaseOwnershipRoot $routes.VerificationDatabasePrefix
+        $global:LASTEXITCODE = 0
+        return
+    }
+
     $runNumber = Get-NextVerificationRunNumber -VerificationRoot $verificationRoot
+    $priorPasses = @()
+    foreach ($priorDirectory in @(Get-ChildItem -LiteralPath $verificationRoot `
+        -Directory -Filter "run_*" -ErrorAction SilentlyContinue)) {
+        if ($priorDirectory.Name -notmatch "^run_(\d+)$") { continue }
+        $priorRunNumber = [int]$Matches[1]
+        $priorVerdictPath = Join-Path $priorDirectory.FullName "VERDICT.json"
+        if (-not (Test-Path -LiteralPath $priorVerdictPath -PathType Leaf)) { continue }
+        try {
+            $priorVerdict = Get-Content -LiteralPath $priorVerdictPath -Raw -ErrorAction Stop |
+                ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            Write-Output "PREVIOUS_VERIFICATION_COUNT_NOTE=prior verdict unreadable; count comparison unavailable"
+            $priorVerdict = $null
+        }
+        if ($null -ne $priorVerdict -and $priorVerdict.verdict -eq "PASS" -and
+            $null -ne $priorVerdict.tests_run) {
+            $priorPasses += [PSCustomObject]@{
+                RunNumber = $priorRunNumber
+                TestsRun = [int]$priorVerdict.tests_run
+            }
+        }
+    }
+    if ($priorPasses.Count -gt 0) {
+        $previousVerificationTestCount = ($priorPasses | Sort-Object RunNumber -Descending |
+            Select-Object -First 1).TestsRun
+    }
+    Write-Output "PREVIOUS_VERIFICATION_TESTS=$(if ($null -eq $previousVerificationTestCount) { 'UNAVAILABLE' } else { $previousVerificationTestCount })"
     $runDirectory = Join-Path $verificationRoot ("run_{0}" -f $runNumber)
     if (Test-Path -LiteralPath $runDirectory) {
         throw "verification run directory already exists; refusing reuse"
@@ -552,7 +796,7 @@ try {
     $runNonce = [guid]::NewGuid().ToString("N")
     $receiptPath = Join-Path $runDirectory "database-receipts.jsonl"
     $isolationPath = Join-Path $runDirectory "isolation.jsonl"
-    $logPath = Join-Path $runDirectory "integrated-fresh-suite.log"
+    $logPath = Join-Path $runDirectory "integrated-clone-suite.log"
     foreach ($line in @(
         "STATE_FILE=$stateFilePath"
         "STATE_ID=$stateId"
@@ -561,6 +805,8 @@ try {
         "HEAD=$head"
         "MERGE_COMMIT=$mergeCommit"
         "BINDING_SHA256=$bindingHash"
+    ) + $script:armedGuardLines + @(
+        "MODE=clone"
     )) {
         Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
     }
@@ -574,8 +820,10 @@ try {
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
     $env:VERIFICATION_EXPECTED_CORE_HEAD = $expectedCoreHead
     $env:VERIFICATION_STEP = "S015"
-    $env:VERIFICATION_TEMPLATE_MODE = "fresh"
-    $env:VERIFICATION_TEMPLATE_STORE = Join-Path $runDirectory "tooling-template-store"
+    $env:VERIFICATION_TEMPLATE_MODE = "clone"
+    $templateStorePath = Join-Path $runDirectory "tooling-template-store"
+    $env:VERIFICATION_TEMPLATE_STORE = $templateStorePath
+    $env:VERIFICATION_TEMPLATE_NAMESPACE = "vr"
     $env:VERIFICATION_TEMPLATE_CLEANUP = "0"
     $env:DJANGO_SETTINGS_MODULE = "intevia.test_settings"
     $env:PYTHONUNBUFFERED = "1"
@@ -678,25 +926,223 @@ try {
         "tests.test_service_models",
         "tests.test_service_postgresql",
         "tests.test_service_versions",
-        "tests.test_sbg_governance"
+        "tests.test_sbg_governance",
+        "tests.test_se_entitlement"
     )
 
     $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()
-    $checkCode = Invoke-PythonAndCapture -Label "Django system check" -LogPath $logPath `
-        -Arguments @("manage.py", "check", "--settings=intevia.test_settings")
-    if ($checkCode -ne 0) {
-        Add-Failure "Django system check returned status $checkCode"
+    $loaderLogPath = Join-Path $runDirectory "test-selection-loader.log"
+    $loaderCode = @'
+import sys
+from contextlib import ExitStack
+from unittest.mock import patch
+
+import django
+django.setup()
+
+from django.db import connections
+from verification.isolation.runner import IsolationRunner
+
+with ExitStack() as stack:
+    for alias in connections:
+        stack.enter_context(
+            patch.object(
+                connections[alias],
+                "ensure_connection",
+                side_effect=RuntimeError("test selection loader attempted database access"),
+            )
+        )
+    runner = IsolationRunner(verbosity=0, interactive=False, parallel=1)
+    suite = runner.build_suite(sys.argv[1:])
+    count = suite.countTestCases()
+for alias in connections:
+    if connections[alias].connection is not None:
+        raise RuntimeError("test selection loader opened a database connection")
+if count <= 0:
+    raise RuntimeError("test selection resolved no test cases")
+print("TESTS_RESOLVED=%d" % count)
+'@
+    $loaderStatus = Invoke-PythonAndCapture `
+        -Label "No-database test-loader selection" `
+        -LogPath $loaderLogPath `
+        -Arguments (@("-c", $loaderCode) + $suite)
+    $loaderResolved = $loaderStatus -eq 0 -and $null -ne $script:printedSummary.resolved
+    if (-not $loaderResolved) {
+        Add-Failure "test loader did not resolve the suite before database creation"
     }
     else {
+        Write-Output "TESTS_RESOLVED=$($script:printedSummary.resolved)"
+        Write-WatchdogLogLine `
+            -LineText "TESTS_RESOLVED=$($script:printedSummary.resolved)" `
+            -LogPath $logPath
+        $checkCode = Invoke-PythonAndCapture -Label "Django system check" -LogPath $logPath `
+            -Arguments @("manage.py", "check", "--settings=intevia.test_settings")
+        if ($checkCode -ne 0) {
+            Add-Failure "Django system check returned status $checkCode"
+        }
+    }
+
+    $canRunTests = $failureReasons.Count -eq 0
+    if ($canRunTests) {
+        $preflightCodeSource = @'
+import os
+import time
+
+import django
+django.setup()
+
+from django.db import connections
+from verification.isolation.template import (
+    _database_record,
+    _drop_database_by_oid,
+    create_clone_database,
+    prepare_template,
+)
+from verification.ownership import read_receipts, write_receipt
+
+connection = connections["default"]
+nonce = os.environ["VERIFICATION_RUN_NONCE"]
+probe_name = "test_intevia_living_organism_tt1_witness_" + nonce[:12]
+template_started = time.perf_counter()
+template_receipt, rebuilt = prepare_template(
+    connection,
+    "default",
+    os.environ["VERIFICATION_TEMPLATE_STORE"],
+)
+template_build_seconds = time.perf_counter() - template_started
+print("TT1_PREFLIGHT_TEMPLATE_BUILD_SECONDS=%.6f" % template_build_seconds)
+if template_receipt is None:
+    raise RuntimeError("template preparation returned no receipt")
+
+clone_started = time.perf_counter()
+try:
+    create_clone_database(connection, template_receipt, probe_name)
+finally:
+    records, problem = read_receipts(
+        os.environ["VERIFICATION_DB_RECEIPT"],
+        nonce,
+    )
+    if problem is not None:
+        raise RuntimeError("clone preflight receipts are untrustworthy")
+    created = [
+        record for record in records
+        if record.get("event") == "created" and record.get("name") == probe_name
+    ]
+    if len(created) > 1:
+        raise RuntimeError("clone preflight has duplicate creation receipts")
+    database = _database_record(connection, probe_name)
+    if created:
+        oid = int(created[0]["oid"])
+        if database is not None and database["oid"] != oid:
+            raise RuntimeError("clone preflight database OID differs from its receipt")
+        connection.close()
+        absent = _drop_database_by_oid(connection, probe_name, oid)
+        write_receipt(
+            "destroyed",
+            name=probe_name,
+            oid=oid,
+            confirmed_absent=absent,
+        )
+        if not absent:
+            raise RuntimeError("clone preflight cleanup was not confirmed")
+    elif database is not None:
+        raise RuntimeError("unreceipted clone preflight database left untouched")
+    print(
+        "CLONE_PREFLIGHT_SETUP_SECONDS=%.6f"
+        % (time.perf_counter() - clone_started)
+    )
+
+print("TEMPLATE_READY=PASS")
+print("TEMPLATE_REBUILT=" + ("YES" if rebuilt else "NO"))
+print("CLONE_PREFLIGHT=PASS")
+print("CLONE_PROBE_DATABASE=" + probe_name)
+'@
+        $previousPgOptions = $env:PGOPTIONS
+        $lockTimeoutOption = "-c lock_timeout=$($script:lockTimeoutMilliseconds / 1000)s"
+        $env:PGOPTIONS = if ([string]::IsNullOrWhiteSpace($previousPgOptions)) {
+            $lockTimeoutOption
+        }
+        else {
+            "$previousPgOptions $lockTimeoutOption"
+        }
+        try {
+            $preflightCode = Invoke-PythonAndCapture `
+                -Label "Verification clone template and database preflight" `
+                -LogPath $logPath `
+                -Arguments @("-c", $preflightCodeSource)
+        }
+        finally {
+            $env:PGOPTIONS = $previousPgOptions
+        }
+        $preflightLines = @(Get-Content -LiteralPath $logPath -ErrorAction Stop)
+        $script:clonePreflightPassed =
+            $preflightCode -eq 0 -and
+            "TEMPLATE_READY=PASS" -in $preflightLines -and
+            "CLONE_PREFLIGHT=PASS" -in $preflightLines -and
+            @($preflightLines | Where-Object { $_ -match "^CLONE_PROBE_DATABASE=" }).Count -eq 1
+        $templateBuildLine = @($preflightLines | Where-Object {
+            $_ -match "^TT1_PREFLIGHT_TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$"
+        } | Select-Object -Last 1)
+        if ($templateBuildLine.Count -eq 1 -and
+            $templateBuildLine[0] -match "^TT1_PREFLIGHT_TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
+            $script:preflightTemplateBuildSeconds = [double]::Parse(
+                $Matches[1], [System.Globalization.CultureInfo]::InvariantCulture
+            )
+        }
+        $cloneSetupLine = @($preflightLines | Where-Object {
+            $_ -match "^CLONE_PREFLIGHT_SETUP_SECONDS=([0-9]+(?:\.[0-9]+)?)$"
+        } | Select-Object -Last 1)
+        if ($cloneSetupLine.Count -eq 1 -and
+            $cloneSetupLine[0] -match "^CLONE_PREFLIGHT_SETUP_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
+            $script:clonePreflightSetupSeconds = [double]::Parse(
+                $Matches[1], [System.Globalization.CultureInfo]::InvariantCulture
+            )
+        }
+        if (-not $script:clonePreflightPassed -or
+            $null -eq $script:preflightTemplateBuildSeconds -or
+            $null -eq $script:clonePreflightSetupSeconds) {
+            Write-Output "CLONE_PREFLIGHT=FAIL"
+            Add-Failure "verification clone preflight failed; test suite was not launched"
+            $canRunTests = $false
+        }
+    }
+
+    if ($canRunTests) {
+        $script:printedSummary.tests_run = $null
+        $script:printedSummary.failures = $null
+        $script:printedSummary.errors = $null
+        $script:printedSummary.skipped = $null
+        $script:printedSummary.discovered = $null
+        $script:printedSummary.run_lines = 0
+        $script:printedSummary.result_seen = $false
+        $script:printedSummary.status = $null
+        $script:printedSummary.skip_ids.Clear()
+        $script:discoveredTestCount = $null
         $testArguments = @(
             "manage.py", "test", "--settings=intevia.test_settings",
             "--testrunner=verification.isolation.runner.IsolationRunner",
-            "--parallel", "1", "--noinput", "--verbosity=2"
+            "--parallel", "1", "--noinput", "--verbosity=2", "--failfast"
         ) + $suite
-        $testCode = Invoke-PythonAndCapture -Label "R1/R2/S1-S3/R3 plus TT-1 full suite" `
-            -LogPath $logPath -Arguments $testArguments
-        if ($testCode -ne 0) {
-            Add-Failure "full suite returned status $testCode"
+        $testRun = Invoke-WatchedPythonAndLog `
+            -Label "R1/R2/S1-S3/R3 plus TT-1 full suite" `
+            -LogPath $logPath `
+            -Arguments $testArguments `
+            -RunRoot $runDirectory `
+            -DatabaseOwnershipRoot $routes.VerificationDatabasePrefix `
+            -Numbering ([string]$runNumber) `
+            -StallThresholdMinutes $script:guardStallMinutes `
+            -DatabaseName $testDatabase `
+            -ReceiptPath $receiptPath `
+            -RunNonce $runNonce
+        if ($testRun.Stalled) {
+            Add-Failure "STALL: full-suite process was ended after five minutes without log growth"
+        }
+        Write-WatchdogLogLine -LineText "STALL=$($testRun.Stalled)" -LogPath $logPath
+        if ($testRun.ExitCode -ne 0) {
+            Add-Failure "full suite returned status $($testRun.ExitCode)"
+        }
+        foreach ($line in @(Get-Content -LiteralPath $logPath -ErrorAction Stop)) {
+            Set-PrintedSummaryFromLine -Line $line
         }
     }
     $wholeRun.Stop()
@@ -798,6 +1244,102 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
         }
     }
 
+    $testsDiscovered = $script:printedSummary.discovered
+    $testsExecuted = $script:printedSummary.tests_run
+    $testsResolved = $script:printedSummary.resolved
+    $testsNotReached = $null
+    if ($null -ne $testsDiscovered -and $null -ne $testsExecuted) {
+        $testsNotReached = [Math]::Max(0, [int]$testsDiscovered - [int]$testsExecuted)
+    }
+    if ($null -eq $testsDiscovered -or $null -eq $testsExecuted -or $null -eq $testsResolved) {
+        Add-Failure "discovered, executed, or loader-resolved test count is absent"
+    }
+    elseif ([int]$testsDiscovered -ne [int]$testsExecuted -or
+        [int]$testsExecuted -ne [int]$testsResolved) {
+        Add-Failure "discovered, executed, and loader-resolved test counts do not match"
+    }
+    if ($null -eq $counts.failures -or [int]$counts.failures -ne 0) {
+        Add-Failure "full-suite failure count is not zero"
+    }
+    if ($null -eq $counts.errors -or [int]$counts.errors -ne 0) {
+        Add-Failure "full-suite error count is not zero"
+    }
+    $skipTestIds = @($script:printedSummary.skip_ids.ToArray())
+    if ($null -eq $counts.skipped -or [int]$counts.skipped -ne $skipTestIds.Count) {
+        Add-Failure "every reported skip must have one named test identifier"
+    }
+    $unpermittedSkips = @($skipTestIds | Where-Object {
+        $_ -notin $script:permittedSkipIds
+    })
+    foreach ($skipId in $unpermittedSkips) {
+        Add-Failure "unpermitted skipped test: $skipId"
+    }
+
+    $runLogLines = if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+        @(Get-Content -LiteralPath $logPath -ErrorAction Stop)
+    }
+    else {
+        @()
+    }
+    $armedLinesPresent = @($script:armedGuardLines | Where-Object {
+        $_ -notin $runLogLines
+    }).Count -eq 0
+    if (-not $armedLinesPresent) {
+        Add-Failure "one or more armed guard summary lines are absent from the run log"
+    }
+    $templateStoreInVerificationRoot = $false
+    if (-not [string]::IsNullOrWhiteSpace($templateStorePath)) {
+        $storeFullPath = [System.IO.Path]::GetFullPath($templateStorePath)
+        $verificationRootFullPath = [System.IO.Path]::GetFullPath($verificationRoot)
+        $verificationPrefix = $verificationRootFullPath.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        $templateStoreInVerificationRoot = $storeFullPath.StartsWith(
+            $verificationPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    $cloneProven = $templateStoreInVerificationRoot -and
+        "MODE=clone" -in $runLogLines -and
+        $script:clonePreflightPassed -and
+        $null -ne $script:preflightTemplateBuildSeconds -and
+        $null -ne $script:clonePreflightSetupSeconds -and
+        $null -ne $script:setupSeconds
+    if (-not $cloneProven) {
+        Add-Failure "verification clone mode, preflight, or timing evidence is incomplete"
+    }
+
+    $verificationEvidence = [ordered]@{
+        Failures = $counts.failures
+        Errors = $counts.errors
+        TestsNotReached = $testsNotReached
+        TestsDiscovered = $testsDiscovered
+        TestsExecuted = $testsExecuted
+        TestsResolved = $testsResolved
+        Skipped = $counts.skipped
+        SkipTestIds = $skipTestIds
+        PermittedSkipIds = $script:permittedSkipIds
+        IsolationVerdict = $isolationVerdict
+        DatabasesCreated = $teardown.created
+        DatabasesDestroyed = $teardown.destroyed
+        DatabaseCount = $teardown.database_count
+        DatabaseOidsMatch = $teardown.oids_match
+        DatabasesConfirmedAbsent = $teardown.confirmed_absent
+        ArmedLinesPresent = $armedLinesPresent
+        CloneProven = $cloneProven
+    }
+    $verificationEvidencePass = Test-VerificationSuccess -Evidence $verificationEvidence
+    if (-not $verificationEvidencePass) {
+        Add-Failure "one or more required S4 success conditions were not met"
+    }
+    $testCountDifference = if ($null -ne $previousVerificationTestCount -and
+        $null -ne $testsExecuted) {
+        [int]$testsExecuted - [int]$previousVerificationTestCount
+    }
+    else {
+        $null
+    }
+
     try {
         $finalBinding = Get-SourceBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
         if ($null -eq $initialBinding -or $finalBinding.SourceKind -ne $initialBinding.SourceKind -or
@@ -822,10 +1364,13 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
         Add-Failure ("verifier script hash could not be re-checked: " + $_.Exception.Message)
     }
 
-    $verdict = if ($failureReasons.Count -eq 0 -and $sourceKind -in @("CANDIDATE", "COMMITTED") -and
-        $isolationVerdict -eq "PASS" -and $cp0Met -and $teardown.created -ge 1 -and
-        $teardown.destroyed -eq $teardown.created -and $teardown.oids_match -and
-        $teardown.confirmed_absent) {
+    $verdict = if ($script:watchdogStalled) {
+        "STALL"
+    }
+    elseif ($failureReasons.Count -eq 0 -and
+        $sourceKind -in @("CANDIDATE", "COMMITTED") -and
+        $isolationVerdict -eq "PASS" -and $cp0Met -and
+        (Test-VerificationSuccess -Evidence $verificationEvidence)) {
         "PASS"
     }
     else {
@@ -842,11 +1387,25 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
         binding_sha256 = $bindingHash
         script_sha256 = $scriptHash
         tests_run = $counts.tests_run
+        tests_discovered = $testsDiscovered
+        tests_executed = $testsExecuted
+        tests_resolved = $testsResolved
+        tests_not_reached = $testsNotReached
+        previous_verification_tests = $previousVerificationTestCount
+        test_count_difference_from_previous = $testCountDifference
         failures = $counts.failures
         errors = $counts.errors
         skipped = $counts.skipped
+        skip_test_ids = $skipTestIds
         isolation_verdict = $isolationVerdict
         cp0_met = $cp0Met
+        mode = "clone"
+        template_store = $templateStorePath
+        template_build_seconds = $script:preflightTemplateBuildSeconds
+        clone_preflight_setup_seconds = $script:clonePreflightSetupSeconds
+        clone_setup_seconds = $script:setupSeconds
+        armed_guard_lines_present = $armedLinesPresent
+        clone_proven = $cloneProven
         teardown = $teardown
         failure_reasons = @($failureReasons)
     }
@@ -863,10 +1422,28 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
 
 Write-Output "ISOLATION_VERDICT=$isolationVerdict"
 Write-Output "CP0_MET=$cp0Met"
+Write-Output "FAILFAST=ON"
+Write-Output "LOCK_TIMEOUT_MS=120000"
+Write-Output "STALL_GUARD_MINUTES=5"
+Write-Output "MODE=clone"
 Write-Output "TESTS_RUN=$($counts.tests_run)"
+Write-Output "TESTS_DISCOVERED=$testsDiscovered"
+Write-Output "TESTS_EXECUTED=$testsExecuted"
+Write-Output "TESTS_RESOLVED=$testsResolved"
+Write-Output "TESTS_NOT_REACHED=$testsNotReached"
+Write-Output "PREVIOUS_VERIFICATION_TESTS=$(if ($null -eq $previousVerificationTestCount) { 'UNAVAILABLE' } else { $previousVerificationTestCount })"
+Write-Output "TEST_COUNT_DIFFERENCE_FROM_PREVIOUS=$(if ($null -eq $testCountDifference) { 'UNAVAILABLE' } else { $testCountDifference })"
 Write-Output "TEST_FAILURES=$($counts.failures)"
 Write-Output "TEST_ERRORS=$($counts.errors)"
 Write-Output "TEST_SKIPPED=$($counts.skipped)"
+Write-Output "TEST_SKIP_IDS=$($skipTestIds -join ',')"
+Write-Output "TT1_TEMPLATE_BUILD_SECONDS=$(if ($null -eq $script:preflightTemplateBuildSeconds) { 'UNAVAILABLE' } else { $script:preflightTemplateBuildSeconds.ToString('F6', [System.Globalization.CultureInfo]::InvariantCulture) })"
+Write-Output "TT1_CLONE_SETUP_SECONDS=$(if ($null -eq $script:setupSeconds) { 'UNAVAILABLE' } else { $script:setupSeconds.ToString('F6', [System.Globalization.CultureInfo]::InvariantCulture) })"
+Write-Output "CLONE_PREFLIGHT_SETUP_SECONDS=$(if ($null -eq $script:clonePreflightSetupSeconds) { 'UNAVAILABLE' } else { $script:clonePreflightSetupSeconds.ToString('F6', [System.Globalization.CultureInfo]::InvariantCulture) })"
+Write-Output "CLONE_PREFLIGHT=$(if ($script:clonePreflightPassed) { 'PASS' } else { 'NOT PROVEN' })"
+Write-Output "CLONE_PROVEN=$cloneProven"
+Write-Output "ARMED_GUARD_LINES_PRESENT=$armedLinesPresent"
+Write-Output "STALL=$($script:watchdogStalled)"
 Write-Output "TEARDOWN_CREATED=$($teardown.created)"
 Write-Output "TEARDOWN_DESTROYED=$($teardown.destroyed)"
 Write-Output "TEARDOWN_OIDS_MATCH=$($teardown.oids_match)"

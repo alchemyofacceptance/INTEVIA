@@ -39,7 +39,7 @@ class LibraryPostgreSQLTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="postgres-library")
         self.profile = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
-        role = Role.objects.create(pk=1_000_003, name="PostgreSQL library actor")
+        role = Role.objects.create(name="PostgreSQL library actor")
         ProfileRole.objects.create(identity=self.profile, role=role)
         self.service = LibraryService(
             authority=ContributionAuthority(Capability())

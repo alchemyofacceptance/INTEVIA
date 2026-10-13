@@ -14,7 +14,8 @@ from django.db import connection, transaction
 from django.test import TransactionTestCase
 
 from s015_0021_support import (
-    FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, drop_unset_check,
+    FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, database_now,
+    drop_unset_check,
     empty_fp, found_nonroot, found_root, fresh, refresh, restore_unset_check, seed_authority, seed_identity,
 )
 
@@ -64,7 +65,7 @@ class _S015PositiveBase(TransactionTestCase):
     def route(self, token, anchor_id, state_at=T0, known_at=None):
         with connection.cursor() as cur:
             cur.execute("SELECT projection, eligible_count, served_from, fingerprint FROM public.s015_effective_state(%s, %s, %s, %s)",
-                        (token, anchor_id, state_at, known_at or dt.datetime.now(dt.timezone.utc)))
+                        (token, anchor_id, state_at, known_at or database_now()))
             return cur.fetchone()
 
     def head(self, table, col, anchor_id):
@@ -388,7 +389,7 @@ class LockOrder(_S015PositiveBase):
                             command_time = clock_cursor.fetchone()[0]
                         service = OrganismRoleService(
                             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
-                            clock=lambda: dt.datetime.now(dt.timezone.utc),
+                            clock=lambda: command_time,
                         )
                         service.transition_assignment(TransitionAssignmentCommand(
                             credential=actor.credential,

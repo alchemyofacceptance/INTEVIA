@@ -94,7 +94,6 @@ class EventAttendancePostgreSQLTests(TransactionTestCase):
             access_state=Identity.AccessState.ACTIVE,
         )
         role = Role.objects.create(
-            pk=1_000_008,
             name="PostgreSQL attendance cross-slice actor",
         )
         ProfileRole.objects.create(identity=self.actor, role=role)

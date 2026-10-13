@@ -73,6 +73,7 @@ from src.intevia.services.organism_formation_authority import (
     founding_authority_request,
 )
 from src.intevia.services.organism_membership_service import _insert_membership_transition_row
+from src.intevia.services.organism_entitlement_service import OrganismEntitlementService
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:COMMAND:v1\x00"
@@ -1704,7 +1705,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
 
 
 _BIRTHING_SUBTYPE = "TRANSITION_LIVING_ORGANISM/BIRTHING"
-_BIRTHING_COMMAND_DOMAIN = b"INTEVIA:S015:TRANSITION_LIVING_ORGANISM/BIRTHING:COMMAND:v1\x00"
+_BIRTHING_COMMAND_DOMAIN = b"INTEVIA:S015:TRANSITION_LIVING_ORGANISM/BIRTHING:COMMAND:v2\x00"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1713,6 +1714,9 @@ class BirthingCommand:
     living_organism_uuid: UUID
     request_reference: str
     idempotency_key: str
+    offering_choice: str
+    policy_version: int
+    policy_text_sha256: str
     effective_at: datetime | None = None
 
 
@@ -1725,8 +1729,15 @@ class BirthingResult:
     lineage_reference: str
     authority_reference: str
     authority_decision_reference: str
+    offering_choice: str | None = None
+    policy_version: int | None = None
+    policy_text_sha256: str | None = None
+    entitlement_event_uuid: UUID | None = None
+    entitlement_uuid: UUID | None = None
+    entitlement_authority_reference: str | None = None
+    entitlement_authority_decision_reference: str | None = None
 
-    def receipt_payload(self) -> dict[str, str | int]:
+    def receipt_payload(self) -> dict[str, str | int | None]:
             return {
                 "living_organism_uuid": str(self.living_organism_uuid),
                 "snapshot_uuid": str(self.snapshot_uuid),
@@ -1735,6 +1746,21 @@ class BirthingResult:
                 "lineage_reference": self.lineage_reference,
                 "authority_reference": self.authority_reference,
                 "authority_decision_reference": self.authority_decision_reference,
+                "offering_choice": self.offering_choice,
+                "policy_version": self.policy_version,
+                "policy_text_sha256": self.policy_text_sha256,
+                "entitlement_event_uuid": (
+                    None
+                    if self.entitlement_event_uuid is None
+                    else str(self.entitlement_event_uuid)
+                ),
+                "entitlement_uuid": (
+                    None if self.entitlement_uuid is None else str(self.entitlement_uuid)
+                ),
+                "entitlement_authority_reference": self.entitlement_authority_reference,
+                "entitlement_authority_decision_reference": (
+                    self.entitlement_authority_decision_reference
+                ),
             }
 
     @classmethod
@@ -1756,6 +1782,25 @@ def _birthing_result_from_payload(payload: object) -> BirthingResult:
                 lineage_reference=payload["lineage_reference"],
                 authority_reference=payload["authority_reference"],
                 authority_decision_reference=payload["authority_decision_reference"],
+                offering_choice=payload.get("offering_choice"),
+                policy_version=payload.get("policy_version"),
+                policy_text_sha256=payload.get("policy_text_sha256"),
+                entitlement_event_uuid=(
+                    None
+                    if payload.get("entitlement_event_uuid") is None
+                    else UUID(payload["entitlement_event_uuid"])
+                ),
+                entitlement_uuid=(
+                    None
+                    if payload.get("entitlement_uuid") is None
+                    else UUID(payload["entitlement_uuid"])
+                ),
+                entitlement_authority_reference=payload.get(
+                    "entitlement_authority_reference"
+                ),
+                entitlement_authority_decision_reference=payload.get(
+                    "entitlement_authority_decision_reference"
+                ),
             )
     except (KeyError, TypeError, ValueError) as exc:
             raise S015CommandReplayMismatch("completed receipt does not match request") from exc
@@ -1795,6 +1840,11 @@ class OrganismBirthingService(_OrganismCommandService):
                     database_alias=database_alias,
                 )
             super().__init__(authority=authority, clock=clock, database_alias=database_alias)
+            self._entitlement_service = OrganismEntitlementService(
+                authority=self._authority,
+                clock=clock,
+                database_alias=database_alias,
+            )
 
     def _replay_result(self, payload: object) -> BirthingResult:
             return _birthing_result_from_payload(payload)
@@ -1830,7 +1880,7 @@ class OrganismBirthingService(_OrganismCommandService):
                 }
                 fingerprint = _command_payload(
                     domain=_BIRTHING_COMMAND_DOMAIN,
-                    schema="s015-birthing-v1",
+                    schema="s015-birthing-v2",
                     action=self._action,
                     actor_identity_id=actor.identity_id,
                     actor_access_epoch=actor.access_epoch,
@@ -1841,7 +1891,10 @@ class OrganismBirthingService(_OrganismCommandService):
                     command={
                         "effective_at": effective_at,
                         "received_at": received_at,
-                        "schema": "s015-birthing-v1",
+                        "offering_choice": command.offering_choice,
+                        "policy_text_sha256": command.policy_text_sha256,
+                        "policy_version": command.policy_version,
+                        "schema": "s015-birthing-v2",
                     },
                 )
                 acquire_organism_command_mutex(
@@ -2014,6 +2067,19 @@ class OrganismBirthingService(_OrganismCommandService):
                         effective_at=effective_at,
                         received_at=received_at,
                     )
+                    prepared_election = self._entitlement_service.prepare_birthing_election(
+                        command=command,
+                        actor=actor,
+                        organism=organism,
+                        role_refs=role_refs,
+                        snapshot_uuid=snapshot_uuid,
+                        request_reference=request_reference,
+                        idempotency_key=idempotency_key,
+                        actor_membership=actor_membership,
+                        occurred_at=effective_at,
+                        effective_at=effective_at,
+                        received_at=received_at,
+                    )
                     event_uuid = uuid4()
                     temporal_kind, temporal_reference = _resulting_temporal_basis(
                         payload_fingerprint=fingerprint,
@@ -2100,6 +2166,12 @@ class OrganismBirthingService(_OrganismCommandService):
                     ) from exc
 
                 event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
+                entitlement_event, entitlement = (
+                    self._entitlement_service.complete_birthing_election(
+                        prepared_election,
+                        birthing_event_uuid=event.event_uuid,
+                    )
+                )
                 result = BirthingResult(
                     living_organism_uuid=organism_uuid,
                     snapshot_uuid=snapshot_uuid,
@@ -2108,6 +2180,19 @@ class OrganismBirthingService(_OrganismCommandService):
                     lineage_reference=lineage_reference,
                     authority_reference=decision.authority_reference,
                     authority_decision_reference=decision.authority_decision_reference,
+                    offering_choice=command.offering_choice,
+                    policy_version=command.policy_version,
+                    policy_text_sha256=command.policy_text_sha256,
+                    entitlement_event_uuid=entitlement_event.event_uuid,
+                    entitlement_uuid=(
+                        None if entitlement is None else entitlement.entitlement_uuid
+                    ),
+                    entitlement_authority_reference=(
+                        prepared_election.decision.authority_reference
+                    ),
+                    entitlement_authority_decision_reference=(
+                        prepared_election.decision.authority_decision_reference
+                    ),
                 )
                 return self._finalise(
                     actor=actor,

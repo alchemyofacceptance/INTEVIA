@@ -15,6 +15,10 @@ class TemplateIdentityUnavailable(RuntimeError):
     """An identity input could not be determined, so the run must build fresh."""
 
 
+class TemplateNamespaceUnavailable(RuntimeError):
+    """A reusable template name requires a recognized store namespace."""
+
+
 class TemplateReceiptInvalid(RuntimeError):
     """A persisted template receipt cannot prove the template's full identity."""
 
@@ -25,6 +29,15 @@ class TemplateNameCollision(RuntimeError):
 
 class TemplateSealingRefused(RuntimeError):
     """The role could not set the required ALLOW_CONNECTIONS false seal."""
+
+
+def _required_template_namespace():
+    namespace = os.environ.get("VERIFICATION_TEMPLATE_NAMESPACE")
+    if namespace not in {"me", "vr"}:
+        raise TemplateNamespaceUnavailable(
+            "VERIFICATION_TEMPLATE_NAMESPACE must be set to 'me' or 'vr'"
+        )
+    return namespace
 
 
 def canonical_listing(lines):
@@ -214,6 +227,7 @@ def source_input_lines(repo_root=None):
 
 def runtime_input_lines(connection=None):
     """Read server, extension, owner and locale facts from the active build database."""
+    _required_template_namespace()
     if connection is None:
         from django.db import connection
 
@@ -285,9 +299,10 @@ def complete_identity(lines):
 
 
 def template_database_name(identity):
+    namespace = _required_template_namespace()
     if not re.fullmatch(r"[0-9a-f]{64}", identity):
         raise TemplateIdentityUnavailable("template identity must be 64 lowercase hexadecimal characters")
-    return "test_intevia_tpl_" + identity[:46]
+    return "test_intevia_tpl_" + namespace + "_" + identity[:43]
 
 
 def validate_template_receipt(receipt, expected_identity=None):
@@ -674,6 +689,7 @@ def _build_template(connection, alias, store, source_lines):
 
 
 def prepare_template(connection, alias, store):
+    _required_template_namespace()
     source_lines = source_input_lines()
     expected_listing, expected_identity = complete_identity(source_lines + runtime_input_lines(connection))
     path = template_receipt_path(store, expected_identity)

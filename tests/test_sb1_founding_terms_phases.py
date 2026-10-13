@@ -1,3 +1,5 @@
+"""SB-1 founding-terms phase and governance-readiness witnesses."""
+
 from dataclasses import asdict
 from datetime import datetime, timedelta
 import hashlib
@@ -8,7 +10,6 @@ from uuid import UUID, uuid4
 
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase, override_settings
-from django.utils import timezone
 
 from core.models import (
     AuthorityBasis,
@@ -41,6 +42,7 @@ from core.organism_contract import (
 from tests.s015_0021_support import (
     T0,
     append_event,
+    database_now,
     empty_fp,
     found_nonroot,
     fresh,
@@ -97,13 +99,16 @@ def _expect_service_success(
     route: str,
     operation: Callable[[], _ServiceResult],
 ) -> _ServiceResult:
+    """Return a successful result or annotate and preserve the original refusal."""
     try:
         return operation()
     except S015AuthorityDenied as exc:
-        test_case.fail(
-            f"{route} unexpectedly refused: refusal_code={exc.refusal_code!r}; "
+        exc.add_note(
+            f"{test_case.id()} {route} unexpectedly refused: "
+            f"refusal_code={exc.refusal_code!r}; "
             f"disclosed_refusal_code={exc.disclosed_refusal_code!r}; message={exc}"
         )
+        raise
 
 
 class SB1FoundingDatabaseInvariantTests(TransactionTestCase):
@@ -1148,7 +1153,7 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         self.assertEqual(event.evidence_reference, "formation-phase:CONCEIVING->GERMINATING")
         self.assertIsNone(event.temporal_basis_kind)
         self.assertIsNone(event.temporal_basis_reference)
-        self.assertEqual(decision.provider_version, "R7.0")
+        self.assertEqual(decision.provider_version, "R8.0")
         self.assertLessEqual(len(result.authority_reference), 255)
         self.assertEqual(
             decision.command_subtype,
@@ -1429,7 +1434,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             registration_source=ProductionGovernedRegistrationFactSource(),
         )
         service = OrganismFormationService(
-            clock=timezone.now,
+            clock=database_now,
             authority=S015Authority(provider=provider),
         )
         registration = LearnerRegistration.objects.filter(
@@ -1472,7 +1477,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         )
         before = self._founding_counts()
         service = OrganismFormationService(
-            clock=timezone.now,
+            clock=database_now,
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
         )
 
@@ -1566,7 +1571,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             registration.recorded_at,
         )
         founding_at = max(
-            timezone.now(),
+            database_now(),
             registration_known_at + timedelta(microseconds=1),
         )
         name = f"Founding Journey {tag}"
@@ -1650,7 +1655,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:governance:key:{tag}",
                 occurred_at=governance_at,
                 effective_at=governance_at,
-                received_at=_database_clock(),
+                received_at=governance_at,
                 fields={
                     "cq_active": False,
                     "governance_enabled": False,
@@ -1661,6 +1666,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             )),
         )
         self.assertIs(governance.governance_enabled, False)
+        governance_effect_at = _database_clock()
         governance_result = _expect_service_success(
             self,
             "governance-configuration gateway effect",
@@ -1671,9 +1677,9 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 version_uuid=governance.version_uuid,
                 request_reference=f"sb1:journey:governance-effect:{tag}",
                 idempotency_key=f"sb1:journey:governance-effect:key:{tag}",
-                occurred_at=governance_at,
-                effective_at=governance_at,
-                received_at=_database_clock(),
+                occurred_at=governance_effect_at,
+                effective_at=governance_effect_at,
+                received_at=governance_effect_at,
             )),
         )
         assert_decision_and_receipt(
@@ -1694,7 +1700,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:question:key:{tag}",
                 occurred_at=question_at,
                 effective_at=question_at,
-                received_at=_database_clock(),
+                received_at=question_at,
                 fields={"answer_format": "LONG_ANSWER"},
             )),
         )
@@ -1702,6 +1708,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             question.question_text,
             f"Why do you want to join {founding_content.name}?",
         )
+        question_effect_at = _database_clock()
         question_result = _expect_service_success(
             self,
             "application-question gateway effect",
@@ -1712,9 +1719,9 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 version_uuid=question.version_uuid,
                 request_reference=f"sb1:journey:question-effect:{tag}",
                 idempotency_key=f"sb1:journey:question-effect:key:{tag}",
-                occurred_at=question_at,
-                effective_at=question_at,
-                received_at=_database_clock(),
+                occurred_at=question_effect_at,
+                effective_at=question_effect_at,
+                received_at=question_effect_at,
             )),
         )
         assert_decision_and_receipt(
@@ -1812,7 +1819,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         self.assertEqual(assignment_event.action, "ASSIGN")
         self.assertEqual(assignment_event.resulting_state, "ACTIVE")
         self.assertEqual(decision_record.outcome, "QUALIFIED")
-        self.assertEqual(decision_record.provider_version, "R7.0")
+        self.assertEqual(decision_record.provider_version, "R8.0")
         self.assertEqual(decision_record.authority_reference, result.authority_reference)
         self.assertLessEqual(len(result.authority_reference), 255)
         maximum_reference_length = len("s015a1:") + len(canonical_json_bytes({

@@ -1,7 +1,8 @@
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
-from django.utils import timezone
+
+from tests.s015_0021_support import database_now
 
 
 class EventAttendanceMigrationTests(TransactionTestCase):
@@ -31,7 +32,7 @@ class EventAttendanceMigrationTests(TransactionTestCase):
             canonical_username="s008-migration-subject",
             access_state="active",
         )
-        occurred_at = timezone.now()
+        occurred_at = database_now()
         event = Event.objects.create(
             event_id="event:s008:migration",
             title="S008 migration",

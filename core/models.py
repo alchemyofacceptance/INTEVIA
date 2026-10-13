@@ -4741,6 +4741,37 @@ class LOApplicationSettingsVersion(_LOGatewayVersion):
     applications_open = models.BooleanField(null=True, blank=True)
     automatic_acceptance = models.BooleanField(null=True, blank=True)
     processing_responsibility = models.CharField(max_length=18, null=True, blank=True)
+    entitlement_choice = models.CharField(max_length=24, null=True, blank=True)
+    entitlement_election_route = models.CharField(max_length=24, null=True, blank=True)
+    entitlement_policy_version = models.PositiveIntegerField(null=True, blank=True)
+    entitlement_policy_text_sha256 = models.CharField(max_length=64, null=True, blank=True)
+    entitlement_authority_source = models.CharField(max_length=255, null=True, blank=True)
+    entitlement_authority_version = models.CharField(max_length=32, null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        entitlement_choice__isnull=True,
+                        entitlement_election_route__isnull=True,
+                        entitlement_policy_version__isnull=True,
+                        entitlement_policy_text_sha256__isnull=True,
+                        entitlement_authority_source__isnull=True,
+                        entitlement_authority_version__isnull=True,
+                    )
+                    | models.Q(
+                        entitlement_choice__in=("FREE", "COMPLIMENTARY_BETA"),
+                        entitlement_election_route__in=("BIRTHING", "POST_BIRTHING"),
+                        entitlement_policy_version__gt=0,
+                        entitlement_policy_text_sha256__regex=r"^[0-9a-f]{64}$",
+                        entitlement_authority_source__gt="",
+                        entitlement_authority_version__gt="",
+                    )
+                ),
+                name="se_entitlement_election_shape_ck",
+            ),
+        ]
 
 
 class LOApplicationQuestionVersion(_LOGatewayVersion):
@@ -5508,7 +5539,14 @@ class GovernedRule(_S015AppendOnly):
                 name="sbg_governedrule_scope_vocab_ck",
             ),
             models.CheckConstraint(
-                condition=models.Q(code__in=("GOVERNANCE_CONSTITUTION", "U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION")),
+                condition=models.Q(
+                    code__in=(
+                        "GOVERNANCE_CONSTITUTION",
+                        "U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION",
+                        "BETA_COMPLIMENTARY_ACCESS",
+                        "FREE_TIER",
+                    )
+                ),
                 name="sbg_governedrule_code_vocab_ck",
             ),
             models.CheckConstraint(
@@ -5760,5 +5798,224 @@ class CircleParticipationEnd(_S015AppendOnly):
                     composed_from_event_uuid__isnull=False,
                 ),
                 name="sbg_circleparticipationend_composed_ck",
+            ),
+        ]
+
+
+SE_ENTITLEMENT_CAPABILITY_CODES = (
+    "APPLICATION_CIRCLE",
+    "FINANCE_CIRCLE",
+    "OPERATIONS_CIRCLE",
+    "UNLIMITED_CIRCLES",
+    "PROBATION",
+    "MENTORSHIP",
+    "CUSTOM_ROLES",
+    "GOVERNANCE_SUSPENSION",
+    "PREMIUM_SEALING",
+    "OPTIONAL_TRANSPARENCY",
+    "CONFIGURABLE_RECOVERY_WINDOWS",
+    "CIRCLE_SCOPED_EXPORT",
+    "SEALED_EXPORT",
+)
+SE_ENTITLEMENT_DIMENSIONS = (
+    "circles",
+    "organism_learners",
+    "document_footprint",
+)
+
+
+class OrganismEntitlementPolicyText(_S015AppendOnly):
+    """An immutable, versioned copy of the exact offering text accepted by an LO."""
+
+    policy_version = models.PositiveIntegerField()
+    accepted_text = models.TextField()
+    text_sha256 = models.CharField(max_length=64)
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy_version",),
+                name="se_entitlement_policy_version_uniq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(policy_version__gt=0),
+                name="se_entitlementpolicytext_policy_version_positive_ck",
+            ),
+        ]
+
+
+class OrganismEntitlement(_S015AppendOnly):
+    """One immutable grant record for a Living Organism's entitlement."""
+
+    SOURCE_CHOICES = (
+        ("PAID", "PAID"),
+        ("COMPLIMENTARY", "COMPLIMENTARY"),
+        ("TRIAL", "TRIAL"),
+    )
+    BASIS_CHOICES = (
+        ("BETA_OPT_IN", "BETA_OPT_IN"),
+        ("TRANSITION_TRIAL", "TRANSITION_TRIAL"),
+        ("AUTHORISED_EXTENSION", "AUTHORISED_EXTENSION"),
+        ("PARTNER", "PARTNER"),
+        ("PAID", "PAID"),
+    )
+
+    entitlement_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    living_organism = models.ForeignKey(
+        LivingOrganism,
+        on_delete=models.PROTECT,
+        related_name="entitlements",
+    )
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES)
+    basis = models.CharField(max_length=24, choices=BASIS_CHOICES)
+    granting_party_id = models.CharField(max_length=255, null=True, blank=True)
+    policy_reference = models.CharField(max_length=255)
+    policy_version = models.PositiveIntegerField()
+    capabilities = models.JSONField()
+    limits = models.JSONField()
+    effective_at = models.DateTimeField()
+    effective_until = models.DateTimeField(null=True, blank=True)
+    ending_condition_reference = models.CharField(max_length=255, null=True, blank=True)
+    tier_reference = models.CharField(max_length=255, null=True, blank=True)
+    pricing_basis_reference = models.CharField(max_length=255, null=True, blank=True)
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(source__in=("PAID", "COMPLIMENTARY", "TRIAL")),
+                name="se_entitlement_source_vocab_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    basis__in=(
+                        "BETA_OPT_IN",
+                        "TRANSITION_TRIAL",
+                        "AUTHORISED_EXTENSION",
+                        "PARTNER",
+                        "PAID",
+                    )
+                ),
+                name="se_entitlement_basis_vocab_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(policy_version__gt=0),
+                name="se_entitlement_policy_version_positive_ck",
+            ),
+            models.UniqueConstraint(
+                fields=("living_organism",),
+                condition=models.Q(basis="BETA_OPT_IN"),
+                name="se_entitlement_beta_one_per_lo_uniq",
+            ),
+        ]
+
+
+class OrganismEntitlementEvent(_S015AppendOnly):
+    """An append-only event in an entitlement's local event chain."""
+
+    EVENT_TYPE_CHOICES = (
+        ("GRANTED", "GRANTED"),
+        ("EXTENDED", "EXTENDED"),
+        ("GRACE_BEGUN", "GRACE_BEGUN"),
+        ("GRACE_ENDED", "GRACE_ENDED"),
+        ("ENDED", "ENDED"),
+        ("REPLACED", "REPLACED"),
+    )
+
+    event_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    entitlement = models.ForeignKey(
+        OrganismEntitlement,
+        on_delete=models.PROTECT,
+        related_name="events",
+    )
+    sequence = models.PositiveIntegerField()
+    predecessor = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    event_type = models.CharField(max_length=16, choices=EVENT_TYPE_CHOICES)
+    actor_state = models.CharField(max_length=24)
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    actor_access_epoch = models.PositiveBigIntegerField(null=True, blank=True)
+    actor_capacity = models.CharField(max_length=24)
+    entry_mode = models.CharField(max_length=16)
+    enterer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    composing_rule_state = models.CharField(max_length=16)
+    composing_rule = models.ForeignKey(
+        GovernedRule,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    composing_rule_reference = models.CharField(max_length=255, null=True, blank=True)
+    composer_state = models.CharField(max_length=16)
+    composed_from_event_uuid = models.UUIDField(null=True, blank=True)
+    composer_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    deciding_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    authoriser_identity = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    authoriser_office = models.CharField(max_length=48, null=True, blank=True)
+    reason = models.TextField(null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("entitlement", "sequence"),
+                name="se_entitlement_event_anchor_seq_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("predecessor",),
+                name="se_entitlement_event_predecessor_uniq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sequence__gt=0),
+                name="se_entitlement_event_sequence_positive_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(event_type__in=(
+                    "GRANTED",
+                    "EXTENDED",
+                    "GRACE_BEGUN",
+                    "GRACE_ENDED",
+                    "ENDED",
+                    "REPLACED",
+                )),
+                name="se_entitlement_event_type_vocab_ck",
             ),
         ]

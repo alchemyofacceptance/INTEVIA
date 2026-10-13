@@ -51,7 +51,7 @@ class S010PostgreSQLGuardianTests(TransactionTestCase):
 			display_name="S010 PostgreSQL",
 		)
 		self.user = self.identity_record.credential
-		role = Role.objects.create(pk=1_000_010, name="S010 PostgreSQL actor")
+		role = Role.objects.create(name="S010 PostgreSQL actor")
 		ProfileRole.objects.create(identity=self.identity_record, role=role)
 		self.event_record = Event.objects.create(
 			event_id="event:s010:postgresql",

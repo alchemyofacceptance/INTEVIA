@@ -3,9 +3,8 @@ import importlib
 from django.db import connection, migrations
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
-from django.utils import timezone
 
-from tests.s015_0021_support import migrate_to_target_with_restore
+from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
 class EventResourceRelationshipMigrationTests(TransactionTestCase):
@@ -48,7 +47,7 @@ class EventResourceRelationshipMigrationTests(TransactionTestCase):
             access_state="active",
             access_epoch=4,
         )
-        occurred_at = timezone.now()
+        occurred_at = database_now()
         event = Event.objects.create(
             event_id="event.s011b.migration",
             title="S011-B migration",

@@ -13,7 +13,7 @@ from threading import Barrier, Event
 from unittest import skipUnless
 from uuid import UUID, uuid4
 
-from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.db import DatabaseError, IntegrityError, close_old_connections, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
@@ -42,6 +42,7 @@ from src.intevia.services.organism_membership_service import S015OperationNotYet
 from tests.s015_0021_support import (
     T0,
     append_event,
+    database_now,
     current_core_leaf,
     empty_fp,
     fresh,
@@ -118,16 +119,16 @@ def _assert_catalog_restored(test_case, reference):
         "table set not restored",
     )
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0045_sbg_governance_formation")
-    test_case.assertEqual(len(after["triggers"]), 458)
+    test_case.assertEqual(head, "0046_se_entitlement_foundation")
+    test_case.assertEqual(len(after["triggers"]), 470)
     test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
 
 
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0045_sbg_governance_formation")
-    test_case.assertEqual(len(reference["triggers"]), 458)
+    test_case.assertEqual(head, "0046_se_entitlement_foundation")
+    test_case.assertEqual(len(reference["triggers"]), 470)
     nonempty = isolation_state.unexpected_data_rows(reference)
     test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
     for table in LEGACY_EMPTY_TABLES:
@@ -226,7 +227,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def service(self, provider=None, clock=None):
         return OrganismApplicationService(
             authority=S015Authority(provider=provider or self.provider),
-            clock=clock or (lambda: datetime.now(timezone.utc)),
+            clock=clock or database_now,
         )
 
     def submit(self):
@@ -283,12 +284,8 @@ class ApplicationDecisionTests(TransactionTestCase):
         role = OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
         role_service = OrganismRoleService(
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
-            clock=lambda: datetime.now(timezone.utc),
+            clock=database_now,
         )
-        def database_now():
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT clock_timestamp()")
-                return cursor.fetchone()[0]
 
         proposal_received_at = database_now()
         proposal = role_service.propose_assignment(ProposeAssignmentCommand(
@@ -322,8 +319,8 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
         head = current_core_leaf(connection)[0][1]
-        self.assertEqual(head, "0045_sbg_governance_formation")
-        self.assertEqual(len(reference["triggers"]), 458)
+        self.assertEqual(head, "0046_se_entitlement_foundation")
+        self.assertEqual(len(reference["triggers"]), 470)
         nonempty = isolation_state.unexpected_data_rows(reference)
         self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")
         for table in LEGACY_EMPTY_TABLES:
@@ -1025,7 +1022,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_status_lifecycle_and_coordinates(self):
         application = self.application()
         service = self.service()
-        future = datetime.now(timezone.utc) + timedelta(days=1)
+        future = database_now() + timedelta(days=1)
         self.assertEqual(service.application_status(application, T0, future), "NOT_PRESENT")
         self.assertEqual(service.application_status(application, future, future), "WAITING")
         service.claim_application(self.command(application))
@@ -1067,7 +1064,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             request_reference="s3:status:withdraw", idempotency_key="s3:status:withdraw",
             occurred_at=NOW, effective_at=NOW, received_at=NOW,
         ))
-        future = datetime.now(timezone.utc) + timedelta(days=1)
+        future = database_now() + timedelta(days=1)
         self.assertEqual(self.service().application_status(application, future, future), "WITHDRAWN")
 
     def test_predecessor_uses_new_application_record_time_not_service_clock(self):
@@ -1543,3 +1540,74 @@ class ApplicationDecisionTests(TransactionTestCase):
             raise outcome
         self.assertEqual(ApplicationDecision.objects.filter(application=application).exists(), outcome is True)
         return outcome
+
+    def test_w_clk_1_future_known_at_refuses_with_exact_message_and_savepoint_rollback(self):
+        primary_message = (
+            "S015 refresh: coordinates must satisfy state_at <= known_at <= now"
+        )
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT state, current_state_effective_at, state_known_at, "
+                    "state_source_event_set_fingerprint "
+                    "FROM public.core_livingorganism WHERE id = %s",
+                    [self.ids["lo"]],
+                )
+                before = cursor.fetchone()
+
+            with self.assertRaises(DatabaseError) as refused:
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT public.s015_refresh_governed_cache("
+                            "'core_livingorganism', %s, %s, "
+                            "clock_timestamp() + interval '60 seconds')",
+                            [self.ids["lo"], T0],
+                        )
+
+            cause = refused.exception.__cause__
+            self.assertIsNotNone(cause)
+            self.assertEqual(cause.diag.message_primary, primary_message)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT state, current_state_effective_at, state_known_at, "
+                    "state_source_event_set_fingerprint "
+                    "FROM public.core_livingorganism WHERE id = %s",
+                    [self.ids["lo"]],
+                )
+                after = cursor.fetchone()
+            self.assertEqual(after, before)
+
+    def test_w_clk_2_shared_refresh_uses_inline_clock_and_reports_ordering_refusal(self):
+        primary_message = (
+            "S015 refresh: coordinates must satisfy state_at <= known_at <= now"
+        )
+        future_state_at = database_now() + timedelta(seconds=60)
+        captured = []
+
+        def capture_refresh_sql(execute, sql, params, many, context):
+            captured.append((sql, params))
+            return execute(sql, params, many, context)
+
+        with self.assertRaisesRegex(RuntimeError, "S015 refresh clock refusal") as refused:
+            with connection.execute_wrapper(capture_refresh_sql):
+                with connection.cursor() as cursor:
+                    _support_refresh(
+                        cursor,
+                        "core_livingorganism",
+                        self.ids["lo"],
+                        future_state_at,
+                    )
+
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "SELECT public.s015_refresh_governed_cache("
+                    "%s, %s, %s, clock_timestamp())",
+                    ("core_livingorganism", self.ids["lo"], future_state_at),
+                )
+            ],
+        )
+        self.assertIn("known_at=statement clock_timestamp()", str(refused.exception))
+        self.assertIn(primary_message, str(refused.exception))

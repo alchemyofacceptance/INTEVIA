@@ -1,3 +1,5 @@
+"""Shared route and setup helpers for SB-2 Birthing tests."""
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
@@ -26,7 +28,10 @@ from src.intevia.services.organism_application_service import (
     GatewayDraftCommand,
     OrganismApplicationService,
 )
-from src.intevia.services.organism_authority import S015Authority
+from src.intevia.services.organism_authority import (
+    S015Authority,
+    S015AuthorityDenied,
+)
 from src.intevia.services.organism_formation_service import (
     BirthingCommand,
     FoundLivingOrganismCommand,
@@ -37,6 +42,7 @@ from src.intevia.services.organism_formation_service import (
 )
 from tests.s015_0021_support import (
     append_event,
+    database_now,
     empty_fp,
     fresh,
     seed_fixture_substitute_authority,
@@ -45,6 +51,7 @@ from tests.s015_0021_support import (
     refresh,
     u,
 )
+from tests.se_route_support import ensure_test_policy_text
 
 SB2_TEST_PASSWORD = "Existing-Governed-Password-1"
 
@@ -71,12 +78,6 @@ class RouteRecordedTimes:
     birthing_recorded_at: datetime | None
     latest_effective_at: datetime
     latest_recorded_at: datetime
-
-
-def database_now():
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
-        return cursor.fetchone()[0]
 
 
 def route_test_now(route: BirthingRoute) -> datetime:
@@ -261,7 +262,7 @@ def effect_gateway(
         idempotency_key=f"sb2:draft:key:{action.value}:{tag}",
         occurred_at=draft_at,
         effective_at=draft_at,
-        received_at=database_now(),
+        received_at=draft_at,
         fields=fields,
     ))
     effect_at = database_now()
@@ -274,19 +275,31 @@ def effect_gateway(
         idempotency_key=f"sb2:effect:key:{action.value}:{tag}",
         occurred_at=effect_at,
         effective_at=effect_at,
-        received_at=database_now(),
+        received_at=effect_at,
     ))
 
 
 def birth(route: BirthingRoute, *, suffix: str = "birth"):
+    """Call Birthing and annotate refusals without changing the exception."""
     received_at = database_now()
-    return route.birthing_service.birth_living_organism(BirthingCommand(
-        credential=route.founder.credential,
-        living_organism_uuid=route.organism.organism_id,
-        request_reference=f"sb2:{suffix}:{route.tag}",
-        idempotency_key=f"sb2:{suffix}:key:{route.tag}",
-        effective_at=received_at,
-    ))
+    policy_version, policy_text_sha256 = ensure_test_policy_text()
+    try:
+        return route.birthing_service.birth_living_organism(BirthingCommand(
+            credential=route.founder.credential,
+            living_organism_uuid=route.organism.organism_id,
+            request_reference=f"sb2:{suffix}:{route.tag}",
+            idempotency_key=f"sb2:{suffix}:key:{route.tag}",
+            effective_at=received_at,
+            offering_choice="FREE",
+            policy_version=policy_version,
+            policy_text_sha256=policy_text_sha256,
+        ))
+    except S015AuthorityDenied as exc:
+        exc.add_note(
+            f"refusal_code={exc.refusal_code!r}; "
+            f"disclosed_refusal_code={exc.disclosed_refusal_code!r}"
+        )
+        raise
 
 
 def route_fixture_state(route: BirthingRoute):
@@ -318,7 +331,11 @@ def route_fixture_state(route: BirthingRoute):
     ).order_by("-sequence").first()
     if head_event is None:
         raise RuntimeError("service-founded route has no LO event head")
-    settings_version = LOApplicationSettingsVersion.objects.get(living_organism=organism)
+    settings_version = LOApplicationSettingsVersion.objects.get(
+        living_organism=organism,
+        entitlement_choice__isnull=True,
+        entitlement_election_route__isnull=True,
+    )
     question_version = LOApplicationQuestionVersion.objects.get(living_organism=organism)
     governance_version = LOGovernanceConfigurationVersion.objects.get(living_organism=organism)
     ids = {

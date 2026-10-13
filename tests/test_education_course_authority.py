@@ -5,6 +5,7 @@ from uuid import uuid4
 from django.db import transaction
 from django.test import TestCase
 
+from tests.s015_0021_support import database_now
 from src.intevia.services.education_course_authority import (
     EducationCourseAuthority,
     EducationCourseAuthorityDenied,
@@ -37,7 +38,7 @@ class EducationCourseAuthorityTests(TestCase):
     def setUp(self):
         self.request = EducationCourseAuthorityRequest(
             "default", 1, uuid4(), 0, EducationCourseAction.CREATE,
-            "a" * 64, "request", "idempotency", datetime.now(timezone.utc),
+            "a" * 64, "request", "idempotency", database_now(),
         )
 
     def response(self, request):

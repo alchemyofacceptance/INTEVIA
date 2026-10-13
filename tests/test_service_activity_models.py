@@ -546,6 +546,14 @@ class IdentityFKPredictionTests(TestCase):
         ("circleparticipationend", "enterer_identity"),
     }
 
+    EXPECTED_SE_FK_ADDITIONS = {
+        ("organismentitlementevent", "actor"),
+        ("organismentitlementevent", "authoriser_identity"),
+        ("organismentitlementevent", "composer_identity"),
+        ("organismentitlementevent", "deciding_identity"),
+        ("organismentitlementevent", "enterer_identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -601,6 +609,7 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_SB1_FK_ADDITIONS,
             self.EXPECTED_P1_FK_ADDITIONS,
             self.EXPECTED_SBG_FK_ADDITIONS,
+            self.EXPECTED_SE_FK_ADDITIONS,
         )
         for expected in later_sets:
             self.assertEqual(scoped_fks & expected, expected)
@@ -621,6 +630,7 @@ class IdentityFKPredictionTests(TestCase):
             | self.EXPECTED_SB1_FK_ADDITIONS
             | self.EXPECTED_P1_FK_ADDITIONS
             | self.EXPECTED_SBG_FK_ADDITIONS
+            | self.EXPECTED_SE_FK_ADDITIONS
         )
         historical_scoped = scoped_fks - later_additions
         self.assertEqual(len(historical_scoped), 56)
@@ -638,7 +648,36 @@ class IdentityFKPredictionTests(TestCase):
             | later_additions
         )
         self.assertEqual(scoped_fks, expected_scoped)
-        self.assertEqual(len(scoped_fks), 108)
+        self.assertEqual(len(scoped_fks), 113)
+
+    def test_se_identity_fk_slice_has_five_references(self):
+        self.assertEqual(len(self.EXPECTED_SE_FK_ADDITIONS), 5)
+        self.assertEqual(
+            self.EXPECTED_SE_FK_ADDITIONS,
+            {
+                ("organismentitlementevent", "actor"),
+                ("organismentitlementevent", "authoriser_identity"),
+                ("organismentitlementevent", "composer_identity"),
+                ("organismentitlementevent", "deciding_identity"),
+                ("organismentitlementevent", "enterer_identity"),
+            },
+        )
+        all_other_slices = (
+            self.EXPECTED_S012_FK_ADDITIONS,
+            self.EXPECTED_S013_FK_ADDITIONS,
+            self.EXPECTED_S014_FK_ADDITIONS,
+            self.EXPECTED_S015_FK_ADDITIONS,
+            self.EXPECTED_S015_POST_0019_FK_ADDITIONS,
+            self.EXPECTED_SB1_FK_ADDITIONS,
+            self.EXPECTED_P1_FK_ADDITIONS,
+            self.EXPECTED_SBG_FK_ADDITIONS,
+        )
+        self.assertTrue(
+            all(
+                self.EXPECTED_SE_FK_ADDITIONS.isdisjoint(other)
+                for other in all_other_slices
+            )
+        )
 
     def test_pre_s012_base_is_34(self):
         from django.apps import apps
@@ -665,6 +704,7 @@ class IdentityFKPredictionTests(TestCase):
             - self.EXPECTED_SB1_FK_ADDITIONS
             - self.EXPECTED_P1_FK_ADDITIONS
             - self.EXPECTED_SBG_FK_ADDITIONS
+            - self.EXPECTED_SE_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 

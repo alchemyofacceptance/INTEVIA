@@ -18,6 +18,7 @@ from tests.s015_0021_support import (
     add_remaining_aggregates,
     append_event,
     append_second_event,
+    current_applied_core_head,
     current_core_leaf,
     empty_fp,
     found_nonroot,
@@ -55,7 +56,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0045_sbg_governance_formation"])
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0046_se_entitlement_foundation"])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -130,6 +131,15 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s1fu_guard_admission_route": sb1.NEW_S1FU_GUARD_ADMISSION_ROUTE_BODY,
             "s3fu_guard_gateway_effect": formation.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
         })
+        if current_applied_core_head(connection) == [
+            ("core", "0046_se_entitlement_foundation")
+        ]:
+            se_migration = importlib.import_module(
+                "core.migrations.0046_se_entitlement_foundation"
+            )
+            declared["s3fu_guard_gateway_effect"] = dict(
+                se_migration.SE_FUNCTION_BODIES
+            )["s3fu_guard_gateway_effect"]
         declared_triggers = {}
 
         def declare(table, name, ddl):
@@ -347,6 +357,19 @@ class ApplicationLineageSchema(TransactionTestCase):
     def test_sbg_0045_guard_census_matches_migration_declarations(self):
         formation = importlib.import_module("core.migrations.0045_sbg_governance_formation")
         declared_bodies = dict(formation.BUILT_FUNCTION_BODIES)
+        se_extension_active = current_applied_core_head(connection) == [
+            ("core", "0046_se_entitlement_foundation")
+        ]
+        if se_extension_active:
+            se_migration = importlib.import_module(
+                "core.migrations.0046_se_entitlement_foundation"
+            )
+            declared_bodies["sbg_guard_governedrule"] = (
+                se_migration._GOVERNEDRULE_GUARD_BODY
+            )
+            declared_bodies["s3fu_guard_gateway_effect"] = dict(
+                se_migration.SE_FUNCTION_BODIES
+            )["s3fu_guard_gateway_effect"]
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT p.proname, p.prosrc "
@@ -395,6 +418,16 @@ class ApplicationLineageSchema(TransactionTestCase):
                 )
                 self.assertIsNotNone(match, statement[:120])
                 name = match.group(1)
+                if se_extension_active and name == "sbg_guard_governedrule":
+                    statement = se_migration.FUNCTION_SQL[0]
+                elif se_extension_active and name == "s3fu_guard_gateway_effect":
+                    statement = next(
+                        sql
+                        for sql in se_migration.FUNCTION_SQL
+                        if sql.lstrip().startswith(
+                            "CREATE OR REPLACE FUNCTION public.s3fu_guard_gateway_effect("
+                        )
+                    )
                 cursor.execute(statement.replace("FUNCTION public.", "FUNCTION pg_temp.", 1))
                 cursor.execute(
                     "SELECT pg_get_functiondef(p.oid) "

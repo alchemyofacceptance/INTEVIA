@@ -10,7 +10,6 @@ from uuid import uuid4
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
-from django.utils import timezone
 
 from core.identity import canonical_username_v1
 from core.models import (
@@ -31,7 +30,16 @@ from core.models import (
     ProfileEffectProposalLineage,
     ProfileEffectProposalTransition,
 )
-from s015_0021_support import T0, add_remaining_aggregates, append_event, empty_fp, found_nonroot, fresh, refresh
+from s015_0021_support import (
+    T0,
+    add_remaining_aggregates,
+    append_event,
+    database_now,
+    empty_fp,
+    found_nonroot,
+    fresh,
+    refresh,
+)
 from tests.s015_0021_support import create_test_identity
 
 
@@ -92,7 +100,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _basis(self, *, principal, root_principal, issuer, label):
-        now = timezone.now()
+        now = database_now()
         return AuthorityBasis.objects.create(
             authority_principal=principal,
             derivation_root_principal=root_principal,
@@ -107,7 +115,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _determination(self, *, determiner, principal, label):
-        now = timezone.now()
+        now = database_now()
         return GovernedDetermination.objects.create(
             determination_type=
             GovernedDetermination.DeterminationType.CONSTITUTIONAL_AUTHORITY_QUALIFICATION,
@@ -124,7 +132,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _organism(self, label):
-        now = timezone.now()
+        now = database_now()
         return LivingOrganism.objects.create(
             slug=f"{label}-{uuid4().hex[:16]}",
             current_state_effective_at=now,
@@ -134,7 +142,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _circle(self, organism, label):
-        now = timezone.now()
+        now = database_now()
         return Circle.objects.create(
             parent_organism=organism,
             state=Circle.State.ACTIVE,
@@ -145,7 +153,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _membership(self, *, identity, organism, label):
-        now = timezone.now()
+        now = database_now()
         return OrganismMembership.objects.create(
             identity=identity,
             living_organism=organism,
@@ -164,7 +172,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         )
 
     def _assignment(self, *, membership, role_definition, circle, label):
-        now = timezone.now()
+        now = database_now()
         return ContextualRoleAssignment.objects.create(
             membership=membership,
             role_definition=role_definition,
@@ -202,7 +210,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
             permitted_command_set={"actions": [f"{label}:found"]},
             target_scope_set={"scope": [f"{label}:organism"]},
             proportionality_bounds={"max": 1},
-            hard_expiry=timezone.now() + timedelta(days=1),
+            hard_expiry=database_now() + timedelta(days=1),
         )
 
     def _complete_founding(self, *, label):
@@ -716,7 +724,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         return self._encode_snapshot({"kind": "cached_projections", "rows": rows})
 
     def _profile_effect_probe(self, label):
-        now = timezone.now()
+        now = database_now()
         user = User.objects.create_user(
             username=f"{label}_{uuid4().hex[:12]}",
             password="unused",
@@ -771,7 +779,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         return identity, lineage, transition
 
     def _append_profile_effect_transition(self, *, lineage, predecessor, label):
-        now = timezone.now()
+        now = database_now()
         transition = ProfileEffectProposalTransition.objects.create(
             lineage=lineage,
             sequence=predecessor.sequence + 1,
@@ -833,7 +841,7 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
                 fields_permitted={"fields": ["display_name"]},
                 purpose_reference="urn:intevia:test:purpose:graph",
                 granting_authority=basis,
-                expiry=timezone.now() + timedelta(days=1),
+                expiry=database_now() + timedelta(days=1),
                 lineage_reference="s015g1:" + uuid4().hex + uuid4().hex,
             )
             with connection.cursor() as cur:

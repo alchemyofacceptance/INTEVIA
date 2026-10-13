@@ -1,3 +1,5 @@
+"""Authority decisions and refusal codes for organism operations."""
+
 from __future__ import annotations
 
 import hashlib
@@ -111,6 +113,15 @@ class S015AuthorityRefusalCode(str, Enum):
     C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN = "C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN"
     C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED = "C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED"
     C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED = "C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED"
+    SE_GRANT_NOT_BY_HAND = "SE_GRANT_NOT_BY_HAND"
+    SE_EXTENSION_AUTHORITY = "SE_EXTENSION_AUTHORITY"
+    SE_SELF_EXTENSION = "SE_SELF_EXTENSION"
+    SE_EXTENSION_ROUTE_UNAVAILABLE = "SE_EXTENSION_ROUTE_UNAVAILABLE"
+    SE_ALREADY_BETA = "SE_ALREADY_BETA"
+    SE_OPT_IN_NEEDS_CQ = "SE_OPT_IN_NEEDS_CQ"
+    SE_OFFER_CLOSED = "SE_OFFER_CLOSED"
+    SE_ALLOWANCE_EXCEEDED = "SE_ALLOWANCE_EXCEEDED"
+    SE_USAGE_UNCHECKABLE = "SE_USAGE_UNCHECKABLE"
     UNRECOGNISED_ACTION = "UNRECOGNISED_ACTION"
     UNRECOGNISED_ROUTE = "UNRECOGNISED_ROUTE"
 
@@ -563,6 +574,8 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.EFFECT_APPLICATION_SETTINGS,
     OrganismAction.EFFECT_APPLICATION_QUESTION,
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+    OrganismAction.EFFECT_ENTITLEMENT_ELECTION,
+    OrganismAction.RECORD_ENTITLEMENT_GRANT,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.TRANSITION_MEMBERSHIP,
@@ -629,6 +642,8 @@ def _facts_read(
             "eligible_at": eligible_at,
         })
     if authority_reference is None or not authority_reference.startswith("s015a1:"):
+        if request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+            raise S015AuthorityMalformed("structured authority reference is invalid")
         return facts
     try:
         content = json.loads(authority_reference[len("s015a1:"):])
@@ -665,6 +680,57 @@ def _facts_read(
         request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
         and content.get("kind") == "BIRTHING"
     )
+    election_target = getattr(request, "target", None)
+    election_snapshot_target = (
+        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+        and type(election_target) is dict
+        and set(election_target) == {"action", "organism_uuid", "snapshot_uuid"}
+        and election_target.get("action") == request.action.value
+        and election_target.get("organism_uuid")
+        == getattr(request, "living_organism_id", None)
+        and type(election_target.get("snapshot_uuid")) is str
+        and getattr(request, "version_uuid", None) is not None
+        and getattr(request, "version_kind", None) == "EFFECT"
+    )
+    entitlement_election_reference = (
+        election_snapshot_target
+        and content.get("kind") == "BIRTHING"
+    )
+    entitlement_election_gateway_reference = (
+        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+        and type(election_target) is dict
+        and set(election_target) == {"action", "organism_uuid", "version_uuid"}
+        and election_target.get("action") == request.action.value
+        and election_target.get("organism_uuid")
+        == getattr(request, "living_organism_id", None)
+        and type(election_target.get("version_uuid")) is UUID
+        and election_target.get("version_uuid")
+        == getattr(request, "version_uuid", None)
+        and getattr(request, "version_kind", None) == "EFFECT"
+    )
+    if (
+        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+        and not entitlement_election_reference
+        and not entitlement_election_gateway_reference
+        and "x" not in content
+    ):
+        raise S015AuthorityMalformed(
+            "structured authority reference has an unknown fact key"
+        )
+    if entitlement_election_reference and (
+        content.get("kind") != "BIRTHING"
+        or set(content) != {"kind", "c", "s", "q", "o", "n"}
+    ):
+        raise S015AuthorityMalformed(
+            "structured authority reference has an unknown fact key"
+        )
+    if entitlement_election_gateway_reference and set(content) not in (
+        {"c", "m", "o", "s", "t", "v"},
+        {"x"},
+    ):
+        raise S015AuthorityMalformed(
+            "structured authority reference has an unknown fact key"
+        )
     if request.action is OrganismAction.FOUND_LIVING_ORGANISM and content.get("kind") == "FOUNDING":
         rule_reference = content.get("rule")
         if type(rule_reference) is str and rule_reference.startswith("platform-terms-version:"):
@@ -753,9 +819,9 @@ def _facts_read(
             "g": ("core_organismroledefinition", None),
             "p": ("core_contextualroleassignmentstateevent", None),
         })
-    if phase_advance_reference or birthing_reference:
+    if phase_advance_reference or birthing_reference or entitlement_election_reference:
         prefix["o"] = ("core_contextualroleassignment", None)
-    if birthing_reference:
+    if birthing_reference or entitlement_election_reference:
         prefix["n"] = ("core_lobirthingsnapshot", None)
     for key, value in content.items():
         if (governance_adoption or governance_circle_creation) and key in {"kind", "source"}:
@@ -770,7 +836,7 @@ def _facts_read(
             continue
         if phase_advance_reference and key in {"kind", "f", "p"}:
             continue
-        if birthing_reference and key == "kind":
+        if (birthing_reference or entitlement_election_reference) and key == "kind":
             continue
         if request.action is OrganismAction.FOUND_LIVING_ORGANISM and key in {
             "kind", "rule", "registration", "terms",
@@ -843,6 +909,7 @@ def _facts_read(
 def _version_relation(action: OrganismAction) -> str:
     return {
         OrganismAction.EFFECT_APPLICATION_SETTINGS: "core_loapplicationsettingsversion",
+        OrganismAction.EFFECT_ENTITLEMENT_ELECTION: "core_loapplicationsettingsversion",
         OrganismAction.EFFECT_APPLICATION_QUESTION: "core_loapplicationquestionversion",
         OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "core_logovernanceconfigurationversion",
     }.get(action, "")
@@ -851,6 +918,7 @@ def _version_relation(action: OrganismAction) -> str:
 def _version_reference_prefix(action: OrganismAction) -> str:
     return {
         OrganismAction.EFFECT_APPLICATION_SETTINGS: "application-settings-version:",
+        OrganismAction.EFFECT_ENTITLEMENT_ELECTION: "application-settings-version:",
         OrganismAction.EFFECT_APPLICATION_QUESTION: "application-question-version:",
         OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "governance-configuration-version:",
     }.get(action, "")

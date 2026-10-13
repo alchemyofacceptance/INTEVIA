@@ -13,6 +13,7 @@ from django.test import TransactionTestCase
 
 from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
+    database_now,
     drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_organism, found_root, fresh, predecessor_l1,
     refresh, restore_unset_check, seed_authority, seed_identity, u,
 )
@@ -200,7 +201,7 @@ class FourTimeGrammar(_S015NegativeBase):
 
     def test_neg_received_in_the_future(self):
         ids = self.commits(lambda cur: self.root(cur))
-        future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)
+        future = database_now() + dt.timedelta(days=1)
         self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
                                               pred_id=ids["lo_event"], occ=future, rec=future, eff=future), contains="four_time_ck")
 
@@ -365,7 +366,7 @@ class CacheBoundary(_S015NegativeBase):
     def test_neg_read_route_never_serves_cache_at_other_coordinates(self):
         ids = self.commits(lambda cur: self.root(cur))
         with connection.cursor() as cur:
-            cur.execute("SELECT served_from FROM public.s015_effective_state('core_livingorganism', %s, %s, %s)", (ids["lo"], T0 + dt.timedelta(days=1), dt.datetime.now(dt.timezone.utc)))
+            cur.execute("SELECT served_from FROM public.s015_effective_state('core_livingorganism', %s, %s, %s)", (ids["lo"], T0 + dt.timedelta(days=1), database_now()))
             self.assertEqual(cur.fetchone()[0], "FOLD")
 
     def test_neg_non_owner_cannot_write_register(self):

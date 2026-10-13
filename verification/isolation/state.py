@@ -56,6 +56,8 @@ from django.db import connection
 #         0044: 433 - four Birthing snapshot/terms triggers [D]
 #         0045: 433 + 25 = 458 - Circle kind (1), governed rule (6), request (4),
 #               decision (4), participation (5), ending (4), membership-end completeness (1) [D]
+#         0046: 458 + 12 = 470 - record-time, validate, immutable, and truncate
+#               triggers for each of the three SE tables [D]
 # REQ-G1  the fifteen required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -79,6 +81,7 @@ FRAMEWORK_TABLES = ("django_content_type", "auth_permission")
 SEED_TABLES = ("core_role",)
 MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0045_sbg_governance_formation": {"core_governedrule": 1},
+    "0046_se_entitlement_foundation": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -102,14 +105,172 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0042_sb1_founding_terms_phases": 418,
                           "0043_p1_governed_registration": 429,
                           "0044_sb2_birthing_snapshot": 433,
-                          "0045_sbg_governance_formation": 458}
+                          "0045_sbg_governance_formation": 458,
+                          "0046_se_entitlement_foundation": 470}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
+OBSERVATION_KEYS = ("sequence_discipline",)
 
 
 def _rows(sql, params=None):
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         return [tuple(r) for r in cursor.fetchall()]
+
+
+def _sequence_discipline_observations(row_counts):
+    """Capture sequence configuration and next-id state without consuming values."""
+    sequence_rows = _rows(
+        """
+        SELECT table_relation.relname, column_info.attname, sequence_relation.relname,
+               sequence.seqincrement, sequence.seqmin, sequence.seqmax,
+               sequence.seqstart, sequence.seqcycle, sequence.seqcache
+        FROM pg_class sequence_relation
+        JOIN pg_sequence sequence ON sequence.seqrelid = sequence_relation.oid
+        JOIN pg_depend dependency
+          ON dependency.objid = sequence_relation.oid
+         AND dependency.classid = 'pg_class'::regclass
+         AND dependency.refclassid = 'pg_class'::regclass
+         AND dependency.deptype IN ('a', 'i')
+        JOIN pg_class table_relation ON table_relation.oid = dependency.refobjid
+        JOIN pg_attribute column_info
+          ON column_info.attrelid = table_relation.oid
+         AND column_info.attnum = dependency.refobjsubid
+        JOIN pg_namespace namespace ON namespace.oid = table_relation.relnamespace
+        WHERE namespace.nspname = current_schema()
+          AND sequence_relation.relkind = 'S'
+          AND table_relation.relkind IN ('r', 'p')
+        ORDER BY 1, 2
+        """
+    )
+    observations = []
+    quote_name = connection.ops.quote_name
+    for (
+        table,
+        column,
+        sequence,
+        increment,
+        minimum,
+        maximum,
+        start,
+        cycle,
+        cache,
+    ) in sequence_rows:
+        observation = {
+            "table": table,
+            "column": column,
+            "sequence": sequence,
+            "increment": increment,
+            "minimum": minimum,
+            "maximum": maximum,
+            "start": start,
+            "cycle": cycle,
+            "cache": cache,
+        }
+        supported = (
+            increment == 1
+            and minimum == 1
+            and start == 1
+            and cycle is False
+            and cache == 1
+        )
+        if not supported:
+            observation["status"] = "UNSUPPORTED"
+            observations.append(observation)
+            continue
+
+        row_count = row_counts.get(table)
+        if row_count is None:
+            observation["status"] = "UNOBSERVED"
+            observations.append(observation)
+            continue
+        if row_count == 0:
+            observation["status"] = "EMPTY"
+            observations.append(observation)
+            continue
+
+        highest = _rows(
+            "SELECT max(%s) FROM %s" % (quote_name(column), quote_name(table))
+        )[0][0]
+        if highest is None:
+            observation["status"] = "INDETERMINATE"
+            observations.append(observation)
+            continue
+
+        last_value, is_called = _rows(
+            "SELECT last_value, is_called FROM %s" % quote_name(sequence)
+        )[0]
+        next_value = last_value + 1 if is_called else last_value
+        observation.update(
+            highest=highest,
+            last_value=last_value,
+            is_called=is_called,
+            next=next_value,
+        )
+        if next_value > maximum:
+            observation["status"] = "EXHAUSTED"
+        elif next_value <= highest:
+            observation["status"] = "BEHIND"
+        else:
+            observation["status"] = "HEALTHY"
+        observations.append(observation)
+    return observations
+
+
+def _sequence_configuration_violation(observation):
+    return (
+        "REQ-S0 unsupported sequence configuration: %s "
+        "(increment %s, min %s, max %s, start %s, cycle %s, cache %s)"
+        % (
+            observation["sequence"],
+            observation["increment"],
+            observation["minimum"],
+            observation["maximum"],
+            observation["start"],
+            observation["cycle"],
+            observation["cache"],
+        )
+    )
+
+
+def _sequence_invariant_violation(observation):
+    common = (
+        "(sequence %s; last_value %s, is_called %s)"
+        % (
+            observation["sequence"],
+            observation.get("last_value"),
+            str(observation.get("is_called")).lower(),
+        )
+    )
+    if observation["status"] == "EXHAUSTED":
+        return (
+            "REQ-S1 %s.%s counter next %s exceeds sequence maximum %s %s"
+            % (
+                observation["table"],
+                observation["column"],
+                observation["next"],
+                observation["maximum"],
+                common,
+            )
+        )
+    if observation["status"] == "BEHIND":
+        return (
+            "REQ-S1 %s.%s counter next %s is at or behind highest row %s %s"
+            % (
+                observation["table"],
+                observation["column"],
+                observation["next"],
+                observation["highest"],
+                common,
+            )
+        )
+    return (
+        "REQ-S1 %s.%s invariant could not be established (%s)"
+        % (
+            observation["table"],
+            observation["column"],
+            observation["status"],
+        )
+    )
 
 
 def expected_seed_rows():
@@ -170,6 +331,7 @@ def capture():
             cursor.execute('SELECT count(*) FROM "%s"' % t.replace('"', '""'))
             counts[t] = cursor.fetchone()[0]
     s["row_counts"] = counts
+    s["sequence_discipline"] = _sequence_discipline_observations(counts)
     s["core_role"] = sorted(
         tuple(sorted({"name": n, "description": d}.items()))
         for n, d in _rows("SELECT name, description FROM core_role"))
@@ -200,6 +362,10 @@ def unexpected_data_rows(captured):
 
 
 def digest(value):
+    if isinstance(value, dict):
+        value = {
+            key: item for key, item in value.items() if key not in OBSERVATION_KEYS
+        }
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -239,6 +405,13 @@ def check_requirements(s, required_guardians):
         v.append("REQ-D3 framework tables empty")
     if s["public_register_insert"] is not False:
         v.append("REQ-P1 PUBLIC holds INSERT on s015_transaction_register")
+    for observation in s.get("sequence_discipline", ()):
+        if observation["status"] == "UNSUPPORTED":
+            v.append(_sequence_configuration_violation(observation))
+        elif observation["status"] in ("BEHIND", "EXHAUSTED"):
+            v.append(_sequence_invariant_violation(observation))
+        elif observation["status"] in ("UNOBSERVED", "INDETERMINATE"):
+            v.append(_sequence_invariant_violation(observation))
     core = sorted(name for app, name in s["migrations"] if app == "core")
     if head in REQUIRED_TRIGGER_COUNT and (not core or core[-1] != head):
         v.append("REQ-D4 latest core migration %s, declared head %s" % (core[-1] if core else None, head))
@@ -266,4 +439,14 @@ def compare(reference, s, ignore_tables=()):
         a, b = set(reference[key]), set(s[key])
         if a != b:
             prot.append("%s: missing %s; unexpected %s" % (key, sorted(a - b)[:5], sorted(b - a)[:5]))
+    for observation in s.get("sequence_discipline", ()):
+        if observation["table"] in ignore_tables:
+            continue
+        if observation["status"] in (
+            "BEHIND",
+            "EXHAUSTED",
+            "UNOBSERVED",
+            "INDETERMINATE",
+        ):
+            data.append(_sequence_invariant_violation(observation))
     return data, prot

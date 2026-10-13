@@ -39,7 +39,7 @@ class ServicePostgreSQLTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="postgres-service")
         self.profile = create_test_identity(credential=self.user, access_state=Identity.AccessState.ACTIVE)
-        role = Role.objects.create(pk=1_000_001, name="PostgreSQL service actor")
+        role = Role.objects.create(name="PostgreSQL service actor")
         ProfileRole.objects.create(identity=self.profile, role=role)
         self.foundation = GovernedService(
             authority=ContributionAuthority(Capability())

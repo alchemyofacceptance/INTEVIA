@@ -1,7 +1,11 @@
+import os
 import unittest
+from unittest.mock import patch
 
+from verification.isolation import template
 from verification.isolation.template import (
     TemplateIdentityUnavailable,
+    TemplateNamespaceUnavailable,
     TemplateReceiptInvalid,
     canonical_listing,
     module_input_lines,
@@ -86,6 +90,7 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
         self.assertIn("setting:DATABASES.default.TEST.COLLATION=null", first_settings)
         self.assertFalse(any("TEST.NAME" in line for line in first_settings))
 
+    @patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"})
     def test_bounded_template_name_retains_full_identity_in_receipt(self):
         listing, identity = canonical_listing(("head=0040", "import:sys=builtin"))
         receipt = {"identity": identity, "listing": listing, "name": template_database_name(identity), "oid": 123}
@@ -93,6 +98,7 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
         self.assertEqual(len(receipt["name"]), 63)
         self.assertTrue(validate_template_receipt(receipt, identity))
 
+    @patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"})
     def test_same_name_prefix_with_different_full_identity_is_refused(self):
         listing, first_identity = canonical_listing(("head=0040",))
         receipt = {
@@ -102,12 +108,41 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
             "oid": 123,
         }
         collision_suffix = "0" if first_identity[-1] != "0" else "1"
-        collision_identity = first_identity[:46] + collision_suffix * 18
+        collision_identity = first_identity[:43] + collision_suffix * 21
 
-        self.assertEqual(first_identity[:46], collision_identity[:46])
+        self.assertEqual(first_identity[:43], collision_identity[:43])
         self.assertNotEqual(first_identity, collision_identity)
         with self.assertRaisesRegex(TemplateReceiptInvalid, "different full identity"):
             validate_template_receipt(receipt, collision_identity)
+
+    def test_template_names_are_namespaced_deterministic_and_require_namespace(self):
+        _, identity = canonical_listing(("head=0040",))
+        with patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"}):
+            me_name = template_database_name(identity)
+            self.assertEqual(me_name, template_database_name(identity))
+        with patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "vr"}):
+            vr_name = template_database_name(identity)
+            self.assertEqual(vr_name, template_database_name(identity))
+
+        self.assertNotEqual(me_name, vr_name)
+        for namespace, name in (("me", me_name), ("vr", vr_name)):
+            self.assertLessEqual(len(name), 63)
+            self.assertEqual(name, "test_intevia_tpl_" + namespace + "_" + identity[:43])
+
+        with patch.object(template, "source_input_lines") as source_input_lines:
+            for namespace in (None, "unknown"):
+                with patch.dict(os.environ, {}, clear=False):
+                    if namespace is None:
+                        os.environ.pop("VERIFICATION_TEMPLATE_NAMESPACE", None)
+                    else:
+                        os.environ["VERIFICATION_TEMPLATE_NAMESPACE"] = namespace
+                    with self.assertRaises(TemplateNamespaceUnavailable) as raised:
+                        template.prepare_template(object(), "default", "unused")
+                    self.assertEqual(
+                        str(raised.exception),
+                        "VERIFICATION_TEMPLATE_NAMESPACE must be set to 'me' or 'vr'",
+                    )
+            source_input_lines.assert_not_called()
 
 
 if __name__ == "__main__":

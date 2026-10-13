@@ -1,9 +1,8 @@
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
-from django.utils import timezone
 
-from tests.s015_0021_support import migrate_to_target_with_restore
+from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
 class IdentityMigrationRehearsalTests(TransactionTestCase):
@@ -42,7 +41,7 @@ class IdentityMigrationRehearsalTests(TransactionTestCase):
         )
         role = Role.objects.create(name="Migration compatibility role")
         profile_role = ProfileRole.objects.create(profile=profile, role=role)
-        occurred_at = timezone.now()
+        occurred_at = database_now()
         contribution = Contribution.objects.create(
             contribution_id="migration:contribution",
             contributor=profile,

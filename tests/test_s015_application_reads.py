@@ -36,6 +36,7 @@ from src.intevia.services.organism_authority import (
 from tests.s015_0021_support import (
     T0,
     append_event,
+    database_now,
     empty_fp,
     fresh,
     refresh,
@@ -241,7 +242,7 @@ class S015ApplicationReadTests(TransactionTestCase):
 
         service = OrganismRoleService(
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
-            clock=lambda: datetime.now(timezone.utc),
+            clock=database_now,
         )
         service.transition_assignment(TransitionAssignmentCommand(
             credential=self.coordinator.credential,

@@ -4,9 +4,8 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.test import TransactionTestCase
-from django.utils import timezone
 
-from tests.s015_0021_support import migrate_to_target_with_restore
+from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
 class S012MigrationStructureTests(TransactionTestCase):
@@ -176,7 +175,7 @@ class S012MigrationRehearsalTests(TransactionTestCase):
         ServiceVersion = old_apps.get_model("core", "ServiceVersion")
         Event = old_apps.get_model("core", "Event")
 
-        occurred_at = timezone.now()
+        occurred_at = database_now()
         credential = User.objects.create(
             username="MigrationS012",
             password="unusable-placeholder",
@@ -443,6 +442,14 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("circleparticipationend", "enterer_identity"),
     }
 
+    SE_ADDITIONS = {
+        ("organismentitlementevent", "actor"),
+        ("organismentitlementevent", "authoriser_identity"),
+        ("organismentitlementevent", "composer_identity"),
+        ("organismentitlementevent", "deciding_identity"),
+        ("organismentitlementevent", "enterer_identity"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -475,11 +482,13 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             self.SB1_ADDITIONS,
             self.P1_ADDITIONS,
             self.SBG_ADDITIONS,
+            self.SE_ADDITIONS,
         )
         self.assertEqual(len(self.S015_POST_0019_ADDITIONS), 37)
         self.assertEqual(len(self.SB1_ADDITIONS), 2)
         self.assertEqual(len(self.P1_ADDITIONS), 1)
         self.assertEqual(len(self.SBG_ADDITIONS), 12)
+        self.assertEqual(len(self.SE_ADDITIONS), 5)
         self.assertEqual(
             len(
                 self.BASE_IDENTITY_FKS
@@ -491,8 +500,9 @@ class IdentityFKCatalogueTests(TransactionTestCase):
                 | self.SB1_ADDITIONS
                 | self.P1_ADDITIONS
                 | self.SBG_ADDITIONS
+                | self.SE_ADDITIONS
             ),
-            108,
+            113,
         )
         for index, left in enumerate(declared_sets):
             for right in declared_sets[index + 1:]:
@@ -529,6 +539,34 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.SB1_ADDITIONS
             | self.P1_ADDITIONS
             | self.SBG_ADDITIONS
+            | self.SE_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 108)
+        self.assertEqual(len(live_fks), 113)
+
+    def test_se_catalogue_slice_is_five_disjoint_durable_attributions(self):
+        self.assertEqual(len(self.SE_ADDITIONS), 5)
+        self.assertEqual(
+            self.SE_ADDITIONS,
+            {
+            ("organismentitlementevent", "actor"),
+            ("organismentitlementevent", "authoriser_identity"),
+            ("organismentitlementevent", "composer_identity"),
+            ("organismentitlementevent", "deciding_identity"),
+            ("organismentitlementevent", "enterer_identity"),
+            },
+        )
+        historical_slices = (
+            self.BASE_IDENTITY_FKS,
+            self.S012_ADDITIONS,
+            self.S013_ADDITIONS,
+            self.S014_ADDITIONS,
+            self.S015_ADDITIONS,
+            self.S015_POST_0019_ADDITIONS,
+            self.SB1_ADDITIONS,
+            self.P1_ADDITIONS,
+            self.SBG_ADDITIONS,
+        )
+        self.assertTrue(
+            all(self.SE_ADDITIONS.isdisjoint(slice_) for slice_ in historical_slices)
+        )

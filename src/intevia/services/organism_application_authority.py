@@ -140,6 +140,10 @@ _VERSION_SPECS = {
         LOApplicationSettingsVersion,
         "application-settings-version:",
     ),
+    OrganismAction.EFFECT_ENTITLEMENT_ELECTION: (
+        LOApplicationSettingsVersion,
+        "application-settings-version:",
+    ),
     OrganismAction.EFFECT_APPLICATION_QUESTION: (
         LOApplicationQuestionVersion,
         "application-question-version:",
@@ -156,6 +160,7 @@ _POST_ACTIONS = {
     OrganismAction.REASSIGN_APPLICATION,
     OrganismAction.DECIDE_APPLICATION,
     OrganismAction.EFFECT_APPLICATION_SETTINGS,
+    OrganismAction.EFFECT_ENTITLEMENT_ELECTION,
     OrganismAction.EFFECT_APPLICATION_QUESTION,
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
@@ -208,10 +213,21 @@ def _effective_version(
         version_uuid = UUID(reference[len(prefix):])
     except ValueError:
         return None
-    return model.objects.using(database_alias).filter(
+    versions = model.objects.using(database_alias).filter(
         version_uuid=version_uuid,
         living_organism=organism,
-    ).first()
+    )
+    if action is OrganismAction.EFFECT_APPLICATION_SETTINGS:
+        versions = versions.filter(
+            entitlement_choice__isnull=True,
+            entitlement_election_route__isnull=True,
+        )
+    elif action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+        versions = versions.filter(
+            entitlement_choice__isnull=False,
+            entitlement_election_route__isnull=False,
+        )
+    return versions.first()
 
 
 def _latest_transition(
@@ -262,7 +278,7 @@ def _assignment_term_in_effect(
 
 class ProductionApplicationAuthorityProvider:
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
-    provider_version = "R7.0"
+    provider_version = "R8.0"
 
     def __init__(
         self,
@@ -503,7 +519,53 @@ class ProductionApplicationAuthorityProvider:
                 ):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif request.action in _VERSION_SPECS:
-                if request.target.get("version_uuid") != request.version_uuid or request.version_kind not in {"DRAFT", "EFFECT"}:
+                if (
+                    request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+                    and request.command_subtype == request.action.value
+                ):
+                    target = request.target
+                    if type(target) is not dict:
+                        return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+                    if set(target) == {"action", "organism_uuid", "snapshot_uuid"}:
+                        try:
+                            snapshot_uuid = UUID(target["snapshot_uuid"])
+                        except (KeyError, TypeError, ValueError):
+                            return self._refuse(
+                                request,
+                                S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+                            )
+                        if (
+                            target.get("action") != request.action.value
+                            or target.get("organism_uuid") != request.living_organism_id
+                            or str(snapshot_uuid) != target["snapshot_uuid"]
+                            or request.version_uuid is None
+                            or request.version_kind != "EFFECT"
+                        ):
+                            return self._refuse(
+                                request,
+                                S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+                            )
+                    elif set(target) == {"action", "organism_uuid", "version_uuid"}:
+                        if (
+                            target.get("action") != request.action.value
+                            or target.get("organism_uuid") != request.living_organism_id
+                            or type(target.get("version_uuid")) is not UUID
+                            or target.get("version_uuid") != request.version_uuid
+                            or request.version_kind != "EFFECT"
+                        ):
+                            return self._refuse(
+                                request,
+                                S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+                            )
+                    else:
+                        return self._refuse(
+                            request,
+                            S015AuthorityRefusalCode.UNRECOGNISED_ACTION,
+                        )
+                elif (
+                    request.target.get("version_uuid") != request.version_uuid
+                    or request.version_kind not in {"DRAFT", "EFFECT"}
+                ):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif type(request.target.get("application_uuid")) is not UUID:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -1521,6 +1583,13 @@ class ProductionApplicationAuthorityProvider:
             f"{OrganismAction.TRANSITION_LIVING_ORGANISM.value}/BIRTHING"
         ):
             return self._qualify_birthing(request, organism, office)
+        if (
+            request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+            and request.command_subtype == request.action.value
+            and type(request.target) is dict
+            and set(request.target) == {"action", "organism_uuid", "snapshot_uuid"}
+        ):
+            return self._qualify_birthing(request, organism, office)
         if request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT:
             return self._qualify_governance_adoption(request, organism)
         if request.action is OrganismAction.CREATE_DORMANT_CIRCLE:
@@ -2298,16 +2367,32 @@ class ProductionApplicationAuthorityProvider:
                 else configuration.require_cq_to_change_lo_settings
             )
             if configuration.cq_active is True and cq_required is True:
-                return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
+                refusal_code = (
+                    S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ
+                    if request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
+                    else S015AuthorityRefusalCode.C_ROUTE_IS_CQ
+                )
+                return self._refuse(request, refusal_code)
             route_basis = "CQ_INACTIVE" if configuration.cq_active is not True else "CHANGE_FLAG_NO"
         nomination_entitlement_reference = None
         if request.version_uuid is not None:
             model, prefix = _VERSION_SPECS[request.action]
-            candidate = model.objects.using(self.database_alias).filter(
+            candidates = model.objects.using(self.database_alias).filter(
                 version_uuid=request.version_uuid,
                 living_organism=organism,
                 recorded_at__lte=request.evaluated_at,
-            ).first()
+            )
+            if request.action is OrganismAction.EFFECT_APPLICATION_SETTINGS:
+                candidates = candidates.filter(
+                    entitlement_choice__isnull=True,
+                    entitlement_election_route__isnull=True,
+                )
+            elif request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+                candidates = candidates.filter(
+                    entitlement_choice__isnull=False,
+                    entitlement_election_route__isnull=False,
+                )
+            candidate = candidates.first()
             if candidate is None:
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
             events = LivingOrganismEvent.objects.using(self.database_alias).filter(
@@ -2325,7 +2410,10 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
             if request.version_kind not in {"DRAFT", "EFFECT"}:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
-            if request.version_kind == "EFFECT" and not self._version_complete(candidate):
+            if request.version_kind == "EFFECT" and not self._version_complete(
+                candidate,
+                request.action,
+            ):
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
             if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION:
                 readiness_refusal = self._governance_enabling_readiness(
@@ -2423,6 +2511,8 @@ class ProductionApplicationAuthorityProvider:
         settings = LOApplicationSettingsVersion.objects.using(self.database_alias).filter(
             version_uuid=settings_uuid,
             living_organism=organism,
+            entitlement_choice__isnull=True,
+            entitlement_election_route__isnull=True,
         ).first()
         if configuration is None or settings is None:
             return None, None
@@ -2444,10 +2534,36 @@ class ProductionApplicationAuthorityProvider:
         return configuration, settings
 
     @staticmethod
-    def _version_complete(version) -> bool:
+    def _version_complete(version, action: OrganismAction) -> bool:
         if isinstance(version, LOApplicationSettingsVersion):
+            election_fields = (
+                version.entitlement_choice,
+                version.entitlement_election_route,
+                version.entitlement_policy_version,
+                version.entitlement_policy_text_sha256,
+                version.entitlement_authority_source,
+                version.entitlement_authority_version,
+            )
+            if action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+                return (
+                    version.entitlement_choice == "COMPLIMENTARY_BETA"
+                    and version.entitlement_election_route == "POST_BIRTHING"
+                    and version.entitlement_policy_version is not None
+                    and version.entitlement_policy_version > 0
+                    and bool(version.entitlement_policy_text_sha256)
+                    and version.entitlement_authority_source is not None
+                    and bool(version.entitlement_authority_source.strip())
+                    and version.entitlement_authority_version is not None
+                    and bool(version.entitlement_authority_version.strip())
+                    and version.applications_open is None
+                    and version.automatic_acceptance is None
+                    and version.processing_responsibility is None
+                )
+            if action is not OrganismAction.EFFECT_APPLICATION_SETTINGS:
+                return False
             return (
-                version.applications_open is not None
+                all(field is None for field in election_fields)
+                and version.applications_open is not None
                 and version.automatic_acceptance is not None
                 and version.processing_responsibility in {"LO", "APPLICATION_CIRCLE"}
             )

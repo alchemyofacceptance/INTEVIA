@@ -58,6 +58,7 @@ from src.intevia.services.organism_membership_service import (
 )
 from tests.s015_0021_support import (
     create_test_identity,
+    database_now,
     register_with_current_terms,
     register_test_learner,
 )
@@ -502,7 +503,7 @@ class P1RegistrationServiceTests(TransactionTestCase):
             published_by_authority_reference="fixture:registration",
             is_fixture=is_fixture,
             effective_from=effective_from
-            or dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1),
+            or database_now() - dt.timedelta(days=1),
             supersedes=supersedes,
         )
 
@@ -1640,7 +1641,7 @@ class P1RegistrationServiceTests(TransactionTestCase):
             authority=S015Authority(
                 provider=ProductionApplicationAuthorityProvider()
             ),
-            clock=lambda: dt.datetime.now(dt.timezone.utc),
+            clock=database_now,
         )
 
         resolved = reader._actor_ref(identity.pk)
@@ -1668,7 +1669,7 @@ class P1RegistrationServiceTests(TransactionTestCase):
             authority=S015Authority(
                 provider=ProductionApplicationAuthorityProvider()
             ),
-            clock=lambda: dt.datetime.now(dt.timezone.utc),
+            clock=database_now,
         )
         registration_before = LearnerRegistration.objects.filter(
             pk=registration.pk
@@ -1737,7 +1738,7 @@ class P1RegistrationServiceTests(TransactionTestCase):
             authority=S015Authority(
                 provider=ProductionApplicationAuthorityProvider()
             ),
-            clock=lambda: dt.datetime.now(dt.timezone.utc),
+            clock=database_now,
         )
         registration_before = LearnerRegistration.objects.filter(
             pk=registration.pk
@@ -1899,7 +1900,7 @@ class P1RegistrationServiceTests(TransactionTestCase):
         )
         self.assertFalse(identity.originating_membership_requests.exists())
         self.assertEqual(self.table_counts(self.membership_tables), membership_before)
-        at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)
+        at = database_now() + dt.timedelta(seconds=1)
         self.assertEqual(
             identity_state_at(
                 identity.identity_id,
@@ -1937,12 +1938,12 @@ class P1RegistrationServiceTests(TransactionTestCase):
         historical_read = identity_state_at(
             identity.identity_id,
             state_at=historical_time,
-            known_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1),
+            known_at=database_now() + dt.timedelta(seconds=1),
         )
         self.assertEqual(historical_read.access_state, Identity.AccessState.PENDING)
         self.assertEqual(historical_read.access_epoch, 0)
 
-        future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)
+        future = database_now() + dt.timedelta(minutes=5)
         password = "P1-Temporal-Password-Changed-47!"
         password_transition = CredentialService.change_password(
             identity_id=identity.identity_id,

@@ -333,7 +333,17 @@ def _effective_gateway_version(
         effective_at__lte=at, received_at__lte=known_at, recorded_at__lte=known_at,
     ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence", "-event_uuid")
     reference = references.values_list("evidence_reference", flat=True).first()
-    return None if reference is None else model.objects.using(database_alias).get(version_uuid=UUID(reference.removeprefix(prefix)))
+    if reference is None:
+        return None
+    versions = model.objects.using(database_alias).filter(
+        version_uuid=UUID(reference.removeprefix(prefix)),
+    )
+    if action is OrganismAction.EFFECT_APPLICATION_SETTINGS:
+        versions = versions.filter(
+            entitlement_choice__isnull=True,
+            entitlement_election_route__isnull=True,
+        )
+    return versions.get()
 
 
 def _engagement_settings_basis(
@@ -385,6 +395,11 @@ def _validate_gateway_answer(question: LOApplicationQuestionVersion, answer: str
 
 def gateway_version_status(database_alias: str, version, at: datetime) -> str:
     """Derive draft/effective/superseded; PROPOSED is reserved for the unbuilt CQ route."""
+    if isinstance(version, LOApplicationSettingsVersion) and (
+        version.entitlement_choice is not None
+        or version.entitlement_election_route is not None
+    ):
+        raise ValueError("entitlement election versions are not application gateway versions")
     action = next(action for action, (model, _) in _VERSION_KINDS.items() if isinstance(version, model))
     prefix = _VERSION_KINDS[action][1]
     reference = prefix + str(version.version_uuid)
@@ -402,7 +417,8 @@ def gateway_version_status(database_alias: str, version, at: datetime) -> str:
 
 def _gateway_version_complete(version) -> bool:
     if isinstance(version, LOApplicationSettingsVersion):
-        return (version.applications_open is not None and version.automatic_acceptance is not None
+        return (version.entitlement_choice is None and version.entitlement_election_route is None
+                and version.applications_open is not None and version.automatic_acceptance is not None
                 and version.processing_responsibility in ("LO", "APPLICATION_CIRCLE"))
     if isinstance(version, LOApplicationQuestionVersion):
         options = version.options

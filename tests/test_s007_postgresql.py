@@ -29,6 +29,7 @@ from src.intevia.services.identity_service import (
     ProvisioningConflict,
 )
 from tests.s015_0021_support import (
+    database_now,
     create_test_identity,
     register_test_learner,
 )
@@ -273,6 +274,11 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             ("core_circleparticipationend", "actor_id"),
             ("core_circleparticipationend", "composer_identity_id"),
             ("core_circleparticipationend", "enterer_identity_id"),
+            ("core_organismentitlementevent", "actor_id"),
+            ("core_organismentitlementevent", "authoriser_identity_id"),
+            ("core_organismentitlementevent", "composer_identity_id"),
+            ("core_organismentitlementevent", "deciding_identity_id"),
+            ("core_organismentitlementevent", "enterer_identity_id"),
         }
         with connection.cursor() as cursor:
             cursor.execute(
@@ -298,7 +304,7 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             )
             observed = set(cursor.fetchall())
         self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 136)
+        self.assertEqual(len(observed), 141)
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")
@@ -580,7 +586,7 @@ class S007PostgreSQLConcurrencyTests(TransactionTestCase):
             title="Restriction Race",
             owner=identity,
             state=Event.State.PUBLISHED,
-            created_at=timezone.now(),
+            created_at=database_now(),
         )
         stale_identity = Identity.objects.get(pk=identity.pk)
         IdentityLifecycleService.change_access(

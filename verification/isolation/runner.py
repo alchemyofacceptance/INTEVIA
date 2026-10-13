@@ -87,6 +87,43 @@ def database_access(test):
     return ("permitted" if "default" in databases else "forbidden"), databases
 
 
+def sequence_check_summary(captured, databases, ignore_tables=()):
+    """Summarize sequence checks performed and sequence state not established."""
+    ignored = set(ignore_tables)
+    observations = [
+        observation
+        for observation in captured.get("sequence_discipline", ())
+        if observation["table"] not in ignored
+    ]
+    not_established = []
+    for observation in observations:
+        if observation["status"] == "UNSUPPORTED":
+            not_established.append(
+                "REQ-S0 unsupported configuration: %s" % observation["sequence"]
+            )
+        elif observation["status"] in ("UNOBSERVED", "INDETERMINATE"):
+            not_established.append(
+                "REQ-S1 not established: %s.%s (%s)"
+                % (
+                    observation["table"],
+                    observation["column"],
+                    observation["status"],
+                )
+            )
+    unobserved_aliases = [
+        alias for alias in (databases or ()) if alias != "default"
+    ]
+    not_established.extend(
+        "database alias %s is not observed by the isolation instrument" % alias
+        for alias in unobserved_aliases
+    )
+    return {
+        "performed": ["REQ-S0", "REQ-S1"],
+        "sequences_observed": len(observations),
+        "not_established": not_established,
+    }
+
+
 def owned_database_problem(database_name, receipt_path, run_nonce, protected_names=()):
     """Return why a database is not proven to be created by this attempt, without connecting to it."""
     if not database_name:
@@ -293,20 +330,60 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         return Result
 
     def checkpoint_a(self, test):
-        rec = {"checkpoint": "CP-A", "test": test.id(), "established": False, "applicable": True}
+        rec = {
+            "checkpoint": "CP-A",
+            "test": test.id(),
+            "established": False,
+            "applicable": True,
+            "sequence_check_summary": {
+                "performed": [],
+                "sequences_observed": 0,
+                "not_established": [],
+            },
+        }
         try:
             access, databases = database_access(test)
             rec.update(database_access=access, effective_databases=databases)
             if access == "forbidden":
                 rec.update(applicable=False, established=None,
                            reason="not applicable: database access forbidden by the framework for this test (effective databases %s)" % databases)
+                rec["sequence_check_summary"]["not_established"].append(
+                    "default database access is forbidden for this test"
+                )
             elif self.reference is None:
                 rec["reason"] = "CP-0 requirements not met"
+                rec["sequence_check_summary"]["not_established"].append(
+                    "CP-0 requirements were not met; CP-A sequence checks did not run"
+                )
             else:
-                data, prot = state.compare(self.reference, state.capture(), self.ignore_tables)
-                rec.update(established=not data and not prot, data_violations=data, protection_violations=prot)
+                captured = state.capture()
+                sequence_summary = sequence_check_summary(
+                    captured, databases, self.ignore_tables
+                )
+                data, prot = state.compare(
+                    self.reference, captured, self.ignore_tables
+                )
+                data = [
+                    "%s — observed at CP-A for %s" % (violation, test.id())
+                    if violation.startswith("REQ-S1 ")
+                    else violation
+                    for violation in data
+                ]
+                rec.update(
+                    established=not data and not prot,
+                    data_violations=data,
+                    protection_violations=prot,
+                    sequence_check_summary=sequence_summary,
+                )
         except Exception as exc:
-            rec.update(established=False, reason="check error: %s: %s" % (type(exc).__name__, exc))
+            rec.update(
+                established=False,
+                reason="check error: %s: %s" % (type(exc).__name__, exc),
+            )
+            rec["sequence_check_summary"]["performed"] = ["capture attempted"]
+            rec["sequence_check_summary"]["not_established"].append(
+                "sequence check error: %s: %s" % (type(exc).__name__, exc)
+            )
         self.checkpoints.append(rec)
         self._emit(rec)
         label = "NOT APPLICABLE" if rec.get("applicable") is False else ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED")
@@ -335,7 +412,11 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                    "not_applicable": sum(1 for c in self.checkpoints if c.get("applicable") is False),
                    "ordinary_test_verdict": ordinary,
                    "evidence_claim": "equality at compared properties only; not complete database-state equivalence; "
-                                     "excluded: sequence and identity positions, primary keys of framework rows"}
+                                     "sequence and identity positions and primary keys of framework rows remain excluded from equality; "
+                                     "table-owned sequence configuration (REQ-S0) and next-id invariants (REQ-S1) "
+                                     "are checked at reset boundaries, CP-0 and CP-A. "
+                                     "The backend checks before teardown flushing and after seed restoration, and checks "
+                                     "the result of the by-name setup reset. The isolation instrument checks at CP-0 and CP-A."}
         self._emit(summary)
         print("ISOLATION VERDICT: %s" % verdict, file=sys.stderr, flush=True)
         for r in reasons:

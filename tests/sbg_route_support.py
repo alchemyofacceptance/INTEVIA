@@ -273,7 +273,7 @@ def end_membership_with_participations(
             [membership.pk],
         )
         predecessor_id, sequence, basis_id = cursor.fetchone()
-        received_at = database_now()
+        received_at = effective_at
         transition_id, _ = append_event(
             cursor,
             "core_organismmembershiptransition",

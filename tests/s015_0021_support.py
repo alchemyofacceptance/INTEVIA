@@ -16,7 +16,6 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import DatabaseError, connection, connections, transaction
 from django.db.models import Q
-from django.utils import timezone
 
 from core.identity import canonical_username_v1
 from core.models import (
@@ -30,19 +29,73 @@ from src.intevia.services.identity_service import (
     RegistrationServiceRefused,
 )
 
+
+def database_now():
+    """Read the authoritative test timestamp once from PostgreSQL."""
+    with connections["default"].cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        return cursor.fetchone()[0]
+
+
 def current_core_leaf(connection):
     from django.db.migrations.executor import MigrationExecutor
-
     leaves = MigrationExecutor(connection).loader.graph.leaf_nodes("core")
     if len(leaves) != 1:
         raise AssertionError(f"expected one core migration leaf, found {leaves!r}")
     return leaves
 
 
+def current_applied_core_head(connection):
+    from django.db.migrations.executor import MigrationExecutor
+    from django.db.migrations.recorder import MigrationRecorder
+
+    graph = MigrationExecutor(connection).loader.graph
+    applied = MigrationRecorder(connection).applied_migrations()
+    applied_core = {
+        key for key in applied if key[0] == "core" and key in graph.node_map
+    }
+    leaves = sorted(
+        key
+        for key in applied_core
+        if not any(
+            child.key in applied_core for child in graph.node_map[key].children
+        )
+    )
+    if len(leaves) != 1:
+        raise AssertionError(f"expected one applied core migration head, found {leaves!r}")
+    return leaves
+
+
 def restore_migration_targets(connection, targets):
     from django.db.migrations.executor import MigrationExecutor
+    from django.db.migrations.recorder import MigrationRecorder
+    from django.core.management.color import no_style
 
-    MigrationExecutor(connection).migrate(targets)
+    executor = MigrationExecutor(connection)
+    formation = ("core", "0045_sbg_governance_formation")
+    entitlement = ("core", "0046_se_entitlement_foundation")
+    applied = MigrationRecorder(connection).applied_migrations()
+    core_targets = [target for target in targets if target[0] == "core"]
+    restores_entitlement = any(
+        entitlement in executor.loader.graph.forwards_plan(target)
+        for target in core_targets
+    )
+
+    if (
+        current_applied_core_head(connection) == [formation]
+        and entitlement not in applied
+        and restores_entitlement
+    ):
+        apps = executor.loader.project_state([formation]).apps
+        governed_rule = apps.get_model("core", "GovernedRule")
+        with connection.cursor() as cursor:
+            for statement in connection.ops.sequence_reset_sql(
+                no_style(), [governed_rule]
+            ):
+                cursor.execute(statement)
+
+    executor = MigrationExecutor(connection)
+    executor.migrate(targets)
 
 
 def migrate_to_target_with_restore(test_case, target):
@@ -182,12 +235,10 @@ def append_event(cur, ev_table, anchor_id, seq, action, prior, result, actor_id,
 def refresh(cur, token, anchor_id, state_at=T0):
     caller = sys._getframe(1)
     call_site = f"{caller.f_code.co_filename}:{caller.f_lineno} in {caller.f_code.co_name}"
-    cur.execute("SELECT clock_timestamp()")
-    known_at = cur.fetchone()[0]
     try:
         cur.execute(
-            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, %s)",
-            (token, anchor_id, state_at, known_at),
+            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+            (token, anchor_id, state_at),
         )
         return cur.fetchone()[0]
     except DatabaseError as exc:
@@ -195,7 +246,7 @@ def refresh(cur, token, anchor_id, state_at=T0):
             raise
         raise RuntimeError(
             "S015 refresh clock refusal: "
-            f"state_at={state_at!r}, known_at={known_at!r}, "
+            f"state_at={state_at!r}, known_at=statement clock_timestamp(), "
             f"call_site={call_site}, original_error={exc!r}"
         ) from exc
 
@@ -403,7 +454,7 @@ def register_test_learner(
     _require_disposable_fixture_database()
     if terms_version is None:
         if not PlatformTermsVersion.objects.exists():
-            now = timezone.now()
+            now = database_now()
             terms_body = "Labelled FIXTURE-DEV-1 registration terms."
             PlatformTermsVersion.objects.create(
                 terms_version_uuid=uuid.uuid4(),
