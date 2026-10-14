@@ -56,7 +56,8 @@ class ApplicationLineageSchema(TransactionTestCase):
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0046_se_entitlement_foundation"])
+            head = current_applied_core_head(connection)[0][1]
+            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head])
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
@@ -131,9 +132,7 @@ class ApplicationLineageSchema(TransactionTestCase):
             "s1fu_guard_admission_route": sb1.NEW_S1FU_GUARD_ADMISSION_ROUTE_BODY,
             "s3fu_guard_gateway_effect": formation.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
         })
-        if current_applied_core_head(connection) == [
-            ("core", "0046_se_entitlement_foundation")
-        ]:
+        if ("core", "0046_se_entitlement_foundation") in MigrationRecorder(connection).applied_migrations():
             se_migration = importlib.import_module(
                 "core.migrations.0046_se_entitlement_foundation"
             )
@@ -357,9 +356,10 @@ class ApplicationLineageSchema(TransactionTestCase):
     def test_sbg_0045_guard_census_matches_migration_declarations(self):
         formation = importlib.import_module("core.migrations.0045_sbg_governance_formation")
         declared_bodies = dict(formation.BUILT_FUNCTION_BODIES)
-        se_extension_active = current_applied_core_head(connection) == [
+        se_extension_active = (
             ("core", "0046_se_entitlement_foundation")
-        ]
+            in MigrationRecorder(connection).applied_migrations()
+        )
         if se_extension_active:
             se_migration = importlib.import_module(
                 "core.migrations.0046_se_entitlement_foundation"

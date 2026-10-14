@@ -82,6 +82,7 @@ SEED_TABLES = ("core_role",)
 MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0045_sbg_governance_formation": {"core_governedrule": 1},
     "0046_se_entitlement_foundation": {"core_governedrule": 3},
+    "0047_sek1_platform_rule_statement_start": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -106,7 +107,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0043_p1_governed_registration": 429,
                           "0044_sb2_birthing_snapshot": 433,
                           "0045_sbg_governance_formation": 458,
-                          "0046_se_entitlement_foundation": 470}
+                          "0046_se_entitlement_foundation": 470,
+                          "0047_sek1_platform_rule_statement_start": 470}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 OBSERVATION_KEYS = ("sequence_discipline",)
 

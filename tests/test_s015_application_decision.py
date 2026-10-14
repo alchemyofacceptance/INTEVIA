@@ -119,7 +119,7 @@ def _assert_catalog_restored(test_case, reference):
         "table set not restored",
     )
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0046_se_entitlement_foundation")
+    test_case.assertEqual(head, "0047_sek1_platform_rule_statement_start")
     test_case.assertEqual(len(after["triggers"]), 470)
     test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
 
@@ -127,7 +127,7 @@ def _assert_catalog_restored(test_case, reference):
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
     head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0046_se_entitlement_foundation")
+    test_case.assertEqual(head, "0047_sek1_platform_rule_statement_start")
     test_case.assertEqual(len(reference["triggers"]), 470)
     nonempty = isolation_state.unexpected_data_rows(reference)
     test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
@@ -319,7 +319,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
         head = current_core_leaf(connection)[0][1]
-        self.assertEqual(head, "0046_se_entitlement_foundation")
+        self.assertEqual(head, "0047_sek1_platform_rule_statement_start")
         self.assertEqual(len(reference["triggers"]), 470)
         nonempty = isolation_state.unexpected_data_rows(reference)
         self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")

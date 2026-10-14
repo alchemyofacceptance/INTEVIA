@@ -100,7 +100,7 @@ Write-IntegratedGuardSummary -FailFast -StallMinutes $script:guardStallMinutes
 Write-Output ("MODE=" + $(if ($StallGuardSelfTest) { "guard-self-check" } else { "clone" }))
 $originalLocation = Get-Location
 $expectedRoute = "LIVING_ORGANISM_TEST_LIFECYCLE"
-$expectedCoreHead = "0046_se_entitlement_foundation"
+$expectedCoreHead = "0047_sek1_platform_rule_statement_start"
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",

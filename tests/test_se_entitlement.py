@@ -78,6 +78,7 @@ from tests.se_route_support import (
 
 SE_MIGRATION = ("core", "0046_se_entitlement_foundation")
 PREVIOUS_MIGRATION = ("core", "0045_sbg_governance_formation")
+SEK1_MIGRATION = ("core", "0047_sek1_platform_rule_statement_start")
 NEW_TABLES = {
     "core_organismentitlement",
     "core_organismentitlementevent",
@@ -254,8 +255,16 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(self._trigger_count(), 458)
 
     def _assert_0046_state(self):
-        self.assertEqual(current_core_leaf(connection), [SE_MIGRATION])
-        self.assertIn(SE_MIGRATION, MigrationRecorder(connection).applied_migrations())
+        self._assert_se_schema_state(SE_MIGRATION)
+
+    def _assert_received_0047_state(self):
+        self._assert_se_schema_state(SEK1_MIGRATION)
+
+    def _assert_se_schema_state(self, expected_head):
+        applied = MigrationRecorder(connection).applied_migrations()
+        self.assertEqual(current_applied_core_head(connection), [expected_head])
+        self.assertIn(SE_MIGRATION, applied)
+        self.assertIn(expected_head, applied)
         self.assertTrue(NEW_TABLES.issubset(self._core_tables()))
         self.assertEqual(self._trigger_count(), 470)
         with connection.cursor() as cursor:
@@ -280,6 +289,26 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             )
             cursor.execute("SELECT count(*) FROM public.core_governedrule")
             self.assertEqual(cursor.fetchone()[0], 3)
+        migration = importlib.import_module(
+            "core.migrations.0046_se_entitlement_foundation"
+        )
+        expected_bodies = dict(migration.SE_FUNCTION_BODIES)
+        if expected_head == SEK1_MIGRATION:
+            sek1_migration = importlib.import_module(
+                "core.migrations.0047_sek1_platform_rule_statement_start"
+            )
+            expected_bodies["s015_entitlement_limit"] = (
+                sek1_migration._ENTITLEMENT_LIMIT_BODY
+            )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.proname, p.prosrc "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.proname = ANY(%s)",
+                [list(expected_bodies)],
+            )
+            installed_bodies = dict(cursor.fetchall())
+        self.assertEqual(installed_bodies, expected_bodies)
 
     def test_w_se_m1_forward_installs_tables_guards_rules_and_derived_trigger_count(self):
         migration = importlib.import_module(
@@ -351,7 +380,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
         self._assert_0045_state(original_tables - NEW_TABLES)
         self.restore_received_migrations()
-        self._assert_0046_state()
+        self._assert_received_0047_state()
 
     def test_w_se_m3_setup_failure_cleanup_restores_0046(self):
         original_tables = self._core_tables()
@@ -370,9 +399,10 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(len(result.errors), 1)
         self.assertIn("intentional SE setup failure", result.errors[0][1])
         self.assertEqual(self._core_tables(), original_tables)
-        self._assert_0046_state()
+        self._assert_received_0047_state()
 
     def test_w_se_m4_reverse_refuses_when_any_se_record_exists(self):
+        migrate_to_target_with_restore(self, SE_MIGRATION)
         text = TEST_POLICY_TEXT
         OrganismEntitlementPolicyText.objects.create(
             policy_version=1,
