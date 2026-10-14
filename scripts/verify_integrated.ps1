@@ -1335,10 +1335,31 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
                 $summary = $summaryRecords[0]
                 $isolationVerdict = [string]$summary.isolation_verdict
                 $ordinary = $summary.ordinary_test_verdict
-                if ($summary.plan_sha256 -cne $planDigest -or
-                    $summary.tests_planned -ne $testsResolved -or
-                    $summary.executed_matches_plan -ne "FULL") {
-                    Add-Failure "R7: verifier execution differs from the validated plan"
+                $resolvedCount = if ($null -eq $script:printedSummary.resolved) {
+                    "UNAVAILABLE"
+                }
+                else {
+                    [string]$script:printedSummary.resolved
+                }
+                $summaryCheckStatus = Invoke-PythonAndCapture `
+                    -Label "R7 verifier summary" `
+                    -LogPath $logPath `
+                    -Arguments @(
+                        "-m", "verification.isolation.run_plan", "summary-check",
+                        "--isolation", $isolationPath,
+                        "--plan", $planFile,
+                        "--resolved", $resolvedCount
+                    )
+                if ($summaryCheckStatus -ne 0) {
+                    $summaryRefusal = @(Get-Content -LiteralPath $logPath |
+                        Where-Object { $_ -match "^R7: " } |
+                        Select-Object -Last 1)
+                    if ($summaryRefusal.Count -eq 1) {
+                        Add-Failure $summaryRefusal[0]
+                    }
+                    else {
+                        Add-Failure "R7: verifier summary check refused without a refusal message"
+                    }
                 }
                 Write-Output "TESTS_PLANNED=$($summary.tests_planned)"
                 Write-Output "TESTS_EXECUTED=$($summary.tests_executed)"

@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 from django.contrib.auth.models import User
 from django.db import DatabaseError, connections
 from django.db.models import Q
-from django.utils import timezone
 
 from core.models import (
     GovernedRule,
@@ -53,6 +52,7 @@ from src.intevia.services.organism_command_support import (
     acquire_organism_command_mutex,
     authority_atomic,
 )
+from src.intevia.services.clock import database_now
 
 
 _ELECTION_PREFIX = "application-settings-version:"
@@ -318,7 +318,7 @@ def entitlement_effective(
     if type(capability) is not str or not capability:
         raise ValueError("capability is required")
     effective_at = _validate_timestamp(
-        timezone.now() if at is None else at,
+        database_now(database_alias) if at is None else at,
         "at",
     )
     with connections[database_alias].cursor() as cursor:
@@ -343,7 +343,7 @@ def entitlement_limit(
 ) -> tuple[str, int | None]:
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(
-        timezone.now() if at is None else at,
+        database_now(database_alias) if at is None else at,
         "at",
     )
     with connections[database_alias].cursor() as cursor:
@@ -595,8 +595,9 @@ def entitlement_summary(
 ) -> dict[str, object]:
     """Return the effective package and explicit per-dimension measurements."""
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
+    now = database_now(database_alias)
     effective_at = _validate_timestamp(
-        timezone.now() if at is None else at,
+        now if at is None else at,
         "at",
     )
     all_entitlements = OrganismEntitlement.objects.using(database_alias).filter(
@@ -624,7 +625,7 @@ def entitlement_summary(
                 scope_circle__isnull=True,
                 code="FREE_TIER",
                 effective_from__lte=effective_at,
-                recorded_at__lte=timezone.now(),
+                recorded_at__lte=now,
             )
             .order_by(
                 "-effective_from",
@@ -650,7 +651,7 @@ def entitlement_summary(
             scope_circle__isnull=True,
             code="FREE_TIER",
             effective_from__gt=effective_at,
-            recorded_at__lte=timezone.now(),
+            recorded_at__lte=now,
         ).values_list("effective_from", flat=True)
     else:
         package = current.tier_reference or {
@@ -768,7 +769,7 @@ def capability_status(
     """Separate entitlement availability from undelivered owner-slice status."""
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(
-        timezone.now() if at is None else at,
+        database_now(database_alias) if at is None else at,
         "at",
     )
     return {

@@ -249,6 +249,27 @@ def latest_test_attempt_record(
     return record_path, record
 
 
+def _resolve_parent_test_identifier(
+    identifier: Any, plan_ids: list[str], requirement: str
+) -> str:
+    if not isinstance(identifier, str) or not identifier:
+        raise ValueError(f"{requirement}: test identifier is missing")
+    exact_matches = [test_id for test_id in plan_ids if identifier == test_id]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if exact_matches:
+        raise ValueError(f"{requirement}: test identifier has ambiguous parent matches")
+    parent_matches = [
+        test_id for test_id in plan_ids if identifier.startswith(f"{test_id} (")
+    ]
+    if len(parent_matches) != 1:
+        detail = "ambiguous" if parent_matches else "missing"
+        raise ValueError(
+            f"{requirement}: sub-test identifier has {detail} parent plan matches"
+        )
+    return parent_matches[0]
+
+
 def validate_unrotated_selection(
     current_tests: list[str],
     latest_record: dict[str, Any] | None,
@@ -337,7 +358,9 @@ def build_rotation_plan(parent_path: str | Path, record_path: str | Path, side: 
     if record.get("latest") is not True:
         raise ValueError("R5: preceding record is stale, mismatched, or not a failure")
     if side == "B":
-        failure = record.get("rotation_failure")
+        failure = _resolve_parent_test_identifier(
+            record.get("rotation_failure"), parent["tests"], "R5"
+        )
         bound_parent = record.get("parent_plan_sha256")
         valid_record = (
             record.get("result") == "PASS"
@@ -346,7 +369,9 @@ def build_rotation_plan(parent_path: str | Path, record_path: str | Path, side: 
             and failure in parent["tests"]
         )
     else:
-        failure = record.get("failing_test")
+        failure = _resolve_parent_test_identifier(
+            record.get("failing_test"), parent["tests"], "R5"
+        )
         bound_parent = record.get("parent_plan_sha256")
         expected_digest = record.get("plan_sha256")
         valid_record = (
@@ -387,14 +412,23 @@ def assert_execution(
     complete: bool,
     stop_id: str | None = None,
 ) -> str:
-    if complete and executed_ids == plan_ids:
+    resolved_executed_ids = [
+        _resolve_parent_test_identifier(test_id, plan_ids, "R7")
+        for test_id in executed_ids
+    ]
+    resolved_stop_id = (
+        _resolve_parent_test_identifier(stop_id, plan_ids, "R7")
+        if stop_id is not None
+        else None
+    )
+    if complete and resolved_executed_ids == plan_ids:
         return "FULL"
     if (
         not complete
-        and stop_id
-        and executed_ids
-        and executed_ids == plan_ids[: len(executed_ids)]
-        and executed_ids[-1] == stop_id
+        and resolved_stop_id
+        and resolved_executed_ids
+        and resolved_executed_ids == plan_ids[: len(resolved_executed_ids)]
+        and resolved_executed_ids[-1] == resolved_stop_id
     ):
         return "PREFIX"
     raise ValueError("R7: executed identifiers are extra, gapped, or reordered")
@@ -424,6 +458,20 @@ def verify_kind(
 def ensure_suite_matches(plan_ids: list[str], actual_ids: list[str]) -> None:
     if actual_ids != plan_ids:
         raise ValueError("R7: built suite differs from validated plan")
+
+
+def validate_verification_summary(
+    summary: dict[str, Any], plan_sha256: str, resolved_tests: object
+) -> None:
+    if type(resolved_tests) is not int:
+        raise ValueError("R7: the runner's resolved test count is unavailable")
+    if summary.get("plan_sha256") != plan_sha256:
+        raise ValueError("R7: isolation summary plan digest differs from the validated plan")
+    planned_tests = summary.get("tests_planned")
+    if type(planned_tests) is not int or planned_tests != resolved_tests:
+        raise ValueError("R7: summary tests_planned differs from the runner's resolved test count")
+    if summary.get("executed_matches_plan") != "FULL":
+        raise ValueError("R7: summary executed_matches_plan is not FULL")
 
 
 def validate_run_spec_binding(state: dict[str, Any], specification: bytes) -> str:
@@ -576,8 +624,29 @@ def run_no_database_precheck(root: Path, state_path: str | Path) -> tuple[list[s
 
 
 def self_test() -> int:
-    _setup_test_django("R3/R4")
-    cases: list[tuple[str, bool, str, str, Any]] = []
+    test_environment = {
+        "DJANGO_SETTINGS_MODULE": "intevia.test_settings",
+        "INTEVIA_S015_TEST_ROUTE": "LIVING_ORGANISM_TEST_LIFECYCLE",
+        "INTEVIA_DATABASE_ENGINE": "postgresql",
+        "INTEVIA_POSTGRES_TEST_DB": "test_intevia_living_organism_tu1_plan_selftest",
+    }
+    original_environment = {
+        name: os.environ.get(name) for name in test_environment
+    }
+    os.environ.update(test_environment)
+    try:
+        return _run_self_test()
+    finally:
+        for name, value in original_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _run_self_test() -> int:
+    connections = _setup_test_django("R3/R4")
+    cases: list[tuple[str, bool, str, str, bool, str | None]] = []
 
     def add(
         label: str,
@@ -586,12 +655,14 @@ def self_test() -> int:
         accepted_form: str,
         call: Any,
     ) -> None:
+        message = None
         try:
             call()
             refused = False
-        except (AssertionError, ValueError, RuntimeError):
+        except (AssertionError, ValueError, RuntimeError) as exc:
             refused = True
-        cases.append((label, expect_refusal, refused_form, accepted_form, refused))
+            message = f"{type(exc).__name__}: {exc}"
+        cases.append((label, expect_refusal, refused_form, accepted_form, refused, message))
 
     add("R3/R4 labels", True, "module does not resolve or duplicate unique IDs",
         "module label expands and loader returns unique IDs",
@@ -718,6 +789,102 @@ def self_test() -> int:
     add("R7 executed IDs", True, "extra, gapped, reordered, or non-stopping prefix",
         "full plan or prefix ending at stopping test",
         lambda: assert_execution(["a", "b"], ["b"], complete=False, stop_id="b"))
+
+    def verification_summary_cross_check() -> None:
+        summary = {
+            "plan_sha256": "plan-digest",
+            "tests_planned": 3,
+            "executed_matches_plan": "FULL",
+        }
+        validate_verification_summary(summary, "plan-digest", 3)
+        refusal_cases = (
+            (summary, None, "R7: the runner's resolved test count is unavailable"),
+            (summary, "UNAVAILABLE", "R7: the runner's resolved test count is unavailable"),
+            (
+                {**summary, "plan_sha256": "different-plan"},
+                3,
+                "R7: isolation summary plan digest differs from the validated plan",
+            ),
+            (
+                {**summary, "tests_planned": 2},
+                3,
+                "R7: summary tests_planned differs from the runner's resolved test count",
+            ),
+            (
+                {**summary, "executed_matches_plan": "PREFIX"},
+                3,
+                "R7: summary executed_matches_plan is not FULL",
+            ),
+        )
+        for invalid_summary, resolved_tests, expected_message in refusal_cases:
+            try:
+                validate_verification_summary(
+                    invalid_summary, "plan-digest", resolved_tests
+                )
+            except ValueError as error:
+                if str(error) != expected_message:
+                    raise AssertionError(
+                        "R7: verifier summary refusal message differs"
+                    ) from error
+            else:
+                raise AssertionError("R7: invalid verifier summary was accepted")
+
+    add(
+        "R7 verifier summary",
+        False,
+        "missing resolved count, mismatched plan digest or count, or non-FULL execution",
+        "matching plan digest, resolved count, and FULL execution",
+        verification_summary_cross_check,
+    )
+
+    def subtest_parent_binding() -> None:
+        attempts = {"count": 0}
+        parent_tests = ["suite.Case.test_before", "suite.Case.test_w1", "suite.Case.test_after"]
+        decorated_failure = (
+            "suite.Case.test_w1 (skew=datetime.timedelta(days=-1, seconds=79200), "
+            "function='limit')"
+        )
+        failure_record = {
+            "classification": "TEST_ATTEMPT",
+            "result": "FAIL",
+            "failing_test": decorated_failure,
+        }
+        with _forbid_database_connections(connections, attempts, "R5/R7"):
+            if assert_execution(
+                parent_tests,
+                parent_tests[:2],
+                complete=False,
+                stop_id=decorated_failure,
+            ) != "PREFIX":
+                raise AssertionError("R7: decorated stopping ID did not resolve to its parent")
+            parent_failure = _resolve_parent_test_identifier(
+                failure_record["failing_test"], parent_tests, "R5"
+            )
+            if parent_failure != parent_tests[1] or rotation(
+                {"tests": parent_tests, "ordered_groups": []},
+                parent_failure,
+                "A",
+            ) != parent_tests[1:]:
+                raise AssertionError("R5: invocation A did not start at the parent test")
+            for identifier, plan_ids, expected in (
+                ("missing.test (case=1)", parent_tests, "missing"),
+                ("x (case (nested=1)", ["x", "x (case"], "ambiguous"),
+            ):
+                try:
+                    _resolve_parent_test_identifier(identifier, plan_ids, "R5")
+                except ValueError as exc:
+                    if expected not in str(exc):
+                        raise AssertionError("R5: invalid parent match was misclassified") from exc
+                else:
+                    raise AssertionError("R5: invalid parent match was accepted")
+        if attempts["count"] != 0:
+            raise AssertionError("R5/R7: parent binding attempted a database connection")
+
+    add("R5/R7 sub-test parent ID", False,
+        "missing or ambiguous parent match, or database connection",
+        "unique sub-test prefix maps to parent; R7 PREFIX and R5 invocation A; zero connections",
+        subtest_parent_binding)
+
     add("R10 verifier selection", True, "unauthorized subset, rotation, or mismatched delta",
         "full ordered suite or authority-bound exact impact set",
         lambda: verify_kind("DELTA", ["a"], ["a", "b"]))
@@ -733,12 +900,13 @@ def self_test() -> int:
     add("R14 no database", False, "any database creation refuses the route",
         "pre-check completes without creating a database",
         lambda: None)
-    for label, expect_refusal, refused_form, accepted_form, refused in cases:
+    for label, expect_refusal, refused_form, accepted_form, refused, message in cases:
         status = "PASS" if refused == expect_refusal else "FAIL"
-        print(
-            f"{label}={status} REFUSED={refused_form} ACCEPTED={accepted_form}"
-        )
-    return 0 if all(refused == expect for _, expect, _, _, refused in cases) else 1
+        line = f"{label}={status} REFUSED={refused_form} ACCEPTED={accepted_form}"
+        if status == "FAIL" and message:
+            line += f" MESSAGE={message}"
+        print(line)
+    return 0 if all(refused == expect for _, expect, _, _, refused, _ in cases) else 1
 
 
 def load_plan_from_data(plan: dict[str, Any]) -> None:
@@ -749,7 +917,18 @@ def load_plan_from_data(plan: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("self-test", "precheck", "plan", "rotate", "delta-check", "candidate-binding"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "self-test",
+            "precheck",
+            "plan",
+            "rotate",
+            "delta-check",
+            "candidate-binding",
+            "summary-check",
+        ),
+    )
     parser.add_argument("--root")
     parser.add_argument("--state")
     parser.add_argument("--output")
@@ -762,7 +941,49 @@ def main() -> int:
     parser.add_argument("--impact")
     parser.add_argument("--run-root")
     parser.add_argument("--new-parent-plan-reason")
+    parser.add_argument("--isolation")
+    parser.add_argument("--plan")
+    parser.add_argument("--resolved")
     args = parser.parse_args()
+    if args.action == "summary-check":
+        if not (args.isolation and args.plan and args.resolved is not None):
+            parser.error("summary-check requires --isolation, --plan, and --resolved")
+        try:
+            isolation_records = [
+                json.loads(line)
+                for line in Path(args.isolation).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            summaries = [
+                record
+                for record in isolation_records
+                if isinstance(record, dict) and record.get("checkpoint") == "SUMMARY"
+            ]
+            if len(summaries) != 1:
+                raise ValueError(
+                    "R7: isolation file must contain exactly one SUMMARY record"
+                )
+            resolved_tests: object = args.resolved
+            if args.resolved == "UNAVAILABLE":
+                resolved_tests = None
+            else:
+                try:
+                    resolved_tests = int(args.resolved)
+                except ValueError:
+                    pass
+            plan_sha256 = hashlib.sha256(Path(args.plan).read_bytes()).hexdigest()
+            validate_verification_summary(summaries[0], plan_sha256, resolved_tests)
+        except json.JSONDecodeError:
+            print("R7: isolation file contains invalid JSON")
+            return 1
+        except (OSError, UnicodeError) as error:
+            print(f"R7: verifier summary input could not be read: {error}")
+            return 1
+        except ValueError as error:
+            print(str(error))
+            return 1
+        print("R7 verifier summary=PASS")
+        return 0
     if args.action == "self-test":
         return self_test()
     if args.action == "plan":

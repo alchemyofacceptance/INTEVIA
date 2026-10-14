@@ -12,6 +12,7 @@ from verification.isolation.run_plan import (
     rotation_basis_records,
     validate_run_spec_binding,
     validate_unrotated_selection,
+    validate_verification_summary,
     verify_kind,
 )
 
@@ -173,6 +174,56 @@ class LaunchBoundaryTests(SimpleTestCase):
             "PREFIX",
         )
 
+    def test_subtest_identifier_resolves_for_r7_and_r5_without_database(self):
+        from django.db import connections
+        from verification.isolation.run_plan import (
+            _forbid_database_connections,
+            _resolve_parent_test_identifier,
+        )
+
+        parent_tests = ["suite.Case.test_before", "suite.Case.test_w1", "suite.Case.test_after"]
+        decorated_failure = (
+            "suite.Case.test_w1 (skew=datetime.timedelta(days=-1, seconds=79200), "
+            "function='limit')"
+        )
+        failure_record = {
+            "classification": "TEST_ATTEMPT",
+            "result": "FAIL",
+            "failing_test": decorated_failure,
+        }
+        attempts = {"count": 0}
+        with _forbid_database_connections(connections, attempts, "R5/R7"):
+            self.assertEqual(
+                assert_execution(
+                    parent_tests,
+                    parent_tests[:2],
+                    complete=False,
+                    stop_id=decorated_failure,
+                ),
+                "PREFIX",
+            )
+            parent_failure = _resolve_parent_test_identifier(
+                failure_record["failing_test"], parent_tests, "R5"
+            )
+            self.assertEqual(parent_failure, parent_tests[1])
+            self.assertEqual(
+                rotation(
+                    {"tests": parent_tests, "ordered_groups": []},
+                    parent_failure,
+                    "A",
+                ),
+                parent_tests[1:],
+            )
+            with self.assertRaisesRegex(ValueError, "missing"):
+                _resolve_parent_test_identifier(
+                    "missing.test (case=1)", parent_tests, "R5"
+                )
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                _resolve_parent_test_identifier(
+                    "x (case (nested=1)", ["x", "x (case"], "R5"
+                )
+        self.assertEqual(attempts["count"], 0)
+
     def test_gapped_execution_is_refused(self):
         with self.assertRaisesRegex(ValueError, "R7"):
             assert_execution(
@@ -202,3 +253,42 @@ class LaunchBoundaryTests(SimpleTestCase):
         from verification.isolation.run_plan import self_test
 
         self.assertEqual(self_test(), 0)
+
+    def test_verification_summary_cross_check(self):
+        summary = {
+            "plan_sha256": "plan-digest",
+            "tests_planned": 3,
+            "executed_matches_plan": "FULL",
+        }
+        self.assertIsNone(
+            validate_verification_summary(summary, "plan-digest", 3)
+        )
+        refusal_cases = (
+            (
+                summary,
+                None,
+                "R7: the runner's resolved test count is unavailable",
+            ),
+            (
+                {**summary, "plan_sha256": "different-plan"},
+                3,
+                "R7: isolation summary plan digest differs from the validated plan",
+            ),
+            (
+                {**summary, "tests_planned": 2},
+                3,
+                "R7: summary tests_planned differs from the runner's resolved test count",
+            ),
+            (
+                {**summary, "executed_matches_plan": "PREFIX"},
+                3,
+                "R7: summary executed_matches_plan is not FULL",
+            ),
+        )
+        for invalid_summary, resolved_tests, expected_message in refusal_cases:
+            with self.subTest(expected_message=expected_message):
+                with self.assertRaises(ValueError) as raised:
+                    validate_verification_summary(
+                        invalid_summary, "plan-digest", resolved_tests
+                    )
+                self.assertEqual(str(raised.exception), expected_message)
