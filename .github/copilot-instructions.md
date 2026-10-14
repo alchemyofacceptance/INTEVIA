@@ -246,3 +246,19 @@ Do not convert a pointer into permission.
 Do not convert historical evidence into standing instruction.
 
 Stop when the close condition is met.
+
+## 13. Run requirements
+
+The operative run requirements are held at the exact repository path `docs/operations/RUN_REQUIREMENTS.md`. That file is rendered from the
+Human Governor's practice (v1.38 §R) and is bound by its SHA-256 in each unit's authorised run state; the unit packet names that digest.
+
+Before preparing or launching any test run:
+
+- confirm the file's SHA-256 equals the digest the unit packet or run state names;
+- apply its requirements R1 to R14 to the run as instructed;
+- report the run's actual mode, fail-fast setting, plan digest, rotation basis and pre-check result, as R8 and R14 require.
+
+Where a unit packet or relay contradicts `docs/operations/RUN_REQUIREMENTS.md`, do not resolve the conflict by assumption: return
+`GOVERNANCE QUESTION`, naming the requirement number, or `HOLD` where safe execution is not possible.
+
+This section records the location and use of the run requirements. Authority for any run still comes from the unit execution packet (§2).

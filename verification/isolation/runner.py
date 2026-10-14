@@ -42,6 +42,7 @@ from .template import (
     record_final_clone_cp0,
     template_receipt_path,
 )
+from .run_plan import assert_execution, ensure_suite_matches, load_plan
 
 CURRENT = {"runner": None}
 DIGEST_KEYS = ("triggers", "constraints", "functions", "ownership_grants", "core_role", "content_types", "permissions", "migrations")
@@ -147,14 +148,49 @@ def owned_database_problem(database_name, receipt_path, run_nonce, protected_nam
 
 
 class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
+    def build_suite(self, test_labels=None, **kwargs):
+        self.run_plan = None
+        self.plan_sha256 = None
+        plan_path = os.environ.get("INTEVIA_RUN_PLAN_FILE")
+        if not plan_path:
+            return super().build_suite(test_labels, **kwargs)
+        self.run_plan, self.plan_sha256 = load_plan(plan_path)
+        if os.environ.get("INTEVIA_RUN_PLAN_SHA256") != self.plan_sha256:
+            raise RuntimeError("R7: execution plan digest differs from validated plan")
+        suite = super().build_suite(self.run_plan["tests"], **kwargs)
+        actual_ids = [case.id() for case in iter_test_cases(suite)]
+        ensure_suite_matches(self.run_plan["tests"], actual_ids)
+        print("PLAN_SHA256=" + self.plan_sha256, file=sys.stderr, flush=True)
+        print("PARENT_PLAN_SHA256=" + str(self.run_plan.get("parent_plan_sha256") or "NONE"),
+              file=sys.stderr, flush=True)
+        print("ROTATION=" + str(self.run_plan.get("rotation_side", "NONE")),
+              file=sys.stderr, flush=True)
+        print("ROTATION_UNIT=" + str(self.run_plan.get("rotation_unit", "NONE")),
+              file=sys.stderr, flush=True)
+        print("TESTS_PLANNED=" + str(len(self.run_plan["tests"])), file=sys.stderr, flush=True)
+        print("ORDERED_GROUPS=%d INTACT" % len(self.run_plan.get("ordered_groups", [])),
+              file=sys.stderr, flush=True)
+        return suite
+
     def setup_databases(self, **kwargs):
         from django.db import connections
 
-        mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "fresh")
+        mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "clone")
         if mode not in ("fresh", "clone"):
-            raise RuntimeError("VERIFICATION_TEMPLATE_MODE must be fresh or clone")
+            raise RuntimeError("R2: template mode must be clone or authorized fresh")
+        if mode == "fresh":
+            from .run_plan import validate_fresh_authority
+
+            self.fresh_authority = validate_fresh_authority(
+                os.environ.get("INTEVIA_FRESH_AUTHORITY_FILE"),
+                os.environ.get("INTEVIA_FRESH_AUTHORITY_SHA256"),
+                os.environ.get("INTEVIA_RUN_SUFFIX", ""),
+            )
+        else:
+            self.fresh_authority = "NONE"
         self.template_receipt = None
         self.template_build_seconds = 0.0
+        self.template_rebuilt = False
         for alias in connections:
             install(connections[alias].creation)
 
@@ -169,10 +205,9 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             except TemplateSealingRefused:
                 raise
             except (TemplateIdentityUnavailable, TemplateNameCollision, TemplateReceiptInvalid) as exc:
-                from verification.ownership import write_receipt
-
-                write_receipt("template_fallback", route="fresh", reason=str(exc))
+                raise RuntimeError("R9: clone pre-flight refused; fresh-mode fallback is prohibited") from exc
             else:
+                self.template_rebuilt = bool(built)
                 if built:
                     self.template_build_seconds = time.perf_counter() - template_started
                 install_clone_creation(connection.creation, self.template_receipt)
@@ -180,8 +215,14 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         setup_started = time.perf_counter()
         old_config = DiscoverRunner.setup_databases(self, **kwargs)
         setup_seconds = time.perf_counter() - setup_started
+        self.clone_setup_seconds = setup_seconds
         if mode == "clone" and self.template_receipt is not None:
-            print("TT1_TEMPLATE_BUILD_SECONDS=%.6f" % self.template_build_seconds, file=sys.stderr, flush=True)
+            print(
+                "TT1_TEMPLATE_BUILD_SECONDS=%.6f" % self.template_build_seconds
+                if self.template_rebuilt else "TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE",
+                file=sys.stderr,
+                flush=True,
+            )
             print("TT1_CLONE_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
         else:
             print("TT1_FRESH_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
@@ -196,6 +237,8 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         self.outcome_ids = []
         self.ignore_tables = ()
         self.suite_ids = [t.id() for t in iter_test_cases(suite)]
+        if self.run_plan is not None:
+            ensure_suite_matches(self.run_plan["tests"], self.suite_ids)
         self.reference = None
         self.cp0_met = False
         database_name = state.connection.settings_dict.get("NAME")
@@ -417,6 +460,56 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                                      "are checked at reset boundaries, CP-0 and CP-A. "
                                      "The backend checks before teardown flushing and after seed restoration, and checks "
                                      "the result of the by-name setup reset. The isolation instrument checks at CP-0 and CP-A."}
+        if self.run_plan is not None:
+            executed_ids = list(self.started_ids)
+            complete = len(executed_ids) == len(self.run_plan["tests"])
+            stopping_test = (
+                (result.errors + result.failures)[-1][0].id()
+                if result is not None and (result.errors or result.failures)
+                else None
+            )
+            try:
+                match = assert_execution(
+                    self.run_plan["tests"],
+                    executed_ids,
+                    complete=complete,
+                    stop_id=stopping_test,
+                )
+            except ValueError:
+                match = "MISMATCH"
+                verdict = "NOT ESTABLISHED"
+                reasons.append("R7: executed identifiers do not match the validated plan")
+                summary["isolation_verdict"] = verdict
+                summary["reasons"] = reasons
+            not_reached = self.run_plan["tests"][len(executed_ids):]
+            summary.update(
+                plan_sha256=self.plan_sha256,
+                parent_plan_sha256=self.run_plan.get("parent_plan_sha256") or "NONE",
+                rotation=self.run_plan.get("rotation_side", "NONE"),
+                rotation_unit=self.run_plan.get("rotation_unit", "NONE"),
+                rotation_failure=self.run_plan.get("rotation_failure"),
+                tests_planned=len(self.run_plan["tests"]),
+                tests_executed=len(executed_ids),
+                tests_not_reached=len(not_reached),
+                executed_matches_plan=match,
+                candidate_binding=os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256", "UNAVAILABLE"),
+                failing_test=(
+                    stopping_test
+                ),
+            )
+            mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "UNKNOWN")
+            print("MODE=" + mode, file=sys.stderr, flush=True)
+            print("FRESH_AUTHORITY=" + getattr(self, "fresh_authority", "NONE"),
+                  file=sys.stderr, flush=True)
+            print("FAILFAST=ON", file=sys.stderr, flush=True)
+            print("RUN_SPEC_SHA256=" + os.environ.get("INTEVIA_RUN_SPEC_SHA256", "UNAVAILABLE"),
+                  file=sys.stderr, flush=True)
+            print("TESTS_EXECUTED=%d" % len(executed_ids), file=sys.stderr, flush=True)
+            print("TESTS_NOT_REACHED=%d" % len(not_reached), file=sys.stderr, flush=True)
+            print("EXECUTED_MATCHES_PLAN=" + match, file=sys.stderr, flush=True)
+            if mode == "clone":
+                print("CLONE_SETUP_SECONDS=%.6f" % getattr(self, "clone_setup_seconds", 0.0),
+                      file=sys.stderr, flush=True)
         self._emit(summary)
         print("ISOLATION VERDICT: %s" % verdict, file=sys.stderr, flush=True)
         for r in reasons:

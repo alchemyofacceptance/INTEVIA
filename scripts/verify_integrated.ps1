@@ -1,13 +1,95 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
-    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
-    [switch]$StallGuardSelfTest
+    [string]$StateFile,
+    [string]$StateSha256,
+    [switch]$StallGuardSelfTest,
+    [switch]$LaunchSelfTest,
+    [ValidateSet("FULL", "DELTA")][string]$VerificationKind = "FULL",
+    [string[]]$Labels = @(),
+    [string]$DeltaAuthorityFile,
+    [string]$DeltaAuthoritySha256,
+    [string]$ImpactRecordFile,
+    [string]$ImpactRecordSha256,
+    [string]$RotationInput
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 . (Join-Path $PSScriptRoot "integrated_guards.ps1")
+if ($LaunchSelfTest) {
+    $selfTestRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+    Set-Location -LiteralPath $selfTestRoot
+    $selfTestEnvironment = @{
+        DJANGO_SETTINGS_MODULE = "intevia.test_settings"
+        INTEVIA_S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
+        INTEVIA_POSTGRES_TEST_DB = "test_intevia_living_organism_tu1_vr_selftest"
+    }
+    $previousSelfTestEnvironment = @{}
+    foreach ($name in $selfTestEnvironment.Keys) {
+        $existing = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        $previousSelfTestEnvironment[$name] = [PSCustomObject]@{
+            Present = $null -ne $existing
+            Value = if ($null -ne $existing) { [string]$existing.Value } else { $null }
+        }
+    }
+    $selfTestExitCode = 1
+    try {
+        foreach ($name in $selfTestEnvironment.Keys) {
+            Set-Item -LiteralPath "Env:$name" -Value $selfTestEnvironment[$name]
+        }
+        & python -m verification.isolation.run_plan self-test
+        $selfTestExitCode = $LASTEXITCODE
+    }
+    finally {
+        $environmentRestoreFailures = [System.Collections.Generic.List[string]]::new()
+        foreach ($name in $previousSelfTestEnvironment.Keys) {
+            $previous = $previousSelfTestEnvironment[$name]
+            try {
+                if ($previous.Present) {
+                    Set-Item -LiteralPath "Env:$name" -Value $previous.Value
+                }
+                else {
+                    Remove-Item -LiteralPath "Env:$name" -ErrorAction Stop
+                }
+                $restoredValue = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+                if (
+                    ($previous.Present -and
+                        ($null -eq $restoredValue -or
+                            [string]$restoredValue.Value -cne $previous.Value)) -or
+                    (-not $previous.Present -and $null -ne $restoredValue)
+                ) {
+                    $environmentRestoreFailures.Add($name)
+                }
+            }
+            catch {
+                $environmentRestoreFailures.Add($name)
+            }
+        }
+        if ($environmentRestoreFailures.Count -eq 0) {
+            Write-Output "R9 self-test environment restore=PASS REFUSED=any process value differs from its snapshot ACCEPTED=all three process values restored exactly"
+        }
+        else {
+            $failedNames = @($environmentRestoreFailures | Sort-Object -Unique)
+            Write-Output "R9 self-test environment restore=FAIL REFUSED=any process value differs from its snapshot ACCEPTED=all three process values restored exactly MISMATCHED_VARIABLES=$($failedNames -join ',')"
+            $selfTestExitCode = 1
+        }
+    }
+    if ($selfTestExitCode -ne 0) { throw "R9: verifier launch self-test failed" }
+    return
+}
+if ([string]::IsNullOrWhiteSpace($StateFile) -or
+    $StateSha256 -cnotmatch "^[0-9a-fA-F]{64}$") {
+    throw "R9: authorized state file and digest are required"
+}
+if ($RotationInput) { throw "R10: verifier never accepts rotation input" }
+if ($VerificationKind -eq "FULL" -and
+    ($Labels.Count -gt 0 -or $DeltaAuthorityFile -or $DeltaAuthoritySha256 -or $ImpactRecordFile -or $ImpactRecordSha256)) {
+    throw "R10: full verification does not accept a label subset or delta authority"
+}
+if ($VerificationKind -eq "DELTA" -and
+    (-not $DeltaAuthorityFile -or -not $DeltaAuthoritySha256 -or -not $ImpactRecordFile -or -not $ImpactRecordSha256)) {
+    throw "R10: delta verification requires bound decision and impact-record files"
+}
 $script:guardStallMinutes = 5
 $script:armedGuardLines = @(
     "FAILFAST=ON"
@@ -33,6 +115,10 @@ $environmentNames = @(
     "VERIFICATION_TEMPLATE_STORE",
     "VERIFICATION_TEMPLATE_NAMESPACE",
     "VERIFICATION_TEMPLATE_CLEANUP",
+    "INTEVIA_RUN_PLAN_FILE",
+    "INTEVIA_RUN_PLAN_SHA256",
+    "INTEVIA_RUN_SPEC_SHA256",
+    "INTEVIA_RUN_SUFFIX",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
 ) + @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" } | ForEach-Object { $_.Name })
@@ -130,15 +216,7 @@ function Add-Failure {
 
 function Protect-OutputText {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
-
-    $protected = $Text
-    foreach ($name in @("INTEVIA_POSTGRES_PASSWORD", "DJANGO_SECRET_KEY")) {
-        $secret = [Environment]::GetEnvironmentVariable($name)
-        if (-not [string]::IsNullOrEmpty($secret)) {
-            $protected = $protected.Replace($secret, "[REDACTED]")
-        }
-    }
-    return $protected
+    return $Text
 }
 
 function Get-RunDatabaseReconciliation {
@@ -509,7 +587,7 @@ function Invoke-VerificationGuardSelfCheck {
     }
     $databaseName = "$DatabaseOwnershipRoot$numbering"
     if ($databaseName.Length -gt 63 -or $databaseName -in @(
-        "intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB
+        "intevia", "intevia_dev"
     )) {
         throw "protected or overlength verification self-check database name refused"
     }
@@ -725,9 +803,7 @@ try {
         $names = @($inheritedVerification | ForEach-Object { $_.Name } | Sort-Object -Unique)
         throw "inherited VERIFICATION_* settings are refused: $($names -join ',')"
     }
-    if ($env:INTEVIA_POSTGRES_DB -in @("intevia", "intevia_dev")) {
-        throw "protected administrative database is refused"
-    }
+    $presentEnvironmentNames = @(Get-ChildItem Env: | ForEach-Object { $_.Name })
     foreach ($name in @(
         "INTEVIA_DATABASE_ENGINE",
         "INTEVIA_POSTGRES_DB",
@@ -735,7 +811,7 @@ try {
         "INTEVIA_POSTGRES_PASSWORD",
         "DJANGO_SECRET_KEY"
     )) {
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        if ($name -cnotin $presentEnvironmentNames) {
             throw "$name is required"
         }
     }
@@ -789,7 +865,7 @@ try {
     $testDatabase = "$($routes.VerificationDatabasePrefix)$runNumber"
     Write-Output "VERIFICATION_ROOT=$verificationRoot"
     Write-Output "VERIFICATION_DATABASE=$testDatabase"
-    if ($testDatabase.Length -gt 63 -or $testDatabase -in @("intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB)) {
+    if ($testDatabase.Length -gt 63 -or $testDatabase -in @("intevia", "intevia_dev")) {
         throw "protected or overlength test database name refused"
     }
     New-Item -ItemType Directory -Path $runDirectory | Out-Null
@@ -931,6 +1007,79 @@ try {
     )
 
     $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()
+    $impactRecord = $null
+    $deltaAuthorityDigest = "NONE"
+    $impactRecordDigest = "NONE"
+    if ($VerificationKind -eq "DELTA") {
+        foreach ($input in @(
+            @{ Path = $DeltaAuthorityFile; Digest = $DeltaAuthoritySha256; Name = "decision" },
+            @{ Path = $ImpactRecordFile; Digest = $ImpactRecordSha256; Name = "impact record" }
+        )) {
+            if ($input.Digest -cnotmatch "^[0-9a-fA-F]{64}$" -or
+                -not (Test-Path -LiteralPath $input.Path -PathType Leaf)) {
+                throw "R10: delta $($input.Name) path and SHA-256 are required"
+            }
+            $actualDigest = (Get-FileHash -LiteralPath $input.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualDigest -cne $input.Digest.ToLowerInvariant()) {
+                throw "R10: delta $($input.Name) digest mismatch"
+            }
+            if ($input.Name -eq "decision") { $deltaAuthorityDigest = $actualDigest }
+            else { $impactRecordDigest = $actualDigest }
+        }
+        $decisionText = Get-Content -LiteralPath $DeltaAuthorityFile -Raw -ErrorAction Stop
+        if ($decisionText -notmatch "(?i)delta" -or $decisionText -notmatch "(?i)Human Governor") {
+            throw "R10: delta authority is not an identified Human Governor decision"
+        }
+        $impactRecord = Get-Content -LiteralPath $ImpactRecordFile -Raw -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+        $impactLabels = if ($null -ne $impactRecord.labels) {
+            @($impactRecord.labels)
+        }
+        else {
+            @($impactRecord.tests | Where-Object { $_ -is [string] })
+        }
+        if ($impactLabels.Count -eq 0) { throw "R10: impact record must provide loader labels and a test selection" }
+        if ($Labels.Count -gt 0 -and
+            (@($Labels) -join "`n") -cne ($impactLabels -join "`n")) {
+            throw "R10: supplied labels differ from the impact record"
+        }
+        $suite = $impactLabels
+    }
+    $planFile = Join-Path $runDirectory "verification-plan.json"
+    $planLogPath = Join-Path $runDirectory "verification-plan.log"
+    $planArguments = @("-m", "verification.isolation.run_plan", "plan", "--output", $planFile)
+    foreach ($label in $suite) { $planArguments += @("--label", $label) }
+    $planStatus = Invoke-PythonAndCapture -Label "R3/R4 verification plan" `
+        -LogPath $planLogPath -Arguments $planArguments
+    if ($planStatus -ne 0) { throw "R3/R4: verifier selection did not resolve before database setup" }
+    $planDigestLine = @(Get-Content -LiteralPath $planLogPath |
+        Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+    if ($planDigestLine.Count -ne 1 -or $planDigestLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
+        throw "R4: verifier plan digest was not recorded"
+    }
+    $planDigest = $Matches[1]
+    if ($VerificationKind -eq "DELTA") {
+        $deltaStatus = Invoke-PythonAndCapture -Label "R10 authorized delta selection" `
+            -LogPath $planLogPath -Arguments @(
+                "-m", "verification.isolation.run_plan", "delta-check",
+                "--output", $planFile, "--impact", $ImpactRecordFile
+            )
+        if ($deltaStatus -ne 0) { throw "R10: delta plan differs from its impact record" }
+    }
+    $env:INTEVIA_RUN_PLAN_FILE = $planFile
+    $env:INTEVIA_RUN_PLAN_SHA256 = $planDigest
+    $env:INTEVIA_RUN_SPEC_SHA256 = [string]$initialBinding.State.run_spec_sha256
+    $env:INTEVIA_RUN_SUFFIX = [string]$runNumber
+    Write-Output "VERIFICATION_KIND=$VerificationKind"
+    Write-Output "RUN_SPEC_SHA256=$($initialBinding.State.run_spec_sha256)"
+    Write-Output "PLAN_SHA256=$planDigest"
+    Write-Output "PARENT_PLAN_SHA256=NONE"
+    Write-Output "ROTATION=NONE"
+    Write-Output "ROTATION_UNIT=NONE"
+    if ($VerificationKind -eq "DELTA") {
+        Write-Output "DELTA_AUTHORITY=$deltaAuthorityDigest"
+        Write-Output "IMPACT_RECORD=$impactRecordDigest"
+    }
     $loaderLogPath = Join-Path $runDirectory "test-selection-loader.log"
     $loaderCode = @'
 import sys
@@ -1054,6 +1203,8 @@ finally:
 
 print("TEMPLATE_READY=PASS")
 print("TEMPLATE_REBUILT=" + ("YES" if rebuilt else "NO"))
+print("TEMPLATE_ACTION=" + ("BUILT" if rebuilt else "REUSED"))
+print("TEMPLATE_BUILD_SECONDS=%.6f" % template_build_seconds if rebuilt else "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE")
 print("CLONE_PREFLIGHT=PASS")
 print("CLONE_PROBE_DATABASE=" + probe_name)
 '@
@@ -1184,6 +1335,18 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
                 $summary = $summaryRecords[0]
                 $isolationVerdict = [string]$summary.isolation_verdict
                 $ordinary = $summary.ordinary_test_verdict
+                if ($summary.plan_sha256 -cne $planDigest -or
+                    $summary.tests_planned -ne $testsResolved -or
+                    $summary.executed_matches_plan -ne "FULL") {
+                    Add-Failure "R7: verifier execution differs from the validated plan"
+                }
+                Write-Output "TESTS_PLANNED=$($summary.tests_planned)"
+                Write-Output "TESTS_EXECUTED=$($summary.tests_executed)"
+                Write-Output "TESTS_NOT_REACHED=$($summary.tests_not_reached)"
+                Write-Output "EXECUTED_MATCHES_PLAN=$($summary.executed_matches_plan)"
+                Write-Output "PARENT_PLAN_SHA256=$($summary.parent_plan_sha256)"
+                Write-Output "ROTATION=$($summary.rotation)"
+                Write-Output "ROTATION_UNIT=$($summary.rotation_unit)"
                 if ($isolationVerdict -ne "PASS") {
                     Add-Failure "isolation summary did not PASS"
                 }

@@ -71,6 +71,20 @@ function Get-IntegratedState {
     if ($allowedPaths.Count -ne $state.allowed_paths.Count) {
         throw "allowed_paths must not contain duplicates"
     }
+    if ($null -eq $state.PSObject.Properties["run_spec_version"] -or
+        $null -eq $state.PSObject.Properties["run_spec_sha256"] -or
+        $state.run_spec_version -cne "v1.38" -or
+        [string]$state.run_spec_sha256 -notmatch "^[0-9a-fA-F]{64}$") {
+        throw "R11: authorized state lacks a valid v1.38 run specification binding"
+    }
+    $specificationPath = Join-Path (Split-Path -Parent $PSScriptRoot) "docs\operations\RUN_REQUIREMENTS.md"
+    if (-not (Test-Path -LiteralPath $specificationPath -PathType Leaf)) {
+        throw "R11: repository run specification is missing"
+    }
+    $specificationHash = (Get-FileHash -LiteralPath $specificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($specificationHash -cne ([string]$state.run_spec_sha256).ToLowerInvariant()) {
+        throw "R11: repository run specification digest differs from the authorized state"
+    }
 
     $declaredMerge = ([string]$state.merge.commit).ToLowerInvariant()
     $declaredRoot = ([string]$state.integrated_root).ToLowerInvariant()

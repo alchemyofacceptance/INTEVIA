@@ -1,28 +1,96 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("fresh", "clone")][string]$Mode,
-    [Parameter(Mandatory = $true)][ValidateRange(1, 99)][int]$AttemptNumber,
+    [ValidateSet("fresh", "clone")][string]$Mode = "clone",
+    [int]$AttemptNumber = 0,
     [ValidatePattern("^[1-9][0-9]*[ab]?$")][string]$RunSuffix,
-    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string[]]$Labels,
-    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$StateFile,
-    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-fA-F]{64}$")][string]$StateSha256,
+    [string[]]$Labels = @(),
+    [string]$StateFile,
+    [string]$StateSha256,
     [switch]$CleanupTemplate,
     [switch]$FullSuiteParity,
     [switch]$FailFast,
     [ValidateRange(1, 60)][int]$StallMinutes = 5,
-    [switch]$StallGuardSelfTest
+    [switch]$StallGuardSelfTest,
+    [switch]$LaunchSelfTest,
+    [string]$FreshAuthorityFile,
+    [string]$FreshAuthoritySha256,
+    [string[]]$OrderedGroups = @(),
+    [string]$ParentPlanFile,
+    [string]$PrecedingRunRecordFile,
+    [string]$NewParentPlanReason,
+    [ValidateSet("NONE", "A", "B")][string]$RotationSide = "NONE"
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_guards.ps1")
-$runSuffix = if ([string]::IsNullOrEmpty($RunSuffix)) {
-    [string]$AttemptNumber
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+if ($LaunchSelfTest) {
+    Set-Location -LiteralPath $repoRoot
+    $selfTestEnvironment = @{
+        DJANGO_SETTINGS_MODULE = "intevia.test_settings"
+        INTEVIA_S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
+        INTEVIA_POSTGRES_TEST_DB = "test_intevia_living_organism_tu1_me_selftest"
+    }
+    $previousSelfTestEnvironment = @{}
+    foreach ($name in $selfTestEnvironment.Keys) {
+        $existing = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        $previousSelfTestEnvironment[$name] = [PSCustomObject]@{
+            Present = $null -ne $existing
+            Value = if ($null -ne $existing) { [string]$existing.Value } else { $null }
+        }
+    }
+    $selfTestExitCode = 1
+    try {
+        foreach ($name in $selfTestEnvironment.Keys) {
+            Set-Item -LiteralPath "Env:$name" -Value $selfTestEnvironment[$name]
+        }
+        & python -m verification.isolation.run_plan self-test
+        $selfTestExitCode = $LASTEXITCODE
+    }
+    finally {
+        $environmentRestoreFailures = [System.Collections.Generic.List[string]]::new()
+        foreach ($name in $previousSelfTestEnvironment.Keys) {
+            $previous = $previousSelfTestEnvironment[$name]
+            try {
+                if ($previous.Present) {
+                    Set-Item -LiteralPath "Env:$name" -Value $previous.Value
+                }
+                else {
+                    Remove-Item -LiteralPath "Env:$name" -ErrorAction Stop
+                }
+                $restoredValue = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+                if (
+                    ($previous.Present -and
+                        ($null -eq $restoredValue -or
+                            [string]$restoredValue.Value -cne $previous.Value)) -or
+                    (-not $previous.Present -and $null -ne $restoredValue)
+                ) {
+                    $environmentRestoreFailures.Add($name)
+                }
+            }
+            catch {
+                $environmentRestoreFailures.Add($name)
+            }
+        }
+        if ($environmentRestoreFailures.Count -eq 0) {
+            Write-Output "R9 self-test environment restore=PASS REFUSED=any process value differs from its snapshot ACCEPTED=all three process values restored exactly"
+        }
+        else {
+            $failedNames = @($environmentRestoreFailures | Sort-Object -Unique)
+            Write-Output "R9 self-test environment restore=FAIL REFUSED=any process value differs from its snapshot ACCEPTED=all three process values restored exactly MISMATCHED_VARIABLES=$($failedNames -join ',')"
+            $selfTestExitCode = 1
+        }
+    }
+    if ($selfTestExitCode -ne 0) { throw "R9: development launch self-test failed" }
+    return
 }
-else {
-    $RunSuffix
+if (-not $FailFast) { throw "R1: fail-fast is mandatory and cannot be disabled" }
+if ((-not $Labels -or $Labels.Count -eq 0) -and $RotationSide -eq "NONE") {
+    throw "R3: at least one test label is required for a new parent plan"
 }
-if ($runSuffix -cnotmatch ("^{0}[ab]?$" -f [regex]::Escape([string]$AttemptNumber))) {
-    throw "run suffix must match the attempt number, optionally followed by a or b"
+if ([string]::IsNullOrWhiteSpace($StateFile) -or
+    $StateSha256 -cnotmatch "^[0-9a-fA-F]{64}$") {
+    throw "R9: authorized state file and digest are required"
 }
 Write-IntegratedGuardSummary -FailFast:$FailFast -StallMinutes $StallMinutes
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
@@ -134,6 +202,13 @@ $environmentNames = @(
     "VERIFICATION_TEMPLATE_STORE",
     "VERIFICATION_TEMPLATE_NAMESPACE",
     "VERIFICATION_TEMPLATE_CLEANUP",
+    "INTEVIA_RUN_PLAN_FILE",
+    "INTEVIA_RUN_PLAN_SHA256",
+    "INTEVIA_RUN_SPEC_SHA256",
+    "INTEVIA_RUN_SUFFIX",
+    "INTEVIA_CANDIDATE_BINDING_SHA256",
+    "INTEVIA_FRESH_AUTHORITY_FILE",
+    "INTEVIA_FRESH_AUTHORITY_SHA256",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
 ) + @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" } | ForEach-Object { $_.Name })
@@ -152,6 +227,7 @@ $failure = $null
 $runProblems = [System.Collections.Generic.List[string]]::new()
 $setupSeconds = $null
 $templateBuildSeconds = $null
+$templateAction = $null
 $instrumentIsolationVerdict = "NOT ESTABLISHED"
 $wholeRun = $null
 $script:teardownLines = 0
@@ -164,15 +240,7 @@ $script:watchdogStalled = $false
 
 function Protect-OutputText {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
-
-    $protected = $Text
-    foreach ($name in @("INTEVIA_POSTGRES_PASSWORD", "DJANGO_SECRET_KEY")) {
-        $secret = [Environment]::GetEnvironmentVariable($name)
-        if (-not [string]::IsNullOrEmpty($secret)) {
-            $protected = $protected.Replace($secret, "[REDACTED]")
-        }
-    }
-    return $protected
+    return $Text
 }
 
 function Get-RunDatabaseReconciliation {
@@ -436,6 +504,48 @@ function Invoke-PythonAndLog {
     return [int]$status
 }
 
+function Write-PreRunRefusalRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunDirectory,
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$RefusalStage,
+        [Parameter(Mandatory = $true)][string]$PlanHash,
+        [Parameter(Mandatory = $true)]$PlanData,
+        [Parameter(Mandatory = $true)][string]$CandidateBinding
+    )
+
+    $parentDigest = if ($PlanData.parent_plan_sha256) {
+        [string]$PlanData.parent_plan_sha256
+    }
+    else {
+        $PlanHash
+    }
+    $refusalRecord = [ordered]@{
+        latest = $true
+        classification = "PRE_RUN_REFUSAL"
+        result = "REFUSED"
+        refusal_stage = $RefusalStage
+        plan_sha256 = $PlanHash
+        parent_plan_sha256 = $parentDigest
+        rotation_side = [string]$PlanData.rotation_side
+        rotation_unit = [string]$PlanData.rotation_unit
+        candidate = $CandidateBinding
+        parent = $parentDigest
+        tests_planned = [int]$PlanData.tests.Count
+        tests_executed = 0
+        tests_not_reached = [int]$PlanData.tests.Count
+        executed_matches_plan = "NOT_STARTED"
+    }
+    $runRecordPath = Join-Path $RunDirectory "run-record.json"
+    [System.IO.File]::WriteAllText(
+        $runRecordPath,
+        (($refusalRecord | ConvertTo-Json -Depth 8) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $recordLine = "RUN_RECORD_CLASSIFICATION=PRE_RUN_REFUSAL"
+    Write-Output $recordLine
+    Add-Content -LiteralPath $LogPath -Value $recordLine -Encoding utf8
+}
 
 
 
@@ -464,7 +574,7 @@ try {
     }
     else {
         foreach ($label in $Labels) {
-            if ($label -notmatch "^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,3}$") {
+            if ($label -notmatch "^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){1,3}$") {
                 throw "test label must be module.Class or module.Class.method"
             }
         }
@@ -475,9 +585,33 @@ try {
     if ($CleanupTemplate -and $Mode -ne "clone") {
         throw "template cleanup is only valid for a clone-mode run"
     }
+    if ($NewParentPlanReason -match "[\r\n]") {
+        throw "R5: -NewParentPlanReason must be a single line"
+    }
+    if ($RotationSide -ne "NONE" -and
+        -not [string]::IsNullOrWhiteSpace($NewParentPlanReason)) {
+        throw "R5: -NewParentPlanReason is only valid for an unrotated new parent plan"
+    }
 
     $authorizedState = Get-IntegratedState -StateFile $StateFile -StateSha256 $StateSha256
     $routes = Get-IntegratedEvidenceRoutes -AuthorizedState $authorizedState -HomeDirectory $HOME
+    $stageRoot = $routes.DevelopmentRoot
+    if ($AttemptNumber -lt 1 -and $RunSuffix) {
+        if ($RunSuffix -notmatch "^([1-9][0-9]*)[ab]?$") {
+            throw "R5: run suffix is invalid"
+        }
+        $AttemptNumber = [int]$Matches[1]
+    }
+    if ($AttemptNumber -lt 1) {
+        $AttemptNumber = 1
+        while (Test-Path -LiteralPath (Join-Path $stageRoot ("attempt_{0}" -f $AttemptNumber))) {
+            $AttemptNumber++
+        }
+    }
+    $runSuffix = if ($RunSuffix) { $RunSuffix } else { [string]$AttemptNumber }
+    if ($runSuffix -cnotmatch ("^{0}[ab]?$" -f [regex]::Escape([string]$AttemptNumber))) {
+        throw "R5: run suffix must match the attempt number, optionally followed by a or b"
+    }
     Write-Output "STATE_FILE=$($authorizedState.StateFile)"
     Write-Output "STATE_ID=$($authorizedState.StateId)"
     Write-Output "STATE_SHA256=$($authorizedState.StateSha256)"
@@ -489,6 +623,7 @@ try {
     Write-Output "ME_DATABASE=$($routes.DevelopmentDatabasePrefix)$runSuffix"
 
     $missingCredentials = [System.Collections.Generic.List[string]]::new()
+    $presentEnvironmentNames = @(Get-ChildItem Env: | ForEach-Object { $_.Name })
     foreach ($name in @(
         "INTEVIA_DATABASE_ENGINE",
         "INTEVIA_POSTGRES_DB",
@@ -496,7 +631,7 @@ try {
         "INTEVIA_POSTGRES_PASSWORD",
         "DJANGO_SECRET_KEY"
     )) {
-        $present = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))
+        $present = $name -cin $presentEnvironmentNames
         Write-Output ("CREDENTIAL_{0}={1}" -f $name, $(if ($present) { "set" } else { "UNSET" }))
         if (-not $present) {
             $missingCredentials.Add($name)
@@ -505,11 +640,31 @@ try {
     if ($missingCredentials.Count -gt 0) {
         throw ("Required credentials are UNSET; no attempt folder was created: " + ($missingCredentials -join ","))
     }
-    if ($env:INTEVIA_POSTGRES_DB -in @("intevia", "intevia_dev")) {
-        throw "protected administrative database is refused"
+    $freshAuthorityDigest = "NONE"
+    if ($Mode -eq "fresh") {
+        if ([string]::IsNullOrWhiteSpace($FreshAuthorityFile) -or
+            $FreshAuthoritySha256 -cnotmatch "^[0-9a-fA-F]{64}$" -or
+            -not (Test-Path -LiteralPath $FreshAuthorityFile -PathType Leaf)) {
+            throw "R2: fresh mode requires an authority file and SHA-256"
+        }
+        $freshAuthorityDigest = (Get-FileHash -LiteralPath $FreshAuthorityFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($freshAuthorityDigest -cne $FreshAuthoritySha256.ToLowerInvariant()) {
+            throw "R2: fresh authority digest mismatch"
+        }
+        $authorityText = Get-Content -LiteralPath $FreshAuthorityFile -Raw -ErrorAction Stop
+        if ($authorityText -notmatch "(?i)fresh" -or
+            $authorityText -notmatch [regex]::Escape($runSuffix) -or
+            $authorityText -notmatch "(?i)Human Governor|commission") {
+            throw "R2: authority must identify its issuer, fresh mode, and this run suffix"
+        }
     }
-
-    $stageRoot = $routes.DevelopmentRoot
+    elseif ($FreshAuthorityFile -or $FreshAuthoritySha256) {
+        throw "R2: fresh authority inputs are not valid in clone mode"
+    }
+    Write-Output "FRESH_AUTHORITY=$freshAuthorityDigest"
+    Write-Output "MODE=$Mode"
+    Write-Output "RUN_SPEC_SHA256=$($authorizedState.State.run_spec_sha256)"
+    Write-Output "VERIFICATION_KIND=DEVELOPMENT"
     if ($StallGuardSelfTest) {
         $selfCheckLogPath = Join-Path $stageRoot ("STALL_GUARD_SELF_CHECK_{0}.log" -f $runSuffix)
         $selfCheckDatabase = "$($routes.DevelopmentDatabasePrefix)selfcheck_1"
@@ -657,7 +812,7 @@ try {
         throw "development attempt directory already exists; refusing reuse"
     }
     $attemptDatabase = "$($routes.DevelopmentDatabasePrefix)$runSuffix"
-    if ($attemptDatabase.Length -gt 63 -or $attemptDatabase -in @("intevia", "intevia_dev", $env:INTEVIA_POSTGRES_DB)) {
+    if ($attemptDatabase.Length -gt 63 -or $attemptDatabase -in @("intevia", "intevia_dev")) {
         throw "protected or overlength test database name refused"
     }
 
@@ -679,6 +834,15 @@ try {
         Write-Output $line
         Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
     }
+    foreach ($line in @(
+        "MODE=$Mode"
+        "FRESH_AUTHORITY=$freshAuthorityDigest"
+        "FAILFAST=ON"
+        "RUN_SPEC_SHA256=$($authorizedState.State.run_spec_sha256)"
+        "VERIFICATION_KIND=DEVELOPMENT"
+    )) {
+        Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
+    }
     $effectiveTemplateStore = if ($Mode -eq "fresh") {
         Join-Path $runDirectory "tooling-template-store"
     }
@@ -698,6 +862,15 @@ try {
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore
     $env:VERIFICATION_TEMPLATE_NAMESPACE = "me"
     $env:VERIFICATION_TEMPLATE_CLEANUP = if ($CleanupTemplate) { "1" } else { "0" }
+    $env:INTEVIA_RUN_SUFFIX = $runSuffix
+    if ($Mode -eq "fresh") {
+        $env:INTEVIA_FRESH_AUTHORITY_FILE = (Resolve-Path -LiteralPath $FreshAuthorityFile).Path
+        $env:INTEVIA_FRESH_AUTHORITY_SHA256 = $freshAuthorityDigest
+    }
+    else {
+        Remove-Item Env:INTEVIA_FRESH_AUTHORITY_FILE -ErrorAction SilentlyContinue
+        Remove-Item Env:INTEVIA_FRESH_AUTHORITY_SHA256 -ErrorAction SilentlyContinue
+    }
     $env:DJANGO_SETTINGS_MODULE = "intevia.test_settings"
     $env:PYTHONUNBUFFERED = "1"
     $testPythonPath = @($repoRoot, (Join-Path $repoRoot "tests"))
@@ -705,9 +878,100 @@ try {
         $testPythonPath += $env:PYTHONPATH
     }
     $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $testPythonPath)
+    $env:INTEVIA_RUN_SPEC_SHA256 = [string]$authorizedState.State.run_spec_sha256
+    $bindingCode = Invoke-PythonAndLog `
+        -Label "Candidate source binding" `
+        -LogPath $logPath `
+        -Arguments @(
+            "-m", "verification.isolation.run_plan", "candidate-binding",
+            "--root", $repoRoot, "--state", $authorizedState.StateFile
+        )
+    if ($bindingCode -ne 0) { throw "R9: candidate binding could not be calculated" }
+    $bindingLine = @(Get-Content -LiteralPath $logPath |
+        Where-Object { $_ -match "^CANDIDATE_BINDING_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+    if ($bindingLine.Count -ne 1) { throw "R9: candidate binding output is missing" }
+    $candidateBinding = ($bindingLine[0] -replace "^CANDIDATE_BINDING_SHA256=", "")
+    $env:INTEVIA_CANDIDATE_BINDING_SHA256 = $candidateBinding
+    Write-Output $bindingLine[0]
+    $planFile = Join-Path $runDirectory "run-plan.json"
+    if ($RotationSide -eq "NONE") {
+        if ($ParentPlanFile -or $PrecedingRunRecordFile) {
+            throw "R5: rotation basis is incomplete or unexpected for a new parent plan"
+        }
+        $planArguments = @(
+            "-m", "verification.isolation.run_plan", "plan",
+            "--output", $planFile, "--run-root", $stageRoot
+        )
+        if (-not [string]::IsNullOrWhiteSpace($NewParentPlanReason)) {
+            $planArguments += @("--new-parent-plan-reason", $NewParentPlanReason)
+        }
+        foreach ($label in $Labels) { $planArguments += @("--label", $label) }
+        foreach ($group in $OrderedGroups) { $planArguments += @("--group", $group) }
+    }
+    else {
+        if (-not $ParentPlanFile -or -not $PrecedingRunRecordFile -or
+            -not (Test-Path -LiteralPath $ParentPlanFile -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $PrecedingRunRecordFile -PathType Leaf)) {
+            throw "R5: rotated launch requires the bound parent plan and preceding run record"
+        }
+        if (-not $runSuffix.EndsWith($RotationSide.ToLowerInvariant())) {
+            throw "R5: rotation side does not match the run suffix"
+        }
+        $planArguments = @(
+            "-m", "verification.isolation.run_plan", "rotate",
+            "--parent", $ParentPlanFile,
+            "--preceding", $PrecedingRunRecordFile,
+            "--side", $RotationSide,
+            "--output", $planFile
+        )
+    }
+    $planCode = Invoke-PythonAndLog -Label "R3/R4 no-database plan" -LogPath $logPath -Arguments $planArguments
+    if ($planCode -ne 0) {
+        $r5RefusalLine = @(Get-Content -LiteralPath $logPath |
+            Where-Object { $_ -match "^R5_REFUSAL=R5:" } | Select-Object -Last 1)
+        if ($r5RefusalLine.Count -eq 1 -and
+            (Test-Path -LiteralPath $planFile -PathType Leaf)) {
+            $planHash = (Get-FileHash -LiteralPath $planFile -Algorithm SHA256).Hash.ToLowerInvariant()
+            $planData = Get-Content -LiteralPath $planFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            Write-PreRunRefusalRecord `
+                -RunDirectory $runDirectory `
+                -LogPath $logPath `
+                -RefusalStage "R5" `
+                -PlanHash $planHash `
+                -PlanData $planData `
+                -CandidateBinding $candidateBinding
+            throw ($r5RefusalLine[0] -replace "^R5_REFUSAL=", "")
+        }
+        throw "R3/R4: labels did not resolve to a valid loader-built plan"
+    }
+    $planLine = @(Get-Content -LiteralPath $logPath | Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+    if ($planLine.Count -ne 1 -or $planLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
+        throw "R4: plan digest was not recorded"
+    }
+    $planHash = $Matches[1]
+    $planData = Get-Content -LiteralPath $planFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $env:INTEVIA_RUN_PLAN_FILE = $planFile
+    $env:INTEVIA_RUN_PLAN_SHA256 = $planHash
+    $env:INTEVIA_RUN_SUFFIX = $runSuffix
+    $precheckCode = Invoke-PythonAndLog `
+        -Label "R14 changed-test no-database pre-check" `
+        -LogPath $logPath `
+        -Arguments @(
+            "-m", "verification.isolation.run_plan", "precheck",
+            "--root", $repoRoot, "--state", $authorizedState.StateFile
+        )
+        if ($precheckCode -ne 0) {
+            Write-PreRunRefusalRecord `
+                -RunDirectory $runDirectory `
+                -LogPath $logPath `
+                -RefusalStage "R14" `
+                -PlanHash $planHash `
+                -PlanData $planData `
+                -CandidateBinding $candidateBinding
+            throw "R14: changed-test no-database pre-check refused the launch"
+        }
 
-    Write-Output "MODE=$Mode"
-    Write-Output "ATTEMPT=$AttemptNumber"
+        Write-Output "ATTEMPT=$AttemptNumber"
     Write-Output "RUN_SUFFIX=$runSuffix"
     Write-Output "DATABASE=$attemptDatabase"
     Write-Output "RUN_DIRECTORY=$runDirectory"
@@ -726,6 +990,7 @@ try {
         if ($Mode -eq "clone") {
             $preflightCodeSource = @'
 import os
+import time
 
 import django
 django.setup()
@@ -742,11 +1007,13 @@ from verification.ownership import read_receipts, write_receipt
 connection = connections["default"]
 nonce = os.environ["VERIFICATION_RUN_NONCE"]
 probe_name = "test_intevia_living_organism_tt1_witness_" + nonce[:12]
+template_started = time.perf_counter()
 template_receipt, rebuilt = prepare_template(
     connection,
     "default",
     os.environ["VERIFICATION_TEMPLATE_STORE"],
 )
+template_build_seconds = time.perf_counter() - template_started
 if template_receipt is None:
     raise RuntimeError("template preparation returned no receipt")
 
@@ -785,6 +1052,8 @@ finally:
 
 print("TEMPLATE_READY=PASS")
 print("TEMPLATE_REBUILT=" + ("YES" if rebuilt else "NO"))
+print("TEMPLATE_ACTION=" + ("BUILT" if rebuilt else "REUSED"))
+print("TEMPLATE_BUILD_SECONDS=%.6f" % template_build_seconds if rebuilt else "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE")
 print("CLONE_PREFLIGHT=PASS")
 print("CLONE_PROBE_DATABASE=" + probe_name)
 '@
@@ -807,6 +1076,27 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
             }
             if ($preflightCode -ne 0) {
                 $runProblems.Add("clone template preflight returned status $preflightCode; tests were not started")
+            }
+            else {
+                $preflightLines = @(Get-Content -LiteralPath $logPath -ErrorAction Stop)
+                $actionLines = @($preflightLines | Where-Object { $_ -match "^TEMPLATE_ACTION=(BUILT|REUSED)$" })
+                $buildLines = @($preflightLines | Where-Object { $_ -match "^TEMPLATE_BUILD_SECONDS=(?:[0-9]+(?:\.[0-9]+)?|NOT_APPLICABLE)$" })
+                if ($actionLines.Count -ne 1 -or $buildLines.Count -ne 1) {
+                    $runProblems.Add("R8: clone preflight omitted template action or build timing")
+                }
+                else {
+                    $templateAction = $actionLines[0].Substring("TEMPLATE_ACTION=".Length)
+                    if ($templateAction -eq "BUILT" -and
+                        $buildLines[0] -match "^TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
+                        $templateBuildSeconds = [double]::Parse(
+                            $Matches[1], [System.Globalization.CultureInfo]::InvariantCulture
+                        )
+                    }
+                    elseif ($templateAction -ne "REUSED" -or
+                        $buildLines[0] -ne "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE") {
+                        $runProblems.Add("R8: template action and build timing contradict")
+                    }
+                }
             }
         }
         if ($preflightCode -eq 0) {
@@ -841,8 +1131,8 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
     if ($null -eq $setupSeconds) {
         $runProblems.Add("isolation runner did not report setup time")
     }
-    if ($Mode -eq "clone" -and $null -eq $templateBuildSeconds) {
-        $runProblems.Add("isolation runner did not report template build time")
+    if ($Mode -eq "clone" -and $null -eq $templateAction) {
+        $runProblems.Add("clone preflight did not report the template action")
     }
     if (Test-Path -LiteralPath $isolationPath -PathType Leaf) {
         try {
@@ -860,6 +1150,19 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
             else {
                 $summary = $summaryRecords[0]
                 $instrumentIsolationVerdict = [string]$summary.isolation_verdict
+                if ($summary.plan_sha256 -cne $planHash -or
+                    ($null -ne $script:printedSummary.discovered -and
+                        [long]$summary.tests_planned -ne [long]$script:printedSummary.discovered) -or
+                    $summary.executed_matches_plan -notin @("FULL", "PREFIX")) {
+                    $runProblems.Add("R7: captured execution does not bind to the validated plan")
+                }
+                Write-Output "TESTS_PLANNED=$($summary.tests_planned)"
+                Write-Output "TESTS_EXECUTED=$($summary.tests_executed)"
+                Write-Output "TESTS_NOT_REACHED=$($summary.tests_not_reached)"
+                Write-Output "EXECUTED_MATCHES_PLAN=$($summary.executed_matches_plan)"
+                Write-Output "PARENT_PLAN_SHA256=$($summary.parent_plan_sha256)"
+                Write-Output "ROTATION=$($summary.rotation)"
+                Write-Output "ROTATION_UNIT=$($summary.rotation_unit)"
                 if ($summary.isolation_verdict -ne "PASS" -or
                     $summary.cp0_requirements_met -ne $true -or
                     $null -eq $summary.ordinary_test_verdict -or
@@ -911,6 +1214,43 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                      $cp0Records[0].template_cp0_digest -ne $cp0Records[0].clone_cp0_digest)) {
                     $runProblems.Add("clone CP-0 did not match the integrated template digest")
                 }
+                $runResult = if ($counts.errors -gt 0) { "ERROR" }
+                    elseif ($counts.failures -gt 0) { "FAIL" }
+                    else { "PASS" }
+                $parentDigest = if ($summary.parent_plan_sha256 -eq "NONE") {
+                    $planHash
+                }
+                else {
+                    [string]$summary.parent_plan_sha256
+                }
+                $record = [ordered]@{
+                    latest = $true
+                    classification = "TEST_ATTEMPT"
+                    result = $runResult
+                    plan_sha256 = [string]$summary.plan_sha256
+                    parent_plan_sha256 = $parentDigest
+                    rotation_side = [string]$summary.rotation
+                    rotation_failure = if ($summary.rotation_failure) {
+                        [string]$summary.rotation_failure
+                    }
+                    else {
+                        [string]$summary.failing_test
+                    }
+                    failing_test = [string]$summary.failing_test
+                    candidate = $candidateBinding
+                    parent = $parentDigest
+                    tests_planned = [int]$summary.tests_planned
+                    tests_executed = [int]$summary.tests_executed
+                    tests_not_reached = [int]$summary.tests_not_reached
+                    executed_matches_plan = [string]$summary.executed_matches_plan
+                }
+                $runRecordPath = Join-Path $runDirectory "run-record.json"
+                [System.IO.File]::WriteAllText(
+                    $runRecordPath,
+                    (($record | ConvertTo-Json -Depth 8) + "`n"),
+                    [System.Text.UTF8Encoding]::new($false)
+                )
+                Write-Output "RUN_RECORD_FILE=$runRecordPath"
             }
         }
         catch {
@@ -1023,13 +1363,21 @@ else {
     Write-Output ("SETUP_SECONDS={0:F6}" -f $setupSeconds)
 }
 if ($Mode -eq "fresh") {
+    Write-Output "TEMPLATE_ACTION=NOT_APPLICABLE"
     Write-Output "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE"
 }
-elseif ($null -eq $templateBuildSeconds) {
+elseif ($null -eq $templateAction) {
+    Write-Output "TEMPLATE_ACTION=UNAVAILABLE"
     Write-Output "TEMPLATE_BUILD_SECONDS=UNAVAILABLE"
 }
 else {
-    Write-Output ("TEMPLATE_BUILD_SECONDS={0:F6}" -f $templateBuildSeconds)
+    Write-Output "TEMPLATE_ACTION=$templateAction"
+    if ($templateAction -eq "BUILT" -and $null -ne $templateBuildSeconds) {
+        Write-Output ("TEMPLATE_BUILD_SECONDS={0:F6}" -f $templateBuildSeconds)
+    }
+    else {
+        Write-Output "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE"
+    }
 }
 if ($null -eq $wholeRun) {
     Write-Output "WHOLE_RUN_SECONDS=UNAVAILABLE"
