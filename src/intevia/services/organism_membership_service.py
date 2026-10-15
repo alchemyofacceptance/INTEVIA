@@ -36,6 +36,7 @@ from src.intevia.services.organism_command_support import (
     ReplayViewer,
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
+    S015CommandReceiptMalformed,
     S015CommandReplayMismatch,
     S015CommandSubstrateError,
     _canonical_key,
@@ -270,7 +271,7 @@ def _insert_membership_transition_row(
     predecessor_id: int | None,
     predecessor_sequence: int | None,
     action: str,
-    actor_id: int,
+    actor_id: int | None,
     actor_state: str,
     actor_capacity: str,
     enterer_identity_id: int,
@@ -283,7 +284,7 @@ def _insert_membership_transition_row(
     effective_until_state: str,
     l1_commitment: str | None,
     l2_commitment: str | None,
-    actor_access_epoch: int,
+    actor_access_epoch: int | None,
     authority_basis_id: int,
     authority_decision_reference: str,
     evidence_reference: str,
@@ -412,30 +413,75 @@ def _insert_membership_transition_row(
 def _parse_canonical_timestamp(value: object) -> datetime:
     if type(value) is not str:
         raise TypeError("timestamp payload must be a string")
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if canonical_timestamp(parsed) != value:
+        raise ValueError("timestamp payload is not canonical")
+    return parsed
 
 
 def _expected_replay_result(
     payload: object,
 ) -> MembershipCommandResult:
     if type(payload) is not dict:
-        raise S015CommandReplayMismatch("completed receipt does not match request")
+        raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
     try:
+        # RC-1 commission v1.3, item 1: enforce the writer's receipt contract.
+        expected_keys = {
+            "authority_decision_reference",
+            "authority_reference",
+            "current_state_effective_at",
+            "lineage_reference",
+            "membership_uuid",
+            "resulting_state",
+            "state_known_at",
+            "state_source_event_set_fingerprint",
+            "temporal_basis_kind",
+            "temporal_basis_reference",
+            "transition_sequence",
+        }
+        if set(payload) != expected_keys:
+            raise ValueError("receipt fields do not match the membership result contract")
+        for key in (
+            "authority_decision_reference",
+            "authority_reference",
+            "current_state_effective_at",
+            "lineage_reference",
+            "membership_uuid",
+            "resulting_state",
+            "state_known_at",
+            "state_source_event_set_fingerprint",
+        ):
+            if type(payload[key]) is not str:
+                raise TypeError(f"{key} must be a string")
+        for key in ("temporal_basis_kind", "temporal_basis_reference"):
+            if payload[key] is not None and type(payload[key]) is not str:
+                raise TypeError(f"{key} must be a string or None")
+        if type(payload["transition_sequence"]) is not int or payload["transition_sequence"] < 1:
+            raise TypeError("transition_sequence must be a positive integer")
+        membership_uuid = UUID(payload["membership_uuid"])
+        if str(membership_uuid) != payload["membership_uuid"]:
+            raise ValueError("membership_uuid must use a canonical string")
+        if payload["resulting_state"] not in {"PROPOSED", "ACTIVE", "PROBATIONARY", "ENDED"}:
+            raise ValueError("resulting_state is outside the membership state vocabulary")
+        if payload["temporal_basis_kind"] not in {None, "RETROSPECTIVE", "PROSPECTIVE"}:
+            raise ValueError("temporal_basis_kind is outside the result vocabulary")
+        if (payload["temporal_basis_kind"] is None) != (payload["temporal_basis_reference"] is None):
+            raise ValueError("temporal basis reference does not match its kind")
         return MembershipCommandResult(
-            membership_uuid=UUID(payload["membership_uuid"]),
-            resulting_state=str(payload["resulting_state"]),
-            transition_sequence=int(payload["transition_sequence"]),
-            lineage_reference=str(payload["lineage_reference"]),
-            temporal_basis_kind=payload.get("temporal_basis_kind"),
-            temporal_basis_reference=payload.get("temporal_basis_reference"),
+            membership_uuid=membership_uuid,
+            resulting_state=payload["resulting_state"],
+            transition_sequence=payload["transition_sequence"],
+            lineage_reference=payload["lineage_reference"],
+            temporal_basis_kind=payload["temporal_basis_kind"],
+            temporal_basis_reference=payload["temporal_basis_reference"],
             current_state_effective_at=_parse_canonical_timestamp(payload["current_state_effective_at"]),
             state_known_at=_parse_canonical_timestamp(payload["state_known_at"]),
-            state_source_event_set_fingerprint=str(payload["state_source_event_set_fingerprint"]),
-            authority_reference=str(payload["authority_reference"]),
-            authority_decision_reference=str(payload["authority_decision_reference"]),
+            state_source_event_set_fingerprint=payload["state_source_event_set_fingerprint"],
+            authority_reference=payload["authority_reference"],
+            authority_decision_reference=payload["authority_decision_reference"],
         )
-    except Exception as exc:  # pragma: no cover - defensive
-        raise S015CommandReplayMismatch("completed receipt does not match request") from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise S015CommandReceiptMalformed() from exc
 
 
 def _result_payload(result: MembershipCommandResult) -> dict[str, object]:
@@ -552,6 +598,24 @@ class OrganismMembershipService(_OrganismCommandService):
 
     def _replay_result(self, payload: object) -> MembershipCommandResult:
         return _expected_replay_result(payload)
+
+    def _verify_replay_result(self, result: MembershipCommandResult) -> None:
+        if not isinstance(result, MembershipCommandResult):
+            raise TypeError("membership replay result has the wrong type")
+        # RC-1 commission v1.3, item 7 (A2-b): agree with the chain only on replay.
+        transition = (
+            OrganismMembershipTransition.objects.using(self._alias)
+            .filter(
+                membership__membership_uuid=result.membership_uuid,
+                sequence=result.transition_sequence,
+            )
+            .values_list("action", "lineage_reference")
+            .first()
+        )
+        if transition is None or transition != (_ACTION.value, result.lineage_reference):
+            raise S015CommandReceiptMalformed() from ValueError(
+                "receipt does not agree with its membership chain transition"
+            )
 
     def _command_fingerprint(
         self,
@@ -1099,34 +1163,35 @@ class OrganismMembershipService(_OrganismCommandService):
         if (current_state, target_state) in {("PROPOSED", "PROBATIONARY"), ("PROBATIONARY", "ACTIVE")}:
             raise S015OperationNotYetImplemented("membership_probation", "S3-IL-PROBATION", "S5")
 
-        head_transition = None
-        if membership.head_transition_id is not None:
-            head_transition = (
-                OrganismMembershipTransition.objects.using(self._alias)
-                .only("effective_at", "occurred_at", "received_at")
-                .get(pk=membership.head_transition_id)
+        if membership.head_transition_id is None:
+            # RC-1 commission v1.3, item 3: refuse before reading the predecessor.
+            raise S015MembershipNotFound("membership head transition not found")
+        head_transition = (
+            OrganismMembershipTransition.objects.using(self._alias)
+            .only("effective_at", "occurred_at", "received_at")
+            .get(pk=membership.head_transition_id)
+        )
+        if (effective_at, occurred_at, received_at) < (
+            head_transition.effective_at,
+            head_transition.occurred_at,
+            head_transition.received_at,
+        ):
+            raise S015OperationNotYetImplemented("out_of_order_transition", "IL-3", "S5")
+
+        if target_state == "ENDED":
+            identity = membership.identity
+            departure_context["person"] = (
+                identity.display_name or identity.canonical_username
             )
-            if (effective_at, occurred_at, received_at) < (
-                head_transition.effective_at,
-                head_transition.occurred_at,
-                head_transition.received_at,
-            ):
-                raise S015OperationNotYetImplemented("out_of_order_transition", "IL-3", "S5")
+            departure_context["organism_slug"] = membership.living_organism.slug
+            refusal = self._departure_precedes_participation(
+                membership,
+                effective_at,
+            )
+            if refusal is not None:
+                raise refusal
 
-            if target_state == "ENDED":
-                identity = membership.identity
-                departure_context["person"] = (
-                    identity.display_name or identity.canonical_username
-                )
-                departure_context["organism_slug"] = membership.living_organism.slug
-                refusal = self._departure_precedes_participation(
-                    membership,
-                    effective_at,
-                )
-                if refusal is not None:
-                    raise refusal
-
-            basis_id = membership.living_organism.founding_authority_basis_id
+        basis_id = membership.living_organism.founding_authority_basis_id
         if basis_id is None:
             raise S015MembershipAuthorityUnavailable(
                 "organism founding authority basis is required"
@@ -1307,6 +1372,7 @@ __all__ = [
     "QualifiedS015AuthorityDecision",
     "S015CommandAtomicityRequired",
     "S015CommandMutexUnavailable",
+    "S015CommandReceiptMalformed",
     "S015CommandReplayMismatch",
     "S015CommandSubstrateError",
     "S015MembershipAuthorityUnavailable",

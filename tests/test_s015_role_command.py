@@ -15,7 +15,7 @@ import os
 import threading
 import time
 from contextlib import nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Queue
@@ -56,6 +56,7 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import (
     ReplayResultType,
     ReplayViewer,
+    S015CommandReceiptMalformed,
     S015CommandReplayMismatch,
     WithheldField,
     _authority_request,
@@ -1324,7 +1325,6 @@ class S015RoleCommandTests(TransactionTestCase):
 
         stored_result = AssignmentCommandResult.from_receipt_payload(
             receipt.result_payload,
-            database_alias="default",
         )
         holder_view = serve_replay(
             stored_result,
@@ -2216,6 +2216,8 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_at=proposal_at,
             received_at=proposal_at,
         ))
+        self.assertEqual(proposal.resulting_state, "PROPOSED")
+        self.assertIsInstance(proposal.event_uuid, UUID)
         proposal_event = _event_for_result(proposal)
         assign_at = database_now()
         assigned = self._service(provider).transition_assignment(self._transition_command(
@@ -3045,19 +3047,36 @@ class S015RoleCommandTests(TransactionTestCase):
     # R4 — END by an authorised decision; history intact.
     def test_end_by_authorised_decision_keeps_history(self):
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(label="end")
+        end_command = self._transition_command(
+            actor=founder,
+            assignment_uuid=assign_result.assignment_uuid,
+            action="END",
+            resulting_state="ENDED",
+            request_reference="request:end:end",
+            idempotency_key="idem:end:end",
+        )
         end_result = service.transition_assignment(
-            self._transition_command(
-                actor=founder,
-                assignment_uuid=assign_result.assignment_uuid,
-                action="END",
-                resulting_state="ENDED",
-                request_reference="request:end:end",
-                idempotency_key="idem:end:end",
-            )
+            end_command
         )
         self.assertEqual(end_result.resulting_state, _subject_marker("resulting_state"))
         self.assertEqual(end_result.event_sequence, _subject_marker("event_sequence"))
         self.assertEqual(end_result.event_uuid, _subject_marker("event_uuid"))
+        self.assertEqual(end_result.effective_until, _subject_marker("effective_until"))
+        self.assertEqual(end_result.effective_until_state, _subject_marker("effective_until_state"))
+        end_receipt = OrganismCommandReceipt.objects.get(
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key=end_command.idempotency_key,
+        )
+        with transaction.atomic():
+            subject_end_result = service._attempt_replay(
+                actor=founder,
+                request_reference=end_command.request_reference,
+                payload_fingerprint=end_receipt.payload_fingerprint,
+                idempotency_key=end_command.idempotency_key,
+                viewer=ReplayViewer(member.pk, member.identity_id, NOW),
+            )
+        self.assertEqual(subject_end_result.effective_until_state, "NOT_ESTABLISHED")
+        self.assertIsNone(subject_end_result.effective_until)
         assignment = _assignment_for_result(assign_result)
         events = list(
             ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment).order_by("sequence")
@@ -3066,6 +3085,201 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual([event.action for event in events], ["PROPOSE", "ASSIGN", "END"])
         self.assertEqual([event.prior_state for event in events], [None, "PROPOSED", "ACTIVE"])
         self.assertEqual([event.resulting_state for event in events], ["PROPOSED", "ACTIVE", "ENDED"])
+
+    def test_malformed_consent_references_use_the_record_fault_text_without_writes(self):
+        import json
+
+        from core.models import AuthorityDecision
+
+        ids, founder, member, service, _proposal, assigned = self._propose_then_assign(
+            label="rc1-a5-malformed-reference",
+        )
+        assignment = _assignment_for_result(assigned)
+        decision = AuthorityDecision.objects.get(
+            decision_reference=assigned.authority_decision_reference,
+        )
+        valid_reference = decision.authority_reference
+        malformed_references = (
+            "x015a1:" + valid_reference[len("s015a1:"):],
+            "s015a1:" + json.dumps("not-an-object"),
+        )
+        tables = (
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+            "core_officeappointmentconsent",
+        )
+        before = _snapshot_tables(*tables)
+        for reference in malformed_references:
+            with self.subTest(reference=reference):
+                with self.assertRaises(S015AssignmentEdgeRefused) as refused:
+                    service._verify_assign_consent(
+                        assignment=assignment,
+                        effective_at=assignment.current_state_effective_at,
+                        authority_reference=reference,
+                    )
+                self.assertEqual(
+                    str(refused.exception),
+                    "Appointment not completed: the recorded authority evidence for this appointment could not "
+                    "be read. No appointment was made by this attempt. This is a record fault, not a withdrawal "
+                    "or decline by the nominee; it needs to be checked before proceeding.",
+                )
+                self.assertEqual(_snapshot_tables(*tables), before)
+
+    def test_legacy_role_receipt_without_event_uuid_is_malformed_without_writes(self):
+        ids, founder = self._setup_organism("rc1-legacy-role-receipt")
+        _, member, member_membership_uuid = self._add_active_member(ids, "rc1-legacy-role-receipt")
+        service = self._service(_ExactProvider())
+        first = service.propose_assignment(
+            self._propose_command(
+                actor=founder,
+                membership_uuid=member_membership_uuid,
+                role_definition_uuid=ids["coordinator_role_uuid"],
+                request_reference="request:rc1-legacy-role:propose",
+                idempotency_key="idem:rc1-legacy-role:propose",
+            )
+        )
+        original = OrganismCommandReceipt.objects.get(
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key="idem:rc1-legacy-role:propose",
+        )
+        malformed_payload = original.result_payload.copy()
+        del malformed_payload["event_uuid"]
+        request_reference = "request:rc1-legacy-role:replay"
+        idempotency_key = "idem:rc1-legacy-role:replay"
+        fingerprint = "b" * 64
+        receipt = OrganismCommandReceipt.objects.create(
+            actor=founder,
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=fingerprint,
+            authority_decision_reference=original.authority_decision_reference,
+            lineage_reference="s015l1:" + uuid4().hex + uuid4().hex,
+            result_payload=malformed_payload,
+        )
+        tables = (
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
+        with self.assertRaises(S015CommandReceiptMalformed) as refused:
+            with transaction.atomic():
+                service._attempt_replay(
+                    actor=founder,
+                    request_reference=request_reference,
+                    payload_fingerprint=fingerprint,
+                    idempotency_key=idempotency_key,
+                    viewer=ReplayViewer(founder.pk, founder.identity_id, NOW),
+                )
+        self.assertEqual(
+            str(refused.exception),
+            "The earlier record of this request could not be read. This attempt made no new changes. This is a "
+            "record fault, not evidence that you submitted a different request; it needs to be checked before "
+            "the request is retried.",
+        )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.result_payload, malformed_payload)
+        self.assertEqual(_snapshot_tables(*tables), before)
+        self.assertEqual(first.assignment_uuid, UUID(original.result_payload["assignment_uuid"]))
+
+    def test_role_replay_rejects_chain_lineage_disagreement_without_writes(self):
+        ids, founder = self._setup_organism("rc1-role-chain-mismatch")
+        _, _member, member_membership_uuid = self._add_active_member(ids, "rc1-role-chain-mismatch")
+        service = self._service(_ExactProvider())
+        service.propose_assignment(
+            self._propose_command(
+                actor=founder,
+                membership_uuid=member_membership_uuid,
+                role_definition_uuid=ids["coordinator_role_uuid"],
+                request_reference="request:rc1-role-chain:propose",
+                idempotency_key="idem:rc1-role-chain:propose",
+            )
+        )
+        original = OrganismCommandReceipt.objects.get(
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key="idem:rc1-role-chain:propose",
+        )
+        malformed_payload = original.result_payload.copy()
+        malformed_payload["lineage_reference"] = "lineage:tampered"
+        request_reference = "request:rc1-role-chain:replay"
+        idempotency_key = "idem:rc1-role-chain:replay"
+        fingerprint = "c" * 64
+        receipt = OrganismCommandReceipt.objects.create(
+            actor=founder,
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=fingerprint,
+            authority_decision_reference=original.authority_decision_reference,
+            lineage_reference="s015l1:" + uuid4().hex + uuid4().hex,
+            result_payload=malformed_payload,
+        )
+        tables = (
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
+        with self.assertRaises(S015CommandReceiptMalformed):
+            with transaction.atomic():
+                service._attempt_replay(
+                    actor=founder,
+                    request_reference=request_reference,
+                    payload_fingerprint=fingerprint,
+                    idempotency_key=idempotency_key,
+                    viewer=ReplayViewer(founder.pk, founder.identity_id, NOW),
+                )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.result_payload, malformed_payload)
+        self.assertEqual(_snapshot_tables(*tables), before)
+
+    def test_role_authority_reference_withholding_contract(self):
+        import json
+
+        ids, founder, member, _service, _proposal, assigned = self._propose_then_assign(
+            label="rc1-role-reference-withholding",
+        )
+        assignment = _assignment_for_result(assigned)
+        event = _event_for_result(assigned)
+        receipt = OrganismCommandReceipt.objects.get(
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            lineage_reference=assigned.lineage_reference,
+        )
+        raw_result = AssignmentCommandResult.from_receipt_payload(receipt.result_payload)
+        references = (
+            (f's015a1:{{"a":{assignment.pk}}}', True),
+            (f's015a1:{{"a":"{assignment.pk}"}}', True),
+            (f's015a1:{{"e":"{event.pk}"}}', True),
+            (f's015a1:{{"e":"{event.pk}:suffix"}}', True),
+            ('s015a1:{"e":1}', False),
+            (
+                "s015a1:" + json.dumps({
+                    "a": str(assignment.assignment_uuid),
+                    "e": str(event.event_uuid),
+                }),
+                False,
+            ),
+        )
+        viewer = ReplayViewer(member.pk, member.identity_id, NOW)
+        for reference, withheld in references:
+            with self.subTest(reference=reference):
+                result = serve_replay(
+                    replace(raw_result, authority_reference=reference),
+                    viewer=viewer,
+                    result_type=ReplayResultType(AssignmentCommandResult, "default"),
+                )
+                if withheld:
+                    self.assertEqual(
+                        result.authority_reference,
+                        _subject_marker("authority_reference"),
+                    )
+                else:
+                    # Human Governor A4 ruling: integer e is an engagement ordinal, not a primary key.
+                    self.assertEqual(result.authority_reference, reference)
 
     # R5 — REASSIGN ends the office; a fresh appointment is a new anchor.
     def test_reassign_ends_and_fresh_appointment_is_new_anchor(self):
@@ -3816,7 +4030,7 @@ class S015RoleCommandTests(TransactionTestCase):
         _, other, _ = self._add_active_member(ids, "founder-denied")
         denied_service = self._service(_DeniedProvider())
         before = self._counts()
-        with self.assertRaises(S015AuthorityDenied):
+        with self.assertRaises(S015AuthorityDenied) as denied:
             denied_service.transition_assignment(
                 self._transition_command(
                     actor=other,
@@ -3827,6 +4041,7 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key="idem:founder-denied:end",
                 )
             )
+        self.assertIs(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
         self.assertEqual(self._counts(), before)
 
     # R10e — provenance is read from the first event, so an anchor UPDATE cannot lift PE-04.

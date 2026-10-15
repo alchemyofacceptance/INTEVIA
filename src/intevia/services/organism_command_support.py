@@ -77,6 +77,16 @@ class S015CommandReplayMismatch(S015CommandSubstrateError):
     pass
 
 
+class S015CommandReceiptMalformed(S015CommandSubstrateError):
+    def __init__(self) -> None:
+        # RC-1 commission v1.3, item 1 (text (a), as resolved by the Human Governor).
+        super().__init__(
+            "The earlier record of this request could not be read. This attempt made no new changes. "
+            "This is a record fault, not evidence that you submitted a different request; it needs to "
+            "be checked before the request is retried."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class WithheldField:
     field: str
@@ -513,6 +523,9 @@ class _OrganismCommandService:
     def _replay_result(self, payload: object) -> object:
         raise NotImplementedError
 
+    def _verify_replay_result(self, result: object) -> None:
+        return None
+
     def _lock_existing_receipt(
         self,
         *,
@@ -617,6 +630,7 @@ class _OrganismCommandService:
         if receipt is None:
             return None
         replay_result = self._replay_result(receipt.result_payload)
+        self._verify_replay_result(replay_result)
         return serve_replay(
             replay_result,
             viewer=viewer,
@@ -752,6 +766,7 @@ __all__ = [
     "QualifiedS015AuthorityDecision",
     "S015CommandAtomicityRequired",
     "S015CommandMutexUnavailable",
+    "S015CommandReceiptMalformed",
     "S015CommandReplayMismatch",
     "S015CommandSubstrateError",
     "_OrganismCommandService",

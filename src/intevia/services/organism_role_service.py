@@ -91,6 +91,7 @@ from src.intevia.services.organism_command_support import (
     ReplayViewer,
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
+    S015CommandReceiptMalformed,
     S015CommandReplayMismatch,
     S015CommandSubstrateError,
     _canonical_key,
@@ -269,50 +270,126 @@ class AssignmentCommandResult:
 
     @classmethod
     def from_receipt_payload(
-        cls, payload: object, *, database_alias: str = "default",
+        cls, payload: object,
     ) -> "AssignmentCommandResult":
         if type(payload) is not dict:
-            raise S015CommandReplayMismatch("completed receipt does not match request")
+            raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
         try:
-            effective_until_raw = payload["effective_until"]
-            event_uuid_raw = payload.get("event_uuid")
-            if event_uuid_raw is None:
-                event_uuid_raw = ContextualRoleAssignmentStateEvent.objects.using(database_alias).filter(
-                    assignment__assignment_uuid=UUID(payload["assignment_uuid"]),
-                    sequence=int(payload["event_sequence"]),
-                    action=str(payload["event_action"]),
-                ).values_list("event_uuid", flat=True).first()
-            if event_uuid_raw is None:
-                raise ValueError("event uuid is unavailable")
+            # RC-1 commission v1.3, item 1: enforce the writer's receipt contract.
+            expected_keys = {
+                "assignment_uuid",
+                "authority_decision_reference",
+                "authority_reference",
+                "current_state_effective_at",
+                "effective_until",
+                "effective_until_state",
+                "event_action",
+                "event_uuid",
+                "event_sequence",
+                "lineage_reference",
+                "resulting_state",
+                "state_known_at",
+                "state_source_event_set_fingerprint",
+                "suspension_tolls_term",
+                "suspension_tolls_term_source",
+                "temporal_basis_kind",
+                "temporal_basis_reference",
+            }
+            if set(payload) != expected_keys:
+                raise ValueError("receipt fields do not match the role result contract")
+            for key in (
+                "assignment_uuid",
+                "authority_decision_reference",
+                "authority_reference",
+                "current_state_effective_at",
+                "effective_until_state",
+                "event_action",
+                "event_uuid",
+                "lineage_reference",
+                "resulting_state",
+                "state_known_at",
+                "state_source_event_set_fingerprint",
+            ):
+                if type(payload[key]) is not str:
+                    raise TypeError(f"{key} must be a string")
+            for key in (
+                "effective_until",
+                "suspension_tolls_term",
+                "suspension_tolls_term_source",
+                "temporal_basis_kind",
+                "temporal_basis_reference",
+            ):
+                if payload[key] is not None and type(payload[key]) is not str:
+                    raise TypeError(f"{key} must be a string or None")
+            if type(payload["event_sequence"]) is not int or payload["event_sequence"] < 1:
+                raise TypeError("event_sequence must be a positive integer")
+
+            assignment_uuid = UUID(payload["assignment_uuid"])
+            event_uuid = UUID(payload["event_uuid"])
+            if (
+                str(assignment_uuid) != payload["assignment_uuid"]
+                or str(event_uuid) != payload["event_uuid"]
+            ):
+                raise ValueError("receipt UUIDs must use canonical strings")
+            if payload["resulting_state"] not in (_STATE_VOCABULARY - _STATE_UNUSED):
+                raise ValueError("resulting_state is outside the role state vocabulary")
+            if payload["event_action"] not in (_ACTION_VOCABULARY - _ACTION_UNUSED):
+                raise ValueError("event_action is outside the role result vocabulary")
+            if payload["effective_until_state"] not in {"FIXED", "NONE", "NOT_ESTABLISHED"}:
+                raise ValueError("effective_until_state is outside the role result vocabulary")
+            if (payload["effective_until_state"] == "FIXED") != (payload["effective_until"] is not None):
+                raise ValueError("effective_until does not match effective_until_state")
+            if payload["temporal_basis_kind"] not in {None, "RETROSPECTIVE", "PROSPECTIVE"}:
+                raise ValueError("temporal_basis_kind is outside the result vocabulary")
+            if (payload["temporal_basis_kind"] is None) != (payload["temporal_basis_reference"] is None):
+                raise ValueError("temporal basis reference does not match its kind")
+            if payload["event_action"] == "ASSIGN":
+                if (
+                    payload["suspension_tolls_term"] != _TOLLING_VALUE
+                    or payload["suspension_tolls_term_source"] != _TOLLING_SOURCE
+                ):
+                    raise ValueError("ASSIGN receipt lacks its tolling snapshot")
+            elif (
+                payload["suspension_tolls_term"] is not None
+                or payload["suspension_tolls_term_source"] is not None
+            ):
+                raise ValueError("non-ASSIGN receipt contains tolling fields")
+
+            effective_until = (
+                None
+                if payload["effective_until"] is None
+                else _parse_canonical_timestamp(payload["effective_until"])
+            )
             return cls(
-                assignment_uuid=UUID(payload["assignment_uuid"]),
-                resulting_state=str(payload["resulting_state"]),
-                event_uuid=UUID(event_uuid_raw),
-                event_sequence=int(payload["event_sequence"]),
-                event_action=str(payload["event_action"]),
-                lineage_reference=str(payload["lineage_reference"]),
-                temporal_basis_kind=payload.get("temporal_basis_kind"),
-                temporal_basis_reference=payload.get("temporal_basis_reference"),
-                effective_until=(
-                    None if effective_until_raw is None else _parse_canonical_timestamp(effective_until_raw)
-                ),
-                effective_until_state=str(payload["effective_until_state"]),
-                suspension_tolls_term=payload.get("suspension_tolls_term"),
-                suspension_tolls_term_source=payload.get("suspension_tolls_term_source"),
+                assignment_uuid=assignment_uuid,
+                resulting_state=payload["resulting_state"],
+                event_uuid=event_uuid,
+                event_sequence=payload["event_sequence"],
+                event_action=payload["event_action"],
+                lineage_reference=payload["lineage_reference"],
+                temporal_basis_kind=payload["temporal_basis_kind"],
+                temporal_basis_reference=payload["temporal_basis_reference"],
+                effective_until=effective_until,
+                effective_until_state=payload["effective_until_state"],
+                suspension_tolls_term=payload["suspension_tolls_term"],
+                suspension_tolls_term_source=payload["suspension_tolls_term_source"],
                 current_state_effective_at=_parse_canonical_timestamp(payload["current_state_effective_at"]),
                 state_known_at=_parse_canonical_timestamp(payload["state_known_at"]),
-                state_source_event_set_fingerprint=str(payload["state_source_event_set_fingerprint"]),
-                authority_reference=str(payload["authority_reference"]),
-                authority_decision_reference=str(payload["authority_decision_reference"]),
+                state_source_event_set_fingerprint=payload["state_source_event_set_fingerprint"],
+                authority_reference=payload["authority_reference"],
+                authority_decision_reference=payload["authority_decision_reference"],
             )
-        except Exception as exc:  # pragma: no cover - defensive
-            raise S015CommandReplayMismatch("completed receipt does not match request") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise S015CommandReceiptMalformed() from exc
 
 
 def _parse_canonical_timestamp(value: object) -> datetime:
     if type(value) is not str:
         raise TypeError("timestamp payload must be a string")
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if canonical_timestamp(parsed) != value:
+        raise ValueError("timestamp payload is not canonical")
+    return parsed
 
 
 def _validate_term(
@@ -389,7 +466,7 @@ def _insert_assignment_event_row(
     predecessor_id: int | None,
     predecessor_sequence: int | None,
     action: str,
-    actor_id: int,
+    actor_id: int | None,
     actor_state: str,
     actor_capacity: str,
     enterer_identity_id: int,
@@ -402,7 +479,7 @@ def _insert_assignment_event_row(
     effective_until_state: str,
     l1_commitment: str | None,
     l2_commitment: str | None,
-    actor_access_epoch: int,
+    actor_access_epoch: int | None,
     authority_basis_id: int,
     authority_decision_reference: str,
     evidence_reference: str,
@@ -571,7 +648,29 @@ class OrganismRoleService(_OrganismCommandService):
     _authority_unavailable = S015AssignmentAuthorityUnavailable
 
     def _replay_result(self, payload: object) -> AssignmentCommandResult:
-        return AssignmentCommandResult.from_receipt_payload(payload, database_alias=self._alias)
+        return AssignmentCommandResult.from_receipt_payload(payload)
+
+    def _verify_replay_result(self, result: AssignmentCommandResult) -> None:
+        if not isinstance(result, AssignmentCommandResult):
+            raise TypeError("role replay result has the wrong type")
+        # RC-1 commission v1.3, item 7 (A2-b): agree with the chain only on replay.
+        event = (
+            ContextualRoleAssignmentStateEvent.objects.using(self._alias)
+            .filter(
+                assignment__assignment_uuid=result.assignment_uuid,
+                sequence=result.event_sequence,
+            )
+            .values_list("event_uuid", "action", "lineage_reference")
+            .first()
+        )
+        if event is None or event != (
+            result.event_uuid,
+            result.event_action,
+            result.lineage_reference,
+        ):
+            raise S015CommandReceiptMalformed() from ValueError(
+                "receipt does not agree with its role chain event"
+            )
 
     def _command_fingerprint(
         self,
@@ -1156,6 +1255,12 @@ class OrganismRoleService(_OrganismCommandService):
         effective_at: datetime,
         authority_reference: str,
     ) -> None:
+        # RC-1 commission v1.3, item 4 (Human Governor-approved text (b)).
+        record_fault_message = (
+            "Appointment not completed: the recorded authority evidence for this appointment could not be read. "
+            "No appointment was made by this attempt. This is a record fault, not a withdrawal or decline by "
+            "the nominee; it needs to be checked before proceeding."
+        )
         proposal = ContextualRoleAssignmentStateEvent.objects.using(self._alias).filter(
             assignment=assignment,
             sequence=1,
@@ -1228,10 +1333,16 @@ class OrganismRoleService(_OrganismCommandService):
                 if latest is not None and latest.action == "CONSENT"
                 else None
             )
+        if type(authority_reference) is not str or not authority_reference.startswith("s015a1:"):
+            raise S015AssignmentEdgeRefused(record_fault_message)
         try:
             facts = json.loads(authority_reference[len("s015a1:"):])
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise S015AssignmentEdgeRefused("ASSIGN authority did not name its consent fact") from exc
+        except (TypeError, ValueError) as exc:
+            raise S015AssignmentEdgeRefused(record_fault_message) from exc
+        if type(facts) is not dict:
+            raise S015AssignmentEdgeRefused(record_fault_message) from TypeError(
+                "authority evidence facts must be a dict"
+            )
         if expected_reference is None or facts.get("u") != expected_reference:
             raise S015AssignmentEdgeRefused(refusal_message)
 
@@ -1367,6 +1478,7 @@ __all__ = [
     "S015AssignmentTermRefused",
     "S015CommandAtomicityRequired",
     "S015CommandMutexUnavailable",
+    "S015CommandReceiptMalformed",
     "S015CommandReplayMismatch",
     "S015CommandSubstrateError",
     "S015OperationNotYetImplemented",

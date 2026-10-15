@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from contextlib import nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from queue import Queue
 from threading import Barrier
@@ -57,7 +57,14 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityRequest,
     S015PostFoundingAuthorityResponse,
 )
-from src.intevia.services.organism_command_support import ReplayViewer, WithheldField, withheld_fields
+from src.intevia.services.organism_command_support import (
+    ReplayResultType,
+    ReplayViewer,
+    S015CommandReceiptMalformed,
+    WithheldField,
+    serve_replay,
+    withheld_fields,
+)
 from src.intevia.services.organism_membership_service import (
     MembershipCommandResult,
     OrganismMembershipReader,
@@ -71,6 +78,7 @@ from src.intevia.services.organism_membership_service import (
     S015MembershipStateUnused,
     S015OperationNotYetImplemented,
     TransitionMembershipCommand,
+    _expected_replay_result,
     acquire_organism_command_mutex,
 )
 from src.intevia.services.identity_service import (
@@ -501,6 +509,34 @@ class S015MembershipCommandTests(TransactionTestCase):
         membership.refresh_from_db()
         self.assertEqual(membership.state, "PROPOSED")
         self.assertEqual((OrganismMembershipTransition.objects.count(), OrganismCommandReceipt.objects.count()), before)
+
+    def test_open_result_withholds_sequence_one_membership_uuid_only_from_coordinator(self):
+        ids, actor, target = self._setup_organism("rc1-membership-withholding")
+        self.assertNotEqual(actor.pk, target.pk)
+        service = self._service(_ExactProvider())
+        command = self._open_command(
+            actor=actor,
+            organism_id=ids["organism_uuid"],
+            target_identity_id=target.identity_id,
+            request_reference="request:rc1-membership-withholding:open",
+            idempotency_key="idem:rc1-membership-withholding:open",
+            reason_class="TEST_ONLY_REASON_OPEN",
+        )
+        opened = service.open_membership(command)
+        membership = _membership_for_result(opened)
+        self.assertEqual(membership.identity_id, target.pk)
+        self.assertEqual(membership.state, "PROPOSED")
+        self.assertEqual(opened.membership_uuid, WithheldField("membership_uuid", "SUBJECT"))
+        receipt = OrganismCommandReceipt.objects.get(idempotency_key=command.idempotency_key)
+        with transaction.atomic():
+            subject_open = service._attempt_replay(
+                actor=actor,
+                request_reference=command.request_reference,
+                payload_fingerprint=receipt.payload_fingerprint,
+                idempotency_key=command.idempotency_key,
+                viewer=ReplayViewer(target.pk, target.identity_id, NOW),
+            )
+        self.assertEqual(subject_open.membership_uuid, membership.membership_uuid)
 
     def test_probation_edges_chain(self):
         ids, actor, target = self._setup_organism("probation")
@@ -1056,36 +1092,40 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(failures[0][1], "membership not found")
 
     def test_membership_receipt_replay_keeps_unresolved_authority_decision_reference(self):
-        ids, actor, _ = self._setup_organism("membership-receipt-reference")
-        membership = OrganismMembership.objects.get(pk=ids["membership"])
+        ids, actor, target = self._setup_organism("membership-receipt-reference")
         service = self._service(_ExactProvider())
+        opened = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:membership-receipt-reference:open",
+                idempotency_key="idem:membership-receipt-reference:open",
+                reason_class="TEST_ONLY_REASON_RECEIPT_REFERENCE",
+            )
+        )
+        membership = _membership_for_result(opened)
+        transition = OrganismMembershipTransition.objects.get(
+            membership=membership,
+            sequence=1,
+        )
         request_reference = "request:membership-receipt-reference"
         idempotency_key = "idem:membership-receipt-reference"
         payload_fingerprint = "a" * 64
         decision_reference = "s015d1:" + uuid4().hex + uuid4().hex
-        lineage_reference = "s015l1:" + uuid4().hex + uuid4().hex
-        result = MembershipCommandResult(
-            membership_uuid=membership.membership_uuid,
-            resulting_state=membership.state,
-            transition_sequence=1,
-            lineage_reference=lineage_reference,
-            temporal_basis_kind=None,
-            temporal_basis_reference=None,
-            current_state_effective_at=membership.current_state_effective_at,
-            state_known_at=membership.state_known_at,
-            state_source_event_set_fingerprint=membership.state_source_event_set_fingerprint,
-            authority_reference="s015a1:fixture",
-            authority_decision_reference=decision_reference,
-        )
-        OrganismCommandReceipt.objects.create(
+        result_payload = OrganismCommandReceipt.objects.get(
+            idempotency_key="idem:membership-receipt-reference:open",
+        ).result_payload.copy()
+        result_payload["authority_decision_reference"] = decision_reference
+        receipt = OrganismCommandReceipt.objects.create(
             actor=actor,
             action=OrganismAction.TRANSITION_MEMBERSHIP.value,
             idempotency_key=idempotency_key,
             request_reference=request_reference,
             payload_fingerprint=payload_fingerprint,
             authority_decision_reference=decision_reference,
-            lineage_reference=lineage_reference,
-            result_payload=result.receipt_payload(),
+            lineage_reference="s015l1:" + uuid4().hex + uuid4().hex,
+            result_payload=result_payload,
         )
         self.assertFalse(AuthorityDecision.objects.filter(decision_reference=decision_reference).exists())
         with transaction.atomic(), CaptureQueriesContext(connection) as captured:
@@ -1102,6 +1142,185 @@ class S015MembershipCommandTests(TransactionTestCase):
             "core_authoritydecision" in query["sql"].lower()
             for query in captured.captured_queries
         ))
+
+    def test_membership_replay_rejects_chain_lineage_disagreement_without_writes(self):
+        ids, actor, target = self._setup_organism("rc1-membership-chain-mismatch")
+        service = self._service(_ExactProvider())
+        opened = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:rc1-membership-chain:open",
+                idempotency_key="idem:rc1-membership-chain:open",
+                reason_class="TEST_ONLY_REASON_OPEN",
+            )
+        )
+        original = OrganismCommandReceipt.objects.get(
+            idempotency_key="idem:rc1-membership-chain:open",
+        )
+        malformed_payload = original.result_payload.copy()
+        malformed_payload["lineage_reference"] = "lineage:tampered"
+        request_reference = "request:rc1-membership-chain:replay"
+        idempotency_key = "idem:rc1-membership-chain:replay"
+        fingerprint = "d" * 64
+        receipt = OrganismCommandReceipt.objects.create(
+            actor=actor,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            idempotency_key=idempotency_key,
+            request_reference=request_reference,
+            payload_fingerprint=fingerprint,
+            authority_decision_reference=original.authority_decision_reference,
+            lineage_reference="s015l1:" + uuid4().hex + uuid4().hex,
+            result_payload=malformed_payload,
+        )
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
+        with self.assertRaises(S015CommandReceiptMalformed):
+            with transaction.atomic():
+                service._attempt_replay(
+                    actor=actor,
+                    request_reference=request_reference,
+                    payload_fingerprint=fingerprint,
+                    idempotency_key=idempotency_key,
+                    viewer=ReplayViewer(actor.pk, actor.identity_id, NOW),
+                )
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.result_payload, malformed_payload)
+        self.assertEqual(_snapshot_tables(*tables), before)
+        self.assertEqual(opened.membership_uuid, WithheldField("membership_uuid", "SUBJECT"))
+
+    def test_membership_authority_reference_withholding_contract(self):
+        import json
+
+        ids, actor, target = self._setup_organism("rc1-membership-reference-withholding")
+        service = self._service(_ExactProvider())
+        opened = service.open_membership(
+            self._open_command(
+                actor=actor,
+                organism_id=ids["organism_uuid"],
+                target_identity_id=target.identity_id,
+                request_reference="request:rc1-membership-reference:open",
+                idempotency_key="idem:rc1-membership-reference:open",
+                reason_class="TEST_ONLY_REASON_OPEN",
+            )
+        )
+        membership = _membership_for_result(opened)
+        transition = OrganismMembershipTransition.objects.get(
+            membership=membership,
+            sequence=1,
+        )
+        receipt = OrganismCommandReceipt.objects.get(
+            idempotency_key="idem:rc1-membership-reference:open",
+        )
+        raw_result = _expected_replay_result(receipt.result_payload)
+        references = (
+            (f's015a1:{{"a":{membership.pk}}}', True),
+            (f's015a1:{{"a":"{membership.pk}"}}', True),
+            (f's015a1:{{"e":"{transition.pk}"}}', True),
+            (f's015a1:{{"e":"{transition.pk}:suffix"}}', True),
+            ('s015a1:{"e":1}', False),
+            (
+                "s015a1:" + json.dumps({
+                    "a": str(membership.membership_uuid),
+                    "e": str(transition.event_uuid),
+                }),
+                False,
+            ),
+        )
+        viewer = ReplayViewer(target.pk, target.identity_id, NOW)
+        for reference, withheld in references:
+            with self.subTest(reference=reference):
+                result = serve_replay(
+                    replace(raw_result, authority_reference=reference),
+                    viewer=viewer,
+                    result_type=ReplayResultType(MembershipCommandResult, "default"),
+                )
+                if withheld:
+                    self.assertEqual(
+                        result.authority_reference,
+                        WithheldField("authority_reference", "SUBJECT"),
+                    )
+                else:
+                    # Human Governor A4 ruling: integer e is an engagement ordinal, not a primary key.
+                    self.assertEqual(result.authority_reference, reference)
+
+    def test_headless_membership_transition_refuses_before_writing(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        from src.intevia.services import organism_membership_service as membership_module
+
+        membership_uuid = uuid4()
+        actor = SimpleNamespace(pk=1, identity_id=uuid4())
+        role_assignments = Mock()
+        role_assignments.filter.return_value = role_assignments
+        role_assignments.exists.return_value = False
+        membership = SimpleNamespace(
+            pk=1,
+            membership_uuid=membership_uuid,
+            state="ACTIVE",
+            head_transition_id=None,
+            identity=SimpleNamespace(identity_id=actor.identity_id),
+            living_organism=SimpleNamespace(organism_id=uuid4()),
+            contextual_role_assignments=role_assignments,
+        )
+        command_actor = SimpleNamespace(credential=User(pk=1))
+        command = self._transition_command(
+            actor=command_actor,
+            membership_uuid=membership_uuid,
+            resulting_state="ENDED",
+            request_reference="request:rc1-headless-membership:end",
+            idempotency_key="idem:rc1-headless-membership:end",
+            reason_class="TEST_ONLY_REASON_HEADLESS",
+        )
+        service = self._service(_ExactProvider())
+        tables = (
+            "core_organismmembership",
+            "core_organismmembershiptransition",
+            "core_organismcommandreceipt",
+            "core_authoritydecision",
+        )
+        before = _snapshot_tables(*tables)
+        membership_queryset = Mock()
+        membership_queryset.select_related.return_value = membership_queryset
+        membership_queryset.select_for_update.return_value = membership_queryset
+        membership_queryset.get.return_value = membership
+        with self.assertRaisesRegex(
+            S015MembershipNotFound,
+            "membership head transition not found",
+        ):
+            with (
+                patch.object(
+                    membership_module.OrganismMembership.objects,
+                    "using",
+                    return_value=membership_queryset,
+                ),
+                patch.object(
+                    membership_module.OrganismMembershipTransition.objects,
+                    "using",
+                ) as transition_query,
+                patch.object(membership_module, "_lock_actor", return_value=actor),
+                patch.object(membership_module, "acquire_organism_command_mutex"),
+                patch.object(membership_module, "_lock_registered_organism"),
+                patch.object(
+                    membership_module,
+                    "_lock_actor_membership_context",
+                    return_value=(None, ()),
+                ),
+                patch.object(service, "_command_fingerprint", return_value="fingerprint"),
+                patch.object(service, "_attempt_replay", return_value=None),
+                patch.object(service, "_evaluate_authority", return_value=None),
+            ):
+                service._execute_transition(command, {})
+        transition_query.assert_not_called()
+        self.assertEqual(membership_queryset.get.call_count, 2)
+        self.assertEqual(_snapshot_tables(*tables), before)
 
     def test_unused_states_are_refused(self):
         ids, actor, target = self._setup_organism("unused")

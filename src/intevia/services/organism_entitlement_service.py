@@ -39,7 +39,7 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_command_support import (
     ReplayViewer,
-    S015CommandReplayMismatch,
+    S015CommandReceiptMalformed,
     _OrganismCommandService,
     _canonical_key,
     _canonical_uuid,
@@ -267,27 +267,64 @@ class _PreparedBirthingElection:
 
 def _election_result_from_payload(payload: object) -> EntitlementElectionResult:
     if type(payload) is not dict:
-        raise S015CommandReplayMismatch("completed receipt does not match request")
+        raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
     try:
+        # RC-1 commission v1.3, item 9(d): Stage 0 found no producer of a null entitlement UUID.
+        expected_keys = {
+            "living_organism_uuid",
+            "offering_choice",
+            "policy_version",
+            "entitlement_uuid",
+            "event_uuid",
+            "event_sequence",
+            "lineage_reference",
+            "authority_reference",
+            "authority_decision_reference",
+        }
+        if set(payload) != expected_keys:
+            raise ValueError("receipt fields do not match the entitlement result contract")
+        for key in (
+            "living_organism_uuid",
+            "offering_choice",
+            "event_uuid",
+            "lineage_reference",
+            "authority_reference",
+            "authority_decision_reference",
+            "entitlement_uuid",
+        ):
+            if type(payload[key]) is not str:
+                raise TypeError(f"{key} must be a string")
+        if type(payload["policy_version"]) is not int:
+            raise TypeError("policy_version must be an integer")
+        if type(payload["event_sequence"]) is not int:
+            raise TypeError("event_sequence must be an integer")
+        if payload["offering_choice"] != "COMPLIMENTARY_BETA":
+            raise ValueError("offering_choice is outside the entitlement result contract")
+        if payload["policy_version"] < 1 or payload["event_sequence"] < 1:
+            raise ValueError("policy_version and event_sequence must be positive")
+
+        living_organism_uuid = UUID(payload["living_organism_uuid"])
+        entitlement_uuid = UUID(payload["entitlement_uuid"])
+        event_uuid = UUID(payload["event_uuid"])
+        if (
+            str(living_organism_uuid) != payload["living_organism_uuid"]
+            or str(entitlement_uuid) != payload["entitlement_uuid"]
+            or str(event_uuid) != payload["event_uuid"]
+        ):
+            raise ValueError("receipt UUIDs must use canonical strings")
         return EntitlementElectionResult(
-            living_organism_uuid=UUID(payload["living_organism_uuid"]),
+            living_organism_uuid=living_organism_uuid,
             offering_choice=payload["offering_choice"],
             policy_version=payload["policy_version"],
-            entitlement_uuid=(
-                None
-                if payload["entitlement_uuid"] is None
-                else UUID(payload["entitlement_uuid"])
-            ),
-            event_uuid=UUID(payload["event_uuid"]),
+            entitlement_uuid=entitlement_uuid,
+            event_uuid=event_uuid,
             event_sequence=payload["event_sequence"],
             lineage_reference=payload["lineage_reference"],
             authority_reference=payload["authority_reference"],
             authority_decision_reference=payload["authority_decision_reference"],
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise S015CommandReplayMismatch(
-            "completed receipt does not match request"
-        ) from exc
+        raise S015CommandReceiptMalformed() from exc
 
 
 class S015EntitlementUnavailable(Exception):
