@@ -16,6 +16,7 @@ other checkpoint is applicable and must be established. A checkpoint marked not 
 anything but 'forbidden' counts as not established. Applicable and not-applicable counts are reported separately."""
 import json
 import os
+import re
 import sys
 import time
 import unittest
@@ -175,6 +176,10 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
     def setup_databases(self, **kwargs):
         from django.db import connections
 
+        candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
+        if not isinstance(candidate_binding, str) or re.fullmatch(r"[0-9a-f]{64}", candidate_binding) is None:
+            # Commission §1: unavailable candidate identity is an evidence gap, never a successful fallback.
+            raise RuntimeError("R9: INTEVIA_CANDIDATE_BINDING_SHA256 is missing or invalid")
         mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "clone")
         if mode not in ("fresh", "clone"):
             raise RuntimeError("R2: template mode must be clone or authorized fresh")
@@ -189,6 +194,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         else:
             self.fresh_authority = "NONE"
         self.template_receipt = None
+        self.template_prepare_seconds = 0.0
         self.template_build_seconds = 0.0
         self.template_rebuilt = False
         for alias in connections:
@@ -207,9 +213,10 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             except (TemplateIdentityUnavailable, TemplateNameCollision, TemplateReceiptInvalid) as exc:
                 raise RuntimeError("R9: clone pre-flight refused; fresh-mode fallback is prohibited") from exc
             else:
+                self.template_prepare_seconds = time.perf_counter() - template_started
                 self.template_rebuilt = bool(built)
                 if built:
-                    self.template_build_seconds = time.perf_counter() - template_started
+                    self.template_build_seconds = self.template_prepare_seconds
                 install_clone_creation(connection.creation, self.template_receipt)
 
         setup_started = time.perf_counter()
@@ -327,7 +334,12 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         if os.environ.get("VERIFICATION_TEMPLATE_CLEANUP") == "1" and self.template_receipt:
             store = os.environ["VERIFICATION_TEMPLATE_STORE"]
             path = template_receipt_path(store, self.template_receipt["identity"])
-            cleanup_template(connections["default"], path, self.template_receipt["identity"])
+            cleanup_template(
+                connections["default"],
+                path,
+                self.template_receipt["identity"],
+                allow_incomplete_parity=os.environ.get("VERIFICATION_TEMPLATE_NAMESPACE") == "me",
+            )
         return result
 
     def get_resultclass(self):
@@ -460,6 +472,36 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                                      "are checked at reset boundaries, CP-0 and CP-A. "
                                      "The backend checks before teardown flushing and after seed restoration, and checks "
                                      "the result of the by-name setup reset. The isolation instrument checks at CP-0 and CP-A."}
+        candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
+        candidate_binding_valid = isinstance(candidate_binding, str) and re.fullmatch(
+            r"[0-9a-f]{64}", candidate_binding
+        ) is not None
+        summary["candidate_binding"] = candidate_binding if candidate_binding_valid else "UNAVAILABLE"
+        summary["candidate_binding_reason"] = (
+            None if candidate_binding_valid else
+            "INTEVIA_CANDIDATE_BINDING_SHA256 is missing or invalid"
+        )
+        if not candidate_binding_valid:
+            verdict = "NOT ESTABLISHED"
+            reasons.append("candidate binding unavailable")
+            summary["isolation_verdict"] = verdict
+            summary["reasons"] = reasons
+        template_receipt = getattr(self, "template_receipt", None)
+        template_rebuilt = getattr(self, "template_rebuilt", False)
+        if template_receipt is not None:
+            summary["template_action"] = "BUILT" if template_rebuilt else "REUSED"
+            summary["template_build_seconds"] = (
+                "%.6f" % getattr(self, "template_build_seconds", 0.0)
+                if template_rebuilt else "NOT_APPLICABLE"
+            )
+            summary["template_prepare_seconds"] = "%.6f" % getattr(
+                self, "template_prepare_seconds", 0.0
+            )
+            summary["template_name"] = template_receipt["name"]
+        else:
+            summary["template_action"] = "NOT_APPLICABLE"
+            summary["template_build_seconds"] = "NOT_APPLICABLE"
+            summary["template_prepare_seconds"] = "NOT_APPLICABLE"
         if self.run_plan is not None:
             executed_ids = list(self.started_ids)
             complete = len(executed_ids) == len(self.run_plan["tests"])
@@ -492,7 +534,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 tests_executed=len(executed_ids),
                 tests_not_reached=len(not_reached),
                 executed_matches_plan=match,
-                candidate_binding=os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256", "UNAVAILABLE"),
+                candidate_binding=summary["candidate_binding"],
                 failing_test=(
                     stopping_test
                 ),
@@ -508,6 +550,11 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             print("TESTS_NOT_REACHED=%d" % len(not_reached), file=sys.stderr, flush=True)
             print("EXECUTED_MATCHES_PLAN=" + match, file=sys.stderr, flush=True)
             if mode == "clone":
+                print("TEMPLATE_ACTION=" + summary["template_action"], file=sys.stderr, flush=True)
+                print("TEMPLATE_BUILD_SECONDS=" + summary["template_build_seconds"],
+                      file=sys.stderr, flush=True)
+                print("TEMPLATE_PREPARE_SECONDS=" + summary["template_prepare_seconds"],
+                      file=sys.stderr, flush=True)
                 print("CLONE_SETUP_SECONDS=%.6f" % getattr(self, "clone_setup_seconds", 0.0),
                       file=sys.stderr, flush=True)
         self._emit(summary)

@@ -11,6 +11,7 @@ from verification.isolation.run_plan import (
     rotation,
     rotation_basis_records,
     validate_run_spec_binding,
+    validate_run_record_consistency,
     validate_unrotated_selection,
     validate_verification_summary,
     verify_kind,
@@ -34,7 +35,20 @@ class LaunchBoundaryTests(SimpleTestCase):
         plan = build_plan([label], connection_attempts=attempts)
 
         self.assertEqual(plan["tests"], [label])
+        self.assertEqual(plan["database_route"], "DATABASE")
         self.assertEqual(attempts["count"], 0)
+
+    def test_plan_marks_database_forbidden_selection_as_no_database_route(self):
+        from verification.isolation.run_plan import build_plan
+
+        plan = build_plan(
+            [
+                "tests.test_tu1_launch_boundary.LaunchBoundaryTests."
+                "test_duplicate_plan_ids_are_refused"
+            ]
+        )
+
+        self.assertEqual(plan["database_route"], "NO_DATABASE")
 
     def test_duplicate_plan_ids_are_refused(self):
         with self.assertRaisesRegex(ValueError, "R4"):
@@ -87,10 +101,31 @@ class LaunchBoundaryTests(SimpleTestCase):
         ):
             validate_unrotated_selection(
                 ["a", "b"],
-                {"classification": "TEST_ATTEMPT", "result": "FAIL"},
+                {
+                    "classification": "TEST_ATTEMPT",
+                    "result": "FAIL",
+                    "failing_test": "a",
+                    "tests_executed": 1,
+                },
                 ["a", "b"],
                 None,
             )
+
+    def test_no_test_failure_requires_reasoned_same_selection(self):
+        record = {
+            "classification": "TEST_ATTEMPT",
+            "result": "ERROR",
+            "tests_executed": 0,
+            "failing_test": None,
+        }
+        with self.assertRaisesRegex(ValueError, "failed attempt without a failing test identifier"):
+            validate_unrotated_selection(["a"], record, ["a"], None)
+        self.assertEqual(
+            validate_unrotated_selection(
+                ["a"], record, ["a"], "retry after a control failure without a test identifier"
+            ),
+            "retry after a control failure without a test identifier",
+        )
 
     def test_unrotated_selection_after_pass_is_accepted(self):
         self.assertIsNone(
@@ -122,6 +157,34 @@ class LaunchBoundaryTests(SimpleTestCase):
             ),
             reason,
         )
+
+    def test_pass_run_record_requires_isolation_and_control_evidence(self):
+        record = {
+            "classification": "TEST_ATTEMPT",
+            "result": "PASS",
+            "isolation_verdict": "PASS",
+            "dev_run_verdict": "PASS",
+            "cp0_requirements_met": True,
+            "required_controls_passed": True,
+            "ordinary_test_verdict": {
+                "was_successful": True,
+                "errors": 0,
+                "failures": 0,
+            },
+            "tests_planned": 2,
+            "tests_executed": 2,
+            "tests_not_reached": 0,
+            "executed_matches_plan": "FULL",
+        }
+        self.assertIsNone(validate_run_record_consistency(record))
+
+        invalid = {**record, "isolation_verdict": "NOT ESTABLISHED"}
+        with self.assertRaisesRegex(ValueError, "complete successful control evidence"):
+            validate_run_record_consistency(invalid)
+
+        invalid = {**record, "result": "FAIL"}
+        with self.assertRaisesRegex(ValueError, "contradicts DEV_RUN_VERDICT"):
+            validate_run_record_consistency(invalid)
 
     def test_state_without_run_spec_binding_fields_is_refused(self):
         with self.assertRaisesRegex(ValueError, "R11: state file lacks"):

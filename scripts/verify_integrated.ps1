@@ -119,6 +119,10 @@ $environmentNames = @(
     "INTEVIA_RUN_PLAN_SHA256",
     "INTEVIA_RUN_SPEC_SHA256",
     "INTEVIA_RUN_SUFFIX",
+    "INTEVIA_CANDIDATE_BINDING_SHA256",
+    "INTEVIA_DATABASE_TAG",
+    "INTEVIA_EVIDENCE_ROOT",
+    "INTEVIA_EVIDENCE_ROOT_PATH",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
 ) + @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" } | ForEach-Object { $_.Name })
@@ -174,7 +178,7 @@ $scriptHash = $null
 $runDirectory = $null
 $templateStorePath = $null
 # S2 run-of-record count; informational only.
-$previousVerificationTestCount = 486
+$previousVerificationTestCount = $null
 $runNonce = $null
 $testDatabase = $null
 $receiptPath = $null
@@ -553,9 +557,21 @@ function Get-SourceBinding {
         StateId = $authorizedState.StateId
         StateFile = $authorizedState.StateFile
         StateSha256 = $authorizedState.StateSha256
+        State = $authorizedState.State
         EvidenceRoot = $authorizedState.EvidenceRoot
         DatabaseTag = $authorizedState.DatabaseTag
     }
+}
+
+function Set-RunSpecBinding {
+    param([Parameter(Mandatory = $true)]$SourceBinding)
+
+    $runSpecSha256 = [string]$SourceBinding.State.run_spec_sha256
+    if ([string]::IsNullOrWhiteSpace($runSpecSha256)) {
+        $runSpecSha256 = "UNAVAILABLE"
+    }
+    $env:INTEVIA_RUN_SPEC_SHA256 = $runSpecSha256
+    return "RUN_SPEC_SHA256=$runSpecSha256"
 }
 
 function Get-NextVerificationRunNumber {
@@ -890,6 +906,10 @@ try {
 
     $env:INTEVIA_DATABASE_ENGINE = "postgresql"
     $env:INTEVIA_POSTGRES_TEST_DB = $testDatabase
+    $env:INTEVIA_CANDIDATE_BINDING_SHA256 = $bindingHash
+    $env:INTEVIA_DATABASE_TAG = [string]$initialBinding.DatabaseTag
+    $env:INTEVIA_EVIDENCE_ROOT = [string]$initialBinding.EvidenceRoot
+    $env:INTEVIA_EVIDENCE_ROOT_PATH = [System.IO.Path]::GetFullPath((Split-Path -Parent $verificationRoot))
     $env:INTEVIA_S015_TEST_ROUTE = $expectedRoute
     $env:VERIFICATION_RUN_NONCE = $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
@@ -897,7 +917,8 @@ try {
     $env:VERIFICATION_EXPECTED_CORE_HEAD = $expectedCoreHead
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = "clone"
-    $templateStorePath = Join-Path $runDirectory "tooling-template-store"
+    # TU1-T13: retain this candidate's template store across runs in the same evidence root.
+    $templateStorePath = Join-Path $verificationRoot "tooling-template-store"
     $env:VERIFICATION_TEMPLATE_STORE = $templateStorePath
     $env:VERIFICATION_TEMPLATE_NAMESPACE = "vr"
     $env:VERIFICATION_TEMPLATE_CLEANUP = "0"
@@ -1068,10 +1089,10 @@ try {
     }
     $env:INTEVIA_RUN_PLAN_FILE = $planFile
     $env:INTEVIA_RUN_PLAN_SHA256 = $planDigest
-    $env:INTEVIA_RUN_SPEC_SHA256 = [string]$initialBinding.State.run_spec_sha256
+    $runSpecBindingLine = Set-RunSpecBinding -SourceBinding $initialBinding
     $env:INTEVIA_RUN_SUFFIX = [string]$runNumber
     Write-Output "VERIFICATION_KIND=$VerificationKind"
-    Write-Output "RUN_SPEC_SHA256=$($initialBinding.State.run_spec_sha256)"
+    Write-Output $runSpecBindingLine
     Write-Output "PLAN_SHA256=$planDigest"
     Write-Output "PARENT_PLAN_SHA256=NONE"
     Write-Output "ROTATION=NONE"
@@ -1132,6 +1153,30 @@ print("TESTS_RESOLVED=%d" % count)
     }
 
     $canRunTests = $failureReasons.Count -eq 0
+    if ($canRunTests) {
+        $tagRegisterPath = Join-Path $HOME "INTEVIA_AGENT_STAGING\database-tag-register.jsonl"
+        $tagRegisterCode = @'
+import json
+import sys
+
+from verification.isolation.template import register_database_tag
+
+result = register_database_tag(sys.argv[1], sys.argv[2], sys.argv[3])
+print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
+'@
+        $tagRegisterStatus = Invoke-PythonAndCapture `
+            -Label "TU-1b database tag register" `
+            -LogPath $logPath `
+            -Arguments @(
+                "-c", $tagRegisterCode, $tagRegisterPath,
+                $env:INTEVIA_DATABASE_TAG, $env:INTEVIA_EVIDENCE_ROOT
+            )
+        if ($tagRegisterStatus -ne 0) {
+            Add-Failure "TU-1b database tag register refused the verification launch"
+            $canRunTests = $false
+        }
+    }
+
     if ($canRunTests) {
         $preflightCodeSource = @'
 import os

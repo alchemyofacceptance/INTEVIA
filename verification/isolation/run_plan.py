@@ -24,6 +24,51 @@ _CONNECTION_GUARD_ACTIVE: ContextVar[bool] = ContextVar(
 )
 
 
+@contextmanager
+def _standalone_action_environment(root: Path, action: str):
+    if action not in {"plan", "precheck"}:
+        raise ValueError("R9: standalone environment is only valid for plan or precheck")
+    names = (
+        "DJANGO_SETTINGS_MODULE",
+        "INTEVIA_S015_TEST_ROUTE",
+        "INTEVIA_DATABASE_ENGINE",
+        "INTEVIA_POSTGRES_TEST_DB",
+        "PYTHONPATH",
+    )
+    original = {name: os.environ.get(name) for name in names}
+    repository_root = str(root.resolve())
+    test_root = str((root / "tests").resolve())
+    python_paths = [repository_root, test_root]
+    run_suffix = os.environ.get("INTEVIA_RUN_SUFFIX")
+    if (
+        not run_suffix
+        or len(run_suffix) > 12
+        or re.fullmatch(r"[1-9][0-9]*[ab]?", run_suffix) is None
+    ):
+        run_suffix = f"p{os.getpid()}"
+    if original["PYTHONPATH"]:
+        python_paths.append(original["PYTHONPATH"])
+    os.environ.update(
+        {
+            "DJANGO_SETTINGS_MODULE": "intevia.test_settings",
+            "INTEVIA_S015_TEST_ROUTE": "LIVING_ORGANISM_TEST_LIFECYCLE",
+            "INTEVIA_DATABASE_ENGINE": "postgresql",
+            "INTEVIA_POSTGRES_TEST_DB": (
+                f"test_intevia_living_organism_tu1_{action}_{run_suffix}"
+            ),
+            "PYTHONPATH": os.pathsep.join(python_paths),
+        }
+    )
+    try:
+        yield
+    finally:
+        for name, value in original.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def _setup_test_django(requirement: str = "R3/R4"):
     os.environ["DJANGO_SETTINGS_MODULE"] = "intevia.test_settings"
     os.environ["INTEVIA_S015_TEST_ROUTE"] = "LIVING_ORGANISM_TEST_LIFECYCLE"
@@ -122,15 +167,26 @@ def resolve_labels(labels: list[str]) -> list[str]:
     return expanded
 
 
-def _loader_suite(labels: list[str]) -> list[str]:
+def _loader_cases(labels: list[str]) -> list[unittest.TestCase]:
     from django.test.runner import DiscoverRunner
     from django.test.utils import iter_test_cases
 
     suite = DiscoverRunner(verbosity=0, interactive=False, parallel=1).build_suite(labels)
-    ids = [case.id() for case in iter_test_cases(suite)]
+    cases = list(iter_test_cases(suite))
+    ids = [case.id() for case in cases]
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("R3: resolved selection is empty or contains duplicate unique tests")
-    return ids
+    return cases
+
+
+def _loader_suite(labels: list[str]) -> list[str]:
+    return [case.id() for case in _loader_cases(labels)]
+
+
+def _run_precheck_suite(suite: unittest.TestSuite) -> unittest.TestResult:
+    return unittest.TextTestRunner(
+        stream=sys.stderr, verbosity=2, failfast=True
+    ).run(suite)
 
 
 def build_plan(
@@ -139,11 +195,19 @@ def build_plan(
     groups: list[list[str]] | None = None,
     connection_attempts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    from .runner import database_access
+
     connections = _setup_test_django("R3/R4")
     attempts = connection_attempts if connection_attempts is not None else {"count": 0}
     with _forbid_database_connections(connections, attempts, "R3/R4"):
         expanded = resolve_labels(labels)
-        tests = _loader_suite(expanded)
+        cases = _loader_cases(expanded)
+        tests = [case.id() for case in cases]
+        database_route = (
+            "DATABASE"
+            if any(database_access(case)[1] for case in cases)
+            else "NO_DATABASE"
+        )
     normalized_groups = [list(group) for group in (groups or [])]
     grouped: set[str] = set()
     for group in normalized_groups:
@@ -160,6 +224,7 @@ def build_plan(
         "labels": labels,
         "expanded_labels": expanded,
         "tests": tests,
+        "database_route": database_route,
         "ordered_groups": normalized_groups,
         "parent_plan_sha256": None,
         "rotation_side": "NONE",
@@ -181,6 +246,9 @@ def load_plan(path: str | Path) -> tuple[dict[str, Any], str]:
     plan = json.loads(raw.decode("utf-8"))
     if plan.get("schema_version") != 1 or not isinstance(plan.get("tests"), list):
         raise ValueError("R4: plan file schema is invalid")
+    database_route = plan.get("database_route")
+    if database_route is not None and database_route not in ("DATABASE", "NO_DATABASE"):
+        raise ValueError("R4: plan database route is invalid")
     tests = plan["tests"]
     if not tests or len(tests) != len(set(tests)):
         raise ValueError("R4: plan is empty or contains duplicate identifiers")
@@ -211,10 +279,47 @@ def rotation(parent: dict[str, Any], failing_test: str, side: str) -> list[str]:
 
 
 def is_rotation_basis_record(record: dict[str, Any]) -> bool:
+    validate_run_record_consistency(record)
     return (
         record.get("classification") != "PRE_RUN_REFUSAL"
         and record.get("result") in {"PASS", "FAIL", "ERROR"}
     )
+
+
+def validate_run_record_consistency(record: dict[str, Any]) -> None:
+    if record.get("classification") == "PRE_RUN_REFUSAL":
+        return
+    has_isolation = "isolation_verdict" in record
+    has_dev_verdict = "dev_run_verdict" in record
+    if not has_isolation and not has_dev_verdict:
+        return
+    if not has_isolation or not has_dev_verdict:
+        raise ValueError("R5: run record has incomplete final-verdict evidence")
+
+    result = record.get("result")
+    isolation_verdict = record.get("isolation_verdict")
+    dev_run_verdict = record.get("dev_run_verdict")
+    if dev_run_verdict == "PASS" and result != "PASS":
+        raise ValueError("R5: run record result contradicts DEV_RUN_VERDICT")
+    if result != "PASS":
+        return
+
+    ordinary = record.get("ordinary_test_verdict")
+    # HG_DIRECTION_TU1B_SCOPE_AND_RC1_TEXTS_20261015 (15 Oct 2026); commission section 1: a refused required control or failed isolation cannot yield an overall PASS.
+    if (
+        isolation_verdict != "PASS"
+        or dev_run_verdict != "PASS"
+        or record.get("cp0_requirements_met") is not True
+        or record.get("required_controls_passed") is not True
+        or not isinstance(ordinary, dict)
+        or ordinary.get("was_successful") is not True
+        or ordinary.get("errors") != 0
+        or ordinary.get("failures") != 0
+        or record.get("tests_not_reached") != 0
+        or record.get("tests_executed") != record.get("tests_planned")
+        or record.get("executed_matches_plan") != "FULL"
+    ):
+        raise ValueError("R5: PASS run record lacks complete successful control evidence")
 
 
 def rotation_basis_records(
@@ -288,13 +393,21 @@ def validate_unrotated_selection(
     if not latest_tests or len(latest_tests) != len(set(latest_tests)):
         raise ValueError("R5: latest failed attempt has no valid plan selection")
     if current_tests == latest_tests:
-        raise ValueError(
-            "R5: the latest attempt on this plan failed; launch rotated (A, then B) from its record."
+        no_failing_test = (
+            latest_record.get("tests_executed") == 0
+            or not latest_record.get("failing_test")
         )
+        if not no_failing_test:
+            raise ValueError(
+                "R5: the latest attempt on this plan failed; launch rotated (A, then B) from its record."
+            )
     if not set(latest_tests).issubset(current_tests):
         raise ValueError("R5: a new parent plan must contain every test from the latest failed plan")
     if not isinstance(new_parent_plan_reason, str) or not new_parent_plan_reason.strip():
-        raise ValueError("R5: a superset new parent plan requires -NewParentPlanReason")
+        raise ValueError(
+            "R5: a failed attempt without a failing test identifier, or a superset new parent plan, "
+            "requires -NewParentPlanReason"
+        )
     reason = new_parent_plan_reason.strip()
     if "\n" in reason or "\r" in reason:
         raise ValueError("R5: -NewParentPlanReason must be a single line")
@@ -388,6 +501,11 @@ def build_rotation_plan(parent_path: str | Path, record_path: str | Path, side: 
     current = build_plan(parent.get("expanded_labels") or parent["labels"],
                          groups=parent.get("ordered_groups"))
     ensure_suite_matches(parent["tests"], current["tests"])
+    if (
+        parent.get("database_route") is not None
+        and parent["database_route"] != current["database_route"]
+    ):
+        raise ValueError("R5: recomputed database route differs from the parent plan")
     selected = rotation(parent, failure, side)
     group = next(
         (group for group in parent.get("ordered_groups", []) if failure in group),
@@ -396,6 +514,7 @@ def build_rotation_plan(parent_path: str | Path, record_path: str | Path, side: 
     payload = dict(parent)
     payload.update(
         tests=selected,
+        database_route=current["database_route"],
         parent_plan_sha256=parent_digest,
         rotation_side=side,
         rotation_unit=",".join(group),
@@ -596,30 +715,34 @@ def candidate_binding(root: Path, state_path: str | Path) -> str:
 
 def run_no_database_precheck(root: Path, state_path: str | Path) -> tuple[list[str], str, int]:
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    database_tag = state.get("database_tag")
+    if not isinstance(database_tag, str) or not database_tag:
+        raise ValueError("R9: standalone precheck requires the authorized state's database_tag")
     modules = _changed_test_modules(root, state["base_commit"], state["allowed_paths"])
     connections = _setup_test_django("R14")
     classes: list[type[unittest.TestCase]] = []
     attempts = {"count": 0}
-    with _forbid_database_connections(connections, attempts, "R14"):
-        for module_name in modules:
-            module = importlib.import_module(module_name)
-            for _, candidate in inspect.getmembers(module, inspect.isclass):
-                if not issubclass(candidate, unittest.TestCase) or candidate in classes:
-                    continue
-                if candidate.__module__ != module_name:
-                    continue
-                databases = getattr(candidate, "databases", set())
-                if databases == set():
-                    classes.append(candidate)
-        names = [f"{cls.__module__}.{cls.__qualname__}" for cls in classes]
-        if not classes:
-            return names, "NONE_QUALIFY", attempts["count"]
+    with patch.dict(os.environ, {"INTEVIA_DATABASE_TAG": database_tag}):
+        with _forbid_database_connections(connections, attempts, "R14"):
+            for module_name in modules:
+                module = importlib.import_module(module_name)
+                for _, candidate in inspect.getmembers(module, inspect.isclass):
+                    if not issubclass(candidate, unittest.TestCase) or candidate in classes:
+                        continue
+                    if candidate.__module__ != module_name:
+                        continue
+                    databases = getattr(candidate, "databases", set())
+                    if databases == set():
+                        classes.append(candidate)
+            names = [f"{cls.__module__}.{cls.__qualname__}" for cls in classes]
+            if not classes:
+                return names, "NONE_QUALIFY", attempts["count"]
 
-        suite = unittest.TestSuite()
-        loader = unittest.defaultTestLoader
-        for cls in classes:
-            suite.addTests(loader.loadTestsFromTestCase(cls))
-        result = unittest.TextTestRunner(stream=sys.stderr, verbosity=1, failfast=True).run(suite)
+            suite = unittest.TestSuite()
+            loader = unittest.defaultTestLoader
+            for cls in classes:
+                suite.addTests(loader.loadTestsFromTestCase(cls))
+            result = _run_precheck_suite(suite)
     return names, "PASS" if result.wasSuccessful() and attempts["count"] == 0 else "FAIL", attempts["count"]
 
 
@@ -703,6 +826,53 @@ def _run_self_test() -> int:
         "parent_plan_sha256": "parent",
     }
 
+    def refused_control_cannot_be_pass() -> None:
+        validate_run_record_consistency(
+            {
+                "classification": "TEST_ATTEMPT",
+                "result": "PASS",
+                "isolation_verdict": "NOT ESTABLISHED",
+                "dev_run_verdict": "FAIL",
+            }
+        )
+
+    add(
+        "T4/T14 refused control run record",
+        True,
+        "required control or isolation refusal recorded as PASS",
+        "refused control cannot produce a PASS record",
+        refused_control_cannot_be_pass,
+    )
+
+    def consistent_pass_record() -> None:
+        validate_run_record_consistency(
+            {
+                "classification": "TEST_ATTEMPT",
+                "result": "PASS",
+                "isolation_verdict": "PASS",
+                "dev_run_verdict": "PASS",
+                "cp0_requirements_met": True,
+                "required_controls_passed": True,
+                "ordinary_test_verdict": {
+                    "was_successful": True,
+                    "errors": 0,
+                    "failures": 0,
+                },
+                "tests_planned": 1,
+                "tests_executed": 1,
+                "tests_not_reached": 0,
+                "executed_matches_plan": "FULL",
+            }
+        )
+
+    add(
+        "T4/T14 consistent pass record",
+        False,
+        "successful evidence is inconsistently classified",
+        "PASS requires every control and isolation to pass",
+        consistent_pass_record,
+    )
+
     def check_pre_run_refusal_basis() -> None:
         if is_rotation_basis_record(refusal) or rotation_basis_records(
             [failed_attempt, refusal], "parent"
@@ -716,7 +886,12 @@ def _run_self_test() -> int:
     def failed_same_selection() -> None:
         validate_unrotated_selection(
             ["a", "b"],
-            {"classification": "TEST_ATTEMPT", "result": "FAIL"},
+            {
+                "classification": "TEST_ATTEMPT",
+                "result": "FAIL",
+                "failing_test": "a",
+                "tests_executed": 1,
+            },
             ["a", "b"],
             None,
         )
@@ -724,6 +899,28 @@ def _run_self_test() -> int:
     add("R5 failed unrotated selection", True,
         "same test list after FAIL/ERROR", "launch rotated (A, then B) from its record",
         failed_same_selection)
+
+    no_identifier_failure = {
+        "classification": "TEST_ATTEMPT",
+        "result": "ERROR",
+        "tests_executed": 0,
+        "failing_test": None,
+    }
+
+    def reasoned_no_identifier_recovery() -> None:
+        reason = "recover after a control failure without a test identifier"
+        if validate_unrotated_selection(
+            ["a"], no_identifier_failure, ["a"], reason
+        ) != reason:
+            raise AssertionError("R5: reasoned recovery did not preserve the failure record")
+
+    add(
+        "R5 reasoned no-identifier recovery",
+        False,
+        "same selection without an explicit recovery reason",
+        "same tests may form a new parent plan with a recorded reason",
+        reasoned_no_identifier_recovery,
+    )
     add("R5 selection after pass", False, "successful latest attempt blocks a new plan",
         "unrotated plan may follow a PASS",
         lambda: validate_unrotated_selection(
@@ -992,7 +1189,9 @@ def main() -> int:
         if args.new_parent_plan_reason is not None and not args.run_root:
             parser.error("--new-parent-plan-reason requires --run-root")
         groups = [group.split(",") for group in args.group]
-        plan = build_plan(args.label, groups=groups)
+        root = Path(__file__).resolve().parents[2]
+        with _standalone_action_environment(root, "plan"):
+            plan = build_plan(args.label, groups=groups)
         latest_attempt = None
         parent_reason = None
         digest = write_plan(plan, args.output)
@@ -1013,6 +1212,7 @@ def main() -> int:
         print(f"PARENT_PLAN_SHA256={plan.get('parent_plan_sha256') or 'NONE'}")
         print(f"ROTATION={plan['rotation_side']}")
         print(f"ROTATION_UNIT={plan['rotation_unit']}")
+        print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
         print(f"ORDERED_GROUPS={len(plan['ordered_groups'])} INTACT")
         print(f"TESTS_PLANNED={len(plan['tests'])}")
         if args.run_root:
@@ -1028,12 +1228,15 @@ def main() -> int:
     if args.action == "rotate":
         if not (args.parent and args.preceding and args.side and args.output):
             parser.error("rotate requires --parent, --preceding, --side, and --output")
-        plan = build_rotation_plan(args.parent, args.preceding, args.side)
+        root = Path(__file__).resolve().parents[2]
+        with _standalone_action_environment(root, "plan"):
+            plan = build_rotation_plan(args.parent, args.preceding, args.side)
         digest = write_plan(plan, args.output)
         print(f"PLAN_SHA256={digest}")
         print(f"PARENT_PLAN_SHA256={plan['parent_plan_sha256']}")
         print(f"ROTATION={plan['rotation_side']}")
         print(f"ROTATION_UNIT={plan['rotation_unit']}")
+        print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
         print(f"ORDERED_GROUPS={len(plan['ordered_groups'])} INTACT")
         print(f"TESTS_PLANNED={len(plan['tests'])}")
         return 0
@@ -1051,7 +1254,8 @@ def main() -> int:
         return 0
     if not (args.root and args.state):
         parser.error("precheck requires --root and --state")
-    names, outcome, attempts = run_no_database_precheck(Path(args.root), args.state)
+    with _standalone_action_environment(Path(args.root), "precheck"):
+        names, outcome, attempts = run_no_database_precheck(Path(args.root), args.state)
     print("PRECHECK_CLASSES=" + (",".join(names) if names else "NONE"))
     print("PRECHECK_RESULT=" + outcome)
     print("PRECHECK_CONNECTION_ATTEMPTS=" + str(attempts))

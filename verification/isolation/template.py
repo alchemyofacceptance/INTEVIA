@@ -1,4 +1,4 @@
-"""Template identity primitives and the ownership route for reusable test databases."""
+"""Template identity and recovery for TU-1b under TU1B_BUILD_COMMISSION_v1_2."""
 import ast
 import hashlib
 import importlib.util
@@ -38,6 +38,136 @@ def _required_template_namespace():
             "VERIFICATION_TEMPLATE_NAMESPACE must be set to 'me' or 'vr'"
         )
     return namespace
+
+
+def _required_database_tag():
+    tag = os.environ.get("INTEVIA_DATABASE_TAG")
+    if not isinstance(tag, str) or re.fullmatch(r"[a-z0-9]{1,8}", tag) is None:
+        raise TemplateIdentityUnavailable("INTEVIA_DATABASE_TAG must be a lowercase tag of at most 8 characters")
+    return tag
+
+
+def _required_evidence_root():
+    evidence_root = os.environ.get("INTEVIA_EVIDENCE_ROOT")
+    if not isinstance(evidence_root, str) or re.fullmatch(r"PKTB_[A-Z0-9_]{1,24}", evidence_root) is None:
+        raise TemplateIdentityUnavailable("INTEVIA_EVIDENCE_ROOT must name the authorized evidence root")
+    return evidence_root
+
+
+def _required_candidate_binding():
+    candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
+    if not isinstance(candidate_binding, str) or re.fullmatch(r"[0-9a-f]{64}", candidate_binding) is None:
+        raise TemplateIdentityUnavailable("candidate binding is required before template use")
+    return candidate_binding
+
+
+def _tag_register_digest(record):
+    payload = {
+        "version": record["version"],
+        "sequence": record["sequence"],
+        "database_tag": record["database_tag"],
+        "evidence_root": record["evidence_root"],
+        "previous_sha256": record["previous_sha256"],
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def register_database_tag(path, database_tag, evidence_root):
+    """Apply TU1-T1: bind one launch tag to one evidence root in the staging register."""
+    if not isinstance(database_tag, str) or re.fullmatch(r"[a-z0-9]{1,8}", database_tag) is None:
+        raise TemplateIdentityUnavailable("database tag is invalid")
+    if not isinstance(evidence_root, str) or re.fullmatch(r"PKTB_[A-Z0-9_]{1,24}", evidence_root) is None:
+        raise TemplateIdentityUnavailable("evidence root is invalid")
+    destination = Path(path)
+    if not destination.parent.is_dir() or destination.is_symlink():
+        raise TemplateReceiptInvalid("database tag register path is absent or symbolic")
+    with open(destination, "a+", encoding="utf-8", newline="\n") as register:
+        if os.name == "nt":
+            import msvcrt
+
+            register.seek(0)
+            try:
+                msvcrt.locking(register.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise RuntimeError("database tag register is locked; launch refused") from exc
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(register.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise RuntimeError("database tag register is locked; launch refused") from exc
+        try:
+            register.seek(0)
+            raw = register.read()
+            if raw and not raw.endswith("\n"):
+                raise TemplateReceiptInvalid("database tag register ends with a partial record")
+            entries = []
+            previous = "0" * 64
+            for number, line in enumerate(raw.splitlines(), 1):
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise TemplateReceiptInvalid("database tag register line %d is invalid JSON" % number) from exc
+                if (
+                    not isinstance(record, dict)
+                    or set(record) != {
+                        "version", "sequence", "database_tag", "evidence_root",
+                        "previous_sha256", "record_sha256",
+                    }
+                    or type(record.get("version")) is not int
+                    or record.get("version") != 1
+                    or type(record.get("sequence")) is not int
+                    or record.get("sequence") != number
+                    or not isinstance(record.get("database_tag"), str)
+                    or not isinstance(record.get("evidence_root"), str)
+                    or not isinstance(record.get("previous_sha256"), str)
+                    or not isinstance(record.get("record_sha256"), str)
+                    or record.get("previous_sha256") != previous
+                    or record.get("record_sha256") != _tag_register_digest(record)
+                    or re.fullmatch(r"[a-z0-9]{1,8}", str(record.get("database_tag", ""))) is None
+                    or re.fullmatch(r"PKTB_[A-Z0-9_]{1,24}", str(record.get("evidence_root", ""))) is None
+                ):
+                    raise TemplateReceiptInvalid("database tag register hash chain is invalid at line %d" % number)
+                entries.append(record)
+                previous = record["record_sha256"]
+
+            tag_roots = {entry["database_tag"]: entry["evidence_root"] for entry in entries}
+            root_tags = {entry["evidence_root"]: entry["database_tag"] for entry in entries}
+            if len(tag_roots) != len(entries) or len(root_tags) != len(entries):
+                raise TemplateReceiptInvalid("database tag register contains duplicate bindings")
+            prior_root = tag_roots.get(database_tag)
+            prior_tag = root_tags.get(evidence_root)
+            if (prior_root is not None and prior_root != evidence_root) or (
+                prior_tag is not None and prior_tag != database_tag
+            ):
+                raise RuntimeError("database tag or evidence root is already bound differently; launch refused")
+            if prior_root is None and prior_tag is None:
+                record = {
+                    "version": 1,
+                    "sequence": len(entries) + 1,
+                    "database_tag": database_tag,
+                    "evidence_root": evidence_root,
+                    "previous_sha256": previous,
+                }
+                record["record_sha256"] = _tag_register_digest(record)
+                register.seek(0, os.SEEK_END)
+                register.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+                register.flush()
+                os.fsync(register.fileno())
+                status = "BOUND"
+            else:
+                status = "EXISTING"
+            register.seek(0)
+            digest = hashlib.sha256(register.read().encode("utf-8")).hexdigest()
+            return {"status": status, "sha256": digest}
+        finally:
+            if os.name == "nt":
+                register.seek(0)
+                msvcrt.locking(register.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(register.fileno(), fcntl.LOCK_UN)
 
 
 def canonical_listing(lines):
@@ -298,14 +428,29 @@ def complete_identity(lines):
     return canonical_listing(lines)
 
 
-def template_database_name(identity):
-    namespace = _required_template_namespace()
+def _template_database_name(identity, namespace, tag):
     if not re.fullmatch(r"[0-9a-f]{64}", identity):
         raise TemplateIdentityUnavailable("template identity must be 64 lowercase hexadecimal characters")
-    return "test_intevia_tpl_" + namespace + "_" + identity[:43]
+    if namespace not in {"me", "vr"}:
+        raise TemplateNamespaceUnavailable("template namespace must be 'me' or 'vr'")
+    if re.fullmatch(r"[a-z0-9]{1,8}", tag) is None:
+        raise TemplateIdentityUnavailable("database tag is invalid")
+    # TU1-T1: bind the bounded name to its registered unit tag while retaining at least 32 identity characters.
+    name = "test_intevia_tpl_" + namespace + "_" + tag + "_" + identity[:32]
+    if len(name.encode("ascii")) > 63:
+        raise TemplateIdentityUnavailable("unit-bound template name exceeds PostgreSQL's 63-byte limit")
+    return name
 
 
-def validate_template_receipt(receipt, expected_identity=None):
+def template_database_name(identity):
+    return _template_database_name(
+        identity, _required_template_namespace(), _required_database_tag()
+    )
+
+
+def validate_template_receipt(receipt, expected_identity=None, namespace=None):
+    if not isinstance(receipt, dict):
+        raise TemplateReceiptInvalid("template receipt is not a JSON object")
     listing = receipt.get("listing")
     identity = receipt.get("identity")
     if not isinstance(listing, str) or not isinstance(identity, str):
@@ -316,11 +461,38 @@ def validate_template_receipt(receipt, expected_identity=None):
         raise TemplateReceiptInvalid("template receipt listing is not canonical") from exc
     if canonical != listing or computed_identity != identity:
         raise TemplateReceiptInvalid("template receipt listing does not match its identity")
-    if receipt.get("name") != template_database_name(identity):
+    receipt_namespace = _required_template_namespace() if namespace is None else namespace
+    if receipt.get("name") != _template_database_name(
+        identity, receipt_namespace, _required_database_tag()
+    ):
         raise TemplateReceiptInvalid("template receipt name does not match the bounded identity name")
+    if receipt.get("database_tag") != _required_database_tag():
+        raise TemplateReceiptInvalid("template receipt belongs to a different database tag")
+    if receipt.get("evidence_root") != _required_evidence_root():
+        raise TemplateReceiptInvalid("template receipt belongs to a different evidence root")
+    if not isinstance(receipt.get("run_nonce"), str) or re.fullmatch(
+        r"[0-9a-f]{32}", receipt["run_nonce"]
+    ) is None:
+        raise TemplateReceiptInvalid("template receipt has no valid owning run nonce")
+    if not isinstance(receipt.get("candidate_binding"), str) or re.fullmatch(
+        r"[0-9a-f]{64}", receipt["candidate_binding"]
+    ) is None:
+        raise TemplateReceiptInvalid("template receipt has no valid candidate binding")
+    build_intent = receipt.get("build_intent")
+    if (
+        not isinstance(build_intent, dict)
+        or set(build_intent) != {"path", "identity", "run_nonce", "database_oid"}
+        or not isinstance(build_intent.get("path"), str)
+        or not build_intent["path"]
+        or build_intent.get("identity") != identity
+        or build_intent.get("run_nonce") != receipt["run_nonce"]
+        or type(build_intent.get("database_oid")) is not int
+        or build_intent.get("database_oid") != receipt["oid"]
+    ):
+        raise TemplateReceiptInvalid("template receipt does not identify its completed build intent")
     if expected_identity is not None and identity != expected_identity:
         raise TemplateReceiptInvalid("template name prefix is associated with a different full identity")
-    if not isinstance(receipt.get("oid"), int) or receipt["oid"] <= 0:
+    if type(receipt.get("oid")) is not int or receipt["oid"] <= 0:
         raise TemplateReceiptInvalid("template receipt has no valid database OID")
     return True
 
@@ -329,7 +501,7 @@ def template_receipt_path(store, identity):
     return Path(store) / (template_database_name(identity) + ".json")
 
 
-def read_template_receipt(path, expected_identity=None):
+def read_template_receipt(path, expected_identity=None, namespace=None):
     try:
         with open(path, encoding="utf-8") as receipt_file:
             receipt = json.load(receipt_file)
@@ -337,7 +509,7 @@ def read_template_receipt(path, expected_identity=None):
         return None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise TemplateReceiptInvalid("template receipt cannot be read") from exc
-    validate_template_receipt(receipt, expected_identity)
+    validate_template_receipt(receipt, expected_identity, namespace)
     return receipt
 
 
@@ -352,6 +524,12 @@ def _database_record(connection, name):
         row = cursor.fetchone()
     if row is None:
         return None
+    with connection.creation._nodb_cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) FROM pg_stat_activity WHERE datid = %s AND pid <> pg_backend_pid()",
+            [int(row[0])],
+        )
+        active_connections = int(cursor.fetchone()[0])
     return {
         "oid": int(row[0]),
         "owner": row[1],
@@ -360,13 +538,17 @@ def _database_record(connection, name):
         "lc_ctype": row[4],
         "allow_connections": bool(row[5]),
         "is_template": bool(row[6]),
+        "active_connections": active_connections,
     }
 
 
-def verify_registered_template(connection, receipt, expected_identity, expected_listing):
-    validate_template_receipt(receipt, expected_identity)
+def verify_registered_template(connection, receipt, expected_identity, expected_listing, namespace=None):
+    validate_template_receipt(receipt, expected_identity, namespace)
+    if receipt.get("destroyed") is not None:
+        raise TemplateReceiptInvalid("template receipt was already consumed by cleanup")
     if receipt["listing"] != expected_listing:
         raise TemplateReceiptInvalid("template receipt listing differs from current identity inputs")
+    _verify_template_build_intent(receipt)
     database = _database_record(connection, receipt["name"])
     if database is None or database["oid"] != receipt["oid"]:
         raise TemplateReceiptInvalid("template database is absent or its OID differs from the receipt")
@@ -385,6 +567,57 @@ def verify_registered_template(connection, receipt, expected_identity, expected_
     return database
 
 
+def _verify_template_build_intent(receipt):
+    reference = receipt["build_intent"]
+    evidence_root_path = os.environ.get("INTEVIA_EVIDENCE_ROOT_PATH")
+    if not evidence_root_path or not _path_is_within(reference["path"], evidence_root_path):
+        raise TemplateReceiptInvalid("template build intent is outside the authorized evidence root")
+    try:
+        with open(reference["path"], encoding="utf-8") as intent_file:
+            intent = json.load(intent_file)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise TemplateReceiptInvalid("template receipt's build intent cannot be read") from exc
+    if (
+        not isinstance(intent, dict)
+        or type(intent.get("version")) is not int
+        or intent.get("version") != 1
+        or intent.get("database_tag") != receipt["database_tag"]
+        or intent.get("evidence_root") != receipt["evidence_root"]
+        or intent.get("namespace") != _template_namespace_from_name(receipt["name"])
+        or intent.get("run_nonce") != reference["run_nonce"]
+        or intent.get("identity") != reference["identity"]
+        or intent.get("database_oid") != reference["database_oid"]
+        or intent.get("target_name") != receipt["name"]
+        or intent.get("candidate_binding") != receipt["candidate_binding"]
+        or intent.get("stage") not in {
+            "TEMPLATE_FLAGGED", "TEMPLATE_FLAG_UNAVAILABLE", "FINAL_RECEIPT",
+            "ATTEMPT_RECEIPT", "COMPLETE",
+        }
+        or not isinstance(intent.get("attempt_receipt_path"), str)
+        or not _path_is_within(intent.get("attempt_receipt_path"), evidence_root_path)
+    ):
+        raise TemplateReceiptInvalid("template receipt does not match its completed build intent")
+    records = _read_attempt_records(intent.get("attempt_receipt_path"), reference["run_nonce"])
+    has_create_attempt = _has_matching_template_create_attempt(records, intent)
+    oid_witnesses = [
+        record for record in records
+        if record.get("event") in {
+            "template_database_created", "template_database_renamed", "template_created",
+        }
+        and record.get("name") == receipt["name"]
+        and record.get("oid") == receipt["oid"]
+    ]
+    if not has_create_attempt or not oid_witnesses:
+        raise TemplateReceiptInvalid("template build attempt records do not corroborate the final receipt")
+
+
+def _template_namespace_from_name(name):
+    match = re.fullmatch(r"test_intevia_tpl_(me|vr)_[a-z0-9]{1,8}_[0-9a-f]{32}", str(name))
+    if match is None:
+        raise TemplateReceiptInvalid("template receipt name has no recognized namespace")
+    return match.group(1)
+
+
 def _listing_value(listing, key):
     prefix = key + "="
     values = [line[len(prefix):] for line in listing.splitlines() if line.startswith(prefix)]
@@ -395,12 +628,265 @@ def _listing_value(listing, key):
 
 def _write_template_receipt(path, receipt):
     validate_template_receipt(receipt, receipt["identity"])
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x", encoding="utf-8", newline="\n") as receipt_file:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = str(path) + ".tmp." + receipt["run_nonce"]
+    with open(temporary, "x", encoding="utf-8", newline="\n") as receipt_file:
         json.dump(receipt, receipt_file, ensure_ascii=True, separators=(",", ":"))
         receipt_file.write("\n")
         receipt_file.flush()
         os.fsync(receipt_file.fileno())
+    if path.exists():
+        raise TemplateNameCollision("template receipt appeared before atomic publication")
+    os.replace(temporary, path)
+
+
+def _write_build_intent(path, intent):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = str(path) + ".tmp." + intent["run_nonce"]
+    with open(temporary, "w", encoding="utf-8", newline="\n") as intent_file:
+        json.dump(intent, intent_file, ensure_ascii=True, separators=(",", ":"))
+        intent_file.write("\n")
+        intent_file.flush()
+        os.fsync(intent_file.fileno())
+    os.replace(temporary, path)
+
+
+def _set_build_stage(path, intent, stage, transition_hook=None):
+    intent["stage"] = stage
+    _write_build_intent(path, intent)
+    if transition_hook is not None:
+        transition_hook(stage, dict(intent))
+
+
+def _read_attempt_records(path, nonce):
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise TemplateReceiptInvalid("build attempt records cannot be read") from exc
+    records = []
+    for number, line in enumerate(lines, 1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise TemplateReceiptInvalid("build attempt record %d is not JSON" % number) from exc
+        if not isinstance(record, dict) or record.get("run_nonce") != nonce:
+            raise TemplateReceiptInvalid("build attempt record belongs to a different run nonce")
+        records.append(record)
+    return records
+
+
+def _has_matching_template_create_attempt(records, intent):
+    matching = [
+        record for record in records
+        if isinstance(record, dict)
+        and record.get("event") == "template_create_attempt"
+        and record.get("name") == intent.get("bootstrap_name")
+        and record.get("unit_tag") == intent.get("database_tag")
+        and record.get("evidence_root") == intent.get("evidence_root")
+        and record.get("run_nonce") == intent.get("run_nonce")
+    ]
+    if not matching or any(record.get("template") is not None for record in matching):
+        return False
+    stable_records = {
+        json.dumps(
+            {key: value for key, value in record.items() if key not in {"at", "pid"}},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for record in matching
+    }
+    return len(stable_records) == 1
+
+
+def _path_is_within(path, root):
+    if not isinstance(path, (str, os.PathLike)) or not path:
+        return False
+    try:
+        resolved_path = str(Path(path).resolve())
+        resolved_root = str(Path(root).resolve())
+        return os.path.normcase(os.path.commonpath([resolved_path, resolved_root])) == os.path.normcase(
+            resolved_root
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _validate_receipt_store(receipt, receipt_path):
+    intent_path = Path(receipt["build_intent"]["path"]).resolve()
+    if intent_path.parent.name != "template-build-intents":
+        raise TemplateReceiptInvalid("template build intent is not in its owning store")
+    owning_store = intent_path.parent.parent
+    resolved_receipt = Path(receipt_path).resolve()
+    if (
+        resolved_receipt.name != receipt["name"] + ".json"
+        or resolved_receipt.parent != owning_store
+    ):
+        raise TemplateReceiptInvalid("template receipt is not in its owning store")
+
+
+def _resolve_build_intent(intent_path, connection, evidence_root_path):
+    try:
+        intent = json.loads(Path(intent_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise TemplateReceiptInvalid("template build intent cannot be read") from exc
+    if (
+        not isinstance(intent, dict)
+        or type(intent.get("version")) is not int
+        or intent.get("version") != 1
+        or intent.get("database_tag") != _required_database_tag()
+        or intent.get("evidence_root") != _required_evidence_root()
+        or not isinstance(intent.get("run_nonce"), str)
+        or re.fullmatch(r"[0-9a-f]{32}", intent["run_nonce"]) is None
+    ):
+        raise TemplateReceiptInvalid("template build intent does not belong to this unit")
+    nonce = intent["run_nonce"]
+    database_tag = _required_database_tag()
+    namespace = intent.get("namespace")
+    if namespace not in {"me", "vr"}:
+        raise TemplateReceiptInvalid("template build intent has an invalid namespace")
+    if intent.get("bootstrap_name") != "test_intevia_boot_%s_%s" % (database_tag, nonce):
+        raise TemplateReceiptInvalid("template build bootstrap name is not derived from its unit nonce")
+    if not isinstance(intent.get("candidate_binding"), str) or re.fullmatch(
+        r"[0-9a-f]{64}", intent["candidate_binding"]
+    ) is None:
+        raise TemplateReceiptInvalid("template build intent has no valid candidate binding")
+    if not _path_is_within(intent.get("attempt_receipt_path", ""), evidence_root_path):
+        raise TemplateReceiptInvalid("template build attempt records are outside the authorized evidence root")
+    if intent.get("target_name") is None:
+        if intent.get("identity") is not None or intent.get("receipt_path") is not None:
+            raise TemplateReceiptInvalid("template build intent has a partial target identity")
+    elif (
+        not isinstance(intent.get("identity"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", intent["identity"]) is None
+        or intent.get("target_name") != _template_database_name(
+            intent["identity"], namespace, database_tag
+        )
+        or not _path_is_within(intent.get("receipt_path", ""), evidence_root_path)
+    ):
+        raise TemplateReceiptInvalid("template build target is not bound to its full identity and evidence root")
+    if intent.get("database_oid") is not None and (
+        type(intent["database_oid"]) is not int or intent["database_oid"] <= 0
+    ):
+        raise TemplateReceiptInvalid("template build intent has an invalid database OID")
+    if intent.get("stage") not in {
+        "INTENT_WRITTEN", "BOOTSTRAP_CREATED", "MIGRATED", "RENAME_PENDING",
+        "RENAMED", "SEALED", "TEMPLATE_FLAGGED", "TEMPLATE_FLAG_UNAVAILABLE",
+        "FINAL_RECEIPT", "ATTEMPT_RECEIPT", "COMPLETE", "RECOVERED_ABSENT",
+    }:
+        raise TemplateReceiptInvalid("template build intent has no lifecycle stage")
+    if intent.get("stage") in {"COMPLETE", "RECOVERED_ABSENT"}:
+        return intent
+
+    names = [intent["bootstrap_name"]]
+    if intent.get("target_name"):
+        names.append(intent["target_name"])
+    databases = [(name, _database_record(connection, name)) for name in names]
+    present = [(name, database) for name, database in databases if database is not None]
+    if not present:
+        intent["stage"] = "RECOVERED_ABSENT"
+        _write_build_intent(intent_path, intent)
+        return intent
+
+    records = _read_attempt_records(intent["attempt_receipt_path"], nonce)
+    if not _has_matching_template_create_attempt(records, intent):
+        raise TemplateReceiptInvalid("template build intent has no matching create-attempt witness")
+
+    if len(present) != 1:
+        bootstrap = next((database for name, database in present if name == intent["bootstrap_name"]), None)
+        target = next((database for name, database in present if name == intent.get("target_name")), None)
+        receipt_path = intent.get("receipt_path")
+        if bootstrap is None or target is None or not receipt_path or not Path(receipt_path).is_file():
+            raise TemplateReceiptInvalid("more than one catalog database matches a template build intent")
+        receipt = read_template_receipt(receipt_path, intent.get("identity"), namespace)
+        if receipt is None or receipt["name"] != intent["target_name"] or receipt["oid"] != target["oid"]:
+            raise TemplateReceiptInvalid("existing target database has no matching final receipt")
+        verify_registered_template(connection, receipt, intent["identity"], receipt["listing"], namespace)
+        if intent.get("database_oid") is not None and intent["database_oid"] != bootstrap["oid"]:
+            raise TemplateReceiptInvalid("bootstrap OID differs from the interrupted reuse intent")
+        if _drop_database_by_oid(
+            connection, intent["bootstrap_name"], bootstrap["oid"], clear_is_template=True
+        ) is not True:
+            raise TemplateReceiptInvalid("interrupted reuse bootstrap cleanup was not confirmed")
+        intent["stage"] = "COMPLETE"
+        _write_build_intent(intent_path, intent)
+        _attempt_receipt(
+            "template_bootstrap_destroyed",
+            name=intent["bootstrap_name"],
+            oid=bootstrap["oid"],
+            confirmed_absent=True,
+        )
+        return intent
+
+    name, database = present[0]
+    oid = database["oid"]
+    receipt_path = intent.get("receipt_path")
+    receipt = None
+    if name == intent.get("target_name") and receipt_path and Path(receipt_path).is_file():
+        receipt = read_template_receipt(
+            receipt_path, intent.get("identity"), namespace
+        )
+        if receipt is not None:
+            receipt_intent_is_current = (
+                Path(receipt["build_intent"]["path"]).resolve() == Path(intent_path).resolve()
+            )
+            if (
+                receipt["name"] != name
+                or receipt["oid"] != oid
+                or (receipt_intent_is_current and (
+                    receipt["run_nonce"] != intent["run_nonce"]
+                    or receipt.get("candidate_binding") != intent["candidate_binding"]
+                ))
+            ):
+                raise TemplateReceiptInvalid("final template receipt does not match the catalog database")
+            _validate_receipt_store(receipt, receipt_path)
+            verify_registered_template(
+                connection, receipt, intent.get("identity"), receipt["listing"], namespace
+            )
+            return intent
+
+    if intent.get("database_oid") is not None and int(intent["database_oid"]) != oid:
+        raise TemplateReceiptInvalid("template build catalog OID differs from its intent")
+    witnessed_oids = []
+    for record in records:
+        if record.get("event") in {
+            "template_database_created", "template_database_renamed",
+        } and record.get("name") in names:
+            if type(record.get("oid")) is not int or record["oid"] <= 0:
+                raise TemplateReceiptInvalid("template build attempt contains an invalid catalog OID")
+            witnessed_oids.append(record["oid"])
+    if any(witnessed_oid != oid for witnessed_oid in witnessed_oids):
+        raise TemplateReceiptInvalid("template build attempt OID differs from the catalog")
+
+    # TU1-T2: recovery drops only the catalog OID corroborated by this unit's intent and attempt witness.
+    absent = _drop_database_by_oid(connection, name, oid, clear_is_template=True)
+    if not absent:
+        raise TemplateReceiptInvalid("recovery could not confirm absence of the owned template build")
+    intent["stage"] = "RECOVERED_ABSENT"
+    _write_build_intent(intent_path, intent)
+    _attempt_receipt(
+        "template_build_recovered",
+        name=name,
+        oid=oid,
+        recovery="OWNED_INCOMPLETE_DATABASE_REMOVED",
+        source_run_nonce=intent["run_nonce"],
+        confirmed_absent=True,
+    )
+    return intent
+
+
+def recover_template_builds(connection, evidence_root_path):
+    root = Path(evidence_root_path).resolve()
+    if not root.is_dir():
+        raise TemplateReceiptInvalid("authorized evidence root is absent during build recovery")
+    expected_root = _required_evidence_root()
+    if root.name != expected_root:
+        raise TemplateReceiptInvalid("build recovery evidence root does not match the authorized unit")
+    intents = sorted(root.glob("**/template-build-intents/*.json"))
+    if any(not _path_is_within(path, root) for path in intents):
+        raise TemplateReceiptInvalid("template build intent path is outside the authorized evidence root")
+    return [_resolve_build_intent(path, connection, root) for path in intents]
 
 
 def _archive_absent_template_receipt(connection, path, receipt, identity):
@@ -437,7 +923,14 @@ def _create_database(connection, name, template_name=None):
     if record is not None:
         raise TemplateNameCollision("database name %s already exists" % name)
     quote = connection.ops.quote_name
-    _attempt_receipt("template_create_attempt", name=name, template=template_name)
+    _attempt_receipt(
+        "template_create_attempt",
+        name=name,
+        template=template_name,
+        unit_tag=_required_database_tag(),
+        evidence_root=_required_evidence_root(),
+        run_nonce=os.environ["VERIFICATION_RUN_NONCE"],
+    )
     statement = "CREATE DATABASE %s%s" % (quote(name), connection.creation.sql_table_creation_suffix())
     if template_name:
         statement += " TEMPLATE %s" % quote(template_name)
@@ -451,6 +944,8 @@ def _create_database(connection, name, template_name=None):
 
 
 def _drop_database_by_oid(connection, name, oid, clear_is_template=False):
+    from django.db import DatabaseError
+
     record = _database_record(connection, name)
     if record is None:
         return True
@@ -458,10 +953,37 @@ def _drop_database_by_oid(connection, name, oid, clear_is_template=False):
         raise TemplateReceiptInvalid("refusing to drop %s: current OID differs from its receipt" % name)
     quote = connection.ops.quote_name
     with connection.creation._nodb_cursor() as cursor:
-        if clear_is_template and record["is_template"]:
+        if record["allow_connections"]:
+            cursor.execute("ALTER DATABASE %s WITH ALLOW_CONNECTIONS false" % quote(name))
+    current = _database_record(connection, name)
+    if current is None or current["oid"] != oid:
+        raise TemplateReceiptInvalid("database changed while cleanup was closing access")
+    if current["active_connections"]:
+        if record["allow_connections"]:
+            with connection.creation._nodb_cursor() as cursor:
+                cursor.execute("ALTER DATABASE %s WITH ALLOW_CONNECTIONS true" % quote(name))
+        raise TemplateReceiptInvalid("refusing to remove a database with active sessions")
+
+    def restore_original_flags():
+        with connection.creation._nodb_cursor() as cursor:
+            if clear_is_template and record["is_template"]:
+                cursor.execute("ALTER DATABASE %s WITH IS_TEMPLATE true" % quote(name))
+            if record["allow_connections"]:
+                cursor.execute("ALTER DATABASE %s WITH ALLOW_CONNECTIONS true" % quote(name))
+
+    if clear_is_template and record["is_template"]:
+        with connection.creation._nodb_cursor() as cursor:
             cursor.execute("ALTER DATABASE %s WITH IS_TEMPLATE false" % quote(name))
-        cursor.execute("DROP DATABASE %s" % quote(name))
-    return _database_record(connection, name) is None
+    try:
+        with connection.creation._nodb_cursor() as cursor:
+            cursor.execute("DROP DATABASE %s" % quote(name))
+    except DatabaseError as exc:
+        restore_original_flags()
+        raise TemplateReceiptInvalid("database is still in use; cleanup refused") from exc
+    if _database_record(connection, name) is None:
+        return True
+    restore_original_flags()
+    return False
 
 
 def _migrate_build_database(connection, alias, name):
@@ -506,7 +1028,7 @@ def _connection_error_details(exc, parameters):
 
 
 def _refuse_template_connections(connection, name, template_oid):
-    control_name = "test_intevia_ctl_" + uuid.uuid4().hex[:20]
+    control_name = "test_intevia_ctl_" + _required_database_tag() + "_" + uuid.uuid4().hex[:20]
     control_database = _create_database(connection, control_name)
     control_connection = None
     catalog_connection = None
@@ -591,105 +1113,156 @@ def _refuse_template_connections(connection, name, template_oid):
             raise TemplateReceiptInvalid("owned control database cleanup was not confirmed")
 
 
-def _build_template(connection, alias, store, source_lines):
+def _build_template(connection, alias, store, source_lines, transition_hook=None):
     from django.conf import settings
 
     nonce = os.environ["VERIFICATION_RUN_NONCE"]
+    if re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+        raise TemplateIdentityUnavailable("VERIFICATION_RUN_NONCE must be a 32-character lowercase hex value")
+    database_tag = _required_database_tag()
+    evidence_root = _required_evidence_root()
+    candidate_binding = _required_candidate_binding()
     original_connection_name = connection.settings_dict["NAME"]
     original_settings_name = settings.DATABASES[alias]["NAME"]
-    bootstrap_name = "test_intevia_boot_" + uuid.uuid4().hex[:20]
+    bootstrap_name = "test_intevia_boot_" + database_tag + "_" + nonce
+    attempt_receipt_path = os.environ.get("VERIFICATION_DB_RECEIPT")
+    if not attempt_receipt_path:
+        raise TemplateIdentityUnavailable("attempt receipt path is required before a template build")
+    intent_path = Path(store) / "template-build-intents" / (nonce + ".json")
+    intent = {
+        "version": 1,
+        "namespace": _required_template_namespace(),
+        "database_tag": database_tag,
+        "evidence_root": evidence_root,
+        "run_nonce": nonce,
+        "attempt_receipt_path": attempt_receipt_path,
+        "bootstrap_name": bootstrap_name,
+        "database_oid": None,
+        "target_name": None,
+        "identity": None,
+        "receipt_path": None,
+        "candidate_binding": candidate_binding,
+        "stage": "INTENT_WRITTEN",
+    }
+    # TU1-T2: persist the unit and nonce before creating the bootstrap database.
+    _write_build_intent(intent_path, intent)
+    _attempt_receipt(
+        "template_build_intent",
+        name=bootstrap_name,
+        unit_tag=database_tag,
+        evidence_root=evidence_root,
+        intent=str(intent_path),
+        run_nonce=nonce,
+    )
+    if transition_hook is not None:
+        transition_hook("INTENT_WRITTEN", dict(intent))
+
     bootstrap = _create_database(connection, bootstrap_name)
-    working_name = bootstrap_name
-    retained = False
-    target_path = None
-    target_identity = None
-    template_receipt_written = False
+    intent["database_oid"] = bootstrap["oid"]
+    _set_build_stage(intent_path, intent, "BOOTSTRAP_CREATED", transition_hook)
+
+    _, cp0_digest, runtime_lines = _migrate_build_database(connection, alias, bootstrap_name)
+    listing, identity = complete_identity(source_lines + runtime_lines)
+    target_name = template_database_name(identity)
+    target_path = template_receipt_path(store, identity)
+    intent.update(identity=identity, target_name=target_name, receipt_path=str(target_path))
+    _set_build_stage(intent_path, intent, "MIGRATED", transition_hook)
+
+    existing_database = _database_record(connection, target_name)
+    existing_receipt = read_template_receipt(target_path)
+    if existing_database is not None:
+        if existing_receipt is None:
+            raise TemplateNameCollision("bounded template name exists without an identity receipt")
+        _validate_receipt_store(existing_receipt, target_path)
+        validate_template_receipt(existing_receipt, identity)
+        verify_registered_template(connection, existing_receipt, identity, listing)
+        if not _drop_database_by_oid(connection, bootstrap_name, bootstrap["oid"]):
+            raise TemplateReceiptInvalid("temporary build database cleanup was not confirmed")
+        _attempt_receipt("template_bootstrap_destroyed", name=bootstrap_name, oid=bootstrap["oid"],
+                         confirmed_absent=True)
+        _set_build_stage(intent_path, intent, "COMPLETE", transition_hook)
+        return existing_receipt, False
+    if existing_receipt is not None:
+        raise TemplateNameCollision("template receipt exists but its database is absent")
+
+    quote = connection.ops.quote_name
+    _set_build_stage(intent_path, intent, "RENAME_PENDING", transition_hook)
+    with connection.creation._nodb_cursor() as cursor:
+        cursor.execute("ALTER DATABASE %s RENAME TO %s" % (quote(bootstrap_name), quote(target_name)))
+    _attempt_receipt(
+        "template_database_renamed",
+        name=target_name,
+        previous_name=bootstrap_name,
+        oid=bootstrap["oid"],
+        unit_tag=database_tag,
+        evidence_root=evidence_root,
+    )
+    _set_build_stage(intent_path, intent, "RENAMED", transition_hook)
+
     try:
-        _, cp0_digest, runtime_lines = _migrate_build_database(connection, alias, bootstrap_name)
-        listing, identity = complete_identity(source_lines + runtime_lines)
-        target_identity = identity
-        target_name = template_database_name(identity)
-        target_path = template_receipt_path(store, identity)
-        existing_database = _database_record(connection, target_name)
-        existing_receipt = read_template_receipt(target_path)
-        if existing_database is not None:
-            if existing_receipt is None:
-                raise TemplateNameCollision("bounded template name exists without an identity receipt")
-            validate_template_receipt(existing_receipt, identity)
-            verify_registered_template(connection, existing_receipt, identity, listing)
-            if not _drop_database_by_oid(connection, bootstrap_name, bootstrap["oid"]):
-                raise TemplateReceiptInvalid("temporary build database cleanup was not confirmed")
-            _attempt_receipt("template_bootstrap_destroyed", name=bootstrap_name, oid=bootstrap["oid"],
-                             confirmed_absent=True)
-            retained = True
-            return existing_receipt, False
-        if existing_receipt is not None:
-            raise TemplateNameCollision("template receipt exists but its database is absent")
-
-        quote = connection.ops.quote_name
         with connection.creation._nodb_cursor() as cursor:
-            cursor.execute("ALTER DATABASE %s RENAME TO %s" % (quote(bootstrap_name), quote(target_name)))
-        working_name = target_name
-        try:
-            with connection.creation._nodb_cursor() as cursor:
-                cursor.execute("ALTER DATABASE %s WITH ALLOW_CONNECTIONS false" % quote(target_name))
-        except Exception:
-            raise TemplateSealingRefused("role could not set required ALLOW_CONNECTIONS false seal") from None
+            cursor.execute("ALTER DATABASE %s WITH ALLOW_CONNECTIONS false" % quote(target_name))
+    except Exception:
+        raise TemplateSealingRefused("role could not set required ALLOW_CONNECTIONS false seal") from None
+    _attempt_receipt("template_database_sealed", name=target_name, oid=bootstrap["oid"],
+                     unit_tag=database_tag, evidence_root=evidence_root)
+    _set_build_stage(intent_path, intent, "SEALED", transition_hook)
 
-        is_template = False
-        try:
-            with connection.creation._nodb_cursor() as cursor:
-                cursor.execute("ALTER DATABASE %s WITH IS_TEMPLATE true" % quote(target_name))
-            is_template = True
-        except Exception as exc:
-            _attempt_receipt("template_is_template_unavailable", name=target_name,
-                             error_type=type(exc).__name__)
+    is_template = False
+    try:
+        with connection.creation._nodb_cursor() as cursor:
+            cursor.execute("ALTER DATABASE %s WITH IS_TEMPLATE true" % quote(target_name))
+        is_template = True
+    except Exception as exc:
+        _attempt_receipt("template_is_template_unavailable", name=target_name,
+                         error_type=type(exc).__name__)
+    _set_build_stage(intent_path, intent, "TEMPLATE_FLAGGED" if is_template else "TEMPLATE_FLAG_UNAVAILABLE",
+                     transition_hook)
 
-        database = _database_record(connection, target_name)
-        if database is None or database["oid"] != bootstrap["oid"] or database["allow_connections"]:
-            raise TemplateSealingRefused("template ALLOW_CONNECTIONS seal was not established")
-        refusal_witness = _refuse_template_connections(connection, target_name, database["oid"])
-        receipt = {
+    database = _database_record(connection, target_name)
+    if database is None or database["oid"] != bootstrap["oid"] or database["allow_connections"]:
+        raise TemplateSealingRefused("template ALLOW_CONNECTIONS seal was not established")
+    refusal_witness = _refuse_template_connections(connection, target_name, database["oid"])
+    receipt = {
+        "identity": identity,
+        "listing": listing,
+        "name": target_name,
+        "oid": database["oid"],
+        "run_nonce": nonce,
+        "build_intent": {
+            "path": str(intent_path),
             "identity": identity,
-            "listing": listing,
-            "name": target_name,
-            "oid": database["oid"],
             "run_nonce": nonce,
-            "cp0_digest": cp0_digest,
-            "fresh_build_cp0_digest": cp0_digest,
-            "allow_connections": False,
-            "is_template": is_template,
-        }
-        receipt.update(refusal_witness)
-        _write_template_receipt(target_path, receipt)
-        template_receipt_written = True
-        _attempt_receipt("template_created", name=target_name, oid=database["oid"], identity=identity,
-                         receipt=str(target_path), cp0_digest=cp0_digest,
-                         allow_connections=False, is_template=is_template,
-                 connection_refused=refusal_witness["connection_refused"],
-                 catalog_datallowconn=refusal_witness["connection_refusal_catalog_datallowconn"],
-                 control_connected=refusal_witness["connection_refusal_control_connected"])
-        retained = True
-        return receipt, True
-    finally:
-        if not retained:
-            connection.close()
-            settings.DATABASES[alias]["NAME"] = original_settings_name
-            connection.settings_dict["NAME"] = original_connection_name
-            absent = _drop_database_by_oid(connection, working_name, bootstrap["oid"], clear_is_template=True)
-            _attempt_receipt("template_build_database_destroyed", name=working_name, oid=bootstrap["oid"],
-                             confirmed_absent=absent)
-            if not absent:
-                raise TemplateReceiptInvalid("template build database cleanup was not confirmed")
-            if template_receipt_written:
-                written_receipt = read_template_receipt(target_path, target_identity)
-                if written_receipt is None or written_receipt["oid"] != bootstrap["oid"]:
-                    raise TemplateReceiptInvalid("new template receipt does not match the destroyed build OID")
-                _archive_absent_template_receipt(connection, target_path, written_receipt, target_identity)
+            "database_oid": bootstrap["oid"],
+        },
+        "database_tag": database_tag,
+        "evidence_root": evidence_root,
+        "candidate_binding": candidate_binding,
+        "cp0_digest": cp0_digest,
+        "fresh_build_cp0_digest": cp0_digest,
+        "allow_connections": False,
+        "is_template": is_template,
+    }
+    receipt.update(refusal_witness)
+    _write_template_receipt(target_path, receipt)
+    _set_build_stage(intent_path, intent, "FINAL_RECEIPT", transition_hook)
+    _attempt_receipt("template_created", name=target_name, oid=database["oid"], identity=identity,
+                     receipt=str(target_path), cp0_digest=cp0_digest,
+                     allow_connections=False, is_template=is_template,
+                     connection_refused=refusal_witness["connection_refused"],
+                     catalog_datallowconn=refusal_witness["connection_refusal_catalog_datallowconn"],
+                     control_connected=refusal_witness["connection_refusal_control_connected"],
+                     unit_tag=database_tag, evidence_root=evidence_root)
+    return receipt, True
 
 
 def prepare_template(connection, alias, store):
     _required_template_namespace()
+    _required_candidate_binding()
+    evidence_root_path = os.environ.get("INTEVIA_EVIDENCE_ROOT_PATH")
+    if not evidence_root_path:
+        raise TemplateIdentityUnavailable("authorized evidence root path is required for template recovery")
+    recover_template_builds(connection, evidence_root_path)
     source_lines = source_input_lines()
     expected_listing, expected_identity = complete_identity(source_lines + runtime_input_lines(connection))
     path = template_receipt_path(store, expected_identity)
@@ -699,16 +1272,31 @@ def prepare_template(connection, alias, store):
         _archive_absent_template_receipt(connection, path, receipt, expected_identity)
         receipt = None
     if receipt is not None:
+        _validate_receipt_store(receipt, path)
         verify_registered_template(connection, receipt, expected_identity, expected_listing)
         return receipt, False
     if _database_record(connection, template_database_name(expected_identity)) is not None:
         raise TemplateNameCollision("bounded template name exists without a matching full-identity receipt")
-    return _build_template(connection, alias, store, source_lines)
+    try:
+        return _build_template(connection, alias, store, source_lines)
+    except Exception:
+        recover_template_builds(connection, evidence_root_path)
+        raise
 
 
 def create_clone_database(connection, template_receipt, test_database_name):
     from verification.ownership import CollisionRefused
 
+    _required_candidate_binding()
+    store = os.environ.get("VERIFICATION_TEMPLATE_STORE")
+    if not store:
+        raise TemplateReceiptInvalid("template store is required to clone its owned database")
+    owning_store = Path(template_receipt["build_intent"]["path"]).resolve().parent.parent
+    if not _path_is_within(str(owning_store), Path(store).resolve()):
+        raise TemplateReceiptInvalid("template receipt is outside the current owning store")
+    _validate_receipt_store(
+        template_receipt, template_receipt_path(owning_store, template_receipt["identity"])
+    )
     listing, identity = collect_template_identity(connection=connection)
     if identity != template_receipt["identity"] or listing != template_receipt["listing"]:
         raise TemplateIdentityUnavailable("current inputs differ from the recorded template identity")
@@ -750,6 +1338,7 @@ def install_clone_creation(creation, template_receipt):
 
 
 def record_final_clone_cp0(receipt_path, identity, clone_digest):
+    _required_candidate_binding()
     receipt = read_template_receipt(receipt_path, identity)
     if receipt is None:
         raise TemplateReceiptInvalid("template receipt is absent while recording final clone CP-0")
@@ -765,38 +1354,148 @@ def record_final_clone_cp0(receipt_path, identity, clone_digest):
     os.replace(temporary, receipt_path)
 
 
+def _write_cleanup_store_record(receipt_path, record):
+    directory = Path(receipt_path).parent / "template-cleanup-records"
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / (record["cleanup_run_nonce"] + ".json")
+    if destination.exists():
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TemplateReceiptInvalid("existing store cleanup record cannot be read") from exc
+        if (
+            not isinstance(existing, dict)
+            or {key: value for key, value in existing.items() if key != "database_absent_before_cleanup"}
+            != {key: value for key, value in record.items() if key != "database_absent_before_cleanup"}
+        ):
+            raise TemplateReceiptInvalid("cleanup run nonce is already bound to a different store record")
+        return destination
+
+    temporary = str(destination) + ".tmp." + uuid.uuid4().hex
+    with open(temporary, "x", encoding="utf-8", newline="\n") as record_file:
+        json.dump(record, record_file, ensure_ascii=True, separators=(",", ":"))
+        record_file.write("\n")
+        record_file.flush()
+        os.fsync(record_file.fileno())
+    try:
+        os.link(temporary, destination)
+    except FileExistsError:
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TemplateReceiptInvalid("concurrent store cleanup record cannot be read") from exc
+        if (
+            not isinstance(existing, dict)
+            or {key: value for key, value in existing.items() if key != "database_absent_before_cleanup"}
+            != {key: value for key, value in record.items() if key != "database_absent_before_cleanup"}
+        ):
+            raise TemplateReceiptInvalid("cleanup run nonce is already bound to a different store record")
+    os.unlink(temporary)
+    return destination
+
+
 def cleanup_template(connection, receipt_path, identity, allow_incomplete_parity=False):
     receipt = read_template_receipt(receipt_path, identity)
     if receipt is None:
         raise TemplateReceiptInvalid("template receipt is absent during cleanup")
     validate_template_receipt(receipt, identity)
+    store = os.environ.get("VERIFICATION_TEMPLATE_STORE")
+    namespace = _required_template_namespace()
+    if (
+        not store
+        or Path(receipt_path).name != template_database_name(identity) + ".json"
+        or not _path_is_within(str(Path(receipt_path).resolve()), Path(store).resolve())
+    ):
+        raise TemplateReceiptInvalid("template receipt is outside the current owning store")
+    _validate_receipt_store(receipt, receipt_path)
+    persisted = read_template_receipt(receipt_path, identity)
+    if persisted != receipt:
+        raise TemplateReceiptInvalid("template receipt changed before cleanup")
+    destroyed = receipt.get("destroyed")
+    if destroyed is not None:
+        if (
+            not isinstance(destroyed, dict)
+            or destroyed.get("oid") != receipt["oid"]
+            or destroyed.get("run_nonce") != receipt["run_nonce"]
+            or destroyed.get("confirmed_absent") is not True
+            or not isinstance(destroyed.get("cleanup_run_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", destroyed["cleanup_run_nonce"]) is None
+            or not _path_is_within(destroyed.get("cleanup_record"), store)
+        ):
+            raise TemplateReceiptInvalid("consumed template receipt has invalid cleanup evidence")
+        try:
+            cleanup_record = json.loads(
+                Path(destroyed["cleanup_record"]).read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TemplateReceiptInvalid("consumed template store record cannot be read") from exc
+        if (
+            not isinstance(cleanup_record, dict)
+            or cleanup_record.get("event") != "template_destroyed"
+            or cleanup_record.get("identity") != identity
+            or cleanup_record.get("name") != receipt["name"]
+            or cleanup_record.get("oid") != receipt["oid"]
+            or cleanup_record.get("created_nonce") != receipt["run_nonce"]
+            or cleanup_record.get("cleanup_run_nonce") != destroyed["cleanup_run_nonce"]
+            or cleanup_record.get("candidate_binding") is None
+            or cleanup_record.get("confirmed_absent") is not True
+        ):
+            raise TemplateReceiptInvalid("consumed template store record does not match its receipt")
+        if _database_record(connection, receipt["name"]) is None:
+            return True
+        raise TemplateReceiptInvalid("consumed template database name is occupied")
+    _verify_template_build_intent(receipt)
     if not receipt.get("connection_refused") or not receipt.get("allow_connections") is False:
         raise TemplateReceiptInvalid("template seal and direct-connection witness are incomplete")
     final_digest = receipt.get("final_clone_cp0_digest")
     if final_digest is not None and final_digest != receipt.get("cp0_digest"):
         raise TemplateReceiptInvalid("final clone CP-0 does not match the template's recorded digest")
-    if final_digest is None and not allow_incomplete_parity:
+    if final_digest is None and (namespace != "me" or not allow_incomplete_parity):
         raise TemplateReceiptInvalid("final clone CP-0 has not been recorded")
+    cleanup_run_nonce = os.environ.get("VERIFICATION_RUN_NONCE")
+    if not isinstance(cleanup_run_nonce, str) or re.fullmatch(r"[0-9a-f]{32}", cleanup_run_nonce) is None:
+        raise TemplateIdentityUnavailable("cleanup run nonce is invalid")
+    cleanup_candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
+    if not isinstance(cleanup_candidate_binding, str) or re.fullmatch(
+        r"[0-9a-f]{64}", cleanup_candidate_binding
+    ) is None:
+        raise TemplateIdentityUnavailable("cleanup candidate binding is invalid")
 
     database = _database_record(connection, receipt["name"])
-    if database is None or database["oid"] != receipt["oid"] or database["allow_connections"]:
+    if database is not None and (
+        database["oid"] != receipt["oid"] or database["allow_connections"]
+    ):
         raise TemplateReceiptInvalid("template OID or sealed state differs from its ownership receipt")
+    # TU1-T3: stop new sessions before checking existing sessions; only then can the owned OID be dropped.
     _attempt_receipt("template_destroy_attempt", name=receipt["name"], oid=receipt["oid"],
                      created_nonce=receipt["run_nonce"], identity=identity)
-    try:
+    if database is not None:
         absent = _drop_database_by_oid(connection, receipt["name"], receipt["oid"], clear_is_template=True)
-    except Exception:
-        raise TemplateReceiptInvalid("template cleanup through its ownership receipt failed") from None
-    if not absent:
+        if not absent:
+            raise TemplateReceiptInvalid("template absence could not be confirmed")
+    elif _database_record(connection, receipt["name"]) is not None:
         raise TemplateReceiptInvalid("template absence could not be confirmed")
 
+    cleanup_record = {
+        "event": "template_destroyed",
+        "identity": identity,
+        "name": receipt["name"],
+        "oid": receipt["oid"],
+        "created_nonce": receipt["run_nonce"],
+        "cleanup_run_nonce": cleanup_run_nonce,
+        "candidate_binding": cleanup_candidate_binding,
+        "confirmed_absent": True,
+        "database_absent_before_cleanup": database is None,
+    }
+    cleanup_record_path = _write_cleanup_store_record(receipt_path, cleanup_record)
     receipt["destroyed"] = {
         "oid": receipt["oid"],
         "run_nonce": receipt["run_nonce"],
-        "cleanup_run_nonce": os.environ["VERIFICATION_RUN_NONCE"],
+        "cleanup_run_nonce": cleanup_run_nonce,
+        "cleanup_record": str(cleanup_record_path),
         "confirmed_absent": True,
     }
-    temporary = str(receipt_path) + ".tmp." + os.environ["VERIFICATION_RUN_NONCE"]
+    temporary = str(receipt_path) + ".tmp." + uuid.uuid4().hex
     with open(temporary, "x", encoding="utf-8", newline="\n") as receipt_file:
         json.dump(receipt, receipt_file, ensure_ascii=True, separators=(",", ":"))
         receipt_file.write("\n")

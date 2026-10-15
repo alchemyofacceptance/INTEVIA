@@ -207,6 +207,9 @@ $environmentNames = @(
     "INTEVIA_RUN_SPEC_SHA256",
     "INTEVIA_RUN_SUFFIX",
     "INTEVIA_CANDIDATE_BINDING_SHA256",
+    "INTEVIA_DATABASE_TAG",
+    "INTEVIA_EVIDENCE_ROOT",
+    "INTEVIA_EVIDENCE_ROOT_PATH",
     "INTEVIA_FRESH_AUTHORITY_FILE",
     "INTEVIA_FRESH_AUTHORITY_SHA256",
     "PYTHONPATH",
@@ -225,6 +228,9 @@ foreach ($name in $environmentNames | Sort-Object -Unique) {
 
 $failure = $null
 $runProblems = [System.Collections.Generic.List[string]]::new()
+$counts = $null
+$summary = $null
+$script:runRecordData = $null
 $setupSeconds = $null
 $templateBuildSeconds = $null
 $templateAction = $null
@@ -506,7 +512,7 @@ function Invoke-PythonAndLog {
 
 function Write-PreRunRefusalRecord {
     param(
-        [Parameter(Mandatory = $true)][string]$RunDirectory,
+        [Parameter(Mandatory = $true)][string]$RecordDirectory,
         [Parameter(Mandatory = $true)][string]$LogPath,
         [Parameter(Mandatory = $true)][string]$RefusalStage,
         [Parameter(Mandatory = $true)][string]$PlanHash,
@@ -535,8 +541,12 @@ function Write-PreRunRefusalRecord {
         tests_executed = 0
         tests_not_reached = [int]$PlanData.tests.Count
         executed_matches_plan = "NOT_STARTED"
+        database_route = [string]$PlanData.database_route
     }
-    $runRecordPath = Join-Path $RunDirectory "run-record.json"
+    if (-not (Test-Path -LiteralPath $RecordDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $RecordDirectory -Force | Out-Null
+    }
+    $runRecordPath = Join-Path $RecordDirectory "run-record.json"
     [System.IO.File]::WriteAllText(
         $runRecordPath,
         (($refusalRecord | ConvertTo-Json -Depth 8) + "`n"),
@@ -544,7 +554,9 @@ function Write-PreRunRefusalRecord {
     )
     $recordLine = "RUN_RECORD_CLASSIFICATION=PRE_RUN_REFUSAL"
     Write-Output $recordLine
+    Write-Output "RUN_RECORD_FILE=$runRecordPath"
     Add-Content -LiteralPath $LogPath -Value $recordLine -Encoding utf8
+    Add-Content -LiteralPath $LogPath -Value "RUN_RECORD_FILE=$runRecordPath" -Encoding utf8
 }
 
 
@@ -596,6 +608,9 @@ try {
     $authorizedState = Get-IntegratedState -StateFile $StateFile -StateSha256 $StateSha256
     $routes = Get-IntegratedEvidenceRoutes -AuthorizedState $authorizedState -HomeDirectory $HOME
     $stageRoot = $routes.DevelopmentRoot
+    $env:INTEVIA_DATABASE_TAG = [string]$authorizedState.DatabaseTag
+    $env:INTEVIA_EVIDENCE_ROOT = [string]$authorizedState.EvidenceRoot
+    $env:INTEVIA_EVIDENCE_ROOT_PATH = [System.IO.Path]::GetFullPath((Split-Path -Parent $stageRoot))
     if ($AttemptNumber -lt 1 -and $RunSuffix) {
         if ($RunSuffix -notmatch "^([1-9][0-9]*)[ab]?$") {
             throw "R5: run suffix is invalid"
@@ -817,12 +832,17 @@ try {
     }
 
     $templateStore = Join-Path $stageRoot "integrated-template-store"
-
-    New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
+    $preRunRoot = Join-Path $stageRoot "pre-run-refusals"
+    New-Item -ItemType Directory -Path $preRunRoot -Force | Out-Null
+    $preflightDirectory = Join-Path $preRunRoot (
+        "attempt_{0}_{1}" -f $runSuffix, [guid]::NewGuid().ToString("N")
+    )
+    New-Item -ItemType Directory -Path $preflightDirectory -Force | Out-Null
     $runNonce = [guid]::NewGuid().ToString("N")
-    $receiptPath = Join-Path $runDirectory "database-receipts.jsonl"
-    $isolationPath = Join-Path $runDirectory "isolation.jsonl"
-    $logPath = Join-Path $runDirectory "integrated-development.log"
+    $receiptPath = Join-Path $preflightDirectory "database-receipts.jsonl"
+    $isolationPath = Join-Path $preflightDirectory "isolation.jsonl"
+    $logPath = Join-Path $preflightDirectory "integrated-development.log"
+    $planFile = Join-Path $preflightDirectory "run-plan.json"
     $runHeader = @(
         "STATE_FILE=$($authorizedState.StateFile)"
         "STATE_ID=$($authorizedState.StateId)"
@@ -893,7 +913,6 @@ try {
     $candidateBinding = ($bindingLine[0] -replace "^CANDIDATE_BINDING_SHA256=", "")
     $env:INTEVIA_CANDIDATE_BINDING_SHA256 = $candidateBinding
     Write-Output $bindingLine[0]
-    $planFile = Join-Path $runDirectory "run-plan.json"
     if ($RotationSide -eq "NONE") {
         if ($ParentPlanFile -or $PrecedingRunRecordFile) {
             throw "R5: rotation basis is incomplete or unexpected for a new parent plan"
@@ -934,7 +953,7 @@ try {
             $planHash = (Get-FileHash -LiteralPath $planFile -Algorithm SHA256).Hash.ToLowerInvariant()
             $planData = Get-Content -LiteralPath $planFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             Write-PreRunRefusalRecord `
-                -RunDirectory $runDirectory `
+                -RecordDirectory $preflightDirectory `
                 -LogPath $logPath `
                 -RefusalStage "R5" `
                 -PlanHash $planHash `
@@ -962,13 +981,88 @@ try {
         )
         if ($precheckCode -ne 0) {
             Write-PreRunRefusalRecord `
-                -RunDirectory $runDirectory `
+                -RecordDirectory $preflightDirectory `
                 -LogPath $logPath `
                 -RefusalStage "R14" `
                 -PlanHash $planHash `
                 -PlanData $planData `
                 -CandidateBinding $candidateBinding
             throw "R14: changed-test no-database pre-check refused the launch"
+        }
+
+        if ($planData.database_route -notin @("DATABASE", "NO_DATABASE")) {
+            Write-PreRunRefusalRecord `
+                -RecordDirectory $preflightDirectory `
+                -LogPath $logPath `
+                -RefusalStage "T6_DATABASE_ROUTE_UNAVAILABLE" `
+                -PlanHash $planHash `
+                -PlanData $planData `
+                -CandidateBinding $candidateBinding
+            throw "T6: plan does not establish a database route; database launch refused"
+        }
+        if ($planData.database_route -eq "NO_DATABASE") {
+            Write-PreRunRefusalRecord `
+                -RecordDirectory $preflightDirectory `
+                -LogPath $logPath `
+                -RefusalStage "T6_NO_DATABASE_ROUTE" `
+                -PlanHash $planHash `
+                -PlanData $planData `
+                -CandidateBinding $candidateBinding
+            throw "T6: plan requires no database; CP-0 and database launch refused"
+        }
+
+        $tagRegisterPath = Join-Path $HOME "INTEVIA_AGENT_STAGING\database-tag-register.jsonl"
+        $tagRegisterCode = @'
+import json
+import sys
+
+from verification.isolation.template import register_database_tag
+
+result = register_database_tag(sys.argv[1], sys.argv[2], sys.argv[3])
+print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
+'@
+        $tagRegisterStatus = Invoke-PythonAndLog `
+            -Label "TU-1b database tag register" `
+            -LogPath $logPath `
+            -Arguments @(
+                "-c", $tagRegisterCode, $tagRegisterPath,
+                $env:INTEVIA_DATABASE_TAG, $env:INTEVIA_EVIDENCE_ROOT
+            )
+        if ($tagRegisterStatus -ne 0) {
+            throw "TU-1b database tag register refused the launch"
+        }
+
+        Move-Item -LiteralPath $preflightDirectory -Destination $runDirectory
+        $preflightDirectory = $null
+        $receiptPath = Join-Path $runDirectory "database-receipts.jsonl"
+        $isolationPath = Join-Path $runDirectory "isolation.jsonl"
+        $logPath = Join-Path $runDirectory "integrated-development.log"
+        $planFile = Join-Path $runDirectory "run-plan.json"
+        $env:VERIFICATION_DB_RECEIPT = $receiptPath
+        $env:VERIFICATION_ISOLATION_JSON = $isolationPath
+        $env:INTEVIA_RUN_PLAN_FILE = $planFile
+
+        $parentDigest = if ($planData.parent_plan_sha256) {
+            [string]$planData.parent_plan_sha256
+        }
+        else {
+            $planHash
+        }
+        $script:runRecordData = [ordered]@{
+            latest = $true
+            classification = "TEST_ATTEMPT"
+            result = "FAIL"
+            plan_sha256 = $planHash
+            parent_plan_sha256 = $parentDigest
+            rotation_side = [string]$planData.rotation_side
+            rotation_failure = $planData.rotation_failure
+            failing_test = $null
+            candidate = $candidateBinding
+            parent = $parentDigest
+            tests_planned = [int]$planData.tests.Count
+            tests_executed = 0
+            tests_not_reached = [int]$planData.tests.Count
+            executed_matches_plan = "NOT_STARTED"
         }
 
         Write-Output "ATTEMPT=$AttemptNumber"
@@ -1214,43 +1308,25 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                      $cp0Records[0].template_cp0_digest -ne $cp0Records[0].clone_cp0_digest)) {
                     $runProblems.Add("clone CP-0 did not match the integrated template digest")
                 }
-                $runResult = if ($counts.errors -gt 0) { "ERROR" }
-                    elseif ($counts.failures -gt 0) { "FAIL" }
-                    else { "PASS" }
-                $parentDigest = if ($summary.parent_plan_sha256 -eq "NONE") {
-                    $planHash
-                }
-                else {
-                    [string]$summary.parent_plan_sha256
-                }
-                $record = [ordered]@{
-                    latest = $true
-                    classification = "TEST_ATTEMPT"
-                    result = $runResult
-                    plan_sha256 = [string]$summary.plan_sha256
-                    parent_plan_sha256 = $parentDigest
-                    rotation_side = [string]$summary.rotation
-                    rotation_failure = if ($summary.rotation_failure) {
+                if ($null -ne $script:runRecordData) {
+                    $script:runRecordData["plan_sha256"] = [string]$summary.plan_sha256
+                    $script:runRecordData["parent_plan_sha256"] = if (
+                        $summary.parent_plan_sha256 -eq "NONE"
+                    ) { $planHash } else { [string]$summary.parent_plan_sha256 }
+                    $script:runRecordData["parent"] = $script:runRecordData["parent_plan_sha256"]
+                    $script:runRecordData["rotation_side"] = [string]$summary.rotation
+                    $script:runRecordData["rotation_failure"] = if ($summary.rotation_failure) {
                         [string]$summary.rotation_failure
                     }
                     else {
                         [string]$summary.failing_test
                     }
-                    failing_test = [string]$summary.failing_test
-                    candidate = $candidateBinding
-                    parent = $parentDigest
-                    tests_planned = [int]$summary.tests_planned
-                    tests_executed = [int]$summary.tests_executed
-                    tests_not_reached = [int]$summary.tests_not_reached
-                    executed_matches_plan = [string]$summary.executed_matches_plan
+                    $script:runRecordData["failing_test"] = [string]$summary.failing_test
+                    $script:runRecordData["tests_planned"] = [int]$summary.tests_planned
+                    $script:runRecordData["tests_executed"] = [int]$summary.tests_executed
+                    $script:runRecordData["tests_not_reached"] = [int]$summary.tests_not_reached
+                    $script:runRecordData["executed_matches_plan"] = [string]$summary.executed_matches_plan
                 }
-                $runRecordPath = Join-Path $runDirectory "run-record.json"
-                [System.IO.File]::WriteAllText(
-                    $runRecordPath,
-                    (($record | ConvertTo-Json -Depth 8) + "`n"),
-                    [System.Text.UTF8Encoding]::new($false)
-                )
-                Write-Output "RUN_RECORD_FILE=$runRecordPath"
             }
         }
         catch {
@@ -1351,6 +1427,77 @@ finally {
     Set-Location -LiteralPath $originalLocation.Path
 }
 
+$finalDevVerdict = if ($script:watchdogStalled) {
+    "STALL"
+}
+elseif ($null -eq $failure -and $runProblems.Count -eq 0) {
+    "PASS"
+}
+else {
+    "FAIL"
+}
+# HG_DIRECTION_TU1B_SCOPE_AND_RC1_TEXTS_20261015 (15 Oct 2026); commission section 1: a refused required control or failed isolation cannot yield an overall PASS.
+$requiredControlsPassed = $finalDevVerdict -eq "PASS" -and
+    $instrumentIsolationVerdict -eq "PASS" -and
+    $null -ne $summary -and
+    $summary.cp0_requirements_met -eq $true -and
+    $null -ne $counts -and
+    $counts.was_successful -eq $true
+
+if ($null -ne $script:runRecordData) {
+    $ordinaryRecord = $null
+    if ($null -ne $counts) {
+        $ordinaryRecord = [ordered]@{
+            tests_run = [int]$counts.tests_run
+            errors = [int]$counts.errors
+            failures = [int]$counts.failures
+            skipped = [int]$counts.skipped
+            was_successful = [bool]$counts.was_successful
+        }
+    }
+    $runResult = if ($null -ne $counts -and [int]$counts.errors -gt 0) {
+        "ERROR"
+    }
+    elseif ($null -ne $counts -and [int]$counts.failures -gt 0) {
+        "FAIL"
+    }
+    elseif ($requiredControlsPassed) {
+        "PASS"
+    }
+    else {
+        "FAIL"
+    }
+    $script:runRecordData["result"] = $runResult
+    $script:runRecordData["isolation_verdict"] = $instrumentIsolationVerdict
+    $script:runRecordData["dev_run_verdict"] = $finalDevVerdict
+    $script:runRecordData["cp0_requirements_met"] = (
+        $null -ne $summary -and $summary.cp0_requirements_met -eq $true
+    )
+    $script:runRecordData["required_controls_passed"] = $requiredControlsPassed
+    $script:runRecordData["ordinary_test_verdict"] = $ordinaryRecord
+    $runRecordPath = Join-Path $runDirectory "run-record.json"
+    $temporaryRecordPath = "$runRecordPath.tmp"
+    try {
+        if (Test-Path -LiteralPath $runRecordPath) {
+            throw "run record already exists; refusing to overwrite"
+        }
+        [System.IO.File]::WriteAllText(
+            $temporaryRecordPath,
+            (($script:runRecordData | ConvertTo-Json -Depth 8) + "`n"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::Move($temporaryRecordPath, $runRecordPath)
+        Write-Output "RUN_RECORD_CLASSIFICATION=TEST_ATTEMPT"
+        Write-Output "RUN_RECORD_FILE=$runRecordPath"
+    }
+    catch {
+        $runProblems.Add("final run record could not be written: $($_.Exception.Message)")
+        if (-not $script:watchdogStalled) {
+            $finalDevVerdict = "FAIL"
+        }
+    }
+}
+
 if (-not $script:testCountsSummaryReported) {
     Write-Output "TESTS_EXECUTED=UNAVAILABLE"
     Write-Output "TESTS_DISCOVERED=UNAVAILABLE"
@@ -1385,7 +1532,7 @@ if ($null -eq $wholeRun) {
 else {
     Write-Output ("WHOLE_RUN_SECONDS={0:F6}" -f $wholeRun.Elapsed.TotalSeconds)
 }
-if ($script:watchdogStalled) {
+if ($finalDevVerdict -eq "STALL") {
     foreach ($problem in $runProblems) {
         Write-Output "FAILURE=$problem"
     }
@@ -1396,7 +1543,7 @@ elseif ($null -eq $failure) {
     foreach ($problem in $runProblems) {
         Write-Output "FAILURE=$problem"
     }
-    if ($runProblems.Count -eq 0) {
+    if ($runProblems.Count -eq 0 -and $finalDevVerdict -eq "PASS") {
         Write-Output "DEV_RUN_VERDICT=PASS"
         $global:LASTEXITCODE = 0
     }

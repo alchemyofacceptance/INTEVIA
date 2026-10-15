@@ -90,15 +90,39 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
         self.assertIn("setting:DATABASES.default.TEST.COLLATION=null", first_settings)
         self.assertFalse(any("TEST.NAME" in line for line in first_settings))
 
-    @patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"})
+    @patch.dict(os.environ, {
+        "VERIFICATION_TEMPLATE_NAMESPACE": "me",
+        "INTEVIA_DATABASE_TAG": "tu1b",
+        "INTEVIA_EVIDENCE_ROOT": "PKTB_TU1B",
+    })
     def test_bounded_template_name_retains_full_identity_in_receipt(self):
         listing, identity = canonical_listing(("head=0040", "import:sys=builtin"))
-        receipt = {"identity": identity, "listing": listing, "name": template_database_name(identity), "oid": 123}
+        receipt = {
+            "identity": identity,
+            "listing": listing,
+            "name": template_database_name(identity),
+            "oid": 123,
+            "run_nonce": "a" * 32,
+            "candidate_binding": "b" * 64,
+            "build_intent": {
+                "path": "C:\\PKTB_TU1B\\ME_DEV\\template-build-intents\\a.json",
+                "identity": identity,
+                "run_nonce": "a" * 32,
+                "database_oid": 123,
+            },
+            "database_tag": "tu1b",
+            "evidence_root": "PKTB_TU1B",
+        }
 
-        self.assertEqual(len(receipt["name"]), 63)
+        self.assertEqual(len(receipt["name"]), 57)
+        self.assertTrue(receipt["name"].endswith(identity[:32]))
         self.assertTrue(validate_template_receipt(receipt, identity))
 
-    @patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"})
+    @patch.dict(os.environ, {
+        "VERIFICATION_TEMPLATE_NAMESPACE": "me",
+        "INTEVIA_DATABASE_TAG": "tu1b",
+        "INTEVIA_EVIDENCE_ROOT": "PKTB_TU1B",
+    })
     def test_same_name_prefix_with_different_full_identity_is_refused(self):
         listing, first_identity = canonical_listing(("head=0040",))
         receipt = {
@@ -106,15 +130,29 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
             "listing": listing,
             "name": template_database_name(first_identity),
             "oid": 123,
+            "run_nonce": "a" * 32,
+            "candidate_binding": "b" * 64,
+            "build_intent": {
+                "path": "C:\\PKTB_TU1B\\ME_DEV\\template-build-intents\\a.json",
+                "identity": first_identity,
+                "run_nonce": "a" * 32,
+                "database_oid": 123,
+            },
+            "database_tag": "tu1b",
+            "evidence_root": "PKTB_TU1B",
         }
         collision_suffix = "0" if first_identity[-1] != "0" else "1"
-        collision_identity = first_identity[:43] + collision_suffix * 21
+        collision_identity = first_identity[:32] + collision_suffix * 32
 
-        self.assertEqual(first_identity[:43], collision_identity[:43])
+        self.assertEqual(first_identity[:32], collision_identity[:32])
         self.assertNotEqual(first_identity, collision_identity)
         with self.assertRaisesRegex(TemplateReceiptInvalid, "different full identity"):
             validate_template_receipt(receipt, collision_identity)
 
+    @patch.dict(os.environ, {
+        "INTEVIA_DATABASE_TAG": "tu1b",
+        "INTEVIA_EVIDENCE_ROOT": "PKTB_TU1B",
+    })
     def test_template_names_are_namespaced_deterministic_and_require_namespace(self):
         _, identity = canonical_listing(("head=0040",))
         with patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "me"}):
@@ -123,11 +161,17 @@ class CanonicalTemplateIdentityTests(unittest.TestCase):
         with patch.dict(os.environ, {"VERIFICATION_TEMPLATE_NAMESPACE": "vr"}):
             vr_name = template_database_name(identity)
             self.assertEqual(vr_name, template_database_name(identity))
+        with patch.dict(os.environ, {
+            "VERIFICATION_TEMPLATE_NAMESPACE": "me",
+            "INTEVIA_DATABASE_TAG": "tu2b",
+        }):
+            other_unit_name = template_database_name(identity)
 
         self.assertNotEqual(me_name, vr_name)
+        self.assertNotEqual(me_name, other_unit_name)
         for namespace, name in (("me", me_name), ("vr", vr_name)):
             self.assertLessEqual(len(name), 63)
-            self.assertEqual(name, "test_intevia_tpl_" + namespace + "_" + identity[:43])
+            self.assertEqual(name, "test_intevia_tpl_" + namespace + "_tu1b_" + identity[:32])
 
         with patch.object(template, "source_input_lines") as source_input_lines:
             for namespace in (None, "unknown"):
