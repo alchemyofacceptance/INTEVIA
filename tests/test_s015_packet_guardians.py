@@ -122,6 +122,11 @@ _ALLOWLIST = (
         "the backend implements the counter-aware sequence reset",
     ),
     (
+        "verification/isolation/selfcheck_tests.py",
+        "P1",
+        "the deliberate core_role sequence-behind-rows self-check restores the sequence",
+    ),
+    (
         "tests/test_s015_test_harness.py",
         "P1",
         "H64 sequence witnesses deliberately wind counters and restore them through sequence_reset_sql",
