@@ -53,6 +53,7 @@ from src.intevia.services.organism_command_support import (
     acquire_organism_command_mutex,
     authority_atomic,
     command_mutex_key,
+    contention_translated,
 )
 
 
@@ -641,8 +642,10 @@ class OrganismMembershipService(_OrganismCommandService):
         )
 
     def open_membership(self, command: OpenMembershipCommand) -> MembershipCommandResult:
-        with transaction.atomic(using=self._alias):
-            return self._execute_open(command)
+        # Keep T-LOCK-1 translation outside atomic so it follows rollback (15 Oct commission, §1).
+        with contention_translated(self._alias):
+            with transaction.atomic(using=self._alias):
+                return self._execute_open(command)
 
     def _execute_open(self, command: OpenMembershipCommand) -> MembershipCommandResult:
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
@@ -720,7 +723,6 @@ class OrganismMembershipService(_OrganismCommandService):
         try:
             target_identity = (
                 Identity.objects.using(self._alias)
-                .select_for_update()
                 .get(identity_id=member_identity_id)
             )
         except Identity.DoesNotExist as exc:

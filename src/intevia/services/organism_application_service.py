@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Protocol
@@ -33,6 +32,8 @@ from src.intevia.services.organism_command_support import (
     _empty_anchor_fingerprint, _lock_actor, _lock_actor_membership_context,
     _read_actor_active_membership, _resulting_temporal_basis, _validate_timestamp, _authority_request,
     acquire_organism_command_mutex,
+    # Shared helper keeps the 15 Oct T-LOCK-1 translation outside the transaction.
+    authority_atomic as _authority_atomic,
     serve_replay,
     WithheldField,
 )
@@ -101,18 +102,6 @@ class S015ApplicationRefused(S015ApplicationError):
     ) -> None:
         super().__init__(message)
         self.refusal_code = refusal_code
-
-
-@contextmanager
-def _authority_atomic(database_alias: str):
-    refusal = None
-    with transaction.atomic(using=database_alias):
-        try:
-            yield
-        except S015AuthorityDenied as exc:
-            refusal = exc
-    if refusal is not None:
-        raise refusal
 
 
 class S015ApplicationNotFound(S015ApplicationError):
@@ -1149,6 +1138,8 @@ class OrganismApplicationService:
             unavailable=S015ApplicationAuthorityUnavailable,
         )
         if action is OrganismAction.DECIDE_APPLICATION:
+            # I-3: take the applicant's FK-compatible KEY SHARE first to preserve lock order.
+            # See PKT_LOCK_1_BUILD_COMMISSION_v1_0.md section 2.5.
             with connections[self._alias].cursor() as cursor:
                 cursor.execute(
                     "SELECT 1 FROM public.core_identity WHERE id = %s FOR KEY SHARE", [application.applicant_id],
@@ -1280,7 +1271,7 @@ class OrganismApplicationService:
             care = None
             if self._care_executor is not None:
                 candidate = self._care_executor.identity_for(organism)
-                care = Identity.objects.using(self._alias).select_for_update().get(pk=candidate.pk)
+                care = Identity.objects.using(self._alias).select_for_update(no_key=True).get(pk=candidate.pk)
                 if care.pk == actor.pk or care.access_state != Identity.AccessState.ACTIVE:
                     raise S015ApplicationAuthorityUnavailable("distinct active CARE executor identity required")
             _lock_owning_organism(self._alias, organism.organism_id)

@@ -23,7 +23,7 @@ from typing import Callable, Literal
 from uuid import UUID
 
 from django.contrib.auth.models import User
-from django.db import connections, transaction
+from django.db import OperationalError, connections, transaction
 
 from core.models import (
     Application,
@@ -85,6 +85,18 @@ class S015CommandReceiptMalformed(S015CommandSubstrateError):
             "This is a record fault, not evidence that you submitted a different request; it needs to "
             "be checked before the request is retried."
         )
+
+
+class S015CommandContended(S015CommandSubstrateError):
+    """T-LOCK-1 outcome for residual contention; retain SQLSTATE and cause (15 Oct commission, §1)."""
+
+    def __init__(self, diagnostic_sqlstate: Literal["40P01", "40001", "55P03"]) -> None:
+        super().__init__(
+            "Your request could not be completed because it conflicted with another database operation. "
+            "This attempt made no changes. Please wait a moment before trying again. "
+            "If this keeps happening, note the time it occurred; it needs to be checked."
+        )
+        self.diagnostic_sqlstate = diagnostic_sqlstate
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,14 +253,31 @@ def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
 
 @contextmanager
 def authority_atomic(database_alias: str):
-    refusal = None
-    with transaction.atomic(using=database_alias):
-        try:
-            yield
-        except S015AuthorityDenied as exc:
-            refusal = exc
-    if refusal is not None:
-        raise refusal
+    """Place T-LOCK-1 translation outside the authority transaction (15 Oct commission, §1)."""
+    with contention_translated(database_alias):
+        refusal = None
+        with transaction.atomic(using=database_alias):
+            try:
+                yield
+            except S015AuthorityDenied as exc:
+                refusal = exc
+        if refusal is not None:
+            raise refusal
+
+
+@contextmanager
+def contention_translated(database_alias: str):
+    """Translate only named SQLSTATEs after rollback, per the 15 Oct T-LOCK-1 terms (§1)."""
+    try:
+        yield
+    except OperationalError as exc:
+        sqlstate = getattr(exc.__cause__, "sqlstate", None)
+        if (
+            sqlstate in {"40P01", "40001", "55P03"}
+            and not transaction.get_connection(database_alias).in_atomic_block
+        ):
+            raise S015CommandContended(sqlstate) from exc
+        raise
 
 
 def _canonical_key(value: object, name: str, maximum: int) -> str:
@@ -379,11 +408,22 @@ def _lock_actor(
     credential: User,
     unavailable: type[Exception],
 ) -> Identity:
+    """Apply I-1 to I-3 and the actor-standing timing rule.
+
+    I-1 locks the actor Identity and credential at NO KEY UPDATE before any
+    organism lock. I-2 takes no other person's Identity or credential lock
+    after the organism lock; I-3 takes a needed other Identity at KEY SHARE
+    before it. Judge the actor's standing at received_at and keep it unchanged
+    from this lock through commit. See
+    HG_DECISION_SEK2_F1_LOCK_ORDER_REPAIR_20261015_CAPTURE.txt,
+    HG_DECISION_PKT_LOCK_1_DESIGN_ADOPTION_WITH_AMENDMENTS_20261015_CAPTURE.txt,
+    and PKT_LOCK_1_BUILD_COMMISSION_v1_0.md.
+    """
     try:
         identity = (
             Identity.objects.using(database_alias)
-            .select_for_update()
             .select_related("credential")
+            .select_for_update(no_key=True, of=("self", "credential"))
             .get(credential=credential)
         )
     except Identity.DoesNotExist as exc:

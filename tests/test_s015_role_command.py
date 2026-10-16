@@ -1760,7 +1760,9 @@ class S015RoleCommandTests(TransactionTestCase):
 
         def capture_act_identity_lock(execute, sql, params, many, context):
             normalized_sql = sql.casefold()
-            if "core_identity" in normalized_sql and "for update" in normalized_sql:
+            if "core_identity" in normalized_sql and (
+                "for update" in normalized_sql or "for no key update" in normalized_sql
+            ):
                 act_identity_queries.append((sql, tuple(params or ())))
             return execute(sql, params, many, context)
 
@@ -1788,7 +1790,9 @@ class S015RoleCommandTests(TransactionTestCase):
 
         def capture_departure_identity_lock(execute, sql, params, many, context):
             normalized_sql = sql.casefold()
-            if "core_identity" in normalized_sql and "for update" in normalized_sql:
+            if "core_identity" in normalized_sql and (
+                "for update" in normalized_sql or "for no key update" in normalized_sql
+            ):
                 departure_identity_queries.append((sql, tuple(params or ())))
                 departure_query_started.set()
             return execute(sql, params, many, context)
@@ -1858,7 +1862,10 @@ class S015RoleCommandTests(TransactionTestCase):
             self.assertEqual(wait_evidence[0], "Lock")
             self.assertIn(act_handle.pid, wait_evidence[3])
             self.assertIn("core_identity", wait_evidence[2].casefold())
-            self.assertIn("for update", wait_evidence[2].casefold())
+            self.assertTrue(
+                "for update" in wait_evidence[2].casefold()
+                or "for no key update" in wait_evidence[2].casefold()
+            )
             self.assertEqual(
                 act_identity_queries[0][1],
                 departure_identity_queries[0][1],

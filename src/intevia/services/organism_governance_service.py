@@ -1019,7 +1019,7 @@ class OrganismGovernanceService:
             )
             join_request = (
                 CircleJoinRequest.objects.using(self._alias)
-                .select_for_update()
+                .select_for_update(of=("self",))
                 .select_related("circle", "membership__identity")
                 .filter(request_uuid=request_uuid)
                 .first()
