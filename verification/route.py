@@ -68,7 +68,7 @@ from verification.ownership import NONCE_ENV, RECEIPT_ENV, read_receipts  # noqa
 
 ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
 DB_PREFIX = "test_intevia_living_organism_"
-S015_PATTERN = "test_s015_*.py"
+S015_PATTERN = "test_*.py"
 ISOLATION_RUNNER = "verification.isolation.runner.IsolationRunner"
 MUTATION_RUNNER = "verification.mutations.MutationRunner"
 LOCK_KEY = int(hashlib.sha256(b"intevia-s015-verification-route").hexdigest()[:15], 16)
@@ -214,6 +214,12 @@ class Route:
         self.attempted = []   # [(step id, database name, receipts path)] - attempts, not ownership
         self.lifecycle = []   # the route's own fixture databases, registered before CREATE (see create_fixture)
         self.lock_conn = None
+        self.candidate_root = None
+        self.candidate_base_commit = None
+        self.candidate_state_path = None
+        self.candidate_binding = None
+        self.run_spec_sha256 = None
+        self.fresh_authorities = {}
         self.transcript = open(os.path.join(self.dir, "transcript.txt"), "x", encoding="utf-8")
 
     def path(self, name):
@@ -414,10 +420,20 @@ class Route:
 
     # ------------------------------------------------------------------ steps
     def django_env(self, db_name, sid, isolation=True, mutation=None):
+        candidate_state_path, candidate_binding, run_spec_sha256 = (
+            self._ensure_candidate_binding()
+        )
+        authority_path, authority_sha256 = self._fresh_authority(sid)
         env = _child_python_env(DJANGO_SETTINGS_MODULE="intevia.test_settings", INTEVIA_S015_TEST_ROUTE=ROUTE, INTEVIA_DATABASE_ENGINE="postgresql",
                                 INTEVIA_POSTGRES_TEST_DB=db_name, INTEVIA_POSTGRES_DB=os.environ.get("INTEVIA_POSTGRES_DB", "postgres"),
                                 PYTHONPATH=os.pathsep.join([ROOT, os.path.join(ROOT, "tests")]), PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
-                                VERIFICATION_EXPECTED_CORE_HEAD=self.core_head() or "")
+                                VERIFICATION_EXPECTED_CORE_HEAD=self.core_head() or "",
+                                INTEVIA_CANDIDATE_BINDING_SHA256=candidate_binding,
+                                VERIFICATION_TEMPLATE_MODE="fresh",
+                                INTEVIA_FRESH_AUTHORITY_FILE=authority_path,
+                                INTEVIA_FRESH_AUTHORITY_SHA256=authority_sha256,
+                                INTEVIA_RUN_SPEC_SHA256=run_spec_sha256,
+                                INTEVIA_RUN_SUFFIX=sid)
         env[NONCE_ENV] = self.nonce
         env[RECEIPT_ENV] = self.path(sid + "_db_receipts.jsonl")
         env["VERIFICATION_ISOLATION_JSON"] = self.path(sid + "_isolation.jsonl")
@@ -425,6 +441,73 @@ class Route:
         if mutation:
             env["VERIFICATION_MUTATION"] = mutation
         return env
+
+    def _ensure_candidate_binding(self):
+        if self.candidate_state_path is not None:
+            return (
+                self.candidate_state_path,
+                self.candidate_binding,
+                self.run_spec_sha256,
+            )
+        root = self.candidate_root or ROOT
+        base_commit = self.candidate_base_commit
+        if base_commit is None:
+            code, head, error = run_git(["rev-parse", "--verify", "HEAD"], cwd=root)
+            if code != 0:
+                raise RouteRefused(
+                    "CI candidate base commit could not be resolved: %s" % error
+                )
+            base_commit = head.decode().strip()
+        specification_path = os.path.join(
+            root, "docs", "operations", "RUN_REQUIREMENTS.md"
+        )
+        if not os.path.isfile(specification_path):
+            raise RouteRefused("CI run requirements file is missing")
+        self.run_spec_sha256 = sha256_file(specification_path)
+        state = {
+            "state_id": "TU2A_CI",
+            "unit": "US015-B-24 TU-2a CI route",
+            "base_commit": base_commit,
+            "allowed_paths": [],
+            "run_spec_version": "v1.38",
+            "run_spec_sha256": self.run_spec_sha256,
+        }
+        self.candidate_state_path = self.path("TU2A_CI_STATE.json")
+        with open(self.candidate_state_path, "x", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=1)
+            handle.write("\n")
+        from verification.isolation.run_plan import candidate_binding
+
+        self.candidate_binding = candidate_binding(
+            root, self.candidate_state_path
+        )
+        return (
+            self.candidate_state_path,
+            self.candidate_binding,
+            self.run_spec_sha256,
+        )
+
+    def _fresh_authority(self, sid):
+        existing = self.fresh_authorities.get(sid)
+        if existing is not None:
+            return self.path(existing["file"]), existing["sha256"]
+        path = self.path(sid + "_fresh_authority.txt")
+        text = (
+            "Authority: TU-2a CI route implementation, WI-TU2A-6.\n"
+            "Clause: RUN_REQUIREMENTS_POST_PERMIT_v1_0 R2.\n"
+            "Mode: fresh.\n"
+            "Step: %s.\n"
+            "Run suffix: %s.\n" % (sid, sid)
+        )
+        with open(path, "x", encoding="utf-8") as handle:
+            handle.write(text)
+        digest = sha256_file(path)
+        self.fresh_authorities[sid] = {
+            "file": os.path.basename(path),
+            "sha256": digest,
+            "mode": "fresh",
+        }
+        return path, digest
 
     def run_logged(self, cmd, log_path, env):
         with open(log_path, "x", encoding="utf-8", newline="\n") as log:
@@ -543,9 +626,14 @@ class Route:
             return res
         cp0 = [r for r in records if r.get("checkpoint") == "CP-0"]
         cpa = [r for r in records if r.get("checkpoint") == "CP-A"]
+        cpz = [r for r in records if r.get("checkpoint") == "CP-Z"]
+        cpf = [r for r in records if r.get("checkpoint") == "CP-F"]
         summ = [r for r in records if r.get("checkpoint") == "SUMMARY"]
-        if len(cp0) != 1 or len(summ) != 1:
-            res["problem"] = "expected exactly one CP-0 and one SUMMARY record, found %d and %d" % (len(cp0), len(summ))
+        if len(cp0) != 1 or len(cpz) != 1 or len(summ) != 1:
+            res["problem"] = (
+                "expected exactly one CP-0, CP-Z, and SUMMARY record, found %d, %d, and %d"
+                % (len(cp0), len(cpz), len(summ))
+            )
             return res
         ids = [r.get("test") for r in cpa]
         lawful_na = sorted(r["test"] for r in cpa if r.get("applicable") is False and r.get("database_access") == "forbidden")
@@ -553,6 +641,10 @@ class Route:
         reasons = []
         if not cp0[0].get("requirements_met"):
             reasons.append("CP-0 requirements not met")
+        if cpz[0].get("established") is not True:
+            reasons.append("CP-Z was not established")
+        if summ[0].get("cpz_established") is not True:
+            reasons.append("SUMMARY does not report CP-Z established")
         if len(ids) != len(set(ids)):
             reasons.append("duplicate CP-A checkpoints")
         if set(ids) != set(collected):
@@ -565,7 +657,8 @@ class Route:
             reasons.append("the runner's SUMMARY verdict %r disagrees with the recomputed verdict" % summ[0].get("isolation_verdict"))
             verdict = "NOT ESTABLISHED"
         res.update(verdict=verdict, reasons=reasons, checkpoints=len(cpa), collected=len(collected), applicable=len(cpa) - len(lawful_na),
-                   established=len(established), not_applicable=len(lawful_na), not_applicable_ids=lawful_na)
+                   established=len(established), not_applicable=len(lawful_na), not_applicable_ids=lawful_na,
+                   cpz_established=cpz[0].get("established") is True, cpf_checkpoints=len(cpf))
         return res
 
     # ------------------------------------------------------------------ database lifecycle (C-A1-B2, C-A1-B3; RC-B2, RC-B3)
@@ -766,6 +859,7 @@ class Route:
 
     # ------------------------------------------------------------------ orchestration
     def run(self, skip_mutations, launch_token=None, snapshot=None, checkout=None, attested_commit=None):
+        self.candidate_root = os.path.abspath(checkout or ROOT)
         summary = {"route": "S015 verification route v0.5", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
         self.say("S015 VERIFICATION ROUTE v0.5  run %s  %s" % (self.run_id, summary["started"]))
         dependency = resolve_dependency_environment()
@@ -775,11 +869,24 @@ class Route:
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
             ident = self.identity(checkout=checkout)
+            self.candidate_base_commit = attested_commit or ident.get("commit")
+            if (
+                attested_commit is not None
+                and ident.get("commit") != attested_commit
+            ):
+                ident["valid"] = False
+                ident.setdefault("problems", []).append(
+                    "attested commit differs from the checked-out commit"
+                )
             summary["identity"] = dict(ident)
             if attested_commit is not None:
                 summary["identity"]["attested_commit"] = attested_commit
             self.steps.append({"id": "IDENTITY", "outcome": "PASS" if ident["valid"] else "INCOMPLETE", **({} if ident["valid"] else {"reason": "; ".join(ident["problems"])})})
             self.say("tested     : %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED: " + "; ".join(ident["problems"])))
+            if attested_commit is not None and ident.get("commit") != attested_commit:
+                raise RouteRefused(
+                    "checked-out commit differs from the attested candidate"
+                )
             if not os.environ.get("INTEVIA_POSTGRES_PASSWORD"):
                 if sys.stdin.isatty():
                     os.environ["INTEVIA_POSTGRES_PASSWORD"] = getpass.getpass("PostgreSQL password for %s: " % os.environ.get("INTEVIA_POSTGRES_USER"))
@@ -839,6 +946,16 @@ class Route:
         cleanup_problem = cleanup["outcome"] not in ("CLEAN", "NOTHING TO CLEAN")
         exit_code = 3 if cleanup_problem else {"PASS": 0, "FAIL": 1, "INCOMPLETE": 2}[result]
         summary.update(steps=self.steps, cleanup=cleanup, result=result, exit_status=exit_code, finished=now())
+        if self.candidate_state_path is not None:
+            summary["ci_candidate_binding"] = {
+                "state_file": os.path.basename(self.candidate_state_path),
+                "state_sha256": sha256_file(self.candidate_state_path),
+                "base_commit": self.candidate_base_commit,
+                "allowed_paths": [],
+                "candidate_binding_sha256": self.candidate_binding,
+                "run_spec_sha256": self.run_spec_sha256,
+                "fresh_authorities": self.fresh_authorities,
+            }
         self.write(summary)
         return exit_code
 

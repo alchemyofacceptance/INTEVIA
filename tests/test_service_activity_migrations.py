@@ -158,6 +158,8 @@ class S012MigrationStructureTests(TransactionTestCase):
 class S012MigrationRehearsalTests(TransactionTestCase):
     """Forward -> reverse -> reapply rehearsal on SQLite with pre-existing data."""
 
+    ISOLATION_FULL_CAPTURE = True
+
     migrate_from = ("core", "0015_s011b_event_resource_relationship")
     migrate_to = ("core", "0016_s012_service_activity_orchestration")
 

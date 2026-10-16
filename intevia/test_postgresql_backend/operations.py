@@ -3,11 +3,15 @@
 The Human Governor's 13 October 2026 direction is to keep generated identifiers
 ahead of every existing row, including rows restored by migrations. The backend
 checks before teardown flushing and after seed restoration, and checks the result
-of the by-name setup reset. The isolation instrument checks at CP-0 and CP-A.
+of the by-name setup reset. The isolation instrument checks at CP-0, CP-A', CP-F
+and CP-Z.
 """
 
 import importlib
+import json
 import re
+import threading
+import time
 
 from django.apps import apps as django_apps
 from django.core.exceptions import ImproperlyConfigured
@@ -87,6 +91,19 @@ S015_MIGRATION_SEEDS = (
 )
 
 _TRUNCATE_TRIGGER_BIT = 32  # pg_trigger.tgtype TRUNCATE event bit
+_TEST_TIMING = threading.local()
+
+
+def set_test_timing_context(test_id, on_flush):
+    _TEST_TIMING.test_id = test_id
+    _TEST_TIMING.on_flush = on_flush
+
+
+def clear_test_timing_context(test_id=None):
+    if test_id is None or getattr(_TEST_TIMING, "test_id", None) == test_id:
+        for name in ("test_id", "on_flush"):
+            if hasattr(_TEST_TIMING, name):
+                delattr(_TEST_TIMING, name)
 
 
 def _sequence_finding_text(finding):
@@ -248,56 +265,119 @@ class DatabaseOperations(PostgreSQLDatabaseOperations):
             and sequence["cache"] == 1
         )
 
-    def _sequence_discipline_findings(self):
-        """Find unsupported or behind table-owned sequences without consuming them."""
-        findings = []
-        for sequence in self._table_owned_sequence_rows():
-            finding = {
-                **sequence,
-                "configuration": {
-                    "increment": sequence["increment"],
-                    "minimum": sequence["minimum"],
-                    "maximum": sequence["maximum"],
-                    "start": sequence["start"],
-                    "cycle": sequence["cycle"],
-                    "cache": sequence["cache"],
-                },
-            }
-            if not self._supported_sequence_configuration(sequence):
-                finding["status"] = "UNSUPPORTED"
-                findings.append(finding)
-                continue
+    def _sequence_discipline_report(self, table_names=None):
+        """Report sequence findings without consuming counters in one database statement."""
+        query = """
+WITH sequence_records AS (
+    SELECT table_relation.relname AS table_name,
+           column_info.attname AS column_name,
+           sequence_relation.relname AS sequence_name,
+           sequence.seqincrement AS increment,
+           sequence.seqmin AS minimum,
+           sequence.seqmax AS maximum,
+           sequence.seqstart AS start,
+           sequence.seqcycle AS cycle,
+           sequence.seqcache AS cache,
+           (xpath(
+               '/table/row/highest_id/text()',
+               query_to_xml(
+                   format(
+                       'SELECT max(%%I) AS highest_id FROM %%I',
+                       column_info.attname, table_relation.relname
+                   ),
+                   true, false, ''
+               )
+           ))[1]::text::bigint AS highest,
+           (xpath(
+               '/table/row/last_value/text()',
+               query_to_xml(
+                   format('SELECT last_value FROM %%I', sequence_relation.relname),
+                   true, false, ''
+               )
+           ))[1]::text::bigint AS last_value,
+           (xpath(
+               '/table/row/is_called/text()',
+               query_to_xml(
+                   format('SELECT is_called FROM %%I', sequence_relation.relname),
+                   true, false, ''
+               )
+           ))[1]::text::boolean AS is_called
+    FROM pg_class sequence_relation
+    JOIN pg_sequence sequence ON sequence.seqrelid = sequence_relation.oid
+    JOIN pg_depend dependency
+      ON dependency.objid = sequence_relation.oid
+     AND dependency.classid = 'pg_class'::regclass
+     AND dependency.refclassid = 'pg_class'::regclass
+     AND dependency.deptype IN ('a', 'i')
+    JOIN pg_class table_relation ON table_relation.oid = dependency.refobjid
+    JOIN pg_attribute column_info
+      ON column_info.attrelid = table_relation.oid
+     AND column_info.attnum = dependency.refobjsubid
+    JOIN pg_namespace namespace ON namespace.oid = table_relation.relnamespace
+    WHERE namespace.nspname = current_schema()
+      AND sequence_relation.relkind = 'S'
+      AND table_relation.relkind IN ('r', 'p')
+      AND (%s::text[] IS NULL OR table_relation.relname = ANY(%s::text[]))
+), sequenced AS (
+    SELECT *,
+           CASE WHEN is_called THEN last_value + increment
+                ELSE COALESCE(last_value, start) END AS next_value
+    FROM sequence_records
+), findings AS (
+    SELECT *,
+           CASE
+               WHEN increment <> 1 OR minimum <> 1 OR start <> 1 OR cycle OR cache <> 1
+                   THEN 'UNSUPPORTED'
+               WHEN highest IS NULL THEN NULL
+               WHEN next_value > maximum THEN 'EXHAUSTED'
+               WHEN next_value <= highest THEN 'BEHIND'
+               ELSE NULL
+           END AS status
+    FROM sequenced
+)
+SELECT count(*),
+       COALESCE(
+           jsonb_agg(
+               jsonb_build_object(
+                   'table', table_name,
+                   'column', column_name,
+                   'sequence', sequence_name,
+                   'increment', increment,
+                   'minimum', minimum,
+                   'maximum', maximum,
+                   'start', start,
+                   'cycle', cycle,
+                   'cache', cache,
+                   'status', status,
+                   'highest', highest,
+                   'last_value', last_value,
+                   'is_called', is_called,
+                   'next', next_value,
+                   'configuration', jsonb_build_object(
+                       'increment', increment,
+                       'minimum', minimum,
+                       'maximum', maximum,
+                       'start', start,
+                       'cycle', cycle,
+                       'cache', cache
+                   )
+               )
+               ORDER BY table_name, column_name
+           ) FILTER (WHERE status IS NOT NULL),
+           '[]'::jsonb
+       )::text
+FROM findings
+"""
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, [table_names, table_names])
+            sequence_count, findings_json = cursor.fetchone()
+        return {
+            "sequences_observed": sequence_count,
+            "findings": json.loads(findings_json),
+        }
 
-            table = self.quote_name(sequence["table"])
-            column = self.quote_name(sequence["column"])
-            sequence_name = self.quote_name(sequence["sequence"])
-            with self.connection.cursor() as cursor:
-                cursor.execute("SELECT max(%s) FROM %s" % (column, table))
-                highest = cursor.fetchone()[0]
-            if highest is None:
-                continue
-
-            with self.connection.cursor() as cursor:
-                cursor.execute("SELECT last_value, is_called FROM %s" % sequence_name)
-                last_value, is_called = cursor.fetchone()
-            next_value = last_value + 1 if is_called else last_value
-            if next_value > sequence["maximum"]:
-                status = "EXHAUSTED"
-            elif next_value <= highest:
-                status = "BEHIND"
-            else:
-                continue
-            findings.append(
-                {
-                    **finding,
-                    "status": status,
-                    "highest": highest,
-                    "last_value": last_value,
-                    "is_called": is_called,
-                    "next": next_value,
-                }
-            )
-        return findings
+    def _sequence_discipline_findings(self, table_names=None):
+        return self._sequence_discipline_report(table_names)["findings"]
 
     def _sequence_reset_verification_sql(self):
         """Return one SQL block that verifies every table-owned sequence after reset."""
@@ -533,16 +613,34 @@ $s015$;
             "RAISE EXCEPTION 'S015 disposable test database qualification failed'; "
             "END IF; END $s015$;"
         )
-        disable = [
-            f"ALTER TABLE {self.quote_name(table)} "
-            f"DISABLE TRIGGER {self.quote_name(trigger)};"
+        guardian_values = ", ".join(
+            "('%s', '%s')" % (table.replace("'", "''"), trigger.replace("'", "''"))
             for table, trigger in guardians
-        ]
-        enable = [
-            f"ALTER TABLE {self.quote_name(table)} "
-            f"ENABLE TRIGGER {self.quote_name(trigger)};"
-            for table, trigger in guardians
-        ]
+        )
+        disable = (
+            [
+                "DO $s015$ DECLARE guardian_record record; BEGIN "
+                "FOR guardian_record IN SELECT table_name, trigger_name "
+                "FROM (VALUES %s) AS guardians(table_name, trigger_name) LOOP "
+                "EXECUTE format('ALTER TABLE %%I DISABLE TRIGGER %%I', "
+                "guardian_record.table_name, guardian_record.trigger_name); "
+                "END LOOP; END $s015$;" % guardian_values
+            ]
+            if guardians
+            else []
+        )
+        enable = (
+            [
+                "DO $s015$ DECLARE guardian_record record; BEGIN "
+                "FOR guardian_record IN SELECT table_name, trigger_name "
+                "FROM (VALUES %s) AS guardians(table_name, trigger_name) LOOP "
+                "EXECUTE format('ALTER TABLE %%I ENABLE TRIGGER %%I', "
+                "guardian_record.table_name, guardian_record.trigger_name); "
+                "END LOOP; END $s015$;" % guardian_values
+            ]
+            if guardians
+            else []
+        )
         restoration_check = []
         if guardians:
             pairs = ", ".join(f"('{table}', '{trigger}')" for table, trigger in guardians)
@@ -583,53 +681,60 @@ $s015$;
 
         Any failure rolls back the whole reset, including trigger changes, and propagates.
         The backend checks before teardown flushing and after seed restoration, and checks
-        the result of the by-name setup reset. The isolation instrument checks at CP-0
-        and CP-A. Django's flush command raises CommandError from this error; its own text
+        the result of the by-name setup reset. The isolation instrument checks at CP-0,
+        CP-A', CP-F and CP-Z. Django's flush command raises CommandError from this error; its own text
         is Django's generic flush header and hints. The discipline message is in the
         chained cause, which the test report's traceback prints. When the discipline error
         is the cause, the flush and restore ran to completion, and the message says whether
         the result was clean.
         """
-        if self.connection.in_atomic_block:
-            raise ImproperlyConfigured(
-                "S015 reset must not run inside an open transaction"
-            )
-
-        before = after = None
+        started = time.perf_counter()
         try:
-            with transaction.atomic(
-                using=self.connection.alias,
-                savepoint=self.connection.features.can_rollback_ddl,
-            ):
-                if sql_list:
-                    self._qualified_database_name()
-                    before = self._sequence_discipline_findings()
-                with self.connection.cursor() as cursor:
-                    for sql in sql_list:
-                        cursor.execute(sql)
-                if sql_list:
-                    self._qualified_database_name()
-                    for module_name, function_name in S015_MIGRATION_SEEDS:
-                        seed = getattr(importlib.import_module(module_name), function_name)
-                        seed(django_apps, None)
-                    after = self._sequence_discipline_findings()
-        except Exception as exc:
-            if before:
-                findings = "; ".join(_sequence_finding_text(item) for item in before)
-                exc.add_note(
-                    "S015 sequence discipline: observed before this reset ran; the reset "
-                    "raised an exception and restoration was not confirmed: %s." % findings
+            if self.connection.in_atomic_block:
+                raise ImproperlyConfigured(
+                    "S015 reset must not run inside an open transaction"
                 )
-            raise
 
-        if after:
-            raise S015SequenceDisciplineError(
-                kind="after_restore",
-                findings=after,
-                earlier=before,
-            )
-        if before:
-            raise S015SequenceDisciplineError(
-                kind="before_teardown",
-                findings=before,
-            )
+            before = after = None
+            try:
+                with transaction.atomic(
+                    using=self.connection.alias,
+                    savepoint=self.connection.features.can_rollback_ddl,
+                ):
+                    if sql_list:
+                        self._qualified_database_name()
+                        before = self._sequence_discipline_findings()
+                    with self.connection.cursor() as cursor:
+                        for sql in sql_list:
+                            cursor.execute(sql)
+                    if sql_list:
+                        self._qualified_database_name()
+                        for module_name, function_name in S015_MIGRATION_SEEDS:
+                            seed = getattr(importlib.import_module(module_name), function_name)
+                            seed(django_apps, None)
+                        after = self._sequence_discipline_findings()
+            except Exception as exc:
+                if before:
+                    findings = "; ".join(_sequence_finding_text(item) for item in before)
+                    exc.add_note(
+                        "S015 sequence discipline: observed before this reset ran; the reset "
+                        "raised an exception and restoration was not confirmed: %s." % findings
+                    )
+                raise
+
+            if after:
+                raise S015SequenceDisciplineError(
+                    kind="after_restore",
+                    findings=after,
+                    earlier=before,
+                )
+            if before:
+                raise S015SequenceDisciplineError(
+                    kind="before_teardown",
+                    findings=before,
+                )
+        finally:
+            callback = getattr(_TEST_TIMING, "on_flush", None)
+            test_id = getattr(_TEST_TIMING, "test_id", None)
+            if callback is not None and test_id is not None:
+                callback(test_id, time.perf_counter() - started)

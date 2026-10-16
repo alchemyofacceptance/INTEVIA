@@ -51,6 +51,8 @@ class _SchemaEditor:
 
 @POSTGRESQL_ONLY
 class ApplicationLineageSchema(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     def test_application_chain_map_triggers_and_lock_route(self):
         with connection.cursor() as cursor:
             cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
@@ -713,6 +715,8 @@ def snapshot(cursor, event_id, membership_id):
 
 @POSTGRESQL_ONLY
 class HistoricalActorBytes(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     def setUp(self):
         migrate_to_target_with_restore(
             self, ("core", "0024_s015_compact_commitment_preimages")
@@ -762,6 +766,8 @@ class HistoricalActorBytes(TransactionTestCase):
 
 @POSTGRESQL_ONLY
 class ApplicationAuthorityMigration(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     def tearDown(self):
         head = current_core_leaf(connection)
         MigrationExecutor(connection).migrate(head)

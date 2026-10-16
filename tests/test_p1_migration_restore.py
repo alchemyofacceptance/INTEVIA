@@ -14,6 +14,8 @@ from tests.s015_0021_support import (
 
 
 class P1MigrationRestoreTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     def setUp(self):
         self.received_targets = tuple(
             MigrationExecutor(connection).loader.graph.leaf_nodes()

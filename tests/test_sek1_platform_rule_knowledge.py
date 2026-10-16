@@ -214,6 +214,8 @@ class SEK1PlatformRuleKnowledgeTests(TransactionTestCase):
 
 @POSTGRESQL_ONLY
 class SEK1MigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     def _assert_function(self, expected_body):
         with connection.cursor() as cursor:
             cursor.execute(

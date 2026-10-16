@@ -1068,17 +1068,94 @@ try {
     }
     $planFile = Join-Path $runDirectory "verification-plan.json"
     $planLogPath = Join-Path $runDirectory "verification-plan.log"
-    $planArguments = @("-m", "verification.isolation.run_plan", "plan", "--output", $planFile)
-    foreach ($label in $suite) { $planArguments += @("--label", $label) }
-    $planStatus = Invoke-PythonAndCapture -Label "R3/R4 verification plan" `
-        -LogPath $planLogPath -Arguments $planArguments
-    if ($planStatus -ne 0) { throw "R3/R4: verifier selection did not resolve before database setup" }
+    $planPartsDirectory = Join-Path $runDirectory "verification-plan-parts"
+    New-Item -ItemType Directory -Path $planPartsDirectory -Force | Out-Null
+    $allExpandedLabels = [System.Collections.Generic.List[string]]::new()
+    $allTestIds = [System.Collections.Generic.List[string]]::new()
+    $partPlans = [System.Collections.Generic.List[object]]::new()
+    for ($offset = 0; $offset -lt $suite.Count; $offset += 20) {
+        $batch = @($suite | Select-Object -Skip $offset -First 20)
+        $partNumber = [int]($offset / 20) + 1
+        $partFile = Join-Path $planPartsDirectory ("part-{0:D2}.json" -f $partNumber)
+        $partLogPath = Join-Path $planPartsDirectory ("part-{0:D2}.log" -f $partNumber)
+        $planArguments = @(
+            "-m", "verification.isolation.run_plan", "plan",
+            "--output", $partFile
+        )
+        foreach ($label in $batch) { $planArguments += @("--label", $label) }
+        $planStatus = Invoke-PythonAndCapture `
+            -Label "R3/R4 verification plan batch $partNumber" `
+            -LogPath $partLogPath -Arguments $planArguments
+        if ($planStatus -ne 0) {
+            throw "R3/R4: verifier selection batch $partNumber did not resolve before database setup"
+        }
+        $partDigestLine = @(Get-Content -LiteralPath $partLogPath |
+            Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+        if ($partDigestLine.Count -ne 1 -or
+            $partDigestLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
+            throw "R4: verifier plan batch $partNumber digest was not recorded"
+        }
+        $partDigest = $Matches[1]
+        $actualPartDigest = (Get-FileHash -LiteralPath $partFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($partDigest -cne $actualPartDigest) {
+            throw "R4: verifier plan batch $partNumber digest differs from its bytes"
+        }
+        $partPlan = Get-Content -LiteralPath $partFile -Raw -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+        $partPlans.Add($partPlan)
+        foreach ($label in @($partPlan.expanded_labels)) { $allExpandedLabels.Add([string]$label) }
+        foreach ($testId in @($partPlan.tests)) { $allTestIds.Add([string]$testId) }
+    }
+    if ($allTestIds.Count -eq 0 -or
+        @($allTestIds | Sort-Object -Unique).Count -ne $allTestIds.Count) {
+        throw "R3/R4: batched verifier plan is empty or contains duplicate test identifiers"
+    }
+    $databaseRoute = if (@($partPlans | Where-Object { $_.database_route -eq "DATABASE" }).Count -gt 0) {
+        "DATABASE"
+    }
+    else {
+        "NO_DATABASE"
+    }
+    $combinedPlan = [ordered]@{
+        schema_version = 1
+        labels = @($suite)
+        expanded_labels = $allExpandedLabels.ToArray()
+        tests = $allTestIds.ToArray()
+        database_route = $databaseRoute
+        ordered_groups = @()
+        parent_plan_sha256 = $null
+        rotation_side = "NONE"
+        rotation_unit = "NONE"
+        counts = [ordered]@{ tests = $allTestIds.Count; groups = 0 }
+    }
+    $planJson = ConvertTo-Json -InputObject $combinedPlan -Depth 20
+    $planJson = [regex]::Replace($planJson, "\r?\n", "`n")
+    [System.IO.File]::WriteAllText(
+        $planFile,
+        $planJson + "`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $planStatus = Invoke-PythonAndCapture `
+        -Label "R3/R4 merged verification plan validation" `
+        -LogPath $planLogPath `
+        -Arguments @(
+            "-m", "verification.isolation.run_plan", "validate-plan",
+            "--plan", $planFile
+        )
+    if ($planStatus -ne 0) {
+        throw "R3/R4: merged verifier selection did not resolve before database setup"
+    }
     $planDigestLine = @(Get-Content -LiteralPath $planLogPath |
         Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
-    if ($planDigestLine.Count -ne 1 -or $planDigestLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
+    if ($planDigestLine.Count -ne 1 -or
+        $planDigestLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
         throw "R4: verifier plan digest was not recorded"
     }
     $planDigest = $Matches[1]
+    $actualPlanDigest = (Get-FileHash -LiteralPath $planFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($planDigest -cne $actualPlanDigest) {
+        throw "R4: merged verifier plan digest differs from its bytes"
+    }
     if ($VerificationKind -eq "DELTA") {
         $deltaStatus = Invoke-PythonAndCapture -Label "R10 authorized delta selection" `
             -LogPath $planLogPath -Arguments @(
@@ -1318,7 +1395,7 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
             "manage.py", "test", "--settings=intevia.test_settings",
             "--testrunner=verification.isolation.runner.IsolationRunner",
             "--parallel", "1", "--noinput", "--verbosity=2", "--failfast"
-        ) + $suite
+        )
         $testRun = Invoke-WatchedPythonAndLog `
             -Label "R1/R2/S1-S3/R3 plus TT-1 full suite" `
             -LogPath $logPath `

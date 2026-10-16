@@ -208,6 +208,8 @@ class SEEntitlementModelContractTests(SimpleTestCase):
 
 @skipUnless(connection.vendor == "postgresql", "SE migration guardians require PostgreSQL")
 class SEEntitlementMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def _core_tables(self):

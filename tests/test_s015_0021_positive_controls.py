@@ -34,6 +34,8 @@ UNSCAFFOLDED_FIXED_VECTOR_TESTS = frozenset({
 
 @POSTGRESQL_ONLY
 class _S015PositiveBase(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset()
 
     def setUp(self):

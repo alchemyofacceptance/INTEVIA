@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-LABEL_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){1,3}$")
+LABEL_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+MAX_LABELS = 20
+TU2A_QUALIFICATION_NEW_PARENT_REASON = (
+    "Independent TU-2a qualification case; the latest failed test attempt in this "
+    "evidence root is a deliberate qualification case or an earlier qualification attempt."
+)
 _CONNECTION_GUARD_ACTIVE: ContextVar[bool] = ContextVar(
     "tu1_connection_guard_active", default=False
 )
@@ -26,7 +31,7 @@ _CONNECTION_GUARD_ACTIVE: ContextVar[bool] = ContextVar(
 
 @contextmanager
 def _standalone_action_environment(root: Path, action: str):
-    if action not in {"plan", "precheck"}:
+    if action not in {"plan", "precheck", "validate-plan"}:
         raise ValueError("R9: standalone environment is only valid for plan or precheck")
     names = (
         "DJANGO_SETTINGS_MODULE",
@@ -130,6 +135,10 @@ def _forbid_database_connections(connections, attempts: dict[str, int], requirem
 
 
 def resolve_labels(labels: list[str]) -> list[str]:
+    if len(labels) > MAX_LABELS:
+        raise ValueError(
+            "R3: at most twenty labels may be expanded; use a resolved plan file for larger selections"
+        )
     if not labels or len(set(labels)) != len(labels):
         raise ValueError("R3: labels must be present and unique")
     expanded: list[str] = []
@@ -176,6 +185,14 @@ def _loader_cases(labels: list[str]) -> list[unittest.TestCase]:
     ids = [case.id() for case in cases]
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("R3: resolved selection is empty or contains duplicate unique tests")
+    failed = [
+        identifier
+        for case, identifier in zip(cases, ids)
+        if type(case).__name__ == "_FailedTest"
+        and type(case).__module__ == "unittest.loader"
+    ]
+    if failed:
+        raise ValueError("R3: test selection contains failed loader entries: %s" % failed[:5])
     return cases
 
 
@@ -253,6 +270,84 @@ def load_plan(path: str | Path) -> tuple[dict[str, Any], str]:
     if not tests or len(tests) != len(set(tests)):
         raise ValueError("R4: plan is empty or contains duplicate identifiers")
     return plan, hashlib.sha256(raw).hexdigest()
+
+
+def validate_plan_file(
+    path: str | Path,
+    *,
+    run_root: str | Path | None = None,
+    new_parent_plan_reason: str | None = None,
+    qualification_case: bool = False,
+) -> tuple[dict[str, Any], str]:
+    plan, digest = load_plan(path)
+    labels = plan.get("labels")
+    if (
+        not isinstance(labels, list)
+        or not labels
+        or any(not isinstance(label, str) or not LABEL_RE.fullmatch(label) for label in labels)
+        or len(labels) != len(set(labels))
+    ):
+        raise ValueError("R3: plan file labels are missing, invalid, or duplicated")
+
+    expanded_labels: list[str] = []
+    resolved_tests: list[str] = []
+    resolved_cases: list[unittest.TestCase] = []
+    attempts = {"count": 0}
+    connections = _setup_test_django("R3/R4")
+    with _forbid_database_connections(connections, attempts, "R3/R4"):
+        for offset in range(0, len(labels), MAX_LABELS):
+            expanded = resolve_labels(labels[offset : offset + MAX_LABELS])
+            cases = _loader_cases(expanded)
+            expanded_labels.extend(expanded)
+            resolved_tests.extend(case.id() for case in cases)
+            resolved_cases.extend(cases)
+
+    if attempts["count"]:
+        raise ValueError("R3/R4: plan validation attempted a database connection")
+    if expanded_labels != plan.get("expanded_labels"):
+        raise ValueError("R4: plan expanded labels differ from the current loader resolution")
+    ensure_suite_matches(plan["tests"], resolved_tests)
+
+    from .runner import database_access
+
+    database_route = (
+        "DATABASE"
+        if any(database_access(case)[1] for case in resolved_cases)
+        else "NO_DATABASE"
+    )
+    if plan.get("database_route") != database_route:
+        raise ValueError("R4: plan database route differs from the current selection")
+
+    groups = plan.get("ordered_groups", [])
+    if not isinstance(groups, list):
+        raise ValueError("R6: plan ordered groups are invalid")
+    grouped: set[str] = set()
+    for group in groups:
+        if (
+            not isinstance(group, list)
+            or not group
+            or any(test not in plan["tests"] for test in group)
+        ):
+            raise ValueError("R6: ordered group is empty or contains an unresolved test")
+        positions = [plan["tests"].index(test) for test in group]
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            raise ValueError("R6: ordered group must be contiguous and retain loader order")
+        if grouped.intersection(group):
+            raise ValueError("R6: ordered groups overlap")
+        grouped.update(group)
+
+    if qualification_case and run_root is None:
+        raise ValueError("R5: qualification-case validation requires the evidence run root")
+    if run_root is not None:
+        _, expected_reason = validate_unrotated_plan(
+            run_root,
+            plan["tests"],
+            new_parent_plan_reason,
+            qualification_case=qualification_case,
+        )
+        if plan.get("new_parent_plan_reason") != expected_reason:
+            raise ValueError("R5: plan reason differs from the validated unrotated selection")
+    return plan, digest
 
 
 def rotation(parent: dict[str, Any], failing_test: str, side: str) -> list[str]:
@@ -380,7 +475,16 @@ def validate_unrotated_selection(
     latest_record: dict[str, Any] | None,
     latest_tests: list[str] | None,
     new_parent_plan_reason: str | None,
+    *,
+    independent_qualification_case: bool = False,
 ) -> str | None:
+    if independent_qualification_case:
+        if new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON:
+            raise ValueError("R5: independent qualification case requires its approved reason")
+        return new_parent_plan_reason
+    if new_parent_plan_reason == TU2A_QUALIFICATION_NEW_PARENT_REASON:
+        raise ValueError("R5: independent qualification reason requires qualification-case validation")
+
     if latest_record is None:
         if new_parent_plan_reason is not None:
             raise ValueError("R5: -NewParentPlanReason requires a failed latest test attempt")
@@ -414,12 +518,63 @@ def validate_unrotated_selection(
     return reason
 
 
+def _is_tu2a_qualification_root(run_root: str | Path) -> bool:
+    root = Path(run_root).resolve()
+    return (
+        root.name.casefold() == "me_dev"
+        and root.parent.name.casefold() == "pktb_tu2a"
+    )
+
+
+def _is_tu2a_qualification_attempt(record_path: str | Path) -> bool:
+    match = re.fullmatch(r"attempt_(\d+)[ab]?", Path(record_path).parent.name)
+    return match is not None and int(match.group(1)) >= 910001
+
+
 def validate_unrotated_plan(
     run_root: str | Path,
     current_tests: list[str],
     new_parent_plan_reason: str | None,
+    *,
+    qualification_case: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     latest = latest_test_attempt_record(run_root)
+    if qualification_case:
+        if not _is_tu2a_qualification_root(run_root):
+            raise ValueError("R5: qualification-case validation is limited to the TU-2a ME_DEV root")
+        if new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON:
+            raise ValueError("R5: qualification case requires its approved independent-case reason")
+        if latest is None:
+            return None, validate_unrotated_selection(
+                current_tests,
+                None,
+                None,
+                new_parent_plan_reason,
+                independent_qualification_case=True,
+            )
+        record_path, record = latest
+        previous_tests = None
+        if record.get("result") in {"FAIL", "ERROR"}:
+            previous_plan_path = record_path.parent / "run-plan.json"
+            if not previous_plan_path.is_file():
+                raise ValueError("R5: latest failed attempt has no bound plan file")
+            previous_plan, _ = load_plan(previous_plan_path)
+            previous_tests = previous_plan["tests"]
+            if not _is_tu2a_qualification_attempt(record_path):
+                raise ValueError(
+                    "R5: qualification case cannot supersede the latest non-qualification failure"
+                )
+        elif record.get("result") != "PASS":
+            raise ValueError("R5: qualification case has an unsupported latest attempt result")
+        reason = validate_unrotated_selection(
+            current_tests,
+            record,
+            previous_tests,
+            new_parent_plan_reason,
+            independent_qualification_case=True,
+        )
+        return record, reason
+
     if latest is None:
         reason = validate_unrotated_selection(
             current_tests, None, None, new_parent_plan_reason
@@ -591,6 +746,8 @@ def validate_verification_summary(
         raise ValueError("R7: summary tests_planned differs from the runner's resolved test count")
     if summary.get("executed_matches_plan") != "FULL":
         raise ValueError("R7: summary executed_matches_plan is not FULL")
+    if summary.get("cpz_established") is not True:
+        raise ValueError("R7: CP-Z was not established after the run completed")
 
 
 def validate_run_spec_binding(state: dict[str, Any], specification: bytes) -> str:
@@ -682,7 +839,8 @@ def _changed_test_modules(root: Path, base: str, allowed: list[str]) -> list[str
     ]
 
 
-def candidate_binding(root: Path, state_path: str | Path) -> str:
+def candidate_binding(root: str | Path, state_path: str | Path) -> str:
+    root = Path(root)
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
     diff = subprocess.run(
         ["git", "--no-pager", "diff", "--binary", state["base_commit"]],
@@ -719,6 +877,9 @@ def run_no_database_precheck(root: Path, state_path: str | Path) -> tuple[list[s
     if not isinstance(database_tag, str) or not database_tag:
         raise ValueError("R9: standalone precheck requires the authorized state's database_tag")
     modules = _changed_test_modules(root, state["base_commit"], state["allowed_paths"])
+    tests_path = str((root / "tests").resolve())
+    if tests_path not in sys.path:
+        sys.path.insert(0, tests_path)
     connections = _setup_test_django("R14")
     classes: list[type[unittest.TestCase]] = []
     attempts = {"count": 0}
@@ -992,6 +1153,7 @@ def _run_self_test() -> int:
             "plan_sha256": "plan-digest",
             "tests_planned": 3,
             "executed_matches_plan": "FULL",
+            "cpz_established": True,
         }
         validate_verification_summary(summary, "plan-digest", 3)
         refusal_cases = (
@@ -1011,6 +1173,11 @@ def _run_self_test() -> int:
                 {**summary, "executed_matches_plan": "PREFIX"},
                 3,
                 "R7: summary executed_matches_plan is not FULL",
+            ),
+            (
+                {**summary, "cpz_established": False},
+                3,
+                "R7: CP-Z was not established after the run completed",
             ),
         )
         for invalid_summary, resolved_tests, expected_message in refusal_cases:
@@ -1120,6 +1287,7 @@ def main() -> int:
             "self-test",
             "precheck",
             "plan",
+            "validate-plan",
             "rotate",
             "delta-check",
             "candidate-binding",
@@ -1138,6 +1306,7 @@ def main() -> int:
     parser.add_argument("--impact")
     parser.add_argument("--run-root")
     parser.add_argument("--new-parent-plan-reason")
+    parser.add_argument("--qualification-case", action="store_true")
     parser.add_argument("--isolation")
     parser.add_argument("--plan")
     parser.add_argument("--resolved")
@@ -1177,7 +1346,11 @@ def main() -> int:
             print(f"R7: verifier summary input could not be read: {error}")
             return 1
         except ValueError as error:
-            print(str(error))
+            message = str(error)
+            if message.startswith("R5:"):
+                print(f"R5_REFUSAL={message}")
+            else:
+                print(message)
             return 1
         print("R7 verifier summary=PASS")
         return 0
@@ -1186,8 +1359,20 @@ def main() -> int:
     if args.action == "plan":
         if not args.output:
             parser.error("plan requires --output")
+        if len(args.label) > MAX_LABELS:
+            print(
+                "R3: at most twenty labels may be expanded; use a resolved plan file for larger selections"
+            )
+            return 1
         if args.new_parent_plan_reason is not None and not args.run_root:
             parser.error("--new-parent-plan-reason requires --run-root")
+        if args.qualification_case and (
+            not args.run_root
+            or args.new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON
+        ):
+            parser.error(
+                "--qualification-case requires the TU-2a ME_DEV root and approved reason"
+            )
         groups = [group.split(",") for group in args.group]
         root = Path(__file__).resolve().parents[2]
         with _standalone_action_environment(root, "plan"):
@@ -1201,6 +1386,7 @@ def main() -> int:
                     args.run_root,
                     plan["tests"],
                     args.new_parent_plan_reason,
+                    qualification_case=args.qualification_case,
                 )
             except ValueError as error:
                 print(f"R5_REFUSAL={error}")
@@ -1224,6 +1410,36 @@ def main() -> int:
             )
             print(f"R5_LATEST_TEST_ATTEMPT={latest_result}")
             print(f"NEW_PARENT_PLAN_REASON={parent_reason or 'NONE'}")
+        return 0
+    if args.action == "validate-plan":
+        if not args.plan:
+            parser.error("validate-plan requires --plan")
+        if args.qualification_case and (
+            not args.run_root
+            or args.new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON
+        ):
+            parser.error(
+                "--qualification-case requires the TU-2a ME_DEV root and approved reason"
+            )
+        root = Path(__file__).resolve().parents[2]
+        with _standalone_action_environment(root, "validate-plan"):
+            try:
+                plan, digest = validate_plan_file(
+                    args.plan,
+                    run_root=args.run_root,
+                    new_parent_plan_reason=args.new_parent_plan_reason,
+                    qualification_case=args.qualification_case,
+                )
+            except ValueError as error:
+                print(str(error))
+                return 1
+        print(f"PLAN_SHA256={digest}")
+        print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
+        print(f"TESTS_PLANNED={len(plan['tests'])}")
+        print(f"LABELS_PLANNED={len(plan['labels'])}")
+        print(f"PARENT_PLAN_SHA256={plan.get('parent_plan_sha256') or 'NONE'}")
+        print(f"ROTATION={plan.get('rotation_side', 'NONE')}")
+        print(f"ROTATION_UNIT={plan.get('rotation_unit', 'NONE')}")
         return 0
     if args.action == "rotate":
         if not (args.parent and args.preceding and args.side and args.output):

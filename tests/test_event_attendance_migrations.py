@@ -6,6 +6,8 @@ from tests.s015_0021_support import database_now
 
 
 class EventAttendanceMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     migrate_from = ("core", "0013_s007_identity_constraints")
     migrate_to = ("core", "0014_s008_event_attendance_foundation")
 

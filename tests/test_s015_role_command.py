@@ -859,6 +859,8 @@ class S015R2InstalledSchemaEvidenceTests(SimpleTestCase):
 
 @POSTGRESQL_ONLY
 class S015RoleCommandTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def setUp(self):

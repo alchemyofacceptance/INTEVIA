@@ -77,6 +77,8 @@ def _source_function_md5(cursor, source_sql):
 
 @POSTGRESQL_ONLY
 class S015RegisterCleanupTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def setUp(self):

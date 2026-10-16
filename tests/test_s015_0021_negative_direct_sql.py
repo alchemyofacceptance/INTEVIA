@@ -37,6 +37,8 @@ EVENT_NAME_TOKENS = {
 
 @POSTGRESQL_ONLY
 class _S015NegativeBase(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset()
 
     def setUp(self):

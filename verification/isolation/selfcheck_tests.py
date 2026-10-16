@@ -6,6 +6,7 @@ Run under IsolationRunner on its own qualified disposable database. Each discrim
 its intended point against a deliberately wrong state; mutations are made inside a transaction and rolled
 back unless stated."""
 import re
+from unittest.mock import patch
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -89,6 +90,30 @@ class IsolationSelfChecks(TransactionTestCase):
         self.detect_inside_rollback(
             lambda cur: cur.execute("INSERT INTO core_role (name, description, created_at) VALUES ('UFUND1_PROBE', 'probe', now())"),
             expect_data=True)
+
+    def test_backend_sequence_sweep_detects_counter_behind_rows(self):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT max(id) FROM core_role")
+            highest_id = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT setval(pg_get_serial_sequence(%s, %s), %s, true)",
+                ["core_role", "id", highest_id - 1],
+            )
+        try:
+            report = connection.ops._sequence_discipline_report(["core_role"])
+            findings = [
+                finding
+                for finding in report["findings"]
+                if finding["table"] == "core_role"
+            ]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["status"], "BEHIND")
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT setval(pg_get_serial_sequence(%s, %s), %s, true)",
+                    ["core_role", "id", highest_id],
+                )
 
     def test_v5b_protection_check_detects_disabled_guardian(self):
         self.detect_inside_rollback(
@@ -220,7 +245,7 @@ class IsolationSelfChecks(TransactionTestCase):
 # ---------------------------------------------------------------------------------------------------------------
 from django.test import SimpleTestCase, TestCase
 
-from .runner import database_access, isolation_verdict
+from .runner import IsolationRunner, database_access, isolation_verdict
 
 
 def _probes():
@@ -253,6 +278,20 @@ def _cp(test, established, applicable=True, access="permitted"):
 
 
 class CheckpointApplicabilitySelfChecks(SimpleTestCase):
+    def _runner(self, test):
+        runner = object.__new__(IsolationRunner)
+        runner.reference = {"reference": True}
+        runner.light_plan = {"plan": True}
+        runner.light_reference = {}
+        runner.ignore_tables = ()
+        runner.checkpoints = []
+        runner.started_ids = []
+        runner.timing_by_id = {test.id(): {}}
+        runner.emit_errors = 0
+        records = []
+        runner._emit = lambda record: records.append(record)
+        return runner, records
+
     def test_n1_access_is_taken_from_effective_databases_not_class_name(self):
         simple, simple_with_default, transaction_probe, all_probe = _probes()
         self.assertEqual(database_access(simple())[0], "forbidden")
@@ -269,12 +308,243 @@ class CheckpointApplicabilitySelfChecks(SimpleTestCase):
 
     def test_n3_not_applicable_counts_only_where_access_is_forbidden(self):
         suite = ["a", "b"]
-        lawful = [_cp("a", True), _cp("b", None, applicable=False, access="forbidden")]
+        cpz = {"checkpoint": "CP-Z", "established": True}
+        lawful = [
+            _cp("a", True),
+            _cp("b", None, applicable=False, access="forbidden"),
+            cpz,
+        ]
         self.assertEqual(isolation_verdict(True, suite, suite, suite, lawful, 0)[0], "PASS")
-        unlawful = [_cp("a", True), _cp("b", None, applicable=False, access="permitted")]
+        unlawful = [
+            _cp("a", True),
+            _cp("b", None, applicable=False, access="permitted"),
+            cpz,
+        ]
         self.assertEqual(isolation_verdict(True, suite, suite, suite, unlawful, 0)[0], "NOT ESTABLISHED")
 
     def test_n4_failed_applicable_checkpoint_prevents_pass_despite_not_applicable_ones(self):
         suite = ["a", "b", "c"]
         checkpoints = [_cp("a", None, applicable=False, access="forbidden"), _cp("b", None, applicable=False, access="forbidden"), _cp("c", False)]
         self.assertEqual(isolation_verdict(True, suite, suite, suite, checkpoints, 0)[0], "NOT ESTABLISHED")
+
+    def test_cpz_is_required_but_cpf_does_not_block_the_verdict(self):
+        suite = ["a"]
+        checkpoints = [
+            _cp("a", True),
+            {"checkpoint": "CP-F", "test": "a", "established": False},
+            {"checkpoint": "CP-Z", "established": True},
+        ]
+        self.assertEqual(
+            isolation_verdict(True, suite, suite, suite, checkpoints, 0)[0],
+            "PASS",
+        )
+        self.assertEqual(
+            isolation_verdict(True, suite, suite, suite, checkpoints[:-1], 0)[0],
+            "NOT ESTABLISHED",
+        )
+
+    def test_cp_a_uses_light_capture_for_unmarked_tests(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        runner, records = self._runner(test)
+        light = {
+            "protection": (2, 0, 3, 0, 4),
+            "row_counts": {"core_role": 1},
+            "sequence": {"sequences_observed": 1, "findings": []},
+            "content": ("a", "b", "c", "d", False),
+        }
+        with (
+            patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "0"}),
+            patch("verification.isolation.runner.state.capture_light", return_value=light),
+            patch("verification.isolation.runner.state.compare_light", return_value=[]),
+        ):
+            self.assertTrue(runner.checkpoint_a(test))
+
+        record = records[-1]
+        self.assertEqual(record["capture"], "light")
+        self.assertEqual(record["trigger"], "light")
+        self.assertEqual(record["light_capture"], light)
+        self.assertEqual(record["light_check"]["performed"], ["Q1", "Q2", "Q3", "Q4"])
+
+    def test_q4_content_mismatch_records_a_full_capture_and_previous_test(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        runner, records = self._runner(test)
+        runner.started_ids = ["previous-test"]
+        reference_light = {
+            "protection": (2, 0, 3, 0, 4),
+            "row_counts": {"core_role": 1},
+            "sequence": {"sequences_observed": 1, "findings": []},
+            "content": ("a", "b", "c", "d", False),
+        }
+        light = {
+            **reference_light,
+            "content": ("changed-role", "b", "c", "d", False),
+        }
+        runner.light_reference = reference_light
+        captured = {"sequence_discipline": []}
+        with (
+            patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "0"}),
+            patch("verification.isolation.runner.state.capture_light", return_value=light),
+            patch("verification.isolation.runner.state.capture", return_value=captured),
+            patch("verification.isolation.runner.state.compare", return_value=([], [])),
+            patch("verification.isolation.runner.state.digest", return_value="full-digest"),
+        ):
+            self.assertFalse(runner.checkpoint_a(test))
+
+        record = records[-1]
+        self.assertEqual(record["capture"], "full")
+        self.assertEqual(record["trigger"], "mismatch")
+        self.assertEqual(record["attributed_to"], "previous-test")
+        self.assertEqual(record["light_mismatches"], ["Q4 seed, framework, migration, or privilege content differs"])
+        self.assertIs(record["full_capture"], captured)
+
+    def test_declared_test_uses_full_capture(self):
+        class DeclaredProbe(TransactionTestCase):
+            ISOLATION_FULL_CAPTURE = True
+
+            def runTest(self):
+                pass
+
+        test = DeclaredProbe()
+        runner, records = self._runner(test)
+        captured = {"sequence_discipline": []}
+        with (
+            patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "0"}),
+            patch("verification.isolation.runner.state.capture", return_value=captured),
+            patch("verification.isolation.runner.state.compare", return_value=([], [])),
+            patch("verification.isolation.runner.state.digest", return_value="full-digest"),
+        ):
+            self.assertTrue(runner.checkpoint_a(test))
+
+        self.assertEqual(records[-1]["capture"], "full")
+        self.assertEqual(records[-1]["trigger"], "declared")
+
+    def test_per_test_switch_uses_full_capture(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        runner, records = self._runner(test)
+        captured = {"sequence_discipline": []}
+        with (
+            patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "1"}),
+            patch("verification.isolation.runner.state.capture", return_value=captured),
+            patch("verification.isolation.runner.state.compare", return_value=([], [])),
+            patch("verification.isolation.runner.state.digest", return_value="full-digest"),
+        ):
+            self.assertTrue(runner.checkpoint_a(test))
+
+        self.assertEqual(records[-1]["capture"], "full")
+        self.assertEqual(records[-1]["trigger"], "switch")
+
+    def test_cpf_and_cpz_records_are_emitted_in_order(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        test_id = test.id()
+        runner, records = self._runner(test)
+        runner.checkpoints = [_cp(test_id, True)]
+        runner.pending_cpf = {test_id: test}
+        runner.timing_by_id[test_id] = {"_post_complete": True}
+        captured = {"sequence_discipline": []}
+        with (
+            patch("verification.isolation.runner.state.capture", return_value=captured),
+            patch("verification.isolation.runner.state.compare", return_value=([], [])),
+            patch("verification.isolation.runner.state.digest", return_value="full-digest"),
+        ):
+            runner._run_pending_cpf()
+            runner.checkpoint_z()
+
+        self.assertEqual(
+            [record["checkpoint"] for record in runner.checkpoints],
+            ["CP-A", "CP-F", "CP-Z"],
+        )
+        self.assertEqual(
+            [record["checkpoint"] for record in records],
+            ["CP-F", "CP-Z"],
+        )
+        self.assertEqual(
+            isolation_verdict(
+                True,
+                [test_id],
+                [test_id],
+                [test_id],
+                runner.checkpoints,
+                0,
+            )[0],
+            "PASS",
+        )
+
+    def test_timing_finalizes_at_next_start_and_run_end(self):
+        _, _, transaction_probe, _ = _probes()
+        first, second = transaction_probe(), transaction_probe()
+        first.id = lambda: "first"
+        second.id = lambda: "second"
+        runner = object.__new__(IsolationRunner)
+        runner.current_timing_id = None
+        runner.timing_records = []
+        runner.timing_by_id = {}
+        runner.pending_cpf = {}
+        emitted = []
+        runner._emit = lambda record: emitted.append(record)
+        with patch(
+            "verification.isolation.runner.time.perf_counter",
+            side_effect=[1.0, 1.5, 3.0, 4.0],
+        ):
+            runner._start_timing(first)
+            runner.timing_by_id["first"]["t_check"] = 0.1
+            runner._stop_timing(first)
+            runner._record_post_teardown(first, 0.2, True)
+            runner._start_timing(second)
+            runner.timing_by_id["second"]["t_check"] = 0.05
+            runner._stop_timing(second)
+            runner._record_post_teardown(second, 0.3, True)
+            runner._finish_timing_run()
+
+        first_phases = runner.timing_records[0]["phases"]
+        second_phases = runner.timing_records[1]["phases"]
+        self.assertEqual(first_phases["t_unittest"], 0.5)
+        self.assertEqual(first_phases["t_post"], 0.2)
+        self.assertEqual(first_phases["t_flush"], 0.0)
+        self.assertEqual(first_phases["t_gap"], 1.5)
+        self.assertEqual(second_phases["t_gap"], "not_applicable")
+        self.assertEqual([record["checkpoint"] for record in emitted], ["TIMING", "TIMING"])
+
+    def test_interrupted_timing_marks_missing_phases_incomplete(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        test.id = lambda: "interrupted"
+        runner = object.__new__(IsolationRunner)
+        runner.current_timing_id = None
+        runner.timing_records = []
+        runner.timing_by_id = {}
+        runner.pending_cpf = {}
+        runner._emit = lambda record: None
+        with patch("verification.isolation.runner.time.perf_counter", return_value=1.0):
+            runner._start_timing(test)
+            runner._finish_timing_run()
+
+        self.assertEqual(
+            runner.timing_records[0]["phases"],
+            {
+                "t_check": "incomplete",
+                "t_unittest": "incomplete",
+                "t_post": "incomplete",
+                "t_flush": "incomplete",
+                "t_gap": "incomplete",
+            },
+        )
+
+    def test_post_teardown_timing_wraps_the_original_method_directly(self):
+        _, _, transaction_probe, _ = _probes()
+        test = transaction_probe()
+        runner = object.__new__(IsolationRunner)
+        recorded = []
+        runner._record_post_teardown = (
+            lambda checked_test, elapsed, completed: recorded.append(
+                (checked_test, elapsed, completed)
+            )
+        )
+        wrapped = runner._timed_post_teardown(lambda checked_test: "returned")
+        self.assertEqual(wrapped(test), "returned")
+        self.assertIs(recorded[0][0], test)
+        self.assertGreaterEqual(recorded[0][1], 0)
+        self.assertTrue(recorded[0][2])

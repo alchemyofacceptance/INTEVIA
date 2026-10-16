@@ -8,6 +8,8 @@ from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
 class EventResourceRelationshipMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     migrate_from = ("core", "0014_s008_event_attendance_foundation")
     migrate_to = ("core", "0015_s011b_event_resource_relationship")
     model_names = (

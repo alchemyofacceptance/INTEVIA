@@ -4,9 +4,9 @@ with VERIFICATION_ISOLATION_JSON set to an output path. verification/run.py sets
 
 Two verdicts are kept separate:
   ordinary test verdict  - what the tests themselves reported (from the runner's result)
-  isolation verdict      - PASS only if CP-0 requirements were met AND every executed test has exactly one
-                           CP-A checkpoint, established, with no check error, AND the checkpoint set, the
-                           executed set and the suite's collected set are identical.
+  isolation verdict      - PASS only if CP-0 requirements were met, every executed test has exactly one
+                           established CP-A checkpoint, and CP-Z was established after the completed run.
+                           CP-F captures after failed tests are diagnostic and do not by themselves block it.
 Anything else, including a missing SUMMARY record, is NOT ESTABLISHED.
 
 v0.3: a CP-A checkpoint is NOT APPLICABLE only where the test framework itself forbids database access for that test -
@@ -20,11 +20,17 @@ import re
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
+from django.test import TransactionTestCase
 from django.test.runner import DiscoverRunner
 from django.test.utils import iter_test_cases
 
-from intevia.test_postgresql_backend.operations import S015_TRUNCATE_GUARDIANS
+from intevia.test_postgresql_backend.operations import (
+    S015_TRUNCATE_GUARDIANS,
+    clear_test_timing_context,
+    set_test_timing_context,
+)
 
 from verification.ownership import OwnedDatabaseRunnerMixin, install, read_receipts
 from verification.recording import RecordingResult, RecordingRunnerMixin
@@ -54,7 +60,9 @@ def isolation_verdict(cp0_met, suite_ids, started_ids, outcome_ids, checkpoints,
     reasons = []
     if not cp0_met:
         reasons.append("CP-0 requirements not met")
-    cp_ids = [c["test"] for c in checkpoints]
+    cpa = [c for c in checkpoints if c.get("checkpoint") == "CP-A"]
+    cpz = [c for c in checkpoints if c.get("checkpoint") == "CP-Z"]
+    cp_ids = [c["test"] for c in cpa]
     dup = sorted({t for t in cp_ids if cp_ids.count(t) > 1})
     if dup:
         reasons.append("duplicate checkpoints: %s" % dup[:5])
@@ -62,20 +70,45 @@ def isolation_verdict(cp0_met, suite_ids, started_ids, outcome_ids, checkpoints,
     missing = sorted(executed - set(cp_ids))
     if missing:
         reasons.append("executed without a checkpoint: %s" % missing[:5])
-    if set(cp_ids) != set(suite_ids) or executed != set(suite_ids):
-        reasons.append("coverage mismatch: suite %d, checkpoints %d, executed %d" % (len(set(suite_ids)), len(set(cp_ids)), len(executed)))
-    lawful_na = [c["test"] for c in checkpoints if c.get("applicable") is False and c.get("database_access") == "forbidden"]
-    not_est = [c["test"] for c in checkpoints if c.get("established") is not True and c["test"] not in lawful_na]
+    extra = sorted(set(cp_ids) - executed)
+    if extra:
+        reasons.append("checkpoints without executed tests: %s" % extra[:5])
+    if len(cp_ids) != len(set(cp_ids)) or len(cp_ids) != len(executed):
+        reasons.append(
+            "coverage mismatch: executed %d, checkpoints %d"
+            % (len(executed), len(cp_ids))
+        )
+    lawful_na = [
+        c["test"]
+        for c in cpa
+        if c.get("applicable") is False
+        and c.get("database_access") == "forbidden"
+    ]
+    not_est = [
+        c["test"]
+        for c in cpa
+        if c.get("established") is not True and c["test"] not in lawful_na
+    ]
     if not_est:
         reasons.append("not established at %d checkpoint(s), first %s" % (len(not_est), not_est[0]))
-    errors = [c["test"] for c in checkpoints if str(c.get("reason", "")).startswith("check error")]
+    errors = [
+        c["test"]
+        for c in cpa
+        if str(c.get("reason", "")).startswith("check error")
+    ]
     if errors:
         reasons.append("check errors at %d checkpoint(s)" % len(errors))
+    if len(cpz) != 1 or cpz[0].get("established") is not True:
+        reasons.append("CP-Z was not established after the run completed")
     if emit_errors:
         reasons.append("output write errors: %d" % emit_errors)
-    if not suite_ids:
+    if not suite_ids or not executed:
         reasons.append("no tests in suite")
     return ("PASS" if not reasons else "NOT ESTABLISHED"), reasons
+
+
+class CheckpointRefused(RuntimeError):
+    pass
 
 
 def database_access(test):
@@ -244,9 +277,17 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         self.outcome_ids = []
         self.ignore_tables = ()
         self.suite_ids = [t.id() for t in iter_test_cases(suite)]
+        self.timing_records = []
+        self.timing_by_id = {}
+        self.current_timing_id = None
+        self.pending_cpf = {}
+        self.checkpoint_stop_id = None
+        self.checkpoint_failure_test = None
         if self.run_plan is not None:
             ensure_suite_matches(self.run_plan["tests"], self.suite_ids)
         self.reference = None
+        self.light_plan = None
+        self.light_reference = None
         self.cp0_met = False
         database_name = state.connection.settings_dict.get("NAME")
         protected_names = ("intevia", "intevia_dev", os.environ.get("INTEVIA_POSTGRES_DB"))
@@ -286,7 +327,16 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         try:
             ref = state.capture()
             violations = state.check_requirements(ref, S015_TRUNCATE_GUARDIANS)
-            self.cp0_met = not violations
+            light_reference = None
+            try:
+                self.light_plan = state.build_light_plan(ref)
+                light_reference = state.capture_light(self.light_plan)
+                violations.extend(state.light_baseline_violations(ref, light_reference))
+            except Exception as light_exc:
+                violations.append(
+                    "CP-0 light-check baseline error: %s: %s"
+                    % (type(light_exc).__name__, light_exc)
+                )
             cp0_digest = state.digest(ref)
             if clone_record and template_receipt:
                 if cp0_digest != clone_record.get("template_cp0_digest") or cp0_digest != template_receipt.get("cp0_digest"):
@@ -295,11 +345,17 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                     template_problem = "template direct-connection refusal was not established"
                 if template_problem:
                     violations.append(template_problem)
-                    self.cp0_met = False
+            self.cp0_met = not violations
             self.reference = ref if self.cp0_met else None
+            self.light_reference = light_reference if self.cp0_met else None
             self._emit({"checkpoint": "CP-0", "requirements_met": self.cp0_met, "violations": violations,
                         "reference_digests": {k: state.digest(ref[k]) for k in DIGEST_KEYS},
                         "trigger_count": len(ref["triggers"]), "suite_ids": self.suite_ids,
+                        "light_check": {
+                            "statements": 4,
+                            "tables": len(self.light_plan["table_names"])
+                            if self.light_plan is not None else 0,
+                        },
                         "template_identity": clone_record.get("identity") if clone_record else None,
                         "template_cp0_digest": clone_record.get("template_cp0_digest") if clone_record else None,
                         "clone_cp0_digest": cp0_digest if clone_record else None})
@@ -321,10 +377,17 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         CURRENT["runner"] = self
         result = None
         try:
-            result = super().run_suite(suite, **kwargs)
+            with patch.object(
+                TransactionTestCase,
+                "_post_teardown",
+                self._timed_post_teardown(TransactionTestCase._post_teardown),
+            ):
+                result = super().run_suite(suite, **kwargs)
             return result
         finally:
             CURRENT["runner"] = None
+            self._run_pending_cpf()
+            self._finish_timing_run()
             self._summary(result)
 
     def teardown_databases(self, old_config, **kwargs):
@@ -351,9 +414,17 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
 
         class IsolationResult(base):
             def startTest(self, test):
-                runner.started_ids.append(test.id())
-                runner.checkpoint_a(test)
+                runner._start_timing(test)
                 super().startTest(test)
+                if not runner.checkpoint_a(test):
+                    raise CheckpointRefused(
+                        "CP-A' was not established before %s; previous test: %s"
+                        % (
+                            test.id(),
+                            runner.checkpoint_failure_test or "none",
+                        )
+                    )
+                runner.started_ids.append(test.id())
 
             def _outcome(self, test):
                 runner.outcome_ids.append(test.id())
@@ -363,9 +434,11 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
 
             def addError(self, test, err):
                 self._outcome(test); super().addError(test, err)
+                runner._mark_failure(test)
 
             def addFailure(self, test, err):
                 self._outcome(test); super().addFailure(test, err)
+                runner._mark_failure(test)
 
             def addSkip(self, test, reason):
                 self._outcome(test); super().addSkip(test, reason)
@@ -378,6 +451,23 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
 
             def addSubTest(self, test, subtest, err):
                 self._outcome(test); super().addSubTest(test, subtest, err)
+                if err is not None:
+                    runner._mark_failure(test)
+
+            def stopTest(self, test):
+                runner._stop_timing(test)
+                try:
+                    super().stopTest(test)
+                finally:
+                    clear_test_timing_context(test.id())
+
+            def stopTestRun(self):
+                try:
+                    super().stopTestRun()
+                finally:
+                    runner._run_pending_cpf()
+                    runner.checkpoint_z()
+                    runner._finish_timing_run()
 
         class Result(RecordingResult, IsolationResult):
             pass
@@ -390,17 +480,22 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             "test": test.id(),
             "established": False,
             "applicable": True,
+            "capture": "none",
+            "trigger": "light",
             "sequence_check_summary": {
                 "performed": [],
                 "sequences_observed": 0,
                 "not_established": [],
             },
         }
+        started = time.perf_counter()
+        previous_test = self.started_ids[-1] if self.started_ids else None
         try:
             access, databases = database_access(test)
             rec.update(database_access=access, effective_databases=databases)
             if access == "forbidden":
                 rec.update(applicable=False, established=None,
+                           capture="none", trigger="not-applicable",
                            reason="not applicable: database access forbidden by the framework for this test (effective databases %s)" % databases)
                 rec["sequence_check_summary"]["not_established"].append(
                     "default database access is forbidden for this test"
@@ -411,25 +506,54 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                     "CP-0 requirements were not met; CP-A sequence checks did not run"
                 )
             else:
-                captured = state.capture()
-                sequence_summary = sequence_check_summary(
-                    captured, databases, self.ignore_tables
-                )
-                data, prot = state.compare(
-                    self.reference, captured, self.ignore_tables
-                )
-                data = [
-                    "%s — observed at CP-A for %s" % (violation, test.id())
-                    if violation.startswith("REQ-S1 ")
-                    else violation
-                    for violation in data
-                ]
-                rec.update(
-                    established=not data and not prot,
-                    data_violations=data,
-                    protection_violations=prot,
-                    sequence_check_summary=sequence_summary,
-                )
+                trigger = self._full_capture_trigger(test)
+                if trigger:
+                    rec.update(capture="full", trigger=trigger)
+                    captured = state.capture()
+                    self._record_full_comparison(
+                        rec, captured, databases, trigger=trigger
+                    )
+                else:
+                    light = state.capture_light(self.light_plan)
+                    light_violations = state.compare_light(
+                        self.light_reference, light
+                    )
+                    light_sequence_summary = {
+                        "performed": ["Q1", "Q2", "Q3", "Q4"],
+                        "sequences_observed": light["sequence"][
+                            "sequences_observed"
+                        ],
+                        "not_established": [
+                            "Q3 %s: %s"
+                            % (finding["status"], finding["sequence"])
+                            for finding in light["sequence"]["findings"]
+                        ],
+                    }
+                    rec.update(
+                        capture="light",
+                        trigger="light",
+                        light_capture=light,
+                        light_check=light_sequence_summary,
+                        sequence_check_summary=light_sequence_summary,
+                    )
+                    if light_violations:
+                        rec.update(
+                            capture="full",
+                            trigger="mismatch",
+                            light_mismatches=light_violations,
+                            attributed_to=previous_test,
+                            reason=(
+                                "CP-A' mismatch after previous test %s"
+                                % (previous_test or "none")
+                            ),
+                        )
+                        captured = state.capture()
+                        self._record_full_comparison(
+                            rec, captured, databases, trigger="mismatch"
+                        )
+                        rec["established"] = False
+                    else:
+                        rec["established"] = True
         except Exception as exc:
             rec.update(
                 established=False,
@@ -439,10 +563,275 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             rec["sequence_check_summary"]["not_established"].append(
                 "sequence check error: %s: %s" % (type(exc).__name__, exc)
             )
+            rec["attributed_to"] = previous_test
+        finally:
+            rec["t_check"] = time.perf_counter() - started
+            timing = self.timing_by_id.get(test.id())
+            if timing is not None:
+                timing["t_check"] = rec["t_check"]
+        if rec.get("established") is not True and rec.get("applicable") is not False:
+            rec.setdefault("attributed_to", previous_test)
+            rec.setdefault(
+                "reason",
+                "CP-A' not established after previous test %s"
+                % (previous_test or "none"),
+            )
+            self.checkpoint_stop_id = (
+                self.started_ids[-1] if self.started_ids else None
+            )
+            self.checkpoint_failure_test = previous_test
         self.checkpoints.append(rec)
         self._emit(rec)
         label = "NOT APPLICABLE" if rec.get("applicable") is False else ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED")
         print("ISOLATION CP-A %s %s" % (label, test.id()), file=sys.stderr, flush=True)
+        return rec.get("applicable") is False or rec.get("established") is True
+
+    def _full_capture_trigger(self, test):
+        if os.environ.get("VERIFICATION_ISOLATION_PER_TEST") == "1":
+            return "switch"
+        method = getattr(test, getattr(test, "_testMethodName", ""), None)
+        method_function = getattr(method, "__func__", method)
+        module = sys.modules.get(type(test).__module__)
+        if (
+            getattr(method_function, "ISOLATION_FULL_CAPTURE", False)
+            or getattr(type(test), "ISOLATION_FULL_CAPTURE", False)
+            or getattr(module, "ISOLATION_FULL_CAPTURE", False)
+        ):
+            return "declared"
+        return None
+
+    def _record_full_comparison(self, rec, captured, databases, *, trigger):
+        rec.update(capture="full", trigger=trigger)
+        rec["full_capture"] = captured
+        rec["full_capture_digest"] = state.digest(captured)
+        data, protection = state.compare(
+            self.reference, captured, self.ignore_tables
+        )
+        data = [
+            "%s — observed at CP-A for %s" % (violation, rec["test"])
+            if violation.startswith("REQ-S1 ")
+            else violation
+            for violation in data
+        ]
+        sequence_summary = sequence_check_summary(
+            captured, databases, self.ignore_tables
+        )
+        rec.update(
+            data_violations=data,
+            protection_violations=protection,
+            sequence_check_summary=sequence_summary,
+            established=(
+                not data
+                and not protection
+                and not sequence_summary["not_established"]
+            ),
+        )
+
+    def _start_timing(self, test):
+        now = time.perf_counter()
+        previous_id = self.current_timing_id
+        if previous_id is not None:
+            previous = self.timing_by_id[previous_id]
+            stop_at = previous.get("_stop_at")
+            if stop_at is not None:
+                previous["t_gap"] = now - stop_at
+            self._run_pending_cpf()
+            self._finalize_timing(previous)
+            self.current_timing_id = None
+
+        test_id = test.id()
+        timing = {
+            "test": test_id,
+            "t_check": None,
+            "t_unittest": None,
+            "t_post": None,
+            "t_flush": None,
+            "t_gap": None,
+            "_unittest_start": now,
+            "_stop_at": None,
+            "_post_complete": False,
+        }
+        self.timing_records.append(timing)
+        self.timing_by_id[test_id] = timing
+        self.current_timing_id = test_id
+        set_test_timing_context(
+            test_id,
+            lambda callback_test_id, elapsed: self._record_flush_time(
+                callback_test_id, elapsed
+            ),
+        )
+
+    def _stop_timing(self, test):
+        timing = self.timing_by_id.get(test.id())
+        if timing is not None:
+            now = time.perf_counter()
+            timing["t_unittest"] = now - timing["_unittest_start"]
+            timing["_stop_at"] = now
+
+    def _record_post_teardown(self, test, elapsed, completed):
+        test_id = test.id()
+        timing = self.timing_by_id.get(test_id)
+        if timing is not None:
+            timing["t_post"] = elapsed
+            timing["_post_complete"] = completed
+        clear_test_timing_context(test_id)
+
+    def _timed_post_teardown(self, original):
+        def timed_post_teardown(test, *args, **kwargs):
+            started = time.perf_counter()
+            completed = False
+            try:
+                result = original(test, *args, **kwargs)
+                completed = True
+                return result
+            finally:
+                self._record_post_teardown(
+                    test, time.perf_counter() - started, completed
+                )
+
+        return timed_post_teardown
+
+    def _record_flush_time(self, test_id, elapsed):
+        timing = self.timing_by_id.get(test_id)
+        if timing is not None:
+            timing["t_flush"] = (timing["t_flush"] or 0.0) + elapsed
+
+    def _finalize_timing(self, timing, *, final=False):
+        if timing.get("_post_complete") and timing["t_flush"] is None:
+            timing["t_flush"] = 0.0
+        phases = {
+            name: value if value is not None else "incomplete"
+            for name, value in (
+                ("t_check", timing["t_check"]),
+                ("t_unittest", timing["t_unittest"]),
+                ("t_post", timing["t_post"]),
+                ("t_flush", timing["t_flush"]),
+                ("t_gap", timing["t_gap"]),
+            )
+        }
+        if (
+            final
+            and timing["_stop_at"] is not None
+            and phases["t_gap"] == "incomplete"
+        ):
+            phases["t_gap"] = "not_applicable"
+        self._emit(
+            {
+                "checkpoint": "TIMING",
+                "test": timing["test"],
+                "label": "between-test interval",
+                "phases": phases,
+            }
+        )
+        timing["phases"] = phases
+        for name in (
+            "_unittest_start",
+            "_stop_at",
+            "_post_complete",
+            "t_check",
+            "t_unittest",
+            "t_post",
+            "t_flush",
+            "t_gap",
+        ):
+            timing.pop(name, None)
+
+    def _finish_timing_run(self):
+        if self.current_timing_id is None:
+            return
+        timing = self.timing_by_id[self.current_timing_id]
+        self._finalize_timing(timing, final=True)
+        clear_test_timing_context(self.current_timing_id)
+        self.current_timing_id = None
+
+    def _mark_failure(self, test):
+        self.pending_cpf[test.id()] = test
+
+    def _run_pending_cpf(self):
+        for test_id, test in list(self.pending_cpf.items()):
+            timing = self.timing_by_id.get(test_id)
+            rec = {
+                "checkpoint": "CP-F",
+                "test": test_id,
+                "capture": "full",
+                "trigger": "failure",
+                "after": "post-teardown",
+                "established": False,
+            }
+            try:
+                if timing is None or not timing.get("_post_complete"):
+                    rec["reason"] = "post-teardown did not complete"
+                elif self.reference is None:
+                    rec["reason"] = "CP-0 requirements not met"
+                else:
+                    captured = state.capture()
+                    rec["full_capture"] = captured
+                    rec["full_capture_digest"] = state.digest(captured)
+                    data, protection = state.compare(
+                        self.reference, captured, self.ignore_tables
+                    )
+                    sequence_summary = sequence_check_summary(
+                        captured, None, self.ignore_tables
+                    )
+                    rec.update(
+                        data_violations=data,
+                        protection_violations=protection,
+                        sequence_check_summary=sequence_summary,
+                        established=(
+                            not data
+                            and not protection
+                            and not sequence_summary["not_established"]
+                        ),
+                    )
+            except Exception as exc:
+                rec["reason"] = "check error: %s: %s" % (
+                    type(exc).__name__,
+                    exc,
+                )
+            self.checkpoints.append(rec)
+            self._emit(rec)
+            self.pending_cpf.pop(test_id, None)
+
+    def checkpoint_z(self):
+        rec = {
+            "checkpoint": "CP-Z",
+            "capture": "full",
+            "trigger": "run-complete",
+            "established": False,
+        }
+        try:
+            if self.reference is None:
+                rec["reason"] = "CP-0 requirements not met"
+            else:
+                captured = state.capture()
+                rec["full_capture"] = captured
+                rec["full_capture_digest"] = state.digest(captured)
+                data, protection = state.compare(
+                    self.reference, captured, self.ignore_tables
+                )
+                sequence_summary = sequence_check_summary(
+                    captured, None, self.ignore_tables
+                )
+                rec.update(
+                    data_violations=data,
+                    protection_violations=protection,
+                    sequence_check_summary=sequence_summary,
+                    established=(
+                        not data
+                        and not protection
+                        and not sequence_summary["not_established"]
+                    ),
+                )
+        except Exception as exc:
+            rec["reason"] = "check error: %s: %s" % (type(exc).__name__, exc)
+        self.checkpoints.append(rec)
+        self._emit(rec)
+        print(
+            "ISOLATION CP-Z %s"
+            % ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED"),
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _emit(self, rec):
         rec = dict(rec, run_nonce=os.environ.get("VERIFICATION_RUN_NONCE"))  # binds every record to the current run (C-A1-B4)
@@ -452,26 +841,74 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         except Exception:
             self.emit_errors += 1
 
+    def _timing_summary(self):
+        phases = ("t_check", "t_unittest", "t_post", "t_flush", "t_gap")
+        sums = {}
+        incomplete = {}
+        records = getattr(self, "timing_records", [])
+        for phase in phases:
+            values = [
+                timing["phases"][phase]
+                for timing in records
+                if isinstance(timing.get("phases", {}).get(phase), (int, float))
+            ]
+            sums[phase] = sum(values)
+            incomplete[phase] = sum(
+                1
+                for timing in records
+                if timing.get("phases", {}).get(phase) == "incomplete"
+            )
+        print(
+            "TIMING: tests=%d check=%.6fs unittest=%.6fs post=%.6fs flush=%.6fs gap=%.6fs"
+            % (
+                len(records),
+                sums["t_check"],
+                sums["t_unittest"],
+                sums["t_post"],
+                sums["t_flush"],
+                sums["t_gap"],
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        return {
+            "tests": len(records),
+            "check_seconds": sums["t_check"],
+            "unittest_seconds": sums["t_unittest"],
+            "post_seconds": sums["t_post"],
+            "flush_seconds": sums["t_flush"],
+            "gap_seconds": sums["t_gap"],
+            "incomplete_phases": incomplete,
+        }
+
     def _summary(self, result):
         verdict, reasons = isolation_verdict(self.cp0_met, self.suite_ids, self.started_ids,
                                              self.outcome_ids, self.checkpoints, self.emit_errors)
+        cpa = [c for c in self.checkpoints if c.get("checkpoint") == "CP-A"]
+        cpz = [c for c in self.checkpoints if c.get("checkpoint") == "CP-Z"]
+        cpf = [c for c in self.checkpoints if c.get("checkpoint") == "CP-F"]
         ordinary = None
         if result is not None:
             ordinary = {"tests_run": result.testsRun, "errors": len(result.errors), "failures": len(result.failures),
                         "skipped": len(result.skipped), "was_successful": result.wasSuccessful()}
+        timing_summary = self._timing_summary()
         summary = {"checkpoint": "SUMMARY", "isolation_verdict": verdict, "reasons": reasons,
                    "cp0_requirements_met": self.cp0_met, "suite_tests": len(self.suite_ids),
-                   "checkpoints": len(self.checkpoints),
-                   "established": sum(1 for c in self.checkpoints if c.get("established") is True),
-                   "applicable": sum(1 for c in self.checkpoints if c.get("applicable") is not False),
-                   "not_applicable": sum(1 for c in self.checkpoints if c.get("applicable") is False),
+                   "checkpoints": len(cpa),
+                   "established": sum(1 for c in cpa if c.get("established") is True),
+                   "applicable": sum(1 for c in cpa if c.get("applicable") is not False),
+                   "not_applicable": sum(1 for c in cpa if c.get("applicable") is False),
+                   "cpz_established": len(cpz) == 1 and cpz[0].get("established") is True,
+                   "cpf_checkpoints": len(cpf),
+                   "timing": timing_summary,
                    "ordinary_test_verdict": ordinary,
                    "evidence_claim": "equality at compared properties only; not complete database-state equivalence; "
                                      "sequence and identity positions and primary keys of framework rows remain excluded from equality; "
                                      "table-owned sequence configuration (REQ-S0) and next-id invariants (REQ-S1) "
-                                     "are checked at reset boundaries, CP-0 and CP-A. "
+                                     "are checked at reset boundaries, CP-0, CP-A', CP-F and CP-Z. "
                                      "The backend checks before teardown flushing and after seed restoration, and checks "
-                                     "the result of the by-name setup reset. The isolation instrument checks at CP-0 and CP-A."}
+                                     "the result of the by-name setup reset. The isolation instrument checks at CP-0, CP-A', "
+                                     "CP-F and CP-Z."}
         candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
         candidate_binding_valid = isinstance(candidate_binding, str) and re.fullmatch(
             r"[0-9a-f]{64}", candidate_binding
@@ -508,7 +945,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             stopping_test = (
                 (result.errors + result.failures)[-1][0].id()
                 if result is not None and (result.errors or result.failures)
-                else None
+                else self.checkpoint_stop_id
             )
             try:
                 match = assert_execution(
@@ -536,7 +973,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 executed_matches_plan=match,
                 candidate_binding=summary["candidate_binding"],
                 failing_test=(
-                    stopping_test
+                    self.checkpoint_failure_test or stopping_test
                 ),
             )
             mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "UNKNOWN")

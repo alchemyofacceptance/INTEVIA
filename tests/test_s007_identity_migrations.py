@@ -6,6 +6,8 @@ from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
 class IdentityMigrationRehearsalTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     migrate_from = ("core", "0010_event_registration_foundation")
     migrate_to = ("core", "0013_s007_identity_constraints")
 

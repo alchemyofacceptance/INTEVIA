@@ -747,6 +747,8 @@ class GovernanceEnablingReadinessGateTests(unittest.TestCase):
 
 
 class SBGGovernanceMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     FORMATION_MIGRATION = ("core", "0045_sbg_governance_formation")

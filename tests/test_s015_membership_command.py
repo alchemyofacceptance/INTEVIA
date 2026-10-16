@@ -181,6 +181,8 @@ class _MalformedProvider:
 
 @POSTGRESQL_ONLY
 class S015MembershipCommandTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def setUp(self):

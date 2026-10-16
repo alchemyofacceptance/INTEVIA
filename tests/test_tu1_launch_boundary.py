@@ -19,40 +19,184 @@ from verification.isolation.run_plan import (
 
 
 class LaunchBoundaryTests(SimpleTestCase):
+    def _run_in_fresh_process(self, source):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path.cwd().resolve()
+        python_paths = [str(root), str(root / "tests")]
+        if os.environ.get("PYTHONPATH"):
+            python_paths.append(os.environ["PYTHONPATH"])
+        child_env = {
+            name: os.environ[name]
+            for name in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
+            if name in os.environ
+        }
+        child_env.update(
+            {
+                "DJANGO_SETTINGS_MODULE": "intevia.test_settings",
+                "DJANGO_SECRET_KEY": "offline-test-placeholder-not-a-secret",
+                "INTEVIA_S015_TEST_ROUTE": "LIVING_ORGANISM_TEST_LIFECYCLE",
+                "INTEVIA_DATABASE_ENGINE": "postgresql",
+                "INTEVIA_POSTGRES_DB": "postgres",
+                "INTEVIA_POSTGRES_USER": "offline_test",
+                "INTEVIA_POSTGRES_PASSWORD": "offline-test-placeholder-not-a-secret",
+                "INTEVIA_POSTGRES_TEST_DB": "test_intevia_living_organism_tu1_plan_precheck",
+                "PYTHONPATH": os.pathsep.join(python_paths),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+        return subprocess.run(
+            [sys.executable, "-B", "-c", source],
+            capture_output=True,
+            check=False,
+            cwd=root,
+            env=child_env,
+            text=True,
+        )
+
+    def _build_plan_in_fresh_process(self, label):
+        import json
+
+        source = (
+            "import json\n"
+            "from verification.isolation.run_plan import build_plan\n"
+            "attempts = {'count': 0}\n"
+            f"plan = build_plan([{label!r}], connection_attempts=attempts)\n"
+            "print(json.dumps({'plan': plan, 'attempts': attempts}))\n"
+        )
+        result = self._run_in_fresh_process(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        return response["plan"], response["attempts"]
+
     def test_module_labels_expand_before_execution(self):
         from verification.isolation.run_plan import resolve_labels
 
         self.assertGreater(len(resolve_labels(["tests.test_tu1_launch_boundary"])), 0)
 
     def test_real_test_label_builds_one_plan_without_database_connections(self):
-        from verification.isolation.run_plan import build_plan
-
         label = (
             "tests.test_sb2_birthing.BirthingAfterWitnessTests."
             "test_gateway_setup_ignores_python_clock_skew"
         )
-        attempts = {"count": 0}
-        plan = build_plan([label], connection_attempts=attempts)
+        plan, attempts = self._build_plan_in_fresh_process(label)
 
         self.assertEqual(plan["tests"], [label])
         self.assertEqual(plan["database_route"], "DATABASE")
         self.assertEqual(attempts["count"], 0)
 
-    def test_plan_marks_database_forbidden_selection_as_no_database_route(self):
-        from verification.isolation.run_plan import build_plan
+    def test_deep_module_method_label_is_supported(self):
+        import re
+        from pathlib import Path
 
-        plan = build_plan(
-            [
-                "tests.test_tu1_launch_boundary.LaunchBoundaryTests."
-                "test_duplicate_plan_ids_are_refused"
-            ]
+        from verification.isolation.run_plan import resolve_labels
+
+        label = (
+            "verification.isolation.selfcheck_tests.IsolationSelfChecks."
+            "test_v5a_data_check_detects_retained_row"
+        )
+        self.assertEqual(resolve_labels([label]), [label])
+
+        source = Path("scripts/run_integrated_dev.ps1").read_text(
+            encoding="utf-8"
+        )
+        launcher_pattern = re.search(r'\$label -notmatch "([^"]+)"', source)
+        if launcher_pattern is None:
+            self.fail("launcher label validation regex is missing")
+        self.assertRegex(label, launcher_pattern.group(1))
+
+    def test_pyright_pre_run_is_removed_and_qualification_exit_tracks_verdict(self):
+        from pathlib import Path
+
+        launcher = Path("scripts/run_integrated_dev.ps1").read_text(encoding="utf-8")
+        qualification = Path("scripts/qualify_tu2a.ps1").read_text(encoding="utf-8")
+
+        self.assertNotIn("Invoke-Tu2aPyrightJson", launcher)
+        self.assertNotIn("Get-Tu2aPyrightClass", launcher)
+        self.assertNotIn("PYRIGHT_PRE_RUN", launcher)
+        self.assertNotIn("PYRIGHT_TRIAL", launcher)
+        self.assertNotIn("pyrightconfig.tu2a.json", launcher)
+        self.assertNotIn("SkipPyrightTrial", launcher + qualification)
+        self.assertIn(
+            'pyright_pre_run = "pyright: removed by Human decision, 16 Oct"',
+            launcher,
+        )
+        self.assertIn("$overall -eq \"PASS\"", qualification)
+        self.assertIn("$overall -eq \"DRY_CHECK\"", qualification)
+        self.assertIn("if ($successfulVerdict) {", qualification)
+
+    def test_development_launcher_process_exit_tracks_final_verdict(self):
+        from pathlib import Path
+
+        launcher = Path("scripts/run_integrated_dev.ps1").read_text(encoding="utf-8")
+        status_block_start = launcher.rfind('if ($finalDevVerdict -eq "STALL")')
+        self.assertGreaterEqual(status_block_start, 0)
+        status_block = launcher[status_block_start:]
+
+        self.assertIn(
+            'if ($runProblems.Count -eq 0 -and $finalDevVerdict -eq "PASS")',
+            status_block,
+        )
+        self.assertIn("$global:LASTEXITCODE = 0", status_block)
+        self.assertIn("$global:LASTEXITCODE = 1", status_block)
+        self.assertTrue(
+            status_block.rstrip().endswith("exit $global:LASTEXITCODE")
         )
 
+    def test_plan_marks_database_forbidden_selection_as_no_database_route(self):
+        label = (
+            "tests.test_tu1_launch_boundary.LaunchBoundaryTests."
+            "test_duplicate_plan_ids_are_refused"
+        )
+        plan, attempts = self._build_plan_in_fresh_process(label)
+
         self.assertEqual(plan["database_route"], "NO_DATABASE")
+        self.assertEqual(attempts["count"], 0)
 
     def test_duplicate_plan_ids_are_refused(self):
         with self.assertRaisesRegex(ValueError, "R4"):
             load_plan_from_data({"tests": ["x", "x"]})
+
+    def test_plan_file_transport_supports_500_ids_without_child_test_arguments(self):
+        import tempfile
+        from pathlib import Path
+
+        from verification.isolation.run_plan import load_plan, write_plan
+
+        identifiers = [f"synthetic.module.Case.test_{index}" for index in range(500)]
+        plan = {
+            "schema_version": 1,
+            "tests": identifiers,
+            "database_route": "NO_DATABASE",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            plan_path = Path(temporary) / "large-plan.json"
+            digest = write_plan(plan, plan_path)
+            loaded, loaded_digest = load_plan(plan_path)
+
+        self.assertEqual(loaded["tests"], identifiers)
+        self.assertEqual(loaded_digest, digest)
+
+        source = Path("scripts/run_integrated_dev.ps1").read_text(
+            encoding="utf-8"
+        )
+        argument_start = source.index("$testArguments = @(")
+        argument_end = source.index("$testRun = Invoke-WatchedPythonAndLog", argument_start)
+        child_arguments = source[argument_start:argument_end]
+        self.assertNotIn("$Labels", child_arguments)
+        self.assertNotIn("$suite", child_arguments)
+        self.assertNotIn("planData.tests", child_arguments)
+        self.assertIn("$env:INTEVIA_RUN_PLAN_FILE = $resolvedRunPlanFile", source)
+        self.assertIn("$env:INTEVIA_RUN_PLAN_SHA256 = $planHash", source)
+
+    def test_more_than_twenty_labels_are_refused_before_label_resolution(self):
+        from verification.isolation.run_plan import resolve_labels
+
+        with self.assertRaisesRegex(ValueError, "R3: at most twenty labels"):
+            resolve_labels([f"synthetic.module{index}.Case" for index in range(21)])
 
     def test_rotation_failure_in_a_preserves_parent_selection(self):
         parent = {"tests": ["a", "b", "c", "d"], "ordered_groups": [["b", "c"]]}
@@ -157,6 +301,43 @@ class LaunchBoundaryTests(SimpleTestCase):
             ),
             reason,
         )
+
+    def test_independent_qualification_failure_does_not_block_next_case_plan(self):
+        from verification.isolation.run_plan import (
+            TU2A_QUALIFICATION_NEW_PARENT_REASON,
+        )
+
+        previous_tests = ["qualification.case.test_deliberate_failure"]
+        next_tests = ["qualification.next_case.test_independent_selection"]
+        failed_record = {"result": "FAIL"}
+
+        self.assertEqual(
+            validate_unrotated_selection(
+                next_tests,
+                failed_record,
+                previous_tests,
+                TU2A_QUALIFICATION_NEW_PARENT_REASON,
+                independent_qualification_case=True,
+            ),
+            TU2A_QUALIFICATION_NEW_PARENT_REASON,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "R5: independent qualification reason requires qualification-case validation",
+        ):
+            validate_unrotated_selection(
+                next_tests,
+                failed_record,
+                previous_tests,
+                TU2A_QUALIFICATION_NEW_PARENT_REASON,
+            )
+        with self.assertRaisesRegex(ValueError, "R5: a new parent plan must contain every test"):
+            validate_unrotated_selection(
+                next_tests,
+                failed_record,
+                previous_tests,
+                "unrelated plan selection",
+            )
 
     def test_pass_run_record_requires_isolation_and_control_evidence(self):
         record = {
@@ -313,15 +494,20 @@ class LaunchBoundaryTests(SimpleTestCase):
         self.assertIn("INTEVIA_S015_TEST_ROUTE", source)
 
     def test_self_test_refusals_and_acceptances_are_defined(self):
-        from verification.isolation.run_plan import self_test
-
-        self.assertEqual(self_test(), 0)
+        source = (
+            "from verification.isolation.run_plan import self_test\n"
+            "raise SystemExit(self_test())\n"
+        )
+        result = self._run_in_fresh_process(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_verification_summary_cross_check(self):
         summary = {
             "plan_sha256": "plan-digest",
             "tests_planned": 3,
             "executed_matches_plan": "FULL",
+            "cpz_established": True,
+            "cpz_established": True,
         }
         self.assertIsNone(
             validate_verification_summary(summary, "plan-digest", 3)
@@ -346,6 +532,11 @@ class LaunchBoundaryTests(SimpleTestCase):
                 {**summary, "executed_matches_plan": "PREFIX"},
                 3,
                 "R7: summary executed_matches_plan is not FULL",
+            ),
+            (
+                {**summary, "cpz_established": False},
+                3,
+                "R7: CP-Z was not established after the run completed",
             ),
         )
         for invalid_summary, resolved_tests, expected_message in refusal_cases:

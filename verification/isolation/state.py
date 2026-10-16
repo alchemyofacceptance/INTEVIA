@@ -15,6 +15,10 @@ Checkpoints
         used as the per-test comparison reference.
   CP-A  unittest startTest for each test: after Django's _pre_setup, before the test's own setUp.
 Read-only: every query here is a SELECT.
+
+CP-A' uses the four light queries planned from CP-0: protection counts, row counts, sequence
+discipline and seed/framework/migration/privilege content. A mismatch, a declared DDL test or
+the per-test switch causes a full capture for diagnosis and comparison.
 """
 import hashlib
 import importlib
@@ -343,6 +347,132 @@ def capture():
            JOIN django_content_type ct ON ct.id = p.content_type_id ORDER BY 1, 2, 3""")
     s["migrations"] = _rows("SELECT app, name FROM django_migrations ORDER BY 1, 2")
     return s
+
+
+def build_light_plan(reference):
+    table_names = sorted(reference["row_counts"])
+    if not table_names:
+        raise RuntimeError("CP-A' cannot be planned without captured tables")
+    row_count_sql = "SELECT " + ", ".join(
+        "(SELECT count(*) FROM %s)" % connection.ops.quote_name(table)
+        for table in table_names
+    )
+    return {
+        "table_names": table_names,
+        "row_count_sql": row_count_sql,
+        "protection_sql": """
+SELECT
+    (SELECT count(*) FROM pg_trigger t
+     JOIN pg_class c ON c.oid = t.tgrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = current_schema() AND NOT t.tgisinternal),
+    (SELECT count(*) FROM pg_trigger t
+     JOIN pg_class c ON c.oid = t.tgrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = current_schema() AND NOT t.tgisinternal
+       AND t.tgenabled <> 'O'),
+    (SELECT count(*) FROM pg_constraint co
+     JOIN pg_class c ON c.oid = co.conrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = current_schema()),
+    (SELECT count(*) FROM pg_constraint co
+     JOIN pg_class c ON c.oid = co.conrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = current_schema()
+       AND left(co.conname, 5) = 's015_' AND NOT co.convalidated),
+    (SELECT count(*) FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = current_schema())
+""",
+        "content_sql": """
+SELECT
+    (SELECT md5(COALESCE(
+        jsonb_agg(jsonb_build_array(name, description) ORDER BY name, description)::text,
+        '[]'
+    )) FROM core_role),
+    (SELECT md5(COALESCE(
+        jsonb_agg(jsonb_build_array(app_label, model) ORDER BY app_label, model)::text,
+        '[]'
+    )) FROM django_content_type),
+    (SELECT md5(COALESCE(
+        jsonb_agg(jsonb_build_array(ct.app_label, ct.model, p.codename)
+                  ORDER BY ct.app_label, ct.model, p.codename)::text,
+        '[]'
+    ))
+     FROM auth_permission p
+     JOIN django_content_type ct ON ct.id = p.content_type_id),
+    (SELECT md5(COALESCE(
+        jsonb_agg(jsonb_build_array(app, name) ORDER BY app, name)::text,
+        '[]'
+    )) FROM django_migrations),
+    has_table_privilege(
+        'public', 'public.s015_transaction_register', 'INSERT'
+    )
+""",
+    }
+
+
+def capture_light(light_plan):
+    with connection.cursor() as cursor:
+        cursor.execute(light_plan["protection_sql"])
+        protection = cursor.fetchone()
+        cursor.execute(light_plan["row_count_sql"])
+        row_counts = dict(zip(light_plan["table_names"], cursor.fetchone()))
+    nonempty_tables = [
+        table for table, count in row_counts.items() if count > 0
+    ]
+    sequence_report = connection.ops._sequence_discipline_report(nonempty_tables)
+    with connection.cursor() as cursor:
+        cursor.execute(light_plan["content_sql"])
+        content = cursor.fetchone()
+    return {
+        "protection": protection,
+        "row_counts": row_counts,
+        "sequence": sequence_report,
+        "content": content,
+    }
+
+
+def light_baseline_violations(reference, observed):
+    expected_protection = (
+        len(reference["triggers"]),
+        sum(1 for trigger in reference["triggers"] if trigger[2] != "O"),
+        len(reference["constraints"]),
+        sum(
+            1
+            for constraint in reference["constraints"]
+            if constraint[1].startswith("s015_") and not constraint[3]
+        ),
+        len(reference["functions"]),
+    )
+    violations = []
+    if observed["protection"] != expected_protection:
+        violations.append("CP-0 Q1 protection counts differ from the full capture")
+    if observed["row_counts"] != reference["row_counts"]:
+        violations.append("CP-0 Q2 row counts differ from the full capture")
+    if observed["sequence"]["findings"]:
+        violations.append("CP-0 Q3 sequence check found unsupported or invalid sequences")
+    if observed["content"][4] != reference["public_register_insert"]:
+        violations.append("CP-0 Q4 register privilege differs from the full capture")
+    return violations
+
+
+def compare_light(reference_light, observed):
+    violations = []
+    if observed["protection"] != reference_light["protection"]:
+        violations.append("Q1 protection counts differ")
+    if observed["row_counts"] != reference_light["row_counts"]:
+        violations.append("Q2 row counts differ")
+    if (
+        observed["sequence"]["sequences_observed"]
+        != reference_light["sequence"]["sequences_observed"]
+    ):
+        violations.append("Q3 observed sequence set differs")
+    if observed["sequence"]["findings"]:
+        violations.append("Q3 sequence check found unsupported or invalid sequences")
+    if observed["content"] != reference_light["content"]:
+        violations.append("Q4 seed, framework, migration, or privilege content differs")
+    return violations
 
 
 def unexpected_data_rows(captured):

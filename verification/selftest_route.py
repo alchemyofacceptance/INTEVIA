@@ -40,6 +40,57 @@ class _Tmp(unittest.TestCase):
 
 
 class B0PycachePrefixEnv(_Tmp):
+    def test_ci_binding_matches_candidate_binding_for_a_clean_checkout(self):
+        root = os.path.join(self.tmp, "clean-checkout")
+        os.makedirs(os.path.join(root, "docs", "operations"))
+        with open(
+            os.path.join(root, "docs", "operations", "RUN_REQUIREMENTS.md"),
+            "wb",
+        ) as handle:
+            handle.write(b"v1.38 test requirements\n")
+
+        def git(*args):
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    root,
+                    "-c",
+                    "user.name=route-selftest",
+                    "-c",
+                    "user.email=route-selftest@example.invalid",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        subprocess.run(["git", "init", "-q", root], check=True, capture_output=True)
+        git("add", "-A")
+        git("commit", "-qm", "clean candidate")
+        _, head, error = route_mod.run_git(
+            ["rev-parse", "--verify", "HEAD"], cwd=root
+        )
+        self.assertFalse(error)
+        r = self.route()
+        r.candidate_root = root
+        r.candidate_base_commit = head.decode().strip()
+
+        state_path, binding, specification_sha256 = r._ensure_candidate_binding()
+        from verification.isolation.run_plan import candidate_binding
+
+        self.assertEqual(binding, candidate_binding(root, state_path))
+        with open(state_path, encoding="utf-8") as handle:
+            state = json.load(handle)
+        self.assertEqual(state["base_commit"], r.candidate_base_commit)
+        self.assertEqual(state["allowed_paths"], [])
+        self.assertEqual(
+            specification_sha256,
+            route_mod.sha256_file(
+                os.path.join(root, "docs", "operations", "RUN_REQUIREMENTS.md")
+            ),
+        )
+
     def test_child_envs_follow_sys_pycache_prefix_and_omit_none(self):
         r = self.route()
 
@@ -92,6 +143,9 @@ class B0PycachePrefixEnv(_Tmp):
 class B1StepGating(_Tmp):
     def test_b1_missing_status_step_is_incomplete_not_pass(self):
         r = self.route()
+        r.candidate_state_path = "candidate-state.json"
+        r.candidate_binding = "a" * 64
+        r.run_spec_sha256 = "b" * 64
 
         def fake_collection(cmd, **kw):
             with open(cmd[4], "x") as f:
@@ -353,7 +407,11 @@ class B4FreshEvidence(_Tmp):
         n = r.nonce
         return ([{"checkpoint": "CP-0", "requirements_met": True, "run_nonce": n}] +
                 [{"checkpoint": "CP-A", "test": t, "established": True, "applicable": True, "database_access": "permitted", "run_nonce": n} for t in ids] +
-                [{"checkpoint": "SUMMARY", "isolation_verdict": "PASS", "run_nonce": n}])
+                [{"checkpoint": "CP-F", "test": ids[0], "established": False, "run_nonce": n},
+                 {"checkpoint": "TIMING", "test": ids[0], "run_nonce": n},
+                 {"checkpoint": "CP-Z", "established": True, "run_nonce": n},
+                 {"checkpoint": "SUMMARY", "isolation_verdict": "PASS",
+                  "cpz_established": True, "run_nonce": n}])
 
     def test_b4_summary_only_isolation_is_not_pass(self):
         r = self.route()

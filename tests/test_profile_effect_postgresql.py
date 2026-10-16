@@ -1151,6 +1151,8 @@ class ProfileEffectPostgreSQLNovelShapeTests(TransactionTestCase):
 
 @POSTGRESQL_ONLY
 class ProfileEffectPostgreSQLMigrationRehearsalTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     migrate_from = ("core", "0016_s012_service_activity_orchestration")
     migrate_to = ("core", "0017_s013_profile_effect")
 
