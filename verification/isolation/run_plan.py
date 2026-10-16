@@ -1,4 +1,4 @@
-"""No-database selection, rotation, verification, and pre-check helpers for TU-1."""
+"""No-database selection, verification, and pre-check helpers for TU-1."""
 
 from __future__ import annotations
 
@@ -20,10 +20,6 @@ from unittest.mock import patch
 
 LABEL_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 MAX_LABELS = 20
-TU2A_QUALIFICATION_NEW_PARENT_REASON = (
-    "Independent TU-2a qualification case; the latest failed test attempt in this "
-    "evidence root is a deliberate qualification case or an earlier qualification attempt."
-)
 _CONNECTION_GUARD_ACTIVE: ContextVar[bool] = ContextVar(
     "tu1_connection_guard_active", default=False
 )
@@ -243,9 +239,6 @@ def build_plan(
         "tests": tests,
         "database_route": database_route,
         "ordered_groups": normalized_groups,
-        "parent_plan_sha256": None,
-        "rotation_side": "NONE",
-        "rotation_unit": "NONE",
         "counts": {"tests": len(tests), "groups": len(normalized_groups)},
     }
 
@@ -274,10 +267,6 @@ def load_plan(path: str | Path) -> tuple[dict[str, Any], str]:
 
 def validate_plan_file(
     path: str | Path,
-    *,
-    run_root: str | Path | None = None,
-    new_parent_plan_reason: str | None = None,
-    qualification_case: bool = False,
 ) -> tuple[dict[str, Any], str]:
     plan, digest = load_plan(path)
     labels = plan.get("labels")
@@ -336,49 +325,7 @@ def validate_plan_file(
             raise ValueError("R6: ordered groups overlap")
         grouped.update(group)
 
-    if qualification_case and run_root is None:
-        raise ValueError("R5: qualification-case validation requires the evidence run root")
-    if run_root is not None:
-        _, expected_reason = validate_unrotated_plan(
-            run_root,
-            plan["tests"],
-            new_parent_plan_reason,
-            qualification_case=qualification_case,
-        )
-        if plan.get("new_parent_plan_reason") != expected_reason:
-            raise ValueError("R5: plan reason differs from the validated unrotated selection")
     return plan, digest
-
-
-def rotation(parent: dict[str, Any], failing_test: str, side: str) -> list[str]:
-    tests = list(parent["tests"])
-    groups = [list(group) for group in parent.get("ordered_groups", [])]
-    if failing_test not in tests or side not in {"A", "B"}:
-        raise ValueError("R5: stale rotation basis or invalid rotation side")
-    units: list[list[str]] = []
-    consumed: set[str] = set()
-    for group in groups:
-        if any(test not in tests for test in group):
-            raise ValueError("R6: ordered group differs from parent plan")
-        units.append(group)
-        consumed.update(group)
-    units.extend([[test] for test in tests if test not in consumed])
-    units.sort(key=lambda unit: tests.index(unit[0]))
-    unit_index = next(index for index, unit in enumerate(units) if failing_test in unit)
-    selected = units[unit_index:] if side == "A" else units[:unit_index]
-    result = [test for unit in selected for test in unit]
-    selected_ids = set(result)
-    if any(selected_ids.intersection(group) and not set(group).issubset(selected_ids) for group in groups):
-        raise ValueError("R6: rotation split an ordered group")
-    return result
-
-
-def is_rotation_basis_record(record: dict[str, Any]) -> bool:
-    validate_run_record_consistency(record)
-    return (
-        record.get("classification") != "PRE_RUN_REFUSAL"
-        and record.get("result") in {"PASS", "FAIL", "ERROR"}
-    )
 
 
 def validate_run_record_consistency(record: dict[str, Any]) -> None:
@@ -389,13 +336,13 @@ def validate_run_record_consistency(record: dict[str, Any]) -> None:
     if not has_isolation and not has_dev_verdict:
         return
     if not has_isolation or not has_dev_verdict:
-        raise ValueError("R5: run record has incomplete final-verdict evidence")
+        raise ValueError("R8: run record has incomplete final-verdict evidence")
 
     result = record.get("result")
     isolation_verdict = record.get("isolation_verdict")
     dev_run_verdict = record.get("dev_run_verdict")
     if dev_run_verdict == "PASS" and result != "PASS":
-        raise ValueError("R5: run record result contradicts DEV_RUN_VERDICT")
+        raise ValueError("R8: run record result contradicts DEV_RUN_VERDICT")
     if result != "PASS":
         return
 
@@ -414,39 +361,7 @@ def validate_run_record_consistency(record: dict[str, Any]) -> None:
         or record.get("tests_executed") != record.get("tests_planned")
         or record.get("executed_matches_plan") != "FULL"
     ):
-        raise ValueError("R5: PASS run record lacks complete successful control evidence")
-
-
-def rotation_basis_records(
-    records: list[dict[str, Any]], parent_digest: str
-) -> list[dict[str, Any]]:
-    return [
-        record
-        for record in records
-        if record.get("parent_plan_sha256") == parent_digest
-        and is_rotation_basis_record(record)
-    ]
-
-
-def latest_test_attempt_record(
-    run_root: str | Path,
-) -> tuple[Path, dict[str, Any]] | None:
-    candidates: list[tuple[int, str, Path, dict[str, Any]]] = []
-    for record_path in Path(run_root).glob("attempt_*/run-record.json"):
-        match = re.fullmatch(r"attempt_(\d+)([ab]?)", record_path.parent.name)
-        if match is None:
-            continue
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-        classification = record.get("classification")
-        if classification not in {None, "TEST_ATTEMPT"} or not is_rotation_basis_record(record):
-            continue
-        candidates.append(
-            (int(match.group(1)), match.group(2), record_path, record)
-        )
-    if not candidates:
-        return None
-    _, _, record_path, record = max(candidates, key=lambda item: (item[0], item[1]))
-    return record_path, record
+        raise ValueError("R8: PASS run record lacks complete successful control evidence")
 
 
 def _resolve_parent_test_identifier(
@@ -468,217 +383,6 @@ def _resolve_parent_test_identifier(
             f"{requirement}: sub-test identifier has {detail} parent plan matches"
         )
     return parent_matches[0]
-
-
-def validate_unrotated_selection(
-    current_tests: list[str],
-    latest_record: dict[str, Any] | None,
-    latest_tests: list[str] | None,
-    new_parent_plan_reason: str | None,
-    *,
-    independent_qualification_case: bool = False,
-) -> str | None:
-    if independent_qualification_case:
-        if new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON:
-            raise ValueError("R5: independent qualification case requires its approved reason")
-        return new_parent_plan_reason
-    if new_parent_plan_reason == TU2A_QUALIFICATION_NEW_PARENT_REASON:
-        raise ValueError("R5: independent qualification reason requires qualification-case validation")
-
-    if latest_record is None:
-        if new_parent_plan_reason is not None:
-            raise ValueError("R5: -NewParentPlanReason requires a failed latest test attempt")
-        return None
-    result = latest_record.get("result")
-    if result not in {"FAIL", "ERROR"}:
-        if new_parent_plan_reason is not None:
-            raise ValueError("R5: -NewParentPlanReason requires a failed latest test attempt")
-        return None
-    if not latest_tests or len(latest_tests) != len(set(latest_tests)):
-        raise ValueError("R5: latest failed attempt has no valid plan selection")
-    if current_tests == latest_tests:
-        no_failing_test = (
-            latest_record.get("tests_executed") == 0
-            or not latest_record.get("failing_test")
-        )
-        if not no_failing_test:
-            raise ValueError(
-                "R5: the latest attempt on this plan failed; launch rotated (A, then B) from its record."
-            )
-    if not set(latest_tests).issubset(current_tests):
-        raise ValueError("R5: a new parent plan must contain every test from the latest failed plan")
-    if not isinstance(new_parent_plan_reason, str) or not new_parent_plan_reason.strip():
-        raise ValueError(
-            "R5: a failed attempt without a failing test identifier, or a superset new parent plan, "
-            "requires -NewParentPlanReason"
-        )
-    reason = new_parent_plan_reason.strip()
-    if "\n" in reason or "\r" in reason:
-        raise ValueError("R5: -NewParentPlanReason must be a single line")
-    return reason
-
-
-def _is_tu2a_qualification_root(run_root: str | Path) -> bool:
-    root = Path(run_root).resolve()
-    return (
-        root.name.casefold() == "me_dev"
-        and root.parent.name.casefold() == "pktb_tu2a"
-    )
-
-
-def _is_tu2a_qualification_attempt(record_path: str | Path) -> bool:
-    match = re.fullmatch(r"attempt_(\d+)[ab]?", Path(record_path).parent.name)
-    return match is not None and int(match.group(1)) >= 910001
-
-
-def validate_unrotated_plan(
-    run_root: str | Path,
-    current_tests: list[str],
-    new_parent_plan_reason: str | None,
-    *,
-    qualification_case: bool = False,
-) -> tuple[dict[str, Any] | None, str | None]:
-    latest = latest_test_attempt_record(run_root)
-    if qualification_case:
-        if not _is_tu2a_qualification_root(run_root):
-            raise ValueError("R5: qualification-case validation is limited to the TU-2a ME_DEV root")
-        if new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON:
-            raise ValueError("R5: qualification case requires its approved independent-case reason")
-        if latest is None:
-            return None, validate_unrotated_selection(
-                current_tests,
-                None,
-                None,
-                new_parent_plan_reason,
-                independent_qualification_case=True,
-            )
-        record_path, record = latest
-        previous_tests = None
-        if record.get("result") in {"FAIL", "ERROR"}:
-            previous_plan_path = record_path.parent / "run-plan.json"
-            if not previous_plan_path.is_file():
-                raise ValueError("R5: latest failed attempt has no bound plan file")
-            previous_plan, _ = load_plan(previous_plan_path)
-            previous_tests = previous_plan["tests"]
-            if not _is_tu2a_qualification_attempt(record_path):
-                raise ValueError(
-                    "R5: qualification case cannot supersede the latest non-qualification failure"
-                )
-        elif record.get("result") != "PASS":
-            raise ValueError("R5: qualification case has an unsupported latest attempt result")
-        reason = validate_unrotated_selection(
-            current_tests,
-            record,
-            previous_tests,
-            new_parent_plan_reason,
-            independent_qualification_case=True,
-        )
-        return record, reason
-
-    if latest is None:
-        reason = validate_unrotated_selection(
-            current_tests, None, None, new_parent_plan_reason
-        )
-        return None, reason
-    record_path, record = latest
-    previous_tests = None
-    if record.get("result") in {"FAIL", "ERROR"}:
-        previous_plan_path = record_path.parent / "run-plan.json"
-        if not previous_plan_path.is_file():
-            raise ValueError("R5: latest failed attempt has no bound plan file")
-        previous_plan, _ = load_plan(previous_plan_path)
-        previous_tests = previous_plan["tests"]
-    reason = validate_unrotated_selection(
-        current_tests, record, previous_tests, new_parent_plan_reason
-    )
-    return record, reason
-
-
-def build_rotation_plan(parent_path: str | Path, record_path: str | Path, side: str) -> dict[str, Any]:
-    parent, parent_digest = load_plan(parent_path)
-    record_file = Path(record_path).resolve()
-    record = json.loads(record_file.read_text(encoding="utf-8"))
-    if not is_rotation_basis_record(record):
-        raise ValueError("R5: pre-run refusal is not a rotation basis")
-    run_root = record_file.parent.parent
-    latest_records: list[tuple[int, str, Path]] = []
-    candidate_records: list[tuple[Path, dict[str, Any]]] = []
-    for candidate in run_root.glob("attempt_*/run-record.json"):
-        candidate_record = json.loads(candidate.read_text(encoding="utf-8"))
-        if candidate_record.get("parent_plan_sha256") == parent_digest:
-            candidate_records.append((candidate, candidate_record))
-    eligible_records = rotation_basis_records(
-        [candidate_record for _, candidate_record in candidate_records],
-        parent_digest,
-    )
-    eligible_paths = {
-        id(candidate_record): candidate
-        for candidate, candidate_record in candidate_records
-    }
-    for candidate_record in eligible_records:
-        candidate = eligible_paths[id(candidate_record)]
-        if candidate_record.get("parent_plan_sha256") == parent_digest:
-            match = re.fullmatch(r"attempt_(\d+)([ab]?)", candidate.parent.name)
-            if match:
-                latest_records.append((int(match.group(1)), match.group(2), candidate.resolve()))
-    if latest_records and max(latest_records, key=lambda item: (item[0], item[1]))[2] != record_file:
-        raise ValueError("R5: preceding record is not the latest attempt on this parent plan")
-    if record.get("latest") is not True:
-        raise ValueError("R5: preceding record is stale, mismatched, or not a failure")
-    if side == "B":
-        failure = _resolve_parent_test_identifier(
-            record.get("rotation_failure"), parent["tests"], "R5"
-        )
-        bound_parent = record.get("parent_plan_sha256")
-        valid_record = (
-            record.get("result") == "PASS"
-            and record.get("rotation_side") == "A"
-            and bound_parent == parent_digest
-            and failure in parent["tests"]
-        )
-    else:
-        failure = _resolve_parent_test_identifier(
-            record.get("failing_test"), parent["tests"], "R5"
-        )
-        bound_parent = record.get("parent_plan_sha256")
-        expected_digest = record.get("plan_sha256")
-        valid_record = (
-            record.get("result") in {"FAIL", "ERROR"}
-            and failure in parent["tests"]
-            and (
-                expected_digest == parent_digest
-                if bound_parent is None
-                else bound_parent == parent_digest
-            )
-        )
-    if not valid_record:
-        raise ValueError("R5: preceding record is stale, mismatched, or not a failure")
-    current = build_plan(parent.get("expanded_labels") or parent["labels"],
-                         groups=parent.get("ordered_groups"))
-    ensure_suite_matches(parent["tests"], current["tests"])
-    if (
-        parent.get("database_route") is not None
-        and parent["database_route"] != current["database_route"]
-    ):
-        raise ValueError("R5: recomputed database route differs from the parent plan")
-    selected = rotation(parent, failure, side)
-    group = next(
-        (group for group in parent.get("ordered_groups", []) if failure in group),
-        [failure],
-    )
-    payload = dict(parent)
-    payload.update(
-        tests=selected,
-        database_route=current["database_route"],
-        parent_plan_sha256=parent_digest,
-        rotation_side=side,
-        rotation_unit=",".join(group),
-        rotation_failure=failure,
-        counts={"tests": len(selected), "groups": len(parent.get("ordered_groups", []))},
-    )
-    return payload
-
-
 def assert_execution(
     plan_ids: list[str],
     executed_ids: list[str],
@@ -715,10 +419,7 @@ def verify_kind(
     *,
     delta_authorized: bool = False,
     impact: list[str] | None = None,
-    rotation_input: bool = False,
 ) -> None:
-    if rotation_input:
-        raise ValueError("R10: verification must not be rotated")
     if kind == "FULL":
         if selected != full:
             raise ValueError("R10: full verification requires the complete ordered suite")
@@ -800,20 +501,6 @@ def validate_delta_impact(plan_path: str | Path, impact_path: str | Path) -> Non
         complete_reasons = False
     if not complete_reasons or selected != plan["tests"]:
         raise ValueError("R10: delta plan differs from the authorized impact selection or lacks reasons")
-
-
-def validate_closure(
-    attempts: list[dict[str, Any]], *, parent_tests: list[str] | None = None
-) -> set[str]:
-    if not attempts:
-        raise ValueError("R5: closure requires bound invocations")
-    bindings = {(item.get("candidate"), item.get("parent")) for item in attempts}
-    if len(bindings) != 1 or None in next(iter(bindings)):
-        raise ValueError("R5: closure mixes candidate bindings or parent plans")
-    union = {test for item in attempts for test in item.get("tests", [])}
-    if parent_tests is not None and union != set(parent_tests):
-        raise ValueError("R5: closure does not cover the whole parent plan")
-    return union
 
 
 def _changed_test_modules(root: Path, base: str, allowed: list[str]) -> list[str]:
@@ -973,20 +660,6 @@ def _run_self_test() -> int:
     add("R11 required binding fields", True, "state lacks run_spec_version or run_spec_sha256",
         "every authorized state binds the v1.38 copy by SHA-256",
         lambda: validate_run_spec_binding({}, b"specification"))
-    add("R5 failed-attempt rotation", True, "unrotated launch or stale preceding record",
-        "latest failed record binds the parent plan and failure unit",
-        lambda: rotation({"tests": ["a"], "ordered_groups": []}, "missing", "A"))
-    refusal = {
-        "classification": "PRE_RUN_REFUSAL",
-        "result": "REFUSED",
-        "parent_plan_sha256": "parent",
-    }
-    failed_attempt = {
-        "classification": "TEST_ATTEMPT",
-        "result": "FAIL",
-        "parent_plan_sha256": "parent",
-    }
-
     def refused_control_cannot_be_pass() -> None:
         validate_run_record_consistency(
             {
@@ -1034,79 +707,6 @@ def _run_self_test() -> int:
         consistent_pass_record,
     )
 
-    def check_pre_run_refusal_basis() -> None:
-        if is_rotation_basis_record(refusal) or rotation_basis_records(
-            [failed_attempt, refusal], "parent"
-        ) != [failed_attempt]:
-            raise AssertionError("R5: pre-run refusal entered the rotation basis")
-
-    add("R5 pre-run refusal basis", False, "pre-run refusal becomes a rotation basis",
-        "refusal is excluded and cannot displace a failed test attempt",
-        check_pre_run_refusal_basis)
-
-    def failed_same_selection() -> None:
-        validate_unrotated_selection(
-            ["a", "b"],
-            {
-                "classification": "TEST_ATTEMPT",
-                "result": "FAIL",
-                "failing_test": "a",
-                "tests_executed": 1,
-            },
-            ["a", "b"],
-            None,
-        )
-
-    add("R5 failed unrotated selection", True,
-        "same test list after FAIL/ERROR", "launch rotated (A, then B) from its record",
-        failed_same_selection)
-
-    no_identifier_failure = {
-        "classification": "TEST_ATTEMPT",
-        "result": "ERROR",
-        "tests_executed": 0,
-        "failing_test": None,
-    }
-
-    def reasoned_no_identifier_recovery() -> None:
-        reason = "recover after a control failure without a test identifier"
-        if validate_unrotated_selection(
-            ["a"], no_identifier_failure, ["a"], reason
-        ) != reason:
-            raise AssertionError("R5: reasoned recovery did not preserve the failure record")
-
-    add(
-        "R5 reasoned no-identifier recovery",
-        False,
-        "same selection without an explicit recovery reason",
-        "same tests may form a new parent plan with a recorded reason",
-        reasoned_no_identifier_recovery,
-    )
-    add("R5 selection after pass", False, "successful latest attempt blocks a new plan",
-        "unrotated plan may follow a PASS",
-        lambda: validate_unrotated_selection(
-            ["a"], {"classification": "TEST_ATTEMPT", "result": "PASS"}, ["a"], None
-        ))
-
-    def incomplete_new_parent() -> None:
-        validate_unrotated_selection(
-            ["a"],
-            {"classification": "TEST_ATTEMPT", "result": "ERROR"},
-            ["a", "b"],
-            "expanded plan",
-        )
-
-    add("R5 incomplete new parent", True, "new selection omits a failed-plan test",
-        "new parent contains every test from the failed plan", incomplete_new_parent)
-    add("R5 reasoned superset", False, "superset lacks its recorded reason",
-        "superset plan contains failed tests and records a non-empty reason",
-        lambda: validate_unrotated_selection(
-            ["a", "b", "c"],
-            {"classification": "TEST_ATTEMPT", "result": "FAIL"},
-            ["a", "b"],
-            "add c for the expanded verification objective",
-        ))
-
     def valid_binding_without_instruction_authority() -> None:
         specification = b"v1.38 run specification"
         state = {
@@ -1120,27 +720,6 @@ def _run_self_test() -> int:
         "R11 requires instruction-file authority in every state",
         "valid run-spec binding passes without the instruction path",
         valid_binding_without_instruction_authority)
-    parent = {"tests": ["a", "b", "c", "d"], "ordered_groups": [["b", "c"]]}
-    a = rotation(parent, "b", "A")
-    b = rotation(parent, "b", "B")
-    add("R5/R6 invocation A+B", False, "omission from A union B",
-        "A and B union equals the complete parent selection",
-        lambda: validate_closure(
-            [{"candidate": "c1", "parent": "p", "tests": a},
-             {"candidate": "c1", "parent": "p", "tests": b}],
-            parent_tests=parent["tests"],
-        ))
-    add("R6 ordered group", True, "split or reordered group",
-        "whole group begins A in its declared order",
-        lambda: rotation(
-            {"tests": ["a", "b", "c"], "ordered_groups": [["b", "c"]]}, "missing", "A"
-        ))
-    add("R5 candidate/parent closure", True, "different candidate or parent binding",
-        "both invocations share one candidate and parent plan",
-        lambda: validate_closure(
-            [{"candidate": "c1", "parent": "p", "tests": ["a"]},
-             {"candidate": "c2", "parent": "p", "tests": ["b"]}]
-        ))
     add("R7 suite-plan binding", True, "built suite differs from plan",
         "built suite exactly equals validated plan",
         lambda: ensure_suite_matches(["a", "b"], ["a", "c"]))
@@ -1208,12 +787,7 @@ def _run_self_test() -> int:
             "suite.Case.test_w1 (skew=datetime.timedelta(days=-1, seconds=79200), "
             "function='limit')"
         )
-        failure_record = {
-            "classification": "TEST_ATTEMPT",
-            "result": "FAIL",
-            "failing_test": decorated_failure,
-        }
-        with _forbid_database_connections(connections, attempts, "R5/R7"):
+        with _forbid_database_connections(connections, attempts, "R7"):
             if assert_execution(
                 parent_tests,
                 parent_tests[:2],
@@ -1221,35 +795,26 @@ def _run_self_test() -> int:
                 stop_id=decorated_failure,
             ) != "PREFIX":
                 raise AssertionError("R7: decorated stopping ID did not resolve to its parent")
-            parent_failure = _resolve_parent_test_identifier(
-                failure_record["failing_test"], parent_tests, "R5"
-            )
-            if parent_failure != parent_tests[1] or rotation(
-                {"tests": parent_tests, "ordered_groups": []},
-                parent_failure,
-                "A",
-            ) != parent_tests[1:]:
-                raise AssertionError("R5: invocation A did not start at the parent test")
             for identifier, plan_ids, expected in (
                 ("missing.test (case=1)", parent_tests, "missing"),
                 ("x (case (nested=1)", ["x", "x (case"], "ambiguous"),
             ):
                 try:
-                    _resolve_parent_test_identifier(identifier, plan_ids, "R5")
+                    _resolve_parent_test_identifier(identifier, plan_ids, "R7")
                 except ValueError as exc:
                     if expected not in str(exc):
-                        raise AssertionError("R5: invalid parent match was misclassified") from exc
+                        raise AssertionError("R7: invalid parent match was misclassified") from exc
                 else:
-                    raise AssertionError("R5: invalid parent match was accepted")
+                    raise AssertionError("R7: invalid test match was accepted")
         if attempts["count"] != 0:
-            raise AssertionError("R5/R7: parent binding attempted a database connection")
+            raise AssertionError("R7: sub-test identifier resolution attempted a database connection")
 
-    add("R5/R7 sub-test parent ID", False,
+    add("R7 sub-test identifier", False,
         "missing or ambiguous parent match, or database connection",
-        "unique sub-test prefix maps to parent; R7 PREFIX and R5 invocation A; zero connections",
+        "unique sub-test prefix maps to its planned test; R7 PREFIX; zero connections",
         subtest_parent_binding)
 
-    add("R10 verifier selection", True, "unauthorized subset, rotation, or mismatched delta",
+    add("R10 verifier selection", True, "unauthorized subset or mismatched delta",
         "full ordered suite or authority-bound exact impact set",
         lambda: verify_kind("DELTA", ["a"], ["a", "b"]))
     add("R9 direct route", True, "direct manage.py route without runner binding",
@@ -1288,7 +853,6 @@ def main() -> int:
             "precheck",
             "plan",
             "validate-plan",
-            "rotate",
             "delta-check",
             "candidate-binding",
             "summary-check",
@@ -1300,13 +864,7 @@ def main() -> int:
     parser.add_argument("--base")
     parser.add_argument("--label", action="append", default=[])
     parser.add_argument("--group", action="append", default=[])
-    parser.add_argument("--parent")
-    parser.add_argument("--preceding")
-    parser.add_argument("--side", choices=("A", "B"))
     parser.add_argument("--impact")
-    parser.add_argument("--run-root")
-    parser.add_argument("--new-parent-plan-reason")
-    parser.add_argument("--qualification-case", action="store_true")
     parser.add_argument("--isolation")
     parser.add_argument("--plan")
     parser.add_argument("--resolved")
@@ -1347,10 +905,7 @@ def main() -> int:
             return 1
         except ValueError as error:
             message = str(error)
-            if message.startswith("R5:"):
-                print(f"R5_REFUSAL={message}")
-            else:
-                print(message)
+            print(message)
             return 1
         print("R7 verifier summary=PASS")
         return 0
@@ -1364,72 +919,23 @@ def main() -> int:
                 "R3: at most twenty labels may be expanded; use a resolved plan file for larger selections"
             )
             return 1
-        if args.new_parent_plan_reason is not None and not args.run_root:
-            parser.error("--new-parent-plan-reason requires --run-root")
-        if args.qualification_case and (
-            not args.run_root
-            or args.new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON
-        ):
-            parser.error(
-                "--qualification-case requires the TU-2a ME_DEV root and approved reason"
-            )
         groups = [group.split(",") for group in args.group]
         root = Path(__file__).resolve().parents[2]
         with _standalone_action_environment(root, "plan"):
             plan = build_plan(args.label, groups=groups)
-        latest_attempt = None
-        parent_reason = None
         digest = write_plan(plan, args.output)
-        if args.run_root:
-            try:
-                latest_attempt, parent_reason = validate_unrotated_plan(
-                    args.run_root,
-                    plan["tests"],
-                    args.new_parent_plan_reason,
-                    qualification_case=args.qualification_case,
-                )
-            except ValueError as error:
-                print(f"R5_REFUSAL={error}")
-                return 1
-        if parent_reason is not None:
-            plan["new_parent_plan_reason"] = parent_reason
-            digest = write_plan(plan, args.output)
         print(f"PLAN_SHA256={digest}")
-        print(f"PARENT_PLAN_SHA256={plan.get('parent_plan_sha256') or 'NONE'}")
-        print(f"ROTATION={plan['rotation_side']}")
-        print(f"ROTATION_UNIT={plan['rotation_unit']}")
         print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
         print(f"ORDERED_GROUPS={len(plan['ordered_groups'])} INTACT")
         print(f"TESTS_PLANNED={len(plan['tests'])}")
-        if args.run_root:
-            latest_result = (
-                f"{latest_attempt.get('classification') or 'TEST_ATTEMPT'}:"
-                f"{latest_attempt['result']}"
-                if latest_attempt is not None
-                else "NONE"
-            )
-            print(f"R5_LATEST_TEST_ATTEMPT={latest_result}")
-            print(f"NEW_PARENT_PLAN_REASON={parent_reason or 'NONE'}")
         return 0
     if args.action == "validate-plan":
         if not args.plan:
             parser.error("validate-plan requires --plan")
-        if args.qualification_case and (
-            not args.run_root
-            or args.new_parent_plan_reason != TU2A_QUALIFICATION_NEW_PARENT_REASON
-        ):
-            parser.error(
-                "--qualification-case requires the TU-2a ME_DEV root and approved reason"
-            )
         root = Path(__file__).resolve().parents[2]
         with _standalone_action_environment(root, "validate-plan"):
             try:
-                plan, digest = validate_plan_file(
-                    args.plan,
-                    run_root=args.run_root,
-                    new_parent_plan_reason=args.new_parent_plan_reason,
-                    qualification_case=args.qualification_case,
-                )
+                plan, digest = validate_plan_file(args.plan)
             except ValueError as error:
                 print(str(error))
                 return 1
@@ -1437,24 +943,6 @@ def main() -> int:
         print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
         print(f"TESTS_PLANNED={len(plan['tests'])}")
         print(f"LABELS_PLANNED={len(plan['labels'])}")
-        print(f"PARENT_PLAN_SHA256={plan.get('parent_plan_sha256') or 'NONE'}")
-        print(f"ROTATION={plan.get('rotation_side', 'NONE')}")
-        print(f"ROTATION_UNIT={plan.get('rotation_unit', 'NONE')}")
-        return 0
-    if args.action == "rotate":
-        if not (args.parent and args.preceding and args.side and args.output):
-            parser.error("rotate requires --parent, --preceding, --side, and --output")
-        root = Path(__file__).resolve().parents[2]
-        with _standalone_action_environment(root, "plan"):
-            plan = build_rotation_plan(args.parent, args.preceding, args.side)
-        digest = write_plan(plan, args.output)
-        print(f"PLAN_SHA256={digest}")
-        print(f"PARENT_PLAN_SHA256={plan['parent_plan_sha256']}")
-        print(f"ROTATION={plan['rotation_side']}")
-        print(f"ROTATION_UNIT={plan['rotation_unit']}")
-        print(f"PLAN_DATABASE_ROUTE={plan['database_route']}")
-        print(f"ORDERED_GROUPS={len(plan['ordered_groups'])} INTACT")
-        print(f"TESTS_PLANNED={len(plan['tests'])}")
         return 0
     if args.action == "delta-check":
         if not (args.output and args.impact):

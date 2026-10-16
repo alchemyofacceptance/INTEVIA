@@ -1,23 +1,14 @@
 [CmdletBinding()]
 param(
     [switch]$HumanLaunch,
-    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A\BINDINGS_B26\TU2A_STATE_S2.json"),
-    [string]$StateSha256 = "5b2a2cb6867434b8161fb0fd2c40816357d48d4f1289d233e741a8ca9157d042"
+    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU\BINDINGS\TU2AFU_STATE_S1.json"),
+    [string]$StateSha256 = "36caa7e2d1d66b80fb2035abb94d262ba9d4f431ca6d1085f86c45b339d4e752"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 Set-Location -LiteralPath $repoRoot
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
-
-$lock1Hashes = [ordered]@{
-    "src/intevia/services/organism_command_support.py" = "d081935a9a0b12f4384319e0b45abfa015ffe4ef"
-    "src/intevia/services/organism_application_service.py" = "05dd081db5ca900c275c0b4aacd96500da96f5c1"
-    "src/intevia/services/organism_governance_service.py" = "50dfa6f250593e1e34b221a3b0fea931707de082"
-    "src/intevia/services/organism_membership_service.py" = "058436f2c9bc0cbfb59c861b72f8b9e06addbecb"
-    "tests/test_s015_application_decision.py" = "18b8fc182a3a4c1f6783d4b80673f0c0c2c4b972"
-    "tests/test_lock1_actor_lock_order.py" = "e67822ecb71c9681902168fd7ea2e7c091965c56"
-}
 
 $qaLabels = @(
     "tests.test_service_activity_service",
@@ -95,50 +86,51 @@ class SeedLeakQualificationTests(_Tu2aLeakCase):
         pass
 '@
 
-$qualificationRoot = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A") "ME_DEV"
-$qualificationPlanReason = "Independent TU-2a qualification case; the latest failed test attempt in this evidence root is a deliberate qualification case or an earlier qualification attempt."
+$qualificationRoot = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU") "ME_DEV"
+$impactRecordPath = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A") "ME_DEV\TU2A_IMPACT_RECORD.json"
 $leakPath = Join-Path $repoRoot "tests\test_tu2a_qualification_leak.py"
 $leakBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($leakSource)
 $leakHash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($leakBytes)).ToLowerInvariant()
 $caseResults = [System.Collections.Generic.List[object]]::new()
 $createdLeakFile = $false
 $qualificationDirectory = $null
+$candidateBinding = $null
 $overall = "STOP"
 
-function Assert-Lock1Bindings {
+function Assert-StateBinding {
     param([string]$AuthorizedStateFile, [string]$AuthorizedStateSha256)
 
     if (-not (Test-Path -LiteralPath $AuthorizedStateFile -PathType Leaf)) {
         throw "R9: authorized TU-2a state file is absent"
     }
-    $authorized = Get-IntegratedState -StateFile $AuthorizedStateFile -StateSha256 $AuthorizedStateSha256
-    foreach ($path in $lock1Hashes.Keys) {
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "LOCK-1 protected path is absent: $path"
-        }
-        $actual = (& git hash-object -- $path).Trim().ToLowerInvariant()
-        if ($LASTEXITCODE -ne 0 -or $actual -cne $lock1Hashes[$path]) {
-            throw "LOCK-1 protected blob differs: $path"
-        }
+    return Get-IntegratedState -StateFile $AuthorizedStateFile -StateSha256 $AuthorizedStateSha256
+}
+
+function Get-CandidateBinding {
+    param([Parameter(Mandatory = $true)][string]$AuthorizedStateFile)
+
+    $output = @(& python -B -m verification.isolation.run_plan candidate-binding `
+        --root $repoRoot --state $AuthorizedStateFile 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "R9: candidate binding calculation failed: $($output -join ' | ')"
     }
-    return $authorized
+    $bindingLines = @($output | Where-Object { $_ -match "^CANDIDATE_BINDING_SHA256=[0-9a-f]{64}$" })
+    if ($bindingLines.Count -ne 1) {
+        throw "R9: candidate binding output is missing or ambiguous"
+    }
+    return ($bindingLines[0] -replace "^CANDIDATE_BINDING_SHA256=", "")
 }
 
 function New-Plan {
     param(
         [Parameter(Mandatory = $true)][string]$OutputPath,
         [Parameter(Mandatory = $true)][string[]]$Labels,
-        [Parameter(Mandatory = $true)][string]$PlanLog,
-        [Parameter(Mandatory = $true)][string]$RunRoot,
-        [Parameter(Mandatory = $true)][string]$NewParentPlanReason
+        [Parameter(Mandatory = $true)][string]$PlanLog
     )
 
     $arguments = @(
         "-B", "-m", "verification.isolation.run_plan", "plan",
-        "--output", $OutputPath,
-        "--run-root", $RunRoot,
-        "--new-parent-plan-reason", $NewParentPlanReason,
-        "--qualification-case"
+        "--output", $OutputPath
     )
     foreach ($label in $Labels) {
         $arguments += @("--label", $label)
@@ -156,14 +148,60 @@ function New-Plan {
         $exitCode = $LASTEXITCODE
         $validationArguments = @(
             "-B", "-m", "verification.isolation.run_plan", "validate-plan",
-            "--plan", $OutputPath,
-            "--run-root", $RunRoot,
-            "--new-parent-plan-reason", $NewParentPlanReason,
-            "--qualification-case"
+            "--plan", $OutputPath
         )
         $validationOutput = @(& python @validationArguments 2>&1)
         $validationExitCode = $LASTEXITCODE
         $output += $validationOutput
+        $planDigest = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $precheckOutput = @(& python -B -m verification.isolation.run_plan precheck `
+            --root $repoRoot --state $StateFile 2>&1)
+        $precheckExitCode = $LASTEXITCODE
+        $output += $precheckOutput
+        $precheckResults = @($precheckOutput | Where-Object {
+            $_ -match "^PRECHECK_RESULT=(PASS|NONE_QUALIFY)$"
+        })
+        $precheckClasses = @($precheckOutput | Where-Object {
+            $_ -match "^PRECHECK_CLASSES="
+        })
+        $precheckConnections = @($precheckOutput | Where-Object {
+            $_ -ceq "PRECHECK_CONNECTION_ATTEMPTS=0"
+        })
+        $routeCode = @'
+import os
+import sys
+from pathlib import Path
+
+os.environ["DJANGO_SETTINGS_MODULE"] = "intevia.test_settings"
+os.environ["INTEVIA_S015_TEST_ROUTE"] = "LIVING_ORGANISM_TEST_LIFECYCLE"
+os.environ["INTEVIA_RUN_PLAN_FILE"] = sys.argv[1]
+os.environ["INTEVIA_RUN_PLAN_SHA256"] = sys.argv[2]
+os.environ["VERIFICATION_RUN_NONCE"] = "TU2AFU_DRY_CHECK"
+os.environ["VERIFICATION_STEP"] = "QUALIFICATION_DRY_CHECK"
+
+from verification.isolation.run_plan import (
+    _forbid_database_connections,
+    _setup_test_django,
+    _standalone_action_environment,
+)
+from verification.isolation.runner import IsolationRunner
+
+with _standalone_action_environment(Path.cwd(), "validate-plan"):
+    connections = _setup_test_django("R7")
+    attempts = {"count": 0}
+    with _forbid_database_connections(connections, attempts, "R7"):
+        runner = IsolationRunner(verbosity=0, interactive=False, keepdb=False)
+        runner.build_suite()
+    if attempts["count"]:
+        raise SystemExit("R7: runner suite build attempted a database connection")
+print("RUNNER_SUITE_BUILD=PASS R7=PASS CONNECTION_ATTEMPTS=0")
+'@
+        $routeOutput = @(& python -B -c $routeCode $OutputPath $planDigest 2>&1)
+        $routeExitCode = $LASTEXITCODE
+        $output += $routeOutput
+        $routeEvidence = @($routeOutput | Where-Object {
+            $_ -ceq "RUNNER_SUITE_BUILD=PASS R7=PASS CONNECTION_ATTEMPTS=0"
+        })
     }
     finally {
         if ($hadPythonPath) {
@@ -175,8 +213,11 @@ function New-Plan {
     }
     $output | Set-Content -LiteralPath $PlanLog -Encoding utf8
     if ($exitCode -ne 0 -or $validationExitCode -ne 0 -or
+        $precheckExitCode -ne 0 -or $precheckResults.Count -ne 1 -or
+        $precheckClasses.Count -ne 1 -or $precheckConnections.Count -ne 1 -or
+        $routeExitCode -ne 0 -or $routeEvidence.Count -ne 1 -or
         -not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
-        throw "R3/R4/R5: plan resolution or launcher-equivalent validation failed for $($Labels -join ','): $($output -join ' | ')"
+        throw "R3/R4/R7: plan resolution, launcher-equivalent validation, or no-database runner suite build failed for $($Labels -join ','): $($output -join ' | ')"
     }
     $plan = Get-Content -LiteralPath $OutputPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     return [PSCustomObject]@{
@@ -184,6 +225,7 @@ function New-Plan {
         Data = $plan
         Sha256 = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
         IdentifierCharacters = ((@($plan.tests) -join "`n") + "`n").Length
+        RouteEvidence = "$($precheckResults[0]) $($precheckClasses[0]) $($precheckConnections[0]); $($routeEvidence[0])"
     }
 }
 
@@ -224,8 +266,7 @@ function Start-QualificationRun {
         [Parameter(Mandatory = $true)][string]$PlanPath,
         [Parameter(Mandatory = $true)][string]$LogPath,
         [Parameter(Mandatory = $true)][int]$RunSuffix,
-        [string]$ExpectedPlanSha256,
-        [Parameter(Mandatory = $true)][string]$NewParentPlanReason
+        [string]$ExpectedPlanSha256
     )
 
     $hostExecutable = (Get-Process -Id $PID -ErrorAction Stop).Path
@@ -237,9 +278,7 @@ function Start-QualificationRun {
         "-Mode", "clone", "-FailFast",
         "-RunSuffix", [string]$RunSuffix,
         "-StateFile", $StateFile, "-StateSha256", $StateSha256,
-        "-PlanFile", $PlanPath,
-        "-NewParentPlanReason", $NewParentPlanReason,
-        "-QualificationCase"
+        "-PlanFile", $PlanPath
     )
     if ($ExpectedPlanSha256) {
         $arguments += @("-PlanExpectedSha256", $ExpectedPlanSha256)
@@ -320,11 +359,20 @@ function Test-SuccessfulIsolationRun {
 }
 
 try {
-    $authorizedState = Assert-Lock1Bindings -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
-    if (-not (Test-Path -LiteralPath (Join-Path $qualificationRoot "TU2A_IMPACT_RECORD.json") -PathType Leaf)) {
+    $authorizedState = Assert-StateBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
+    if ($authorizedState.StateId -cne "TU2AFU_S1" -or
+        $authorizedState.DatabaseTag -cne "tu2afu" -or
+        $authorizedState.EvidenceRoot -cne "PKTB_TU2A_FU") {
+        throw "R9: authorized state does not bind the TU2A_FU qualification"
+    }
+    if (-not (Test-Path -LiteralPath $impactRecordPath -PathType Leaf)) {
         throw "impact record is absent"
     }
-    $null = Get-Content -LiteralPath (Join-Path $qualificationRoot "TU2A_IMPACT_RECORD.json") -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $null = Get-Content -LiteralPath $impactRecordPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+
+    if (-not (Test-Path -LiteralPath $qualificationRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $qualificationRoot -Force -ErrorAction Stop | Out-Null
+    }
 
     if ($HumanLaunch) {
         $qualificationDirectory = Join-Path $qualificationRoot ("qualification_" + [guid]::NewGuid().ToString("N"))
@@ -343,14 +391,13 @@ try {
     if ($actualLeakHash -cne $leakHash) {
         throw "qualification leak module bytes differ from the generated source"
     }
+    $candidateBinding = Get-CandidateBinding -AuthorizedStateFile $StateFile
 
     $plans = [ordered]@{}
     $plans["Q-A"] = New-Plan `
         -OutputPath (Join-Path $qualificationDirectory "q-a-plan.json") `
         -Labels $qaLabels `
-        -PlanLog (Join-Path $qualificationDirectory "q-a-plan.log") `
-        -RunRoot $qualificationRoot `
-        -NewParentPlanReason $qualificationPlanReason
+        -PlanLog (Join-Path $qualificationDirectory "q-a-plan.log")
     $qaTestCount = @($plans["Q-A"].Data.tests).Count
     $qaIdentifierCharacters = [int]$plans["Q-A"].IdentifierCharacters
     if ($qaTestCount -ne 311 -or $qaIdentifierCharacters -ne 34774) {
@@ -359,21 +406,15 @@ try {
     $plans["Q-B1"] = New-Plan `
         -OutputPath (Join-Path $qualificationDirectory "q-b1-plan.json") `
         -Labels @("tests.test_tu2a_qualification_leak.RowLeakQualificationTests") `
-        -PlanLog (Join-Path $qualificationDirectory "q-b1-plan.log") `
-        -RunRoot $qualificationRoot `
-        -NewParentPlanReason $qualificationPlanReason
+        -PlanLog (Join-Path $qualificationDirectory "q-b1-plan.log")
     $plans["Q-B2"] = New-Plan `
         -OutputPath (Join-Path $qualificationDirectory "q-b2-plan.json") `
         -Labels @("tests.test_tu2a_qualification_leak.SeedLeakQualificationTests") `
-        -PlanLog (Join-Path $qualificationDirectory "q-b2-plan.log") `
-        -RunRoot $qualificationRoot `
-        -NewParentPlanReason $qualificationPlanReason
+        -PlanLog (Join-Path $qualificationDirectory "q-b2-plan.log")
     $plans["Q-C"] = New-Plan `
         -OutputPath (Join-Path $qualificationDirectory "q-c-plan.json") `
         -Labels @("tests.test_s015_role_command.S015HistoricalAuthorityReferenceReplayTests") `
-        -PlanLog (Join-Path $qualificationDirectory "q-c-plan.log") `
-        -RunRoot $qualificationRoot `
-        -NewParentPlanReason $qualificationPlanReason
+        -PlanLog (Join-Path $qualificationDirectory "q-c-plan.log")
     $plans["Q-D"] = New-Plan `
         -OutputPath (Join-Path $qualificationDirectory "q-d-plan.json") `
         -Labels @(
@@ -381,9 +422,7 @@ try {
             "tests.test_s015_application_schema.HistoricalActorBytes.test_c1_historical_party_record_set_commitments_and_actor",
             "tests.test_s015_application_schema.ApplicationAuthorityMigration.test_0027_schema_and_historical_chain_bytes"
         ) `
-        -PlanLog (Join-Path $qualificationDirectory "q-d-plan.log") `
-        -RunRoot $qualificationRoot `
-        -NewParentPlanReason $qualificationPlanReason
+        -PlanLog (Join-Path $qualificationDirectory "q-d-plan.log")
     if (@($plans["Q-B1"].Data.tests).Count -ne 5 -or
         @($plans["Q-B2"].Data.tests).Count -ne 5 -or
         @($plans["Q-C"].Data.tests).Count -lt 1 -or
@@ -393,6 +432,12 @@ try {
 
     if (-not $HumanLaunch) {
         $overall = "DRY_CHECK"
+        Write-Output "CANDIDATE_BINDING_SHA256=$candidateBinding"
+        Write-Output "QUALIFICATION_DIRECTORY=$qualificationDirectory"
+        foreach ($case in @("Q-A", "Q-B1", "Q-B2", "Q-C", "Q-D")) {
+            $plan = $plans[$case]
+            Write-Output "$case | PLAN_SHA256=$($plan.Sha256) | PLAN_DATABASE_ROUTE=$($plan.Data.database_route) | TESTS_PLANNED=$(@($plan.Data.tests).Count) | LABELS_PLANNED=$(@($plan.Data.labels).Count) | $($plan.RouteEvidence)"
+        }
         Write-Output "DRY_CHECK=PASS; bindings and Q-A/Q-B/Q-C/Q-D plans resolved; no qualification run launched"
         return
     }
@@ -409,8 +454,7 @@ try {
             -PlanPath $plans[$case].Path `
             -LogPath $caseLog `
             -RunSuffix $nextSuffix `
-            -ExpectedPlanSha256 $expectedPlanDigest `
-            -NewParentPlanReason $qualificationPlanReason
+            -ExpectedPlanSha256 $expectedPlanDigest
         $nextSuffix++
         if ($case -ceq "Q-A") {
             $passed = $run.ExitCode -eq 0 -and
@@ -539,7 +583,8 @@ finally {
             "Overall: $overall",
             "State SHA-256: $StateSha256",
             "Run specification SHA-256: $($authorizedState.State.run_spec_sha256)",
-            "Candidate binding and per-run records are retained in `$qualificationDirectory`.",
+            "Qualification directory: $qualificationDirectory",
+            "Candidate binding SHA-256: $candidateBinding",
             ""
         )
         foreach ($result in $caseResults) {

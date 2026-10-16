@@ -6,13 +6,9 @@ from django.test import SimpleTestCase
 
 from verification.isolation.run_plan import (
     assert_execution,
-    is_rotation_basis_record,
     load_plan_from_data,
-    rotation,
-    rotation_basis_records,
     validate_run_spec_binding,
     validate_run_record_consistency,
-    validate_unrotated_selection,
     validate_verification_summary,
     verify_kind,
 )
@@ -198,146 +194,47 @@ class LaunchBoundaryTests(SimpleTestCase):
         with self.assertRaisesRegex(ValueError, "R3: at most twenty labels"):
             resolve_labels([f"synthetic.module{index}.Case" for index in range(21)])
 
-    def test_rotation_failure_in_a_preserves_parent_selection(self):
-        parent = {"tests": ["a", "b", "c", "d"], "ordered_groups": [["b", "c"]]}
-        a = rotation(parent, "b", "A")
-        b = rotation(parent, "b", "B")
-        self.assertEqual(set(a + b), set(parent["tests"]))
+    def test_failed_plan_can_be_reused_unrotated_without_a_superset(self):
+        import json
+        import tempfile
+        from pathlib import Path
 
-    def test_rotation_failure_in_b_preserves_parent_selection(self):
-        parent = {"tests": ["a", "b", "c", "d"], "ordered_groups": [["b", "c"]]}
-        a = rotation(parent, "d", "A")
-        b = rotation(parent, "d", "B")
-        self.assertEqual(set(a + b), set(parent["tests"]))
+        full_label = "tests.test_tu1_launch_boundary.LaunchBoundaryTests"
+        subset_label = full_label + ".test_duplicate_plan_ids_are_refused"
+        with tempfile.TemporaryDirectory() as temporary:
+            source = (
+                "import json\n"
+                "from pathlib import Path\n"
+                "from verification.isolation.run_plan import build_plan, write_plan, validate_plan_file\n"
+                f"root = Path({temporary!r})\n"
+                f"full_label = {full_label!r}\n"
+                f"subset_label = {subset_label!r}\n"
+                "failed_plan = build_plan([full_label])\n"
+                "attempt = root / 'attempt_1'\n"
+                "write_plan(failed_plan, attempt / 'run-plan.json')\n"
+                "(attempt / 'run-record.json').write_text(json.dumps("
+                "{'classification': 'TEST_ATTEMPT', 'result': 'FAIL'}), encoding='utf-8')\n"
+                "same_path = root / 'same-plan.json'\n"
+                "write_plan(build_plan([full_label]), same_path)\n"
+                "same, _ = validate_plan_file(same_path)\n"
+                "subset_path = root / 'subset-plan.json'\n"
+                "write_plan(build_plan([subset_label]), subset_path)\n"
+                "subset, _ = validate_plan_file(subset_path)\n"
+                "print(json.dumps({'failed': failed_plan['tests'], 'same': same['tests'], "
+                "'subset': subset['tests'], 'same_keys': sorted(same)}))\n"
+            )
+            result = self._run_in_fresh_process(source)
 
-    def test_rotation_inside_group_keeps_group_whole(self):
-        parent = {"tests": ["a", "b", "c", "d"], "ordered_groups": [["b", "c"]]}
-        self.assertEqual(rotation(parent, "c", "A"), ["b", "c", "d"])
-
-    def test_split_or_stale_group_is_refused(self):
-        parent = {"tests": ["a", "b", "c"], "ordered_groups": [["b", "c"]]}
-        with self.assertRaisesRegex(ValueError, "R5"):
-            rotation(parent, "missing", "A")
-
-    def test_pre_run_refusal_does_not_create_rotation_basis(self):
-        parent_digest = "parent-plan"
-        failed_attempt = {
-            "classification": "TEST_ATTEMPT",
-            "result": "FAIL",
-            "parent_plan_sha256": parent_digest,
-        }
-        refusal = {
-            "classification": "PRE_RUN_REFUSAL",
-            "result": "REFUSED",
-            "parent_plan_sha256": parent_digest,
-        }
-
-        self.assertFalse(is_rotation_basis_record(refusal))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertEqual(response["same"], response["failed"])
         self.assertEqual(
-            rotation_basis_records([failed_attempt, refusal], parent_digest),
-            [failed_attempt],
+            response["subset"],
+            ["tests.test_tu1_launch_boundary.LaunchBoundaryTests.test_duplicate_plan_ids_are_refused"],
         )
-
-    def test_unrotated_same_failed_selection_is_refused(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            r"R5: the latest attempt on this plan failed; launch rotated \(A, then B\) from its record\.",
-        ):
-            validate_unrotated_selection(
-                ["a", "b"],
-                {
-                    "classification": "TEST_ATTEMPT",
-                    "result": "FAIL",
-                    "failing_test": "a",
-                    "tests_executed": 1,
-                },
-                ["a", "b"],
-                None,
-            )
-
-    def test_no_test_failure_requires_reasoned_same_selection(self):
-        record = {
-            "classification": "TEST_ATTEMPT",
-            "result": "ERROR",
-            "tests_executed": 0,
-            "failing_test": None,
-        }
-        with self.assertRaisesRegex(ValueError, "failed attempt without a failing test identifier"):
-            validate_unrotated_selection(["a"], record, ["a"], None)
-        self.assertEqual(
-            validate_unrotated_selection(
-                ["a"], record, ["a"], "retry after a control failure without a test identifier"
-            ),
-            "retry after a control failure without a test identifier",
-        )
-
-    def test_unrotated_selection_after_pass_is_accepted(self):
-        self.assertIsNone(
-            validate_unrotated_selection(
-                ["a"],
-                {"classification": "TEST_ATTEMPT", "result": "PASS"},
-                ["a"],
-                None,
-            )
-        )
-
-    def test_new_parent_missing_failed_plan_test_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "R5: a new parent plan must contain every test"):
-            validate_unrotated_selection(
-                ["a"],
-                {"classification": "TEST_ATTEMPT", "result": "ERROR"},
-                ["a", "b"],
-                "expanded plan",
-            )
-
-    def test_reasoned_superset_is_accepted_for_new_parent_plan(self):
-        reason = "add c for the expanded verification objective"
-        self.assertEqual(
-            validate_unrotated_selection(
-                ["a", "b", "c"],
-                {"classification": "TEST_ATTEMPT", "result": "FAIL"},
-                ["a", "b"],
-                reason,
-            ),
-            reason,
-        )
-
-    def test_independent_qualification_failure_does_not_block_next_case_plan(self):
-        from verification.isolation.run_plan import (
-            TU2A_QUALIFICATION_NEW_PARENT_REASON,
-        )
-
-        previous_tests = ["qualification.case.test_deliberate_failure"]
-        next_tests = ["qualification.next_case.test_independent_selection"]
-        failed_record = {"result": "FAIL"}
-
-        self.assertEqual(
-            validate_unrotated_selection(
-                next_tests,
-                failed_record,
-                previous_tests,
-                TU2A_QUALIFICATION_NEW_PARENT_REASON,
-                independent_qualification_case=True,
-            ),
-            TU2A_QUALIFICATION_NEW_PARENT_REASON,
-        )
-        with self.assertRaisesRegex(
-            ValueError,
-            "R5: independent qualification reason requires qualification-case validation",
-        ):
-            validate_unrotated_selection(
-                next_tests,
-                failed_record,
-                previous_tests,
-                TU2A_QUALIFICATION_NEW_PARENT_REASON,
-            )
-        with self.assertRaisesRegex(ValueError, "R5: a new parent plan must contain every test"):
-            validate_unrotated_selection(
-                next_tests,
-                failed_record,
-                previous_tests,
-                "unrelated plan selection",
-            )
+        self.assertLess(len(response["subset"]), len(response["failed"]))
+        self.assertNotIn("rotation_side", response["same_keys"])
+        self.assertNotIn("parent_plan_sha256", response["same_keys"])
 
     def test_pass_run_record_requires_isolation_and_control_evidence(self):
         record = {
@@ -396,17 +293,6 @@ class LaunchBoundaryTests(SimpleTestCase):
         source = Path("scripts/integrated_state.ps1").read_text(encoding="utf-8")
         self.assertNotIn('".github/copilot-instructions.md" -cnotin $allowedPaths', source)
 
-    def test_closure_requires_same_candidate_and_parent_binding(self):
-        from verification.isolation.run_plan import validate_closure
-
-        with self.assertRaisesRegex(ValueError, "R5"):
-            validate_closure(
-                [
-                    {"candidate": "candidate-one", "parent": "plan-a"},
-                    {"candidate": "candidate-two", "parent": "plan-a"},
-                ]
-            )
-
     def test_full_plan_is_accepted(self):
         self.assertEqual(assert_execution(["a", "b"], ["a", "b"], complete=True), "FULL")
 
@@ -418,7 +304,7 @@ class LaunchBoundaryTests(SimpleTestCase):
             "PREFIX",
         )
 
-    def test_subtest_identifier_resolves_for_r7_and_r5_without_database(self):
+    def test_subtest_identifier_resolves_for_r7_without_database(self):
         from django.db import connections
         from verification.isolation.run_plan import (
             _forbid_database_connections,
@@ -430,13 +316,8 @@ class LaunchBoundaryTests(SimpleTestCase):
             "suite.Case.test_w1 (skew=datetime.timedelta(days=-1, seconds=79200), "
             "function='limit')"
         )
-        failure_record = {
-            "classification": "TEST_ATTEMPT",
-            "result": "FAIL",
-            "failing_test": decorated_failure,
-        }
         attempts = {"count": 0}
-        with _forbid_database_connections(connections, attempts, "R5/R7"):
+        with _forbid_database_connections(connections, attempts, "R7"):
             self.assertEqual(
                 assert_execution(
                     parent_tests,
@@ -446,25 +327,13 @@ class LaunchBoundaryTests(SimpleTestCase):
                 ),
                 "PREFIX",
             )
-            parent_failure = _resolve_parent_test_identifier(
-                failure_record["failing_test"], parent_tests, "R5"
-            )
-            self.assertEqual(parent_failure, parent_tests[1])
-            self.assertEqual(
-                rotation(
-                    {"tests": parent_tests, "ordered_groups": []},
-                    parent_failure,
-                    "A",
-                ),
-                parent_tests[1:],
-            )
             with self.assertRaisesRegex(ValueError, "missing"):
                 _resolve_parent_test_identifier(
-                    "missing.test (case=1)", parent_tests, "R5"
+                    "missing.test (case=1)", parent_tests, "R7"
                 )
             with self.assertRaisesRegex(ValueError, "ambiguous"):
                 _resolve_parent_test_identifier(
-                    "x (case (nested=1)", ["x", "x (case"], "R5"
+                    "x (case (nested=1)", ["x", "x (case"], "R7"
                 )
         self.assertEqual(attempts["count"], 0)
 
@@ -482,10 +351,6 @@ class LaunchBoundaryTests(SimpleTestCase):
         verify_kind("DELTA", ["b"], ["a", "b"], delta_authorized=True, impact=["b"])
         with self.assertRaisesRegex(ValueError, "R10"):
             verify_kind("DELTA", ["a"], ["a", "b"], delta_authorized=True, impact=["b"])
-
-    def test_verification_cannot_rotate(self):
-        with self.assertRaisesRegex(ValueError, "R10"):
-            verify_kind("FULL", ["a"], ["a"], rotation_input=True)
 
     def test_direct_manage_py_route_refusal_is_present(self):
         from pathlib import Path

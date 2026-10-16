@@ -1,4 +1,4 @@
-# INTEVIA run requirements (repository copy)
+# INTEVIA run requirements (repository copy) — post-permit v1.1 (16 Oct 2026: R5 rotation code removed; R15 without pyright)
 
 Rendered from practice section R as reset by the Human Governor's decisions TR-1 to TR-4 of 15 October 2026 (the testing reset), reconciled
 from the Lead Designer's returns v1.0 section 5.5 and v1.1 and the TU-2a commission. Operative from the first launch after the TU-2a
@@ -15,7 +15,8 @@ R3. Labels are module.Class or module.Class.method, resolved to a plan; a launch
     A module is expanded to its classes and loader-checked before launch.
 R4. Resolve the current selection and counts through the loader at launch (unique tests, no duplicates, no failed labels), stored as a
     plan file whose digest is the SHA-256 of its final bytes. Earlier counts are never accepted without current validation.
-R5. Rotation is retired, from the first launch after the TU-2a qualification permit. After a failure in a development run, the Making
+R5. Rotation is retired, from the first launch after the TU-2a qualification permit, and its code is removed. A run never resumes from a
+    failure point and a plan is never required to contain an earlier failed plan. After a failure in a development run, the Making
     Engine diagnoses the failing witness and its directly related cases first, then reruns the complete packet set on the corrected
     candidate before READY. After a failure in a closure run, the cause is diagnosed in development runs and the closure run is rerun whole
     on the resulting candidate. Closure is one complete passing run, never a union.
@@ -40,10 +41,9 @@ R13. Every closure-run and full-run relay ends with a pre-launch check, one line
 R14. Before any development launch, the test classes in the changed test files that declare no database are identified mechanically and
     run with fail-fast and database connections forbidden on every alias; the classes, the outcome and the connection-attempt count are
     reported, and "none qualify" is reported explicitly. No database is created.
-R15. The pre-run, before every development run and after relevant edits: py_compile on every changed file; R14; and pyright over the
-    changed test and product files using the repository's trial configuration (typeCheckingMode basic), its result recorded with checker
-    failures kept apart from code diagnostics. Pyright gates a launch only when a later Human decision adopts it as a gate. A pre-run failure
-    stops the launch and is corrected across the whole file before the next pre-run.
+R15. The pre-run, before every development run and after relevant edits: py_compile on every changed file, and R14. A pre-run failure stops
+    the launch and is corrected across the whole file before the next pre-run. Pyright is not part of the pre-run (removed by the Human
+    Governor's decision of 16 October 2026 after its one trial); any static checker becomes part of it only by a later Human decision.
 R16. Named runs. Pre-run: no database; seconds; the Making Engine. Development run: the packet set (the packet's new and changed tests, the
     existing tests the commission names as direct witnesses, and the directly affected guardians and concurrency witnesses); the Making
     Engine under H87 within the commission's budget. Closure run: once, on the frozen candidate, the commission's dependency-argued impact

@@ -1176,7 +1176,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.service(_Provider()).withdraw_application(command)
 
     def test_dw1_withdraw_first_then_decide_waits_on_organism_lock(self):
-        """Original name restored for this run. The Identity-level meeting existed only while actors were locked FOR UPDATE. LD_RETURN_LOCK1_DW_DETERMINATION_v1_0 predicts the organism-lock relation until this run observes it. The rename to test_dw1_withdraw_first_then_decide_waits_on_organism_lock follows after closure under this decision."""
+        """DW1 observes withdrawal-first serialization: the decision waits on the organism lock, then refuses the withdrawn application."""
         application = self.claimed()
         self._register_workers()
         holder_pid = backend_pid(connection)
@@ -1203,7 +1203,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertFalse(ApplicationDecision.objects.filter(application=application).exists())
 
     def test_dw2_decide_first_then_withdraw_waits_on_organism_lock(self):
-        """Original name restored for this run. The Identity-level meeting existed only while actors were locked FOR UPDATE. LD_RETURN_LOCK1_DW_DETERMINATION_v1_0 predicts the organism-lock relation until this run observes it. The rename to test_dw2_decide_first_then_withdraw_waits_on_organism_lock follows after closure under this decision."""
+        """DW2 observes decision-first serialization: withdrawal waits on the organism lock, then refuses the decided application."""
         application = self.claimed()
         self._register_workers()
         holder_pid = backend_pid(connection)

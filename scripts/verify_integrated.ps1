@@ -9,8 +9,7 @@ param(
     [string]$DeltaAuthorityFile,
     [string]$DeltaAuthoritySha256,
     [string]$ImpactRecordFile,
-    [string]$ImpactRecordSha256,
-    [string]$RotationInput
+    [string]$ImpactRecordSha256
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,7 +80,6 @@ if ([string]::IsNullOrWhiteSpace($StateFile) -or
     $StateSha256 -cnotmatch "^[0-9a-fA-F]{64}$") {
     throw "R9: authorized state file and digest are required"
 }
-if ($RotationInput) { throw "R10: verifier never accepts rotation input" }
 if ($VerificationKind -eq "FULL" -and
     ($Labels.Count -gt 0 -or $DeltaAuthorityFile -or $DeltaAuthoritySha256 -or $ImpactRecordFile -or $ImpactRecordSha256)) {
     throw "R10: full verification does not accept a label subset or delta authority"
@@ -1123,9 +1121,6 @@ try {
         tests = $allTestIds.ToArray()
         database_route = $databaseRoute
         ordered_groups = @()
-        parent_plan_sha256 = $null
-        rotation_side = "NONE"
-        rotation_unit = "NONE"
         counts = [ordered]@{ tests = $allTestIds.Count; groups = 0 }
     }
     $planJson = ConvertTo-Json -InputObject $combinedPlan -Depth 20
@@ -1171,9 +1166,6 @@ try {
     Write-Output "VERIFICATION_KIND=$VerificationKind"
     Write-Output $runSpecBindingLine
     Write-Output "PLAN_SHA256=$planDigest"
-    Write-Output "PARENT_PLAN_SHA256=NONE"
-    Write-Output "ROTATION=NONE"
-    Write-Output "ROTATION_UNIT=NONE"
     if ($VerificationKind -eq "DELTA") {
         Write-Output "DELTA_AUTHORITY=$deltaAuthorityDigest"
         Write-Output "IMPACT_RECORD=$impactRecordDigest"
@@ -1487,9 +1479,6 @@ if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType
                 Write-Output "TESTS_EXECUTED=$($summary.tests_executed)"
                 Write-Output "TESTS_NOT_REACHED=$($summary.tests_not_reached)"
                 Write-Output "EXECUTED_MATCHES_PLAN=$($summary.executed_matches_plan)"
-                Write-Output "PARENT_PLAN_SHA256=$($summary.parent_plan_sha256)"
-                Write-Output "ROTATION=$($summary.rotation)"
-                Write-Output "ROTATION_UNIT=$($summary.rotation_unit)"
                 if ($isolationVerdict -ne "PASS") {
                     Add-Failure "isolation summary did not PASS"
                 }

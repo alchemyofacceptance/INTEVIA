@@ -195,12 +195,6 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         actual_ids = [case.id() for case in iter_test_cases(suite)]
         ensure_suite_matches(self.run_plan["tests"], actual_ids)
         print("PLAN_SHA256=" + self.plan_sha256, file=sys.stderr, flush=True)
-        print("PARENT_PLAN_SHA256=" + str(self.run_plan.get("parent_plan_sha256") or "NONE"),
-              file=sys.stderr, flush=True)
-        print("ROTATION=" + str(self.run_plan.get("rotation_side", "NONE")),
-              file=sys.stderr, flush=True)
-        print("ROTATION_UNIT=" + str(self.run_plan.get("rotation_unit", "NONE")),
-              file=sys.stderr, flush=True)
         print("TESTS_PLANNED=" + str(len(self.run_plan["tests"])), file=sys.stderr, flush=True)
         print("ORDERED_GROUPS=%d INTACT" % len(self.run_plan.get("ordered_groups", [])),
               file=sys.stderr, flush=True)
@@ -963,10 +957,6 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             not_reached = self.run_plan["tests"][len(executed_ids):]
             summary.update(
                 plan_sha256=self.plan_sha256,
-                parent_plan_sha256=self.run_plan.get("parent_plan_sha256") or "NONE",
-                rotation=self.run_plan.get("rotation_side", "NONE"),
-                rotation_unit=self.run_plan.get("rotation_unit", "NONE"),
-                rotation_failure=self.run_plan.get("rotation_failure"),
                 tests_planned=len(self.run_plan["tests"]),
                 tests_executed=len(executed_ids),
                 tests_not_reached=len(not_reached),

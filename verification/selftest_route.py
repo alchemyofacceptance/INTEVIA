@@ -94,13 +94,15 @@ class B0PycachePrefixEnv(_Tmp):
     def test_child_envs_follow_sys_pycache_prefix_and_omit_none(self):
         r = self.route()
 
-        with mock.patch.object(route_mod.sys, "pycache_prefix", os.path.join(self.tmp, "pycache")):
+        with mock.patch.object(route_mod.sys, "pycache_prefix", os.path.join(self.tmp, "pycache")), \
+                mock.patch.object(r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)):
             django_env = r.django_env("test_db", "SELF")
             offline_env = route_mod._child_python_env(PYTHONPATH=route_mod.ROOT, PYTHONIOENCODING="utf-8")
             self.assertEqual(django_env["PYTHONPYCACHEPREFIX"], route_mod.sys.pycache_prefix)
             self.assertEqual(offline_env["PYTHONPYCACHEPREFIX"], route_mod.sys.pycache_prefix)
 
-        with mock.patch.object(route_mod.sys, "pycache_prefix", None):
+        with mock.patch.object(route_mod.sys, "pycache_prefix", None), \
+                mock.patch.object(r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)):
             django_env = r.django_env("test_db", "SELF")
             offline_env = route_mod._child_python_env(PYTHONPATH=route_mod.ROOT, PYTHONIOENCODING="utf-8")
             self.assertNotIn("PYTHONPYCACHEPREFIX", django_env)
@@ -650,6 +652,7 @@ class RCB2B3FixtureLifecycle(_Tmp):
                 mock.patch.object(r, "step_offline", return_value={"id": "OFFLINE", "outcome": "PASS"}), \
                 mock.patch.object(r, "step_suite", side_effect=lambda sid, *a, **k: {"id": sid, "outcome": "PASS"}), \
                 mock.patch.object(r, "step_lock", return_value={"id": "LOCK", "outcome": "PASS"}), \
+                mock.patch.object(r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)), \
                 mock.patch.object(r, "connect", side_effect=srv.connect), mock.patch.object(r, "oid_of", side_effect=srv.oid_of), \
                 mock.patch.object(r, "run_logged", side_effect=collide), contextlib.redirect_stdout(io.StringIO()):
             code = r.run(skip_mutations=True)

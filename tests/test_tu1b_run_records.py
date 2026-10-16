@@ -216,3 +216,40 @@ Write-Output "MISSING:$line"
 
         self.assertEqual(emitted[-1]["candidate_binding"], binding)
         self.assertIsNone(emitted[-1]["candidate_binding_reason"])
+
+    def test_attempt_summary_keeps_plan_binding_without_rotation_lineage(self):
+        runner = object.__new__(IsolationRunner)
+        test_id = "suite.Case.test_one"
+        runner.cp0_met = False
+        runner.suite_ids = [test_id]
+        runner.started_ids = [test_id]
+        runner.outcome_ids = [test_id]
+        runner.checkpoints = []
+        runner.emit_errors = 0
+        runner.run_plan = {"tests": [test_id]}
+        runner.plan_sha256 = "d" * 64
+        runner.checkpoint_stop_id = None
+        runner.checkpoint_failure_test = None
+        emitted = []
+        runner._emit = lambda record: emitted.append(record)
+
+        with patch.dict(os.environ, {"INTEVIA_CANDIDATE_BINDING_SHA256": "a" * 64}):
+            runner._summary(None)
+
+        summary = emitted[-1]
+        self.assertEqual(summary["plan_sha256"], "d" * 64)
+        self.assertEqual(summary["executed_matches_plan"], "FULL")
+        self.assertFalse(
+            {
+                "parent_plan_sha256",
+                "rotation",
+                "rotation_unit",
+                "rotation_failure",
+            }
+            & summary.keys()
+        )
+
+        source = Path("scripts/run_integrated_dev.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("latest = $true", source)
+        self.assertNotIn("parent_plan_sha256", source)
+        self.assertNotIn("rotation_side", source)

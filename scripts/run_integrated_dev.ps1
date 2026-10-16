@@ -2,7 +2,7 @@
 param(
     [ValidateSet("fresh", "clone")][string]$Mode = "clone",
     [int]$AttemptNumber = 0,
-    [ValidatePattern("^[1-9][0-9]*[ab]?$")][string]$RunSuffix,
+    [ValidatePattern("^[1-9][0-9]*$")][string]$RunSuffix,
     [string[]]$Labels = @(),
     [string]$PlanFile,
     [string]$PlanExpectedSha256,
@@ -16,20 +16,149 @@ param(
     [switch]$LaunchSelfTest,
     [string]$FreshAuthorityFile,
     [string]$FreshAuthoritySha256,
-    [string[]]$OrderedGroups = @(),
-    [string]$ParentPlanFile,
-    [string]$PrecedingRunRecordFile,
-    [string]$NewParentPlanReason,
-    [switch]$QualificationCase,
-    [ValidateSet("NONE", "A", "B")][string]$RotationSide = "NONE"
+    [string[]]$OrderedGroups = @()
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "integrated_guards.ps1")
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 
+function Get-TemplatePreflightEvidence {
+    param([Parameter(Mandatory = $true)]$Invocation)
+
+    $actionLines = @()
+    $buildLines = @()
+    if ($Invocation.Label -ceq "Clone template preflight") {
+        $actionLines = @($Invocation.OutputLines | Where-Object {
+            $_ -match "^TEMPLATE_ACTION=(BUILT|REUSED)$"
+        })
+        $buildLines = @($Invocation.OutputLines | Where-Object {
+            $_ -match "^TEMPLATE_BUILD_SECONDS=(?:[0-9]+(?:\.[0-9]+)?|NOT_APPLICABLE)$"
+        })
+    }
+
+    $templateAction = $null
+    $templateBuildSeconds = $null
+    $consistent = $false
+    if ($actionLines.Count -eq 1 -and $buildLines.Count -eq 1) {
+        $templateAction = $actionLines[0].Substring("TEMPLATE_ACTION=".Length)
+        if ($templateAction -eq "BUILT" -and
+            $buildLines[0] -match "^TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
+            $templateBuildSeconds = [double]::Parse(
+                $Matches[1], [System.Globalization.CultureInfo]::InvariantCulture
+            )
+            $consistent = $true
+        }
+        elseif ($templateAction -eq "REUSED" -and
+            $buildLines[0] -ceq "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE") {
+            $consistent = $true
+        }
+    }
+
+    return [PSCustomObject]@{
+        ActionLineCount = $actionLines.Count
+        BuildLineCount = $buildLines.Count
+        TemplateAction = $templateAction
+        TemplateBuildSeconds = $templateBuildSeconds
+        IsConsistent = $consistent
+    }
+}
+
+function Get-CommandLogOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $logLines = @(Get-Content -LiteralPath $LogPath -ErrorAction Stop)
+    $marker = "COMMAND=$Label"
+    $markerIndexes = [System.Collections.Generic.List[int]]::new()
+    for ($index = 0; $index -lt $logLines.Count; $index++) {
+        if ($logLines[$index] -ceq $marker) {
+            $markerIndexes.Add($index)
+        }
+    }
+    if ($markerIndexes.Count -gt 1) {
+        throw "R9: log contains ambiguous command sections for '$Label'"
+    }
+    if ($markerIndexes.Count -eq 0 -or $markerIndexes[0] -ge ($logLines.Count - 1)) {
+        return @()
+    }
+    $startIndex = $markerIndexes[0] + 1
+
+    $endIndex = $logLines.Count
+    for ($index = $startIndex; $index -lt $logLines.Count; $index++) {
+        if ($logLines[$index] -match "^COMMAND=") {
+            $endIndex = $index
+            break
+        }
+    }
+    if ($endIndex -le $startIndex) {
+        return @()
+    }
+    return @($logLines[$startIndex..($endIndex - 1)])
+}
+
 if ($LaunchSelfTest) {
     Set-Location -LiteralPath $repoRoot
+    $earlierTestOutput = [PSCustomObject]@{
+        Label = "R14 changed-test no-database pre-check"
+        OutputLines = @(
+            "TEMPLATE_ACTION=BUILT",
+            "TEMPLATE_BUILD_SECONDS=12.500000"
+        )
+    }
+    $currentPreflightOutput = [PSCustomObject]@{
+        Label = "Clone template preflight"
+        OutputLines = @(
+            "TEMPLATE_ACTION=REUSED",
+            "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE"
+        )
+    }
+    $earlierEvidence = Get-TemplatePreflightEvidence -Invocation $earlierTestOutput
+    $currentEvidence = Get-TemplatePreflightEvidence -Invocation $currentPreflightOutput
+    if ($earlierEvidence.ActionLineCount -ne 0 -or
+        $earlierEvidence.BuildLineCount -ne 0 -or
+        $earlierEvidence.IsConsistent -or
+        $currentEvidence.ActionLineCount -ne 1 -or
+        $currentEvidence.BuildLineCount -ne 1 -or
+        -not $currentEvidence.IsConsistent -or
+        $currentEvidence.TemplateAction -cne "REUSED") {
+        throw "R8: clone preflight invocation-scope self-test failed"
+    }
+    Write-Output "R8 clone preflight invocation-scope self-test=PASS"
+
+    $commandScopeTestPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "intevia-command-scope-" + [guid]::NewGuid().ToString("N") + ".log"
+    )
+    try {
+        @(
+            "COMMAND=Explicit-label development run",
+            "test_control_output (tests.sample.ControlCase.test_control_output) ... ok",
+            "COMMAND=Explicit-label development run",
+            "Destroying test database for alias 'default' ('decoy')..."
+        ) | Set-Content -LiteralPath $commandScopeTestPath -Encoding utf8
+        $ambiguousCommandSectionMessage = $null
+        try {
+            [void](Get-CommandLogOutput -LogPath $commandScopeTestPath -Label "Explicit-label development run")
+        }
+        catch {
+            if ($_.Exception.Message -notmatch "ambiguous command sections") {
+                throw
+            }
+            $ambiguousCommandSectionMessage = $_.Exception.Message
+        }
+        if ($null -eq $ambiguousCommandSectionMessage) {
+            throw "R9: duplicate command-section self-test was not refused"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $commandScopeTestPath -PathType Leaf) {
+            Remove-Item -LiteralPath $commandScopeTestPath -Force -ErrorAction Stop
+        }
+    }
+    Write-Output "R9 command-section uniqueness self-test=PASS"
+
     $selfTestEnvironment = @{
         DJANGO_SETTINGS_MODULE = "intevia.test_settings"
         INTEVIA_S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
@@ -96,8 +225,8 @@ if ($LaunchSelfTest) {
 }
 if (-not $FailFast) { throw "R1: fail-fast is mandatory and cannot be disabled" }
 if ((-not $Labels -or $Labels.Count -eq 0) -and
-    [string]::IsNullOrWhiteSpace($PlanFile) -and $RotationSide -eq "NONE") {
-    throw "R3: at least one test label is required for a new parent plan"
+    [string]::IsNullOrWhiteSpace($PlanFile)) {
+    throw "R3: at least one test label is required when no plan file is supplied"
 }
 if ([string]::IsNullOrWhiteSpace($StateFile) -or
     $StateSha256 -cnotmatch "^[0-9a-fA-F]{64}$") {
@@ -245,6 +374,7 @@ $script:runRecordData = $null
 $setupSeconds = $null
 $templateBuildSeconds = $null
 $templateAction = $null
+$clonePreflightOutputLines = @()
 $instrumentIsolationVerdict = "NOT ESTABLISHED"
 $wholeRun = $null
 $script:teardownLines = 0
@@ -264,7 +394,7 @@ function Get-RunDatabaseReconciliation {
     # P1-F5: ^test_intevia_living_organism_tt1_witness_[0-9a-f]+$ is the only naming exemption.
     param(
         [Parameter(Mandatory = $true)][string]$ReceiptPath,
-        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$LogLines,
         [Parameter(Mandatory = $true)][string]$RunNonce,
         [Parameter(Mandatory = $true)][string]$PrimaryDatabase,
         [Parameter(Mandatory = $true)][int]$TeardownLines,
@@ -282,13 +412,7 @@ function Get-RunDatabaseReconciliation {
             ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop })
     }
 
-    $logLines = @()
-    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
-        $failureReasons.Add("test run log is absent")
-    }
-    else {
-        $logLines = @(Get-Content -LiteralPath $LogPath -ErrorAction Stop)
-    }
+    $logLines = @($LogLines)
 
     $creationMarkers = @($logLines | Where-Object { $_ -match "Creating test database for alias" })
     $destructionMarkers = @($logLines | Where-Object { $_ -match "Destroying test database for alias" })
@@ -507,16 +631,8 @@ function Invoke-PythonAndLog {
             $lineText = Protect-OutputText -Text ([string]$_)
             $capturedLines.Add($lineText)
             Write-Host $lineText
-            if ($lineText -match "^TT1_(?:FRESH|CLONE)_SETUP_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
-                $script:setupSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
-            }
-            elseif ($lineText -match "^TT1_TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
-                $script:templateBuildSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
-            }
-            if ($lineText -match "^Found ([0-9]+) test\(s\)\.?$") {
-                $script:discoveredTestCount = [int]$Matches[1]
-            }
-            if ($lineText -match "Destroying test database for alias") {
+            if ($Label -ceq "Clone template preflight" -and
+                $lineText -match "Destroying test database for alias") {
                 $script:teardownLines++
             }
         }
@@ -532,7 +648,11 @@ function Invoke-PythonAndLog {
             )
         }
     }
-    return [int]$status
+    return [PSCustomObject]@{
+        Label = $Label
+        ExitCode = [int]$status
+        OutputLines = [string[]]$capturedLines.ToArray()
+    }
 }
 
 function Write-PreRunRefusalRecord {
@@ -545,23 +665,12 @@ function Write-PreRunRefusalRecord {
         [Parameter(Mandatory = $true)][string]$CandidateBinding
     )
 
-    $parentDigest = if ($PlanData.parent_plan_sha256) {
-        [string]$PlanData.parent_plan_sha256
-    }
-    else {
-        $PlanHash
-    }
     $refusalRecord = [ordered]@{
-        latest = $true
         classification = "PRE_RUN_REFUSAL"
         result = "REFUSED"
         refusal_stage = $RefusalStage
         plan_sha256 = $PlanHash
-        parent_plan_sha256 = $parentDigest
-        rotation_side = [string]$PlanData.rotation_side
-        rotation_unit = [string]$PlanData.rotation_unit
         candidate = $CandidateBinding
-        parent = $parentDigest
         tests_planned = [int]$PlanData.tests.Count
         tests_executed = 0
         tests_not_reached = [int]$PlanData.tests.Count
@@ -611,9 +720,6 @@ try {
         if ($Labels.Count -gt 0) {
             throw "R3: specify either -PlanFile or -Labels, not both"
         }
-        if ($RotationSide -ne "NONE") {
-            throw "R5: -PlanFile cannot be combined with rotated selection"
-        }
         if (-not (Test-Path -LiteralPath $PlanFile -PathType Leaf)) {
             throw "R4: resolved plan file does not exist"
         }
@@ -634,33 +740,15 @@ try {
     if ($CleanupTemplate -and $Mode -ne "clone") {
         throw "template cleanup is only valid for a clone-mode run"
     }
-    if ($NewParentPlanReason -match "[\r\n]") {
-        throw "R5: -NewParentPlanReason must be a single line"
-    }
-    if ($RotationSide -ne "NONE" -and
-        -not [string]::IsNullOrWhiteSpace($NewParentPlanReason)) {
-        throw "R5: -NewParentPlanReason is only valid for an unrotated new parent plan"
-    }
-    if ($QualificationCase -and (
-        -not $PlanFile -or
-        $RotationSide -ne "NONE" -or
-        [string]::IsNullOrWhiteSpace($NewParentPlanReason)
-    )) {
-        throw "R5: qualification-case validation requires an unrotated plan file and reason"
-    }
-
     $authorizedState = Get-IntegratedState -StateFile $StateFile -StateSha256 $StateSha256
-    if ($QualificationCase -and [string]$authorizedState.DatabaseTag -cne "tu2a") {
-        throw "R5: qualification-case validation requires TU-2a state"
-    }
     $routes = Get-IntegratedEvidenceRoutes -AuthorizedState $authorizedState -HomeDirectory $HOME
     $stageRoot = $routes.DevelopmentRoot
     $env:INTEVIA_DATABASE_TAG = [string]$authorizedState.DatabaseTag
     $env:INTEVIA_EVIDENCE_ROOT = [string]$authorizedState.EvidenceRoot
     $env:INTEVIA_EVIDENCE_ROOT_PATH = [System.IO.Path]::GetFullPath((Split-Path -Parent $stageRoot))
     if ($AttemptNumber -lt 1 -and $RunSuffix) {
-        if ($RunSuffix -notmatch "^([1-9][0-9]*)[ab]?$") {
-            throw "R5: run suffix is invalid"
+        if ($RunSuffix -notmatch "^([1-9][0-9]*)$") {
+            throw "R9: run suffix is invalid"
         }
         $AttemptNumber = [int]$Matches[1]
     }
@@ -671,8 +759,8 @@ try {
         }
     }
     $runSuffix = if ($RunSuffix) { $RunSuffix } else { [string]$AttemptNumber }
-    if ($runSuffix -cnotmatch ("^{0}[ab]?$" -f [regex]::Escape([string]$AttemptNumber))) {
-        throw "R5: run suffix must match the attempt number, optionally followed by a or b"
+    if ($runSuffix -cnotmatch ("^{0}$" -f [regex]::Escape([string]$AttemptNumber))) {
+        throw "R9: run suffix must match the attempt number"
     }
     Write-Output "STATE_FILE=$($authorizedState.StateFile)"
     Write-Output "STATE_ID=$($authorizedState.StateId)"
@@ -946,92 +1034,46 @@ try {
     }
     $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $testPythonPath)
     $env:INTEVIA_RUN_SPEC_SHA256 = [string]$authorizedState.State.run_spec_sha256
-    $bindingCode = Invoke-PythonAndLog `
+    $bindingRun = Invoke-PythonAndLog `
         -Label "Candidate source binding" `
         -LogPath $logPath `
         -Arguments @(
             "-m", "verification.isolation.run_plan", "candidate-binding",
             "--root", $repoRoot, "--state", $authorizedState.StateFile
         )
-    if ($bindingCode -ne 0) { throw "R9: candidate binding could not be calculated" }
-    $bindingLine = @(Get-Content -LiteralPath $logPath |
-        Where-Object { $_ -match "^CANDIDATE_BINDING_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+    if ($bindingRun.ExitCode -ne 0) { throw "R9: candidate binding could not be calculated" }
+    $bindingLine = @($bindingRun.OutputLines |
+        Where-Object { $_ -match "^CANDIDATE_BINDING_SHA256=[0-9a-f]{64}$" })
     if ($bindingLine.Count -ne 1) { throw "R9: candidate binding output is missing" }
     $candidateBinding = ($bindingLine[0] -replace "^CANDIDATE_BINDING_SHA256=", "")
     $env:INTEVIA_CANDIDATE_BINDING_SHA256 = $candidateBinding
     Write-Output $bindingLine[0]
-    if ($RotationSide -eq "NONE") {
-        if ($ParentPlanFile -or $PrecedingRunRecordFile) {
-            throw "R5: rotation basis is incomplete or unexpected for a new parent plan"
-        }
-        if ($PlanFile) {
-            $resolvedPlanSource = (Resolve-Path -LiteralPath $PlanFile -ErrorAction Stop).Path
-            Copy-Item -LiteralPath $resolvedPlanSource -Destination $resolvedRunPlanFile -ErrorAction Stop
-            $sourcePlanHash = (Get-FileHash -LiteralPath $resolvedPlanSource -Algorithm SHA256).Hash.ToLowerInvariant()
-            $planHash = (Get-FileHash -LiteralPath $resolvedRunPlanFile -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($sourcePlanHash -cne $planHash) {
-                throw "R4: copied plan bytes differ from the supplied resolved plan"
-            }
-            $planArguments = @(
-                "-m", "verification.isolation.run_plan", "validate-plan",
-                "--plan", $resolvedRunPlanFile, "--run-root", $stageRoot
-            )
-            if (-not [string]::IsNullOrWhiteSpace($NewParentPlanReason)) {
-                $planArguments += @("--new-parent-plan-reason", $NewParentPlanReason)
-            }
-            if ($QualificationCase) {
-                $planArguments += "--qualification-case"
-            }
-        }
-        else {
-            $planArguments = @(
-                "-m", "verification.isolation.run_plan", "plan",
-                "--output", $resolvedRunPlanFile, "--run-root", $stageRoot
-            )
-            if (-not [string]::IsNullOrWhiteSpace($NewParentPlanReason)) {
-                $planArguments += @("--new-parent-plan-reason", $NewParentPlanReason)
-            }
-            foreach ($label in $Labels) { $planArguments += @("--label", $label) }
-            foreach ($group in $OrderedGroups) { $planArguments += @("--group", $group) }
-        }
-    }
-    else {
-        if (-not $ParentPlanFile -or -not $PrecedingRunRecordFile -or
-            -not (Test-Path -LiteralPath $ParentPlanFile -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $PrecedingRunRecordFile -PathType Leaf)) {
-            throw "R5: rotated launch requires the bound parent plan and preceding run record"
-        }
-        if (-not $runSuffix.EndsWith($RotationSide.ToLowerInvariant())) {
-            throw "R5: rotation side does not match the run suffix"
+    if ($PlanFile) {
+        $resolvedPlanSource = (Resolve-Path -LiteralPath $PlanFile -ErrorAction Stop).Path
+        Copy-Item -LiteralPath $resolvedPlanSource -Destination $resolvedRunPlanFile -ErrorAction Stop
+        $sourcePlanHash = (Get-FileHash -LiteralPath $resolvedPlanSource -Algorithm SHA256).Hash.ToLowerInvariant()
+        $planHash = (Get-FileHash -LiteralPath $resolvedRunPlanFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($sourcePlanHash -cne $planHash) {
+            throw "R4: copied plan bytes differ from the supplied resolved plan"
         }
         $planArguments = @(
-            "-m", "verification.isolation.run_plan", "rotate",
-            "--parent", $ParentPlanFile,
-            "--preceding", $PrecedingRunRecordFile,
-            "--side", $RotationSide,
-            "--output", $resolvedRunPlanFile
+            "-m", "verification.isolation.run_plan", "validate-plan",
+            "--plan", $resolvedRunPlanFile
         )
     }
-    $planCode = Invoke-PythonAndLog -Label "R3/R4 no-database plan" -LogPath $logPath -Arguments $planArguments
-    if ($planCode -ne 0) {
-        $r5RefusalLine = @(Get-Content -LiteralPath $logPath |
-            Where-Object { $_ -match "^R5_REFUSAL=R5:" } | Select-Object -Last 1)
-        if ($r5RefusalLine.Count -eq 1 -and
-            (Test-Path -LiteralPath $resolvedRunPlanFile -PathType Leaf)) {
-            $planHash = (Get-FileHash -LiteralPath $resolvedRunPlanFile -Algorithm SHA256).Hash.ToLowerInvariant()
-            $planData = Get-Content -LiteralPath $resolvedRunPlanFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            Write-PreRunRefusalRecord `
-                -RecordDirectory $preflightDirectory `
-                -LogPath $logPath `
-                -RefusalStage "R5" `
-                -PlanHash $planHash `
-                -PlanData $planData `
-                -CandidateBinding $candidateBinding
-            throw ($r5RefusalLine[0] -replace "^R5_REFUSAL=", "")
-        }
+    else {
+        $planArguments = @(
+            "-m", "verification.isolation.run_plan", "plan",
+            "--output", $resolvedRunPlanFile
+        )
+        foreach ($label in $Labels) { $planArguments += @("--label", $label) }
+        foreach ($group in $OrderedGroups) { $planArguments += @("--group", $group) }
+    }
+    $planRun = Invoke-PythonAndLog -Label "R3/R4 no-database plan" -LogPath $logPath -Arguments $planArguments
+    if ($planRun.ExitCode -ne 0) {
         throw "R3/R4: labels did not resolve to a valid loader-built plan"
     }
-    $planLine = @(Get-Content -LiteralPath $logPath | Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" } | Select-Object -Last 1)
+    $planLine = @($planRun.OutputLines | Where-Object { $_ -match "^PLAN_SHA256=[0-9a-f]{64}$" })
     if ($planLine.Count -ne 1 -or $planLine[0] -notmatch "^PLAN_SHA256=([0-9a-f]{64})$") {
         throw "R4: plan digest was not recorded"
     }
@@ -1060,14 +1102,14 @@ try {
     $env:INTEVIA_RUN_PLAN_FILE = $resolvedRunPlanFile
     $env:INTEVIA_RUN_PLAN_SHA256 = $planHash
     $env:INTEVIA_RUN_SUFFIX = $runSuffix
-    $precheckCode = Invoke-PythonAndLog `
+    $precheckRun = Invoke-PythonAndLog `
         -Label "R14 changed-test no-database pre-check" `
         -LogPath $logPath `
         -Arguments @(
             "-m", "verification.isolation.run_plan", "precheck",
             "--root", $repoRoot, "--state", $authorizedState.StateFile
         )
-        if ($precheckCode -ne 0) {
+        if ($precheckRun.ExitCode -ne 0) {
             Write-PreRunRefusalRecord `
                 -RecordDirectory $preflightDirectory `
                 -LogPath $logPath `
@@ -1113,14 +1155,14 @@ from verification.isolation.template import register_database_tag
 result = register_database_tag(sys.argv[1], sys.argv[2], sys.argv[3])
 print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
 '@
-        $tagRegisterStatus = Invoke-PythonAndLog `
+        $tagRegisterRun = Invoke-PythonAndLog `
             -Label "TU-1b database tag register" `
             -LogPath $logPath `
             -Arguments @(
                 "-c", $tagRegisterCode, $tagRegisterPath,
                 $env:INTEVIA_DATABASE_TAG, $env:INTEVIA_EVIDENCE_ROOT
             )
-        if ($tagRegisterStatus -ne 0) {
+        if ($tagRegisterRun.ExitCode -ne 0) {
             throw "TU-1b database tag register refused the launch"
         }
 
@@ -1134,23 +1176,12 @@ print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
         $env:VERIFICATION_ISOLATION_JSON = $isolationPath
         $env:INTEVIA_RUN_PLAN_FILE = $resolvedRunPlanFile
 
-        $parentDigest = if ($planData.parent_plan_sha256) {
-            [string]$planData.parent_plan_sha256
-        }
-        else {
-            $planHash
-        }
         $script:runRecordData = [ordered]@{
-            latest = $true
             classification = "TEST_ATTEMPT"
             result = "FAIL"
             plan_sha256 = $planHash
-            parent_plan_sha256 = $parentDigest
-            rotation_side = [string]$planData.rotation_side
-            rotation_failure = $planData.rotation_failure
             failing_test = $null
             candidate = $candidateBinding
-            parent = $parentDigest
             tests_planned = [int]$planData.tests.Count
             tests_executed = 0
             tests_not_reached = [int]$planData.tests.Count
@@ -1167,10 +1198,10 @@ print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
     Write-Output "LABELS=$($Labels -join ',')"
 
     $wholeRun = [System.Diagnostics.Stopwatch]::StartNew()
-    $checkCode = Invoke-PythonAndLog -Label "Django system check" -LogPath $logPath `
+    $checkRun = Invoke-PythonAndLog -Label "Django system check" -LogPath $logPath `
         -Arguments @("manage.py", "check", "--settings=intevia.test_settings")
-    if ($checkCode -ne 0) {
-        $runProblems.Add("Django system check returned status $checkCode")
+    if ($checkRun.ExitCode -ne 0) {
+        $runProblems.Add("Django system check returned status $($checkRun.ExitCode)")
     }
     else {
         $preflightCode = 0
@@ -1253,34 +1284,31 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                 "$previousPgOptions $lockTimeoutOption"
             }
             try {
-                $preflightCode = Invoke-PythonAndLog `
+                $preflightRun = Invoke-PythonAndLog `
                     -Label "Clone template preflight" `
                     -LogPath $logPath `
                     -Arguments @("-c", $preflightCodeSource)
+                $clonePreflightOutputLines = @($preflightRun.OutputLines)
             }
             finally {
                 $env:PGOPTIONS = $previousPgOptions
             }
+            $preflightCode = $preflightRun.ExitCode
             if ($preflightCode -ne 0) {
                 $runProblems.Add("clone template preflight returned status $preflightCode; tests were not started")
             }
             else {
-                $preflightLines = @(Get-Content -LiteralPath $logPath -ErrorAction Stop)
-                $actionLines = @($preflightLines | Where-Object { $_ -match "^TEMPLATE_ACTION=(BUILT|REUSED)$" })
-                $buildLines = @($preflightLines | Where-Object { $_ -match "^TEMPLATE_BUILD_SECONDS=(?:[0-9]+(?:\.[0-9]+)?|NOT_APPLICABLE)$" })
-                if ($actionLines.Count -ne 1 -or $buildLines.Count -ne 1) {
+                $preflightEvidence = Get-TemplatePreflightEvidence -Invocation $preflightRun
+                if ($preflightEvidence.ActionLineCount -ne 1 -or
+                    $preflightEvidence.BuildLineCount -ne 1) {
                     $runProblems.Add("R8: clone preflight omitted template action or build timing")
                 }
                 else {
-                    $templateAction = $actionLines[0].Substring("TEMPLATE_ACTION=".Length)
-                    if ($templateAction -eq "BUILT" -and
-                        $buildLines[0] -match "^TEMPLATE_BUILD_SECONDS=([0-9]+(?:\.[0-9]+)?)$") {
-                        $templateBuildSeconds = [double]::Parse(
-                            $Matches[1], [System.Globalization.CultureInfo]::InvariantCulture
-                        )
+                    $templateAction = $preflightEvidence.TemplateAction
+                    if ($preflightEvidence.IsConsistent) {
+                        $templateBuildSeconds = $preflightEvidence.TemplateBuildSeconds
                     }
-                    elseif ($templateAction -ne "REUSED" -or
-                        $buildLines[0] -ne "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE") {
+                    else {
                         $runProblems.Add("R8: template action and build timing contradict")
                     }
                 }
@@ -1346,9 +1374,6 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                 Write-Output "TESTS_EXECUTED=$($summary.tests_executed)"
                 Write-Output "TESTS_NOT_REACHED=$($summary.tests_not_reached)"
                 Write-Output "EXECUTED_MATCHES_PLAN=$($summary.executed_matches_plan)"
-                Write-Output "PARENT_PLAN_SHA256=$($summary.parent_plan_sha256)"
-                Write-Output "ROTATION=$($summary.rotation)"
-                Write-Output "ROTATION_UNIT=$($summary.rotation_unit)"
                 if ($summary.isolation_verdict -ne "PASS" -or
                     $summary.cp0_requirements_met -ne $true -or
                     $null -eq $summary.ordinary_test_verdict -or
@@ -1402,17 +1427,6 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                 }
                 if ($null -ne $script:runRecordData) {
                     $script:runRecordData["plan_sha256"] = [string]$summary.plan_sha256
-                    $script:runRecordData["parent_plan_sha256"] = if (
-                        $summary.parent_plan_sha256 -eq "NONE"
-                    ) { $planHash } else { [string]$summary.parent_plan_sha256 }
-                    $script:runRecordData["parent"] = $script:runRecordData["parent_plan_sha256"]
-                    $script:runRecordData["rotation_side"] = [string]$summary.rotation
-                    $script:runRecordData["rotation_failure"] = if ($summary.rotation_failure) {
-                        [string]$summary.rotation_failure
-                    }
-                    else {
-                        [string]$summary.failing_test
-                    }
                     $script:runRecordData["failing_test"] = [string]$summary.failing_test
                     $script:runRecordData["tests_planned"] = [int]$summary.tests_planned
                     $script:runRecordData["tests_executed"] = [int]$summary.tests_executed
@@ -1428,8 +1442,14 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
     else { $runProblems.Add("isolation evidence file is absent") }
 
     try {
+        $reconciliationLogLines = @($clonePreflightOutputLines |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $developmentRunLogLines = @(Get-CommandLogOutput `
+            -LogPath $logPath -Label "Explicit-label development run" |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $reconciliationLogLines += $developmentRunLogLines
         $reconciliation = Get-RunDatabaseReconciliation `
-            -ReceiptPath $receiptPath -LogPath $logPath -RunNonce $runNonce `
+            -ReceiptPath $receiptPath -LogLines $reconciliationLogLines -RunNonce $runNonce `
             -PrimaryDatabase $attemptDatabase -TeardownLines $script:teardownLines `
             -IsolationVerdict $instrumentIsolationVerdict
         Write-Output "DATABASE_CREATED_COUNT=$($reconciliation.created)"
