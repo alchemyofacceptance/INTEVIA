@@ -4,6 +4,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 from contextlib import redirect_stderr
 from pathlib import Path
 import unittest
@@ -15,7 +16,8 @@ from verification.isolation.run_plan import (
     _run_precheck_suite,
     _standalone_action_environment,
 )
-from verification.isolation.runner import IsolationRunner
+from verification.isolation.runner import IsolationRunner, _runner_print
+from verification.parse_results import parse
 
 
 class _ReporterSampleCase(unittest.TestCase):
@@ -24,6 +26,263 @@ class _ReporterSampleCase(unittest.TestCase):
 
 
 class RunRecordBoundaryTests(SimpleTestCase):
+    def test_isolation_messages_follow_test_results_in_parser_output(self):
+        def emit(message, test_id=None):
+            suffix = " " + test_id if test_id else ""
+            _runner_print(
+                "ISOLATION %s%s" % (message, suffix),
+                file=sys.stderr,
+                flush=True,
+            )
+
+        def new_runner(emit_controls=False, run_spec="a" * 64):
+            runner = object.__new__(IsolationRunner)
+            runner.debug_sql = False
+            runner.pdb = False
+            runner.started_ids = []
+            runner.outcome_ids = []
+            pending_failures = []
+            runner._start_timing = lambda test: None
+            runner._stop_timing = lambda test: None
+
+            def checkpoint_a(test):
+                if emit_controls:
+                    for line in (
+                        "MODE=clone",
+                        "FRESH_AUTHORITY=NONE",
+                        "FAILFAST=ON",
+                        "RUN_SPEC_SHA256=" + run_spec,
+                        "TESTS_EXECUTED=1",
+                        "TESTS_NOT_REACHED=0",
+                        "EXECUTED_MATCHES_PLAN=FULL",
+                        "TEMPLATE_ACTION=REUSED",
+                        "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE",
+                        "TEMPLATE_PREPARE_SECONDS=0.000000",
+                        "CLONE_SETUP_SECONDS=0.000000",
+                    ):
+                        _runner_print(line, file=sys.stderr, flush=True)
+                emit("CP-A ESTABLISHED", test.id())
+                return True
+
+            runner.checkpoint_a = checkpoint_a
+            runner._mark_failure = lambda test: pending_failures.append(test)
+
+            def run_pending_cpf():
+                while pending_failures:
+                    emit("CP-F ESTABLISHED", pending_failures.pop(0).id())
+
+            runner._run_pending_cpf = run_pending_cpf
+            runner.checkpoint_z = lambda: emit("CP-Z ESTABLISHED")
+            runner._finish_timing_run = lambda: (
+                _runner_print(
+                    "TIMING: tests=1 check=0.000000s unittest=0.000000s "
+                    "post=0.000000s flush=0.000000s gap=0.000000s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if emit_controls
+                else None
+            )
+            return runner
+
+        class OutputProbe(unittest.TestCase):
+            def test_a_pass(self):
+                pass
+
+            def test_b_failure(self):
+                self.fail("expected parser regression witness")
+
+            def test_c_error(self):
+                raise RuntimeError("expected parser regression witness")
+
+            @unittest.skip("expected parser regression witness")
+            def test_d_skip(self):
+                pass
+
+            def test_e_isolation_message(self):
+                pass
+
+            def test_f_nested_probe(self):
+                class NestedProbe(unittest.TestCase):
+                    def test_nested_failure(self):
+                        self.fail("nested probe witness")
+
+                NestedProbe.__module__ = __name__
+                NestedProbe.__qualname__ = "NestedProbe"
+                nested_runner = new_runner(
+                    emit_controls=True,
+                    run_spec="b" * 64,
+                )
+                nested_suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+                    NestedProbe
+                )
+                nested_result = unittest.TextTestRunner(
+                    stream=io.StringIO(),
+                    verbosity=2,
+                    resultclass=nested_runner.get_resultclass(),
+                ).run(nested_suite)
+                self.assertFalse(nested_result.wasSuccessful())
+
+        OutputProbe.__module__ = __name__
+        OutputProbe.__qualname__ = "OutputProbe"
+        runner = new_runner(emit_controls=True)
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(OutputProbe)
+        collected = [test.id() for test in suite]
+        output = io.StringIO()
+        with patch.dict(
+            os.environ, {"VERIFICATION_RUN_NONCE": "qe-route-repair-regression"}
+        ), redirect_stderr(output):
+            result = unittest.TextTestRunner(
+                stream=output,
+                verbosity=2,
+                resultclass=runner.get_resultclass(),
+            ).run(suite)
+
+        text = output.getvalue() + "\nEXIT_STATUS: %d\n" % (
+            0 if result.wasSuccessful() else 1
+        )
+        parsed = parse(text, collected)
+        self.assertTrue(parsed["reconciled"], parsed["reconciliation"])
+        self.assertEqual([test["id"] for test in parsed["tests"]], collected)
+        self.assertEqual(parsed["summary"]["ran"], len(collected))
+        self.assertEqual(
+            (
+                parsed["summary"]["failures"],
+                parsed["summary"]["errors"],
+                parsed["summary"]["skipped"],
+            ),
+            (1, 1, 1),
+        )
+        self.assertTrue(
+            all(len(test["status_events"]) == 1 for test in parsed["tests"])
+        )
+
+        lines = text.splitlines()
+        status_positions = {}
+        for test_id in collected:
+            positions = [
+                index
+                for index, line in enumerate(lines)
+                if "(%s) ... " % test_id in line
+            ]
+            self.assertEqual(len(positions), 1, test_id)
+            status_positions[test_id] = positions[0]
+        nested_id = "%s.NestedProbe.test_nested_failure" % __name__
+        expected_messages = [
+            "ISOLATION CP-A ESTABLISHED %s" % test_id
+            for test_id in collected
+        ]
+        expected_messages.extend(
+            [
+                "ISOLATION CP-A ESTABLISHED %s" % nested_id,
+                "ISOLATION CP-F ESTABLISHED %s" % nested_id,
+                "ISOLATION CP-Z ESTABLISHED",
+            ]
+        )
+        expected_messages.extend(
+            [
+                "ISOLATION CP-F ESTABLISHED %s" % collected[1],
+                "ISOLATION CP-F ESTABLISHED %s" % collected[2],
+                "ISOLATION CP-Z ESTABLISHED",
+            ]
+        )
+        isolation_lines = [
+            line for line in lines if line.startswith("ISOLATION ")
+        ]
+        self.assertEqual(isolation_lines, expected_messages)
+        nested_parent_position = status_positions[collected[5]]
+        nested_message_positions = [
+            lines.index(message)
+            for message in expected_messages[
+                expected_messages.index(
+                    "ISOLATION CP-A ESTABLISHED %s" % nested_id
+                ) :
+                expected_messages.index(
+                    "ISOLATION CP-Z ESTABLISHED"
+                )
+                + 1
+            ]
+        ]
+        self.assertTrue(
+            all(position > nested_parent_position for position in nested_message_positions)
+        )
+        nested_run_spec = "RUN_SPEC_SHA256=" + ("b" * 64)
+        nested_spec_position = lines.index(nested_run_spec)
+        nested_controls = [
+            "MODE=clone",
+            "FRESH_AUTHORITY=NONE",
+            "FAILFAST=ON",
+            nested_run_spec,
+            "TESTS_EXECUTED=1",
+            "TESTS_NOT_REACHED=0",
+            "EXECUTED_MATCHES_PLAN=FULL",
+            "TEMPLATE_ACTION=REUSED",
+            "TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE",
+            "TEMPLATE_PREPARE_SECONDS=0.000000",
+            "CLONE_SETUP_SECONDS=0.000000",
+        ]
+        nested_control_start = nested_spec_position - 3
+        self.assertEqual(
+            lines[
+                nested_control_start :
+                nested_control_start + len(nested_controls)
+            ],
+            nested_controls,
+        )
+        nested_cpa_position = lines.index(
+            "ISOLATION CP-A ESTABLISHED %s" % nested_id
+        )
+        nested_cpf_position = lines.index(
+            "ISOLATION CP-F ESTABLISHED %s" % nested_id
+        )
+        nested_cpz_position = lines.index(
+            "ISOLATION CP-Z ESTABLISHED", nested_cpf_position
+        )
+        nested_timing_position = lines.index(
+            "TIMING: tests=1 check=0.000000s unittest=0.000000s "
+            "post=0.000000s flush=0.000000s gap=0.000000s",
+            nested_cpz_position,
+        )
+        self.assertGreater(nested_control_start, nested_parent_position)
+        self.assertLess(
+            nested_control_start + len(nested_controls) - 1,
+            nested_cpa_position,
+        )
+        self.assertLess(nested_cpa_position, nested_cpf_position)
+        self.assertLess(nested_cpf_position, nested_cpz_position)
+        self.assertLess(nested_cpz_position, nested_timing_position)
+
+        class InterruptedProbe(unittest.TestCase):
+            def test_interrupted(self):
+                raise KeyboardInterrupt
+
+        InterruptedProbe.__module__ = __name__
+        InterruptedProbe.__qualname__ = "InterruptedProbe"
+        interruption_runner = new_runner(
+            emit_controls=True,
+            run_spec="c" * 64,
+        )
+        interruption_suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+            InterruptedProbe
+        )
+        interruption_output = io.StringIO()
+        with patch.dict(
+            os.environ, {"VERIFICATION_RUN_NONCE": "qe-route-repair-interruption"}
+        ), redirect_stderr(interruption_output):
+            with self.assertRaises(KeyboardInterrupt):
+                unittest.TextTestRunner(
+                    stream=interruption_output,
+                    verbosity=2,
+                    resultclass=interruption_runner.get_resultclass(),
+                ).run(interruption_suite)
+        self.assertIn("RUN_SPEC_SHA256=" + ("c" * 64), interruption_output.getvalue())
+        self.assertIn(
+            "ISOLATION CP-A ESTABLISHED %s.InterruptedProbe.test_interrupted"
+            % __name__,
+            interruption_output.getvalue(),
+        )
+        self.assertIn("TIMING: tests=1", interruption_output.getvalue())
+
     def test_standalone_environment_isolated_and_restored_on_exception(self):
         names = (
             "DJANGO_SETTINGS_MODULE",

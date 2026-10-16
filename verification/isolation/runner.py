@@ -111,6 +111,44 @@ class CheckpointRefused(RuntimeError):
     pass
 
 
+class _RunnerConsoleStream:
+    def __init__(self, stream):
+        self._stream = stream
+        self._runner_output = []
+
+    def write(self, text):
+        self._stream.write(text)
+        return len(text)
+
+    def write_runner(self, text):
+        self._runner_output.append(text)
+        return len(text)
+
+    def flush(self):
+        self._stream.flush()
+
+    def flush_runner_output(self):
+        while self._runner_output:
+            text = self._runner_output[0]
+            self._stream.write(text)
+            del self._runner_output[0]
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def _runner_print(*args, sep=" ", end="\n", file=None, flush=False):
+    stream = sys.stderr if file is None else file
+    text = sep.join(str(arg) for arg in args) + end
+    if isinstance(stream, _RunnerConsoleStream):
+        stream.write_runner(text)
+        if flush:
+            stream.flush()
+    else:
+        print(*args, sep=sep, end=end, file=stream, flush=flush)
+
+
 def database_access(test):
     """'forbidden' when the framework refuses every query to the default connection during this test: the test's
     effective databases, as Django itself resolves them, exclude 'default'. 'permitted' when they include it.
@@ -194,9 +232,9 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         suite = super().build_suite(self.run_plan["tests"], **kwargs)
         actual_ids = [case.id() for case in iter_test_cases(suite)]
         ensure_suite_matches(self.run_plan["tests"], actual_ids)
-        print("PLAN_SHA256=" + self.plan_sha256, file=sys.stderr, flush=True)
-        print("TESTS_PLANNED=" + str(len(self.run_plan["tests"])), file=sys.stderr, flush=True)
-        print("ORDERED_GROUPS=%d INTACT" % len(self.run_plan.get("ordered_groups", [])),
+        _runner_print("PLAN_SHA256=" + self.plan_sha256, file=sys.stderr, flush=True)
+        _runner_print("TESTS_PLANNED=" + str(len(self.run_plan["tests"])), file=sys.stderr, flush=True)
+        _runner_print("ORDERED_GROUPS=%d INTACT" % len(self.run_plan.get("ordered_groups", [])),
               file=sys.stderr, flush=True)
         return suite
 
@@ -251,15 +289,15 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         setup_seconds = time.perf_counter() - setup_started
         self.clone_setup_seconds = setup_seconds
         if mode == "clone" and self.template_receipt is not None:
-            print(
+            _runner_print(
                 "TT1_TEMPLATE_BUILD_SECONDS=%.6f" % self.template_build_seconds
                 if self.template_rebuilt else "TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE",
                 file=sys.stderr,
                 flush=True,
             )
-            print("TT1_CLONE_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
+            _runner_print("TT1_CLONE_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
         else:
-            print("TT1_FRESH_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
+            _runner_print("TT1_FRESH_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
         return old_config
 
     def run_suite(self, suite, **kwargs):
@@ -291,8 +329,8 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             violations = [ownership_problem]
             self._emit({"checkpoint": "CP-0", "requirements_met": False, "violations": violations,
                         "suite_ids": self.suite_ids})
-            print("ISOLATION CP-0 requirements met: False", file=sys.stderr, flush=True)
-            print("ISOLATION CP-0 VIOLATION: %s" % ownership_problem, file=sys.stderr, flush=True)
+            _runner_print("ISOLATION CP-0 requirements met: False", file=sys.stderr, flush=True)
+            _runner_print("ISOLATION CP-0 VIOLATION: %s" % ownership_problem, file=sys.stderr, flush=True)
             self._summary(None)
             raise RuntimeError("isolation runner refused database before CP-0: %s" % ownership_problem)
         clone_record = None
@@ -356,9 +394,9 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         except Exception as exc:
             violations = ["check error: %s: %s" % (type(exc).__name__, exc)]
             self._emit({"checkpoint": "CP-0", "requirements_met": False, "violations": violations})
-        print("ISOLATION CP-0 requirements met: %s" % self.cp0_met, file=sys.stderr, flush=True)
+        _runner_print("ISOLATION CP-0 requirements met: %s" % self.cp0_met, file=sys.stderr, flush=True)
         for v in violations:
-            print("ISOLATION CP-0 VIOLATION: %s" % v, file=sys.stderr, flush=True)
+            _runner_print("ISOLATION CP-0 VIOLATION: %s" % v, file=sys.stderr, flush=True)
         if clone_record and not self.cp0_met and not template_problem:
             template_problem = "clone CP-0 did not satisfy the isolation requirements"
         if template_problem and clone_record:
@@ -410,15 +448,32 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             def startTest(self, test):
                 runner._start_timing(test)
                 super().startTest(test)
-                if not runner.checkpoint_a(test):
-                    raise CheckpointRefused(
-                        "CP-A' was not established before %s; previous test: %s"
-                        % (
-                            test.id(),
-                            runner.checkpoint_failure_test or "none",
+                self._runner_console_stream = None
+                if not isinstance(sys.stderr, _RunnerConsoleStream):
+                    self._runner_console_stream = _RunnerConsoleStream(sys.stderr)
+                    sys.stderr = self._runner_console_stream
+                try:
+                    if not runner.checkpoint_a(test):
+                        raise CheckpointRefused(
+                            "CP-A' was not established before %s; previous test: %s"
+                            % (
+                                test.id(),
+                                runner.checkpoint_failure_test or "none",
+                            )
                         )
-                    )
+                except BaseException:
+                    self._release_runner_output()
+                    raise
                 runner.started_ids.append(test.id())
+
+            def _release_runner_output(self):
+                stream = getattr(self, "_runner_console_stream", None)
+                if stream is None:
+                    return
+                stream.flush_runner_output()
+                if sys.stderr is stream:
+                    sys.stderr = stream._stream
+                self._runner_console_stream = None
 
             def _outcome(self, test):
                 runner.outcome_ids.append(test.id())
@@ -449,16 +504,20 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                     runner._mark_failure(test)
 
             def stopTest(self, test):
-                runner._stop_timing(test)
                 try:
-                    super().stopTest(test)
+                    runner._stop_timing(test)
+                    try:
+                        super().stopTest(test)
+                    finally:
+                        clear_test_timing_context(test.id())
                 finally:
-                    clear_test_timing_context(test.id())
+                    self._release_runner_output()
 
             def stopTestRun(self):
                 try:
                     super().stopTestRun()
                 finally:
+                    self._release_runner_output()
                     runner._run_pending_cpf()
                     runner.checkpoint_z()
                     runner._finish_timing_run()
@@ -577,7 +636,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         self.checkpoints.append(rec)
         self._emit(rec)
         label = "NOT APPLICABLE" if rec.get("applicable") is False else ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED")
-        print("ISOLATION CP-A %s %s" % (label, test.id()), file=sys.stderr, flush=True)
+        _runner_print("ISOLATION CP-A %s %s" % (label, test.id()), file=sys.stderr, flush=True)
         return rec.get("applicable") is False or rec.get("established") is True
 
     def _full_capture_trigger(self, test):
@@ -820,7 +879,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             rec["reason"] = "check error: %s: %s" % (type(exc).__name__, exc)
         self.checkpoints.append(rec)
         self._emit(rec)
-        print(
+        _runner_print(
             "ISOLATION CP-Z %s"
             % ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED"),
             file=sys.stderr,
@@ -852,7 +911,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 for timing in records
                 if timing.get("phases", {}).get(phase) == "incomplete"
             )
-        print(
+        _runner_print(
             "TIMING: tests=%d check=%.6fs unittest=%.6fs post=%.6fs flush=%.6fs gap=%.6fs"
             % (
                 len(records),
@@ -967,25 +1026,25 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 ),
             )
             mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "UNKNOWN")
-            print("MODE=" + mode, file=sys.stderr, flush=True)
-            print("FRESH_AUTHORITY=" + getattr(self, "fresh_authority", "NONE"),
+            _runner_print("MODE=" + mode, file=sys.stderr, flush=True)
+            _runner_print("FRESH_AUTHORITY=" + getattr(self, "fresh_authority", "NONE"),
                   file=sys.stderr, flush=True)
-            print("FAILFAST=ON", file=sys.stderr, flush=True)
-            print("RUN_SPEC_SHA256=" + os.environ.get("INTEVIA_RUN_SPEC_SHA256", "UNAVAILABLE"),
+            _runner_print("FAILFAST=ON", file=sys.stderr, flush=True)
+            _runner_print("RUN_SPEC_SHA256=" + os.environ.get("INTEVIA_RUN_SPEC_SHA256", "UNAVAILABLE"),
                   file=sys.stderr, flush=True)
-            print("TESTS_EXECUTED=%d" % len(executed_ids), file=sys.stderr, flush=True)
-            print("TESTS_NOT_REACHED=%d" % len(not_reached), file=sys.stderr, flush=True)
-            print("EXECUTED_MATCHES_PLAN=" + match, file=sys.stderr, flush=True)
+            _runner_print("TESTS_EXECUTED=%d" % len(executed_ids), file=sys.stderr, flush=True)
+            _runner_print("TESTS_NOT_REACHED=%d" % len(not_reached), file=sys.stderr, flush=True)
+            _runner_print("EXECUTED_MATCHES_PLAN=" + match, file=sys.stderr, flush=True)
             if mode == "clone":
-                print("TEMPLATE_ACTION=" + summary["template_action"], file=sys.stderr, flush=True)
-                print("TEMPLATE_BUILD_SECONDS=" + summary["template_build_seconds"],
+                _runner_print("TEMPLATE_ACTION=" + summary["template_action"], file=sys.stderr, flush=True)
+                _runner_print("TEMPLATE_BUILD_SECONDS=" + summary["template_build_seconds"],
                       file=sys.stderr, flush=True)
-                print("TEMPLATE_PREPARE_SECONDS=" + summary["template_prepare_seconds"],
+                _runner_print("TEMPLATE_PREPARE_SECONDS=" + summary["template_prepare_seconds"],
                       file=sys.stderr, flush=True)
-                print("CLONE_SETUP_SECONDS=%.6f" % getattr(self, "clone_setup_seconds", 0.0),
+                _runner_print("CLONE_SETUP_SECONDS=%.6f" % getattr(self, "clone_setup_seconds", 0.0),
                       file=sys.stderr, flush=True)
         self._emit(summary)
-        print("ISOLATION VERDICT: %s" % verdict, file=sys.stderr, flush=True)
+        _runner_print("ISOLATION VERDICT: %s" % verdict, file=sys.stderr, flush=True)
         for r in reasons:
-            print("ISOLATION REASON: %s" % r, file=sys.stderr, flush=True)
-        print("ISOLATION ORDINARY TEST VERDICT (separate): %s" % ordinary, file=sys.stderr, flush=True)
+            _runner_print("ISOLATION REASON: %s" % r, file=sys.stderr, flush=True)
+        _runner_print("ISOLATION ORDINARY TEST VERDICT (separate): %s" % ordinary, file=sys.stderr, flush=True)

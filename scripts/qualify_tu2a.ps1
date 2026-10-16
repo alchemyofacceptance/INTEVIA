@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$HumanLaunch,
-    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU\BINDINGS\TU2AFU_STATE_S1.json"),
-    [string]$StateSha256 = "36caa7e2d1d66b80fb2035abb94d262ba9d4f431ca6d1085f86c45b339d4e752"
+    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU2\BINDINGS\TU2AFU2_STATE_S1.json"),
+    [string]$StateSha256 = "afa1738d3fb5adce3c647a4df18291db4637ba82b030ed00a630ce930637017e"
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,7 +86,7 @@ class SeedLeakQualificationTests(_Tu2aLeakCase):
         pass
 '@
 
-$qualificationRoot = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU") "ME_DEV"
+$qualificationRoot = $null
 $impactRecordPath = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A") "ME_DEV\TU2A_IMPACT_RECORD.json"
 $leakPath = Join-Path $repoRoot "tests\test_tu2a_qualification_leak.py"
 $leakBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($leakSource)
@@ -360,10 +360,24 @@ function Test-SuccessfulIsolationRun {
 
 try {
     $authorizedState = Assert-StateBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
-    if ($authorizedState.StateId -cne "TU2AFU_S1" -or
-        $authorizedState.DatabaseTag -cne "tu2afu" -or
-        $authorizedState.EvidenceRoot -cne "PKTB_TU2A_FU") {
+    if ($authorizedState.StateId -cne "TU2AFU2_S1" -or
+        $authorizedState.DatabaseTag -cne "tu2afu2" -or
+        $authorizedState.EvidenceRoot -cne "PKTB_TU2A_FU2") {
         throw "R9: authorized state does not bind the TU2A_FU qualification"
+    }
+    $stagingRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $HOME "INTEVIA_AGENT_STAGING")
+    )
+    $qualificationRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $stagingRoot $authorizedState.EvidenceRoot)
+    )
+    $stagingPrefix = $stagingRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
+        [System.IO.Path]::DirectorySeparatorChar
+    if (-not $qualificationRoot.StartsWith(
+        $stagingPrefix,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "R9: evidence root resolves outside INTEVIA_AGENT_STAGING"
     }
     if (-not (Test-Path -LiteralPath $impactRecordPath -PathType Leaf)) {
         throw "impact record is absent"
@@ -432,13 +446,60 @@ try {
 
     if (-not $HumanLaunch) {
         $overall = "DRY_CHECK"
+        $leakRelativePath = "tests/test_tu2a_qualification_leak.py"
+        $preflightFailures = [System.Collections.Generic.List[string]]::new()
+        foreach ($case in @("Q-A", "Q-B1", "Q-B2", "Q-C", "Q-D")) {
+            $launcherState = $null
+            $caseCandidateBinding = $null
+            $sourceKind = "UNAVAILABLE"
+            $changedPathsText = "UNAVAILABLE"
+            $changedPathStatus = "UNAVAILABLE"
+            $candidateBindingStatus = "UNAVAILABLE"
+            $preflightStatus = "FAIL"
+            $preflightError = $null
+            try {
+                if (-not (Test-Path -LiteralPath $leakPath -PathType Leaf)) {
+                    throw "throwaway leak module is absent"
+                }
+                $fixtureHash = (Get-FileHash -LiteralPath $leakPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($fixtureHash -cne $leakHash) {
+                    throw "throwaway leak module bytes differ from the generated source"
+                }
+                $launcherState = Get-IntegratedState `
+                    -StateFile $StateFile `
+                    -StateSha256 $StateSha256
+                $sourceKind = $launcherState.SourceKind
+                $changedPaths = @($launcherState.ChangedPaths)
+                $changedPathsText = $changedPaths -join ","
+                if ($sourceKind -cne "CANDIDATE" -or
+                    $launcherState.State.allowed_paths -cnotcontains $leakRelativePath -or
+                    $changedPaths -cnotcontains $leakRelativePath) {
+                    throw "launcher state validation did not accept the present leak module as an allowed candidate path"
+                }
+                $changedPathStatus = "PASS"
+                $caseCandidateBinding = Get-CandidateBinding -AuthorizedStateFile $StateFile
+                if ($caseCandidateBinding -cne $candidateBinding) {
+                    throw "candidate binding differs from the qualification binding"
+                }
+                $candidateBindingStatus = "PASS"
+                $preflightStatus = "PASS"
+            }
+            catch {
+                $preflightError = $_.Exception.Message -replace "[\r\n|]", " "
+                $preflightFailures.Add("$case`: $preflightError")
+            }
+            Write-Output "$case | LAUNCHER_STATE_CANDIDATE_VALIDATION=$preflightStatus | SOURCE_KIND=$sourceKind | CHANGED_PATHS_CHECK=$changedPathStatus | CHANGED_PATHS=$changedPathsText | CANDIDATE_BINDING_CHECK=$candidateBindingStatus | DATABASE_CONNECTIONS=0$(if ($preflightError) { " | ERROR=$preflightError" })"
+        }
+        if ($preflightFailures.Count -gt 0) {
+            throw "launcher state/candidate validation failed: $($preflightFailures -join '; ')"
+        }
         Write-Output "CANDIDATE_BINDING_SHA256=$candidateBinding"
         Write-Output "QUALIFICATION_DIRECTORY=$qualificationDirectory"
         foreach ($case in @("Q-A", "Q-B1", "Q-B2", "Q-C", "Q-D")) {
             $plan = $plans[$case]
             Write-Output "$case | PLAN_SHA256=$($plan.Sha256) | PLAN_DATABASE_ROUTE=$($plan.Data.database_route) | TESTS_PLANNED=$(@($plan.Data.tests).Count) | LABELS_PLANNED=$(@($plan.Data.labels).Count) | $($plan.RouteEvidence)"
         }
-        Write-Output "DRY_CHECK=PASS; bindings and Q-A/Q-B/Q-C/Q-D plans resolved; no qualification run launched"
+        Write-Output "DRY_CHECK=PASS; bindings, launcher state/candidate validation, and Q-A/Q-B/Q-C/Q-D plans resolved; no qualification run launched"
         return
     }
 
