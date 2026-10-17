@@ -129,25 +129,32 @@ def _load_census():
 
 
 def _scan_tree(census):
-    listing = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(_ROOT),
-            "--no-optional-locks",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "src",
-            "core",
-            "intevia",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
+    if (_ROOT / ".git").exists():
+        listing = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(_ROOT),
+                "--no-optional-locks",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                "src",
+                "core",
+                "intevia",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    else:
+        listing = sorted(
+            path.relative_to(_ROOT).as_posix()
+            for directory in ("src", "core", "intevia")
+            for path in (_ROOT / directory).rglob("*.py")
+        )
     sources = {}
     for rel in listing:
         path = Path(rel)
