@@ -201,29 +201,30 @@ class CollectionFactTests(_Tmp):
         reporter = object.__new__(route_mod.Route)
         reporter.dir = str(evidence_dir)
         reporter.transcript = io.StringIO()
-        reporter.write({
-            "result": "PASS",
-            "exit_status": 0,
-            "cleanup": {"outcome": "CLEAN", "names": []},
-            "identity": {},
-            "environment": {
-                "python": "test",
-                "django": "test",
-                "psycopg": "test",
-                "platform": "test",
-                "ci": None,
-            },
-            "steps": [{
-                "id": "S015",
-                "outcome": "PASS",
-                "collection": {"facts": facts},
-            }],
-            "run_id": "test",
-            "run_token": "token",
-            "run_nonce": "nonce",
-            "started": "start",
-            "finished": "finish",
-        })
+        with contextlib.redirect_stdout(io.StringIO()):
+            reporter.write({
+                "result": "PASS",
+                "exit_status": 0,
+                "cleanup": {"outcome": "CLEAN", "names": []},
+                "identity": {},
+                "environment": {
+                    "python": "test",
+                    "django": "test",
+                    "psycopg": "test",
+                    "platform": "test",
+                    "ci": None,
+                },
+                "steps": [{
+                    "id": "S015",
+                    "outcome": "PASS",
+                    "collection": {"facts": facts},
+                }],
+                "run_id": "test",
+                "run_token": "token",
+                "run_nonce": "nonce",
+                "started": "start",
+                "finished": "finish",
+            })
         summary = (evidence_dir / "SUMMARY.md").read_text(encoding="utf-8")
         self.assertIn(
             "**outside the discovery pattern; not collected:** "
@@ -942,7 +943,8 @@ class AliasCheckpointTests(unittest.TestCase):
         with _alias_checkpoint_stubs("tests.alias_probe.AliasCase.test_read") as (
             runner, test, emitted, seen, default_conn, alias_conn
         ):
-            self.assertTrue(runner.checkpoint_a(test))
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertTrue(runner.checkpoint_a(test))
         self.assertEqual(seen, [default_conn, alias_conn])
         record = emitted[0]
         alias_record = record["alias_checks"]["s014_secondary"]
@@ -1086,7 +1088,8 @@ class AliasCheckpointTests(unittest.TestCase):
         with _alias_checkpoint_stubs("tests.alias_probe.AliasCase.test_read") as (
             runner, _test, emitted, _seen, _default_conn, _alias_conn
         ):
-            runner.checkpoint_z()
+            with contextlib.redirect_stderr(io.StringIO()):
+                runner.checkpoint_z()
         record = emitted[0]
         self.assertEqual(record["observed_aliases"], ["default", "s014_secondary"])
         self.assertTrue(record["established"] and record["alias_checks"]["s014_secondary"]["established"])

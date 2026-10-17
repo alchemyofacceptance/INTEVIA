@@ -254,6 +254,9 @@ def owned_database_problem(database_name, receipt_path, run_nonce, protected_nam
 
 
 class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
+    extra_aliases = ()
+    observed_aliases = ("default",)
+
     def build_suite(self, test_labels=None, **kwargs):
         self.run_plan = None
         self.plan_sha256 = None
@@ -752,6 +755,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             reference=reference, checked_aliases=checked_aliases,
             attributed_test=rec.get("test") if record_key.get("annotate_test", True) else None,
         )
+        rec["established"] = False
 
     def checkpoint_a(self, test):
         from django.db import connections
