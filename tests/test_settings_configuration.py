@@ -84,13 +84,16 @@ class S015TestDatabaseConfigurationTests(SimpleTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "django.db.backends.postgresql")
 
-    def test_test_settings_keep_standard_backend_without_route(self):
+    def test_test_settings_reject_missing_route(self):
         result = self.settings_import(
             "intevia.test_settings", self.postgresql_environment()
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "django.db.backends.postgresql")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "S015 test lifecycle backend requires the exact attempt route",
+            result.stderr,
+        )
 
     def test_test_settings_reject_insufficiently_qualified_database(self):
         environment = self.postgresql_environment()

@@ -1,7 +1,12 @@
-# S015 verification route in CI (workflow v0.9, Change C design v0.5).
+# S015 verification route in CI (workflow v0.10, Change C design v0.5).
 #
 # Author : Vision Chamber (Claude Opus 5), UFUND-5, 18 September 2026. Human Governor: Carmian Owen.
 # Against: CONSUMER_REQUIREMENT_v0_5.md, sha256 995073dbf74a8722dbdb03a55d68acba29893534360e5e8e5364f903a3aafd20
+#
+# v0.10 change from v0.9, and only this:
+#
+#   1. NODE. Require an absolute Node executable before bootstrapping and pass it through the
+#      bootstrap's exact environment allowlist for the independent canonicalization witnesses.
 #
 # v0.9 change from v0.8, and only this:
 #
@@ -136,6 +141,26 @@ jobs:
           if ! [[ "$major" =~ ^[0-9]+$ ]] || (( major < 7 )); then fail_prerequisite "{\"pwsh\":{\"status\":\"UNMET\",\"path\":\"$pwsh_path\",\"version\":\"$version\"}}" "ENVIRONMENT PREREQUISITE UNMET: pwsh (PowerShell 7) required; found $version; no database step was run."; fi
           printf '{"pwsh":{"status":"PASS","path":"%s","version":"%s"}}\n' "$pwsh_path" "$version" > "$R/ENVIRONMENT_PREREQUISITES.json"
           echo "PowerShell 7 prerequisite: $pwsh_path ($version)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Require Node.js for independent canonicalization witnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/s015-verification"; mkdir -p "$R"
+          fail_node_prerequisite() {
+            printf '%s\n' "$1" > "$R/NODE_PREREQUISITE.json"
+            echo "$2" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          node_path="$(command -v node || true)"
+          [ -n "$node_path" ] || fail_node_prerequisite '{"node":{"status":"UNMET","path":null,"version":null}}' "ENVIRONMENT PREREQUISITE UNMET: node (Node.js) was not found; no database step was run."
+          [[ "$node_path" == /* && -x "$node_path" ]] || fail_node_prerequisite '{"node":{"status":"UNMET","path":null,"version":null}}' "ENVIRONMENT PREREQUISITE UNMET: node did not resolve to an absolute executable path; no database step was run."
+          if ! node_version="$("$node_path" --version)"; then
+            fail_node_prerequisite "{\"node\":{\"status\":\"UNMET\",\"path\":\"$node_path\",\"version\":null}}" "ENVIRONMENT PREREQUISITE UNMET: node could not report its version; no database step was run."
+          fi
+          printf '{"node":{"status":"PASS","path":"%s","version":"%s"}}\n' "$node_path" "$node_version" > "$R/NODE_PREREQUISITE.json"
+          printf 'S011A_NODE_EXECUTABLE=%s\n' "$node_path" >> "$GITHUB_ENV"
+          echo "Node.js prerequisite: $node_path ($node_version)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Probe the derived dependency layout under -I -S
         run: |

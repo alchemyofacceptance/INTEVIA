@@ -341,8 +341,9 @@ class RunRecordBoundaryTests(SimpleTestCase):
             result = _run_precheck_suite(suite)
 
         self.assertTrue(result.wasSuccessful())
+        expected_identifier = _ReporterSampleCase("test_success").id()
         self.assertIn(
-            "test_success (tests.test_tu1b_run_records._ReporterSampleCase.test_success) ... ok",
+            f"test_success ({expected_identifier}) ... ok",
             output.getvalue(),
         )
 

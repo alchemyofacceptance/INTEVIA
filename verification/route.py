@@ -93,13 +93,13 @@ if mode == "label":
     suite = DiscoverRunner(verbosity=0).build_suite(rest)
 else:
     suite = DiscoverRunner(verbosity=0, pattern=rest[0], top_level="tests").build_suite(["tests"])
-ids = sorted(t.id() for t in suite)
+ids = [t.id() for t in suite]
 failed = [i for i in ids if "loader._FailedTest" in i]
 facts = {}
 if mode == "discover":
     aliases = {
-        alias: connection.creation._get_test_db_name()
-        for alias, connection in connections.items()
+        alias: connections[alias].creation._get_test_db_name()
+        for alias in connections
     }
     facts = collection_facts(os.path.join(os.getcwd(), "tests"), ids, aliases)
 with open(out_path, "x", encoding="utf-8") as f:
@@ -748,7 +748,7 @@ class Route:
         runner = MUTATION_RUNNER if mutation else ISOLATION_RUNNER
         log = self.path(sid + "_test_output.log")
         self.attempted.append((sid, db, env[RECEIPT_ENV]))
-        fail_fast = sid in ("SELF", "S015")
+        fail_fast = True
         test_command = [
             sys.executable, "manage.py", "test", *labels, "--testrunner", runner,
             "--parallel", "1", "--noinput", "-v", "2", "--buffer",

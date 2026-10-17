@@ -159,10 +159,14 @@ class BootstrapSurfaceTests(unittest.TestCase):
     def test_ci_environment_allowlist_is_exact_and_excludes_github_wildcards(self):
         expected = ("CI", "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_SHA",
                     "GITHUB_REF", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT",
-                    "GITHUB_WORKFLOW", "RUNNER_OS")
+                    "GITHUB_WORKFLOW", "RUNNER_OS", "S011A_NODE_EXECUTABLE")
         self.assertEqual(bootstrap_mod.ROUTE_ENVIRONMENT_ALLOWLIST, expected)
         environment = {name: "allowed" for name in expected}
-        environment.update(GITHUB_TOKEN="must-not-pass", GITHUB_ENV="must-not-pass")
+        environment.update(
+            GITHUB_TOKEN="must-not-pass",
+            GITHUB_ENV="must-not-pass",
+            S011A_NODE_EXECUTABLE_EXTRA="must-not-pass",
+        )
         with mock.patch.dict(os.environ, environment, clear=True), \
                 mock.patch.object(bootstrap_mod.subprocess, "run") as run:
             bootstrap_mod.launch_coordinator(
@@ -171,7 +175,13 @@ class BootstrapSurfaceTests(unittest.TestCase):
             )
         passed = run.call_args.kwargs["env"]
         self.assertEqual({name: passed[name] for name in expected}, {name: "allowed" for name in expected})
-        self.assertTrue({"GITHUB_TOKEN", "GITHUB_ENV"}.isdisjoint(passed))
+        self.assertTrue(
+            {
+                "GITHUB_TOKEN",
+                "GITHUB_ENV",
+                "S011A_NODE_EXECUTABLE_EXTRA",
+            }.isdisjoint(passed)
+        )
 
     def test_clean_run_qualifies(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
