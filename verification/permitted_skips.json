@@ -19,7 +19,7 @@
     {
       "id": "tests.test_tt1_template_lifecycle.TemplateLifecycleToolingTests.test_template_clone_parity_and_receipt_cleanup",
       "condition": "fresh-mode",
-      "reason": "Clone parity and receipt cleanup are established by clone-mode CP-0 comparison and the local clone-mode run."
+      "reason": "Clone parity and receipt cleanup are local development concerns only. CI runs fresh mode and is the sole evidence of record under the Human Governor's 'proven on GitHub only' ruling. The skip is permitted in fresh mode; the property is not claimed as established by any local run."
     }
   ]
 }
