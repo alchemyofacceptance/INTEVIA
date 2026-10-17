@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from contextlib import redirect_stderr
 from pathlib import Path
 import unittest
@@ -602,13 +603,64 @@ if ($line -cne "RUN_SPEC_SHA256=UNAVAILABLE" -or
 }}
 Write-Output "MISSING:$line"
 """
-        result = subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
-            cwd=Path.cwd(),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            git_root = Path(temporary)
+            subprocess.run(
+                ["git", "init"],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "--local", "user.name", "TU1B Test"],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "config",
+                    "--local",
+                    "user.email",
+                    "tu1b-test@example.invalid",
+                ],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            (git_root / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "--", "fixture.txt"],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "test verifier witness",
+                ],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            result = subprocess.run(
+                [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+                cwd=git_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PRESENT:RUN_SPEC_SHA256=" + ("a" * 64), result.stdout.splitlines())
         self.assertIn("MISSING:RUN_SPEC_SHA256=UNAVAILABLE", result.stdout.splitlines())
