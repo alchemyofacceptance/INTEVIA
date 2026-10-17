@@ -22,9 +22,11 @@ from core.models import (
     LivingOrganism,
     LivingOrganismEvent,
     LOApplicationQuestionVersion,
+    LOApplicationSettingsVersion,
     OrganismCommandReceipt,
     OrganismEntitlement,
     OrganismEntitlementEvent,
+    OrganismEntitlementPolicyText,
     OrganismMembership,
     OrganismMembershipTransition,
     OrganismRoleDefinition,
@@ -46,6 +48,8 @@ from src.intevia.services.organism_command_support import command_mutex_key
 from src.intevia.services.organism_entitlement_service import (
     EntitlementElectionCommand,
     OrganismEntitlementService,
+    S015AuthorityRefusalCode,
+    S015EntitlementRefused,
 )
 from src.intevia.services.organism_command_support import (
     S015CommandContended,
@@ -676,6 +680,20 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         )
         founder_command = _election_command(route, route.founder, "founder")
         coordinator_command = _election_command(route, coordinator, "coordinator")
+        tracked_models = (
+            OrganismEntitlement,
+            OrganismEntitlementEvent,
+            OrganismEntitlementPolicyText,
+            LOApplicationSettingsVersion,
+            LivingOrganismEvent,
+            OrganismCommandReceipt,
+            AuthorityDecision,
+            LivingOrganism,
+        )
+        before = {
+            model.__name__: model.objects.count()
+            for model in tracked_models
+        }
         gate_key = command_mutex_key(
             actor_identity_id=route.founder.identity_id,
             action=OrganismAction.EFFECT_ENTITLEMENT_ELECTION,
@@ -740,9 +758,32 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         self.assertNotEqual(_sqlstate(coordinator_result), "40P01")
         self.assertEqual(grants, 1)
         self.assertEqual(coordinator_result, "ok")
-        self.assertIsInstance(founder_result, IntegrityError)
-        self.assertEqual(_sqlstate(founder_result), "23505")
-        self.assertIn("se_entitlement_beta_one_per_lo_uniq", str(founder_result))
+        self.assertIsInstance(founder_result, S015EntitlementRefused)
+        self.assertIs(
+            founder_result.refusal_code,
+            S015AuthorityRefusalCode.SE_ALREADY_BETA,
+        )
+        expected_additions = {
+            "OrganismEntitlement": 1,
+            "OrganismEntitlementEvent": 1,
+            "OrganismEntitlementPolicyText": 0,
+            "LOApplicationSettingsVersion": 1,
+            "LivingOrganismEvent": 1,
+            "OrganismCommandReceipt": 1,
+            "AuthorityDecision": 1,
+            "LivingOrganism": 0,
+        }
+        for model in tracked_models:
+            self.assertEqual(
+                model.objects.count() - before[model.__name__],
+                expected_additions[model.__name__],
+                model.__name__,
+            )
+        self.assertFalse(
+            AuthorityDecision.objects.filter(
+                request_reference=founder_command.request_reference,
+            ).exists()
+        )
         self.assertFalse(
             OrganismCommandReceipt.objects.filter(
                 actor=route.founder,

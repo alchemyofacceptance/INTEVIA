@@ -15,6 +15,7 @@ from django.db import DatabaseError, close_old_connections, connection, connecti
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import SimpleTestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 
 from core.models import (
     AuthorityDecision,
@@ -839,13 +840,48 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
 
     reset_sequences = True
 
+    def _read_only(self, operation):
+        """W-K2.A5: compare all allowance-domain state around one read."""
+        before = _allowance_state()
+        result = operation()
+        self.assertEqual(_allowance_state(), before)
+        return result
+
     def test_w_se_a1_allowance_is_read_only_and_distinguishes_t8_from_t12(self):
         """Assert authoritative measurements, authored messages, and no writes."""
         free_route = prepare_route()
+        zero_route = prepare_route()
         unlimited_route = prepare_route()
         birth(free_route)
+        birth(zero_route)
         birth(unlimited_route)
         at = database_now()
+        self.assertEqual(
+            Circle.objects.filter(parent_organism=free_route.organism).count(),
+            0,
+        )
+        self.assertEqual(
+            Circle.objects.filter(parent_organism=zero_route.organism).count(),
+            0,
+        )
+        _seed_entitlement_limits(
+            free_route,
+            effective_at=at - timedelta(seconds=1),
+            limits={
+                "circles": {"kind": "LIMIT", "value": 1},
+                "organism_learners": {"kind": "NOT_SET"},
+                "document_footprint": {"kind": "NOT_SET"},
+            },
+        )
+        _seed_entitlement_limits(
+            zero_route,
+            effective_at=at - timedelta(seconds=1),
+            limits={
+                "circles": {"kind": "LIMIT", "value": 0},
+                "organism_learners": {"kind": "NOT_SET"},
+                "document_footprint": {"kind": "LIMIT", "value": 1},
+            },
+        )
         _seed_entitlement_limits(
             unlimited_route,
             effective_at=at - timedelta(seconds=1),
@@ -855,13 +891,13 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
                 "document_footprint": {"kind": "NOT_SET"},
             },
         )
-        before = _allowance_state()
-
-        within = check_allowance(
-            free_route.organism.organism_id,
-            "circles",
-            9,
-            at,
+        within = self._read_only(
+            lambda: check_allowance(
+                free_route.organism.organism_id,
+                "circles",
+                1,
+                at,
+            )
         )
         self.assertEqual(within.status, "within")
         self.assertEqual(within.limit_kind, "LIMIT")
@@ -869,79 +905,150 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
             within.measured_usage,
             Circle.objects.filter(parent_organism=free_route.organism).count(),
         )
+        self.assertEqual(
+            within.proposed_total,
+            within.measured_usage + within.increment,
+        )
 
-        exceeded = check_allowance(
-            free_route.organism.organism_id,
-            "circles",
-            10,
-            at,
+        exceeded = self._read_only(
+            lambda: check_allowance(
+                free_route.organism.organism_id,
+                "circles",
+                2,
+                at,
+            )
         )
         self.assertEqual(exceeded.status, "exceeds")
+        self.assertEqual(exceeded.measured_usage, 0)
+        self.assertEqual(exceeded.proposed_total, 2)
         self.assertIs(
             exceeded.code,
             S015AuthorityRefusalCode.SE_ALLOWANCE_EXCEEDED,
         )
         self.assertEqual(
             exceeded.message,
-            "Your organism's current allowance is 9 Circles. This action would "
-            "bring the total to 10 Circles. Nothing has changed.",
+            "Your organism's current allowance is 1 Circle. This action would "
+            "bring the total to 2 Circles. Nothing has changed.",
+        )
+
+        zero_limit_exceeds = self._read_only(
+            lambda: check_allowance(
+                zero_route.organism.organism_id,
+                "circles",
+                1,
+                at,
+            )
+        )
+        self.assertEqual(zero_limit_exceeds.status, "exceeds")
+        self.assertEqual(zero_limit_exceeds.measured_usage, 0)
+        self.assertEqual(zero_limit_exceeds.proposed_total, 1)
+        self.assertIn("total to 1 Circle.", zero_limit_exceeds.message)
+
+        zero_limit_within = self._read_only(
+            lambda: check_allowance(
+                zero_route.organism.organism_id,
+                "circles",
+                0,
+                at,
+            )
+        )
+        self.assertEqual(zero_limit_within.status, "within")
+        self.assertEqual(zero_limit_within.proposed_total, 0)
+
+        with CaptureQueriesContext(connection) as early_return_queries:
+            with patch(
+                "src.intevia.services.organism_entitlement_service._measure_usage",
+                side_effect=AssertionError("early-return dimensions must not be measured"),
+            ) as failed_measurement:
+                not_set = self._read_only(
+                    lambda: check_allowance(
+                        free_route.organism.organism_id,
+                        "organism_learners",
+                        1,
+                        at,
+                    )
+                )
+                unlimited = self._read_only(
+                    lambda: check_allowance(
+                        unlimited_route.organism.organism_id,
+                        "circles",
+                        100,
+                        at,
+                    )
+                )
+        failed_measurement.assert_not_called()
+        self.assertFalse(
+            any(
+                "s015_eligible_event_ids" in query["sql"]
+                for query in early_return_queries.captured_queries
+            )
+        )
+
+        self.assertEqual(not_set.status, "within")
+        self.assertEqual(not_set.limit_kind, "NOT_SET")
+        self.assertIsNone(not_set.measured_usage)
+        self.assertIsNone(not_set.proposed_total)
+        self.assertEqual(unlimited.status, "within")
+        self.assertEqual(unlimited.limit_kind, "UNLIMITED")
+        self.assertIsNone(unlimited.measured_usage)
+        self.assertIsNone(unlimited.proposed_total)
+
+        document_limit = self._read_only(
+            lambda: check_allowance(
+                zero_route.organism.organism_id,
+                "document_footprint",
+                0,
+                at,
+            )
+        )
+        self.assertEqual(document_limit.status, "cannot_check")
+        self.assertIsNone(document_limit.proposed_total)
+        self.assertTrue(document_limit.technical_failure)
+        self.assertIs(
+            document_limit.code,
+            S015AuthorityRefusalCode.SE_USAGE_UNCHECKABLE,
         )
 
         with patch(
             "src.intevia.services.organism_entitlement_service._measure_usage",
             side_effect=S015EntitlementTechnicalFailure("test measurement failure"),
         ) as failed_measurement:
-            not_set = check_allowance(
-                free_route.organism.organism_id,
-                "organism_learners",
-                1,
-                at,
+            uncheckable = self._read_only(
+                lambda: check_allowance(
+                    free_route.organism.organism_id,
+                    "circles",
+                    1,
+                    at,
+                )
             )
-            unlimited = check_allowance(
-                unlimited_route.organism.organism_id,
-                "circles",
-                100,
-                at,
-            )
-            uncheckable = check_allowance(
-                free_route.organism.organism_id,
-                "circles",
-                10,
-                at,
-            )
-
-        self.assertEqual(not_set.status, "within")
-        self.assertEqual(not_set.limit_kind, "NOT_SET")
-        self.assertIsNone(not_set.measured_usage)
-        self.assertEqual(unlimited.status, "within")
-        self.assertEqual(unlimited.limit_kind, "UNLIMITED")
-        self.assertIsNone(unlimited.measured_usage)
         self.assertEqual(uncheckable.status, "cannot_check")
         self.assertTrue(uncheckable.technical_failure)
         self.assertIs(
             uncheckable.code,
             S015AuthorityRefusalCode.SE_USAGE_UNCHECKABLE,
         )
+        self.assertEqual(failed_measurement.call_count, 1)
         self.assertEqual(
             uncheckable.message,
             "We could not check your organism's usage of Circles against its "
-            "allowance of 9 Circles, so this action was not completed. Nothing has "
+            "allowance of 1 Circle, so this action was not completed. Nothing has "
             "changed. Please try again later.",
         )
-        self.assertEqual(failed_measurement.call_count, 1)
-        self.assertEqual(_allowance_state(), before)
 
     def test_w_se_d1_summary_carries_units_basis_and_all_display_variants(self):
         """Assert T-9 through T-11 and the three T-9a variants."""
         route = prepare_route()
         birth(route)
         at = database_now()
-        free = entitlement_summary(route.organism.organism_id, at=at)
+        free = self._read_only(
+            lambda: entitlement_summary(route.organism.organism_id, at=at)
+        )
         free_dimensions = free["dimensions"]
 
         learners = free_dimensions["organism_learners"]
         self.assertEqual(learners["kind"], "NOT_SET")
         self.assertIsInstance(learners["measured_usage"], int)
+        self.assertEqual(learners["not_yet_known"], 0)
         self.assertEqual(learners["unit"], "Learners")
         self.assertEqual(
             learners["measurement_basis"],
@@ -956,6 +1063,7 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
         document = free_dimensions["document_footprint"]
         self.assertEqual(document["kind"], "NOT_SET")
         self.assertIsNone(document["measured_usage"])
+        self.assertIsNone(document["not_yet_known"])
         self.assertEqual(document["unit"], "B")
         self.assertEqual(
             document["measurement_reason_code"],
@@ -979,7 +1087,9 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
                 "document_footprint": {"kind": "NOT_SET"},
             },
         )
-        beta = entitlement_summary(route.organism.organism_id, at=at_beta)
+        beta = self._read_only(
+            lambda: entitlement_summary(route.organism.organism_id, at=at_beta)
+        )
         dimensions = beta["dimensions"]
         self.assertEqual(beta["package"], "BETA_COMPLIMENTARY_ACCESS")
         self.assertEqual(beta["source"], "COMPLIMENTARY")
@@ -995,9 +1105,11 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
             "src.intevia.services.organism_entitlement_service._measure_usage",
             side_effect=S015EntitlementTechnicalFailure("test measurement failure"),
         ):
-            failed = entitlement_summary(
-                route.organism.organism_id,
-                at=at_beta,
+            failed = self._read_only(
+                lambda: entitlement_summary(
+                    route.organism.organism_id,
+                    at=at_beta,
+                )
             )["dimensions"]
 
         self.assertEqual(
@@ -1014,11 +1126,13 @@ class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
             failed["document_footprint"]["display_line"],
             document["display_line"],
         )
-        still_within = check_allowance(
-            route.organism.organism_id,
-            "circles",
-            9,
-            at_beta,
+        still_within = self._read_only(
+            lambda: check_allowance(
+                route.organism.organism_id,
+                "circles",
+                8,
+                at_beta,
+            )
         )
         self.assertEqual(still_within.status, "within")
 

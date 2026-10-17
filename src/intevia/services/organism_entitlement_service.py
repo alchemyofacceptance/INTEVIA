@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, IntegrityError, connections
 from django.db.models import Q
 
 from core.models import (
@@ -239,7 +239,8 @@ class AllowanceCheckResult:
 
     status: Literal["within", "exceeds", "cannot_check"]
     dimension: str
-    proposed_total: int
+    increment: int
+    proposed_total: int | None
     limit_kind: Literal["LIMIT", "UNLIMITED", "NOT_SET"]
     limit: int | None
     measured_usage: int | None
@@ -344,6 +345,57 @@ class S015EntitlementRefused(Exception):
         self.refusal_code = refusal_code
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementResult:
+    """Hold the complete, per-anchor outcome of an authoritative usage fold."""
+
+    counted: int
+    absent_state: int
+    not_yet_known: int
+    unreadable: int
+    anomalous: int
+
+
+def _decide_measurement(
+    result: MeasurementResult,
+    mode: Literal["check", "summary"],
+) -> int:
+    """Return complete usage or refuse histories whose meaning is not established."""
+    if mode not in {"check", "summary"}:
+        raise ValueError("measurement mode is not registered")
+    if result.unreadable > 0 or result.anomalous > 0:
+        raise S015EntitlementTechnicalFailure(
+            "authoritative usage history could not be established"
+        )
+    # HQ-R1, DOC15-R3, and decision 12.3 keep state-time absence distinct from a
+    # history outside the requested knowledge view.
+    if mode == "check" and result.not_yet_known > 0:
+        raise S015EntitlementTechnicalFailure(
+            "authoritative usage is not yet known at the check's current knowledge time"
+        )
+    return result.counted
+
+
+def _is_constraint_violation(
+    error: IntegrityError,
+    *,
+    sqlstate: str,
+    constraint_name: str,
+) -> bool:
+    """Match a database fault only by its driver SQLSTATE and constraint identity."""
+    cause = error.__cause__
+    while cause is not None:
+        state = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        diagnostic = getattr(cause, "diag", None)
+        if (
+            state == sqlstate
+            and getattr(diagnostic, "constraint_name", None) == constraint_name
+        ):
+            return True
+        cause = cause.__cause__
+    return False
+
+
 def entitlement_effective(
     living_organism_uuid: UUID,
     capability: str,
@@ -431,45 +483,87 @@ def _format_dimension_quantity(dimension: str, value: int) -> str:
 def _measure_usage(
     living_organism_uuid: UUID,
     dimension: str,
-    at: datetime,
+    state_at: datetime,
     database_alias: str,
-) -> int:
+    *,
+    known_at: datetime | None,
+) -> MeasurementResult:
     if dimension == "circles":
         sql = """
             SELECT
-                COUNT(*) FILTER (WHERE folded.state IS NULL),
+                COUNT(*) FILTER (WHERE folded.n_all = 0),
+                COUNT(*) FILTER (WHERE folded.n_all > 0 AND folded.n_state = 0),
+                COUNT(*) FILTER (WHERE folded.n_state > 0 AND folded.n_known = 0),
+                COUNT(*) FILTER (WHERE folded.n_known > 0 AND folded.state IS NULL),
                 COUNT(*) FILTER (WHERE folded.state <> 'CLOSED')
             FROM (
-                SELECT public.s015_fold_effective_state(
-                    'core_circle', circle.id, %s, %s
-                ) AS state
+                SELECT
+                    events.ids,
+                    cardinality(events.ids) AS n_known,
+                    public.s015_reduce_projection('core_circle', events.ids) AS state,
+                    cardinality(public.s015_eligible_event_ids(
+                        'core_circle', circle.id, %(state_at)s, 'infinity'::timestamptz
+                    )) AS n_state,
+                    cardinality(public.s015_eligible_event_ids(
+                        'core_circle', circle.id,
+                        'infinity'::timestamptz, 'infinity'::timestamptz
+                    )) AS n_all
                 FROM public.core_circle AS circle
                 JOIN public.core_livingorganism AS organism
                   ON organism.id = circle.parent_organism_id
-                WHERE organism.organism_id = %s
+                CROSS JOIN LATERAL (
+                    SELECT public.s015_eligible_event_ids(
+                        'core_circle', circle.id, %(state_at)s,
+                        COALESCE(%(known_at)s, statement_timestamp())
+                    ) AS ids
+                ) AS events
+                WHERE organism.organism_id = %(living_organism_uuid)s
             ) AS folded
         """
-        params = [at, at, living_organism_uuid]
     elif dimension == "organism_learners":
         sql = """
             SELECT
-                COUNT(*) FILTER (WHERE folded.state IS NULL),
+                COUNT(DISTINCT folded.identity_id) FILTER (WHERE folded.n_all = 0),
+                COUNT(DISTINCT folded.identity_id) FILTER (
+                    WHERE folded.n_all > 0 AND folded.n_state = 0
+                ),
+                COUNT(DISTINCT folded.identity_id) FILTER (
+                    WHERE folded.n_state > 0 AND folded.n_known = 0
+                ),
+                COUNT(DISTINCT folded.identity_id) FILTER (
+                    WHERE folded.n_known > 0 AND folded.state IS NULL
+                ),
                 COUNT(DISTINCT folded.identity_id) FILTER (
                     WHERE folded.state IN ('ACTIVE', 'PROBATIONARY')
                 )
             FROM (
                 SELECT
                     membership.identity_id,
-                    public.s015_fold_effective_state(
-                        'core_organismmembership', membership.id, %s, %s
-                    ) AS state
+                    events.ids,
+                    cardinality(events.ids) AS n_known,
+                    public.s015_reduce_projection(
+                        'core_organismmembership', events.ids
+                    ) AS state,
+                    cardinality(public.s015_eligible_event_ids(
+                        'core_organismmembership', membership.id,
+                        %(state_at)s, 'infinity'::timestamptz
+                    )) AS n_state,
+                    cardinality(public.s015_eligible_event_ids(
+                        'core_organismmembership', membership.id,
+                        'infinity'::timestamptz, 'infinity'::timestamptz
+                    )) AS n_all
                 FROM public.core_organismmembership AS membership
                 JOIN public.core_livingorganism AS organism
                   ON organism.id = membership.living_organism_id
-                WHERE organism.organism_id = %s
+                CROSS JOIN LATERAL (
+                    SELECT public.s015_eligible_event_ids(
+                        'core_organismmembership', membership.id, %(state_at)s,
+                        COALESCE(%(known_at)s, statement_timestamp())
+                    ) AS ids
+                ) AS events
+                WHERE organism.organism_id = %(living_organism_uuid)s
             ) AS folded
         """
-        params = [at, at, living_organism_uuid]
     elif dimension == "document_footprint":
         raise S015EntitlementTechnicalFailure(
             "document footprint cannot be measured without authoritative byte records"
@@ -478,36 +572,52 @@ def _measure_usage(
         raise ValueError("dimension is not registered")
 
     with connections[database_alias].cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(
+            sql,
+            {
+                "state_at": state_at,
+                "known_at": known_at,
+                "living_organism_uuid": living_organism_uuid,
+            },
+        )
         row = cursor.fetchone()
     if (
         row is None
-        or type(row[0]) is not int
-        or row[0] != 0
-        or type(row[1]) is not int
-        or row[1] < 0
+        or len(row) != 5
+        or any(type(value) is not int or value < 0 for value in row)
     ):
         raise S015EntitlementTechnicalFailure(
             f"authoritative {dimension} usage could not be established"
         )
-    return row[1]
+    measurement = MeasurementResult(
+        counted=row[4],
+        absent_state=row[1],
+        not_yet_known=row[2],
+        unreadable=row[0],
+        anomalous=row[3],
+    )
+    if measurement.unreadable > 0 or measurement.anomalous > 0:
+        raise S015EntitlementTechnicalFailure(
+            f"authoritative {dimension} usage history could not be established"
+        )
+    return measurement
 
 
 def check_allowance(
     living_organism_uuid: UUID,
     dimension: str,
-    proposed_total: int,
+    increment: int,
     at: datetime,
     *,
     database_alias: str = "default",
 ) -> AllowanceCheckResult:
-    """Check a proposed total without writing or consulting dashboard state."""
+    """Check current authoritative usage plus a validated caller increment."""
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(at, "at")
     if dimension not in SE_ENTITLEMENT_DIMENSIONS:
         raise ValueError("dimension is not registered")
-    if type(proposed_total) is not int or proposed_total < 0:
-        raise ValueError("proposed_total must be a non-negative integer")
+    if type(increment) is not int or increment < 0:
+        raise ValueError("increment must be a non-negative integer")
 
     kind, limit = entitlement_limit(
         organism_uuid,
@@ -520,7 +630,8 @@ def check_allowance(
         return AllowanceCheckResult(
             status="within",
             dimension=dimension,
-            proposed_total=proposed_total,
+            increment=increment,
+            proposed_total=None,
             limit_kind=kind,
             limit=None,
             measured_usage=None,
@@ -528,19 +639,22 @@ def check_allowance(
         )
 
     try:
-        measured_usage = _measure_usage(
+        measurement = _measure_usage(
             organism_uuid,
             dimension,
             effective_at,
             database_alias,
+            known_at=None,
         )
+        measured_usage = _decide_measurement(measurement, "check")
     except (DatabaseError, S015EntitlementTechnicalFailure):
         limit_text = _format_dimension_quantity(dimension, limit)
         dimension_text = _DIMENSION_PRESENTATION[dimension][0]
         return AllowanceCheckResult(
             status="cannot_check",
             dimension=dimension,
-            proposed_total=proposed_total,
+            increment=increment,
+            proposed_total=None,
             limit_kind=kind,
             limit=limit,
             measured_usage=None,
@@ -553,10 +667,12 @@ def check_allowance(
             technical_failure=True,
         )
 
+    proposed_total = measured_usage + increment
     if proposed_total > limit:
         return AllowanceCheckResult(
             status="exceeds",
             dimension=dimension,
+            increment=increment,
             proposed_total=proposed_total,
             limit_kind=kind,
             limit=limit,
@@ -577,6 +693,7 @@ def check_allowance(
     return AllowanceCheckResult(
         status="within",
         dimension=dimension,
+        increment=increment,
         proposed_total=proposed_total,
         limit_kind=kind,
         limit=limit,
@@ -747,13 +864,17 @@ def entitlement_summary(
             database_alias=database_alias,
         )
         measurement_reason = None
+        not_yet_known = None
         try:
-            usage = _measure_usage(
+            measurement = _measure_usage(
                 organism_uuid,
                 dimension,
                 effective_at,
                 database_alias,
+                known_at=effective_at,
             )
+            usage = _decide_measurement(measurement, "summary")
+            not_yet_known = measurement.not_yet_known
         except (DatabaseError, S015EntitlementTechnicalFailure):
             usage = None
             measurement_reason = "UNMEASURABLE"
@@ -761,6 +882,7 @@ def entitlement_summary(
             "kind": kind,
             "limit": limit,
             "measured_usage": usage,
+            "not_yet_known": not_yet_known,
             "unit": _DIMENSION_PRESENTATION[dimension][1],
             "measurement_basis": _DIMENSION_PRESENTATION[dimension][2],
             "measurement_reason_code": measurement_reason,
@@ -938,25 +1060,35 @@ class OrganismEntitlementService(_OrganismCommandService):
             )
         return version
 
-    def _effective_beta_grant(
+    def _beta_grant_collision(
         self,
         organism: LivingOrganism,
-        effective_at: datetime,
         received_at: datetime,
     ) -> OrganismEntitlement | None:
+        """Return the first row that makes this opt-in "already has beta", or None.
+
+        Design section 6.3 item 2, with the Human Governor's ruling of 17 Oct 2026
+        (HG_DECISION_K2_REISSUE_A1_A7_AND_EXTENSION_20261017): every BETA_OPT_IN row
+        of the organism collides, with no effective- or recorded-time filter (the
+        unique constraint's scope); an AUTHORISED_EXTENSION collides when its
+        effective interval contains received_at, using the rows visible to this
+        statement, with no recorded_at cutoff.
+        """
         return (
             OrganismEntitlement.objects.using(self._alias)
+            .filter(living_organism=organism)
             .filter(
-                living_organism=organism,
-                basis__in=("BETA_OPT_IN", "AUTHORISED_EXTENSION"),
-                effective_at__lte=effective_at,
-                recorded_at__lte=received_at,
+                Q(basis="BETA_OPT_IN")
+                | (
+                    Q(basis="AUTHORISED_EXTENSION")
+                    & Q(effective_at__lte=received_at)
+                    & (
+                        Q(effective_until__isnull=True)
+                        | Q(effective_until__gt=received_at)
+                    )
+                )
             )
-            .filter(
-                Q(effective_until__isnull=True)
-                | Q(effective_until__gt=effective_at)
-            )
-            .order_by("-effective_at", "-recorded_at", "-pk")
+            .order_by("pk")
             .first()
         )
 
@@ -1252,7 +1384,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                 living_organism_id=organism_uuid,
                 unavailable=S015EntitlementUnavailable,
             )
-            if self._effective_beta_grant(organism, effective_at, received_at) is not None:
+            if self._beta_grant_collision(organism, received_at) is not None:
                 raise S015EntitlementRefused(S015AuthorityRefusalCode.SE_ALREADY_BETA)
             paid_transition = self._availability_source.paid_availability_transition_reference(
                 organism_uuid,
@@ -1545,23 +1677,35 @@ class OrganismEntitlementService(_OrganismCommandService):
             raise S015EntitlementTechnicalFailure(
                 "the effective BETA_COMPLIMENTARY_ACCESS rule is malformed"
             )
-        entitlement = OrganismEntitlement.objects.using(self._alias).create(
-            living_organism=organism,
-            source="COMPLIMENTARY",
-            basis="BETA_OPT_IN",
-            granting_party_id=None,
-            policy_reference=f"policy-text:v{policy.policy_version}",
-            policy_version=policy.policy_version,
-            capabilities=capabilities,
-            limits=limits,
-            effective_at=effective_at,
-            effective_until=None,
-            ending_condition_reference=(
-                f"paid-availability-transition:{organism.organism_id}"
-            ),
-            tier_reference=None,
-            pricing_basis_reference=None,
-        )
+        try:
+            entitlement = OrganismEntitlement.objects.using(self._alias).create(
+                living_organism=organism,
+                source="COMPLIMENTARY",
+                basis="BETA_OPT_IN",
+                granting_party_id=None,
+                policy_reference=f"policy-text:v{policy.policy_version}",
+                policy_version=policy.policy_version,
+                capabilities=capabilities,
+                limits=limits,
+                effective_at=effective_at,
+                effective_until=None,
+                ending_condition_reference=(
+                    f"paid-availability-transition:{organism.organism_id}"
+                ),
+                tier_reference=None,
+                pricing_basis_reference=None,
+            )
+        except IntegrityError as exc:
+            # C4 translates only the named beta-per-organism uniqueness race.
+            if _is_constraint_violation(
+                exc,
+                sqlstate="23505",
+                constraint_name="se_entitlement_beta_one_per_lo_uniq",
+            ):
+                raise S015EntitlementRefused(
+                    S015AuthorityRefusalCode.SE_ALREADY_BETA
+                ) from exc
+            raise
         rule_reference = f"rule:{rule.rule_uuid}@{rule.version}"
         OrganismEntitlementEvent.objects.using(self._alias).create(
             entitlement=entitlement,
