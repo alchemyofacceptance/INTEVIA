@@ -84,6 +84,12 @@ class _FakeDatabase:
 
 
 class TemplateConnectionWitnessTests(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        tag_environment = patch.dict(os.environ, {"INTEVIA_DATABASE_TAG": "tu1b"})
+        tag_environment.start()
+        self.addCleanup(tag_environment.stop)
+
     template_name = "test_intevia_tpl_me_" + "0" * 43
 
     def _run_witness(self, catalog_value=False, fail_control_call=None):
