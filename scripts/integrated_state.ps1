@@ -1,3 +1,50 @@
+﻿$script:MaxTestDatabaseNameLength = 47
+$script:MaxAttemptNumberDigits = 6
+$script:MaxDatabaseTagLength = $script:MaxTestDatabaseNameLength -
+    ("test_intevia_living_organism__me_".Length + $script:MaxAttemptNumberDigits)
+
+function Assert-IntegratedDatabaseTag {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$DatabaseTag)
+
+    $tagPattern = '^[a-z0-9]{1,' + $script:MaxDatabaseTagLength + '}$'
+    if ($DatabaseTag -cnotmatch $tagPattern) {
+        throw "database_tag must match $tagPattern for a six-digit attempt and the $($script:MaxTestDatabaseNameLength)-byte primary-name bound"
+    }
+    return $DatabaseTag
+}
+
+function Assert-IntegratedTestDatabaseName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Name,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Purpose
+    )
+
+    $nameBytes = [System.Text.Encoding]::UTF8.GetByteCount($Name)
+    if ($nameBytes -gt $script:MaxTestDatabaseNameLength) {
+        throw "$Purpose database name exceeds the $($script:MaxTestDatabaseNameLength)-byte primary-name bound"
+    }
+    return $Name
+}
+
+function Get-IntegratedCloneProbeDatabaseName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$RunNonce)
+
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $algorithm.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($RunNonce))
+    }
+    finally {
+        $algorithm.Dispose()
+    }
+    $token = [System.Convert]::ToHexString($hash).ToLowerInvariant().Substring(0, 12)
+    return Assert-IntegratedTestDatabaseName `
+        -Name "test_intevia_living_organism_w_$token" `
+        -Purpose "clone preflight probe"
+}
+
 function Get-IntegratedState {
     [CmdletBinding()]
     param(
@@ -27,10 +74,10 @@ function Get-IntegratedState {
         $state.evidence_root -cnotmatch "^PKTB_[A-Z0-9_]{1,24}$") {
         throw "evidence_root must match ^PKTB_[A-Z0-9_]{1,24}$"
     }
-    if ($state.database_tag -isnot [string] -or
-        $state.database_tag -cnotmatch "^[a-z0-9]{1,8}$") {
-        throw "database_tag must match ^[a-z0-9]{1,8}$"
+    if ($state.database_tag -isnot [string]) {
+        throw "database_tag must be a string"
     }
+    $null = Assert-IntegratedDatabaseTag -DatabaseTag $state.database_tag
     if ($null -eq $state.merge -or
         $null -eq $state.merge.PSObject.Properties["commit"] -or
         $null -eq $state.merge.PSObject.Properties["parents"]) {
@@ -212,10 +259,10 @@ function Get-IntegratedEvidenceRoutes {
     $databaseTag = $AuthorizedState.DatabaseTag
     if ($evidenceRoot -isnot [string] -or
         $evidenceRoot -cnotmatch "^PKTB_[A-Z0-9_]{1,24}$" -or
-        $databaseTag -isnot [string] -or
-        $databaseTag -cnotmatch "^[a-z0-9]{1,8}$") {
+        $databaseTag -isnot [string]) {
         throw "evidence routes require a validated state"
     }
+    $databaseTag = Assert-IntegratedDatabaseTag -DatabaseTag $databaseTag
 
     $stageRoot = Join-Path (Join-Path $HomeDirectory "INTEVIA_AGENT_STAGING") $evidenceRoot
     return [PSCustomObject]@{
@@ -223,5 +270,7 @@ function Get-IntegratedEvidenceRoutes {
         VerificationRoot = Join-Path $stageRoot "VERIFICATION_OF_RECORD"
         DevelopmentDatabasePrefix = "test_intevia_living_organism_${databaseTag}_me_"
         VerificationDatabasePrefix = "test_intevia_living_organism_${databaseTag}_vr_"
+        DatabaseNameMaxLength = $script:MaxTestDatabaseNameLength
+        DatabaseTagMaxLength = $script:MaxDatabaseTagLength
     }
 }

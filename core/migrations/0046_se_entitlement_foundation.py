@@ -2,7 +2,7 @@
 
 from importlib import import_module
 
-from django.db import connection, migrations, models
+from django.db import migrations, models
 import django.db.models.deletion
 import uuid
 
@@ -744,7 +744,7 @@ def install(apps, schema_editor):
 
 def restore_entitlement_rules(apps, schema_editor):
     """Restore the SE-owned platform rule seeds after an S015 database reset."""
-    database_connection = schema_editor.connection if schema_editor is not None else connection
+    database_connection = schema_editor.connection
     if database_connection.vendor != "postgresql":
         return
     with database_connection.cursor() as cursor:

@@ -11,6 +11,7 @@ from verification.isolation.run_plan import (
     validate_run_record_consistency,
     validate_verification_summary,
     verify_kind,
+    _standalone_test_database_name,
 )
 
 
@@ -39,7 +40,9 @@ class LaunchBoundaryTests(SimpleTestCase):
                 "INTEVIA_POSTGRES_DB": "postgres",
                 "INTEVIA_POSTGRES_USER": "offline_test",
                 "INTEVIA_POSTGRES_PASSWORD": "offline-test-placeholder-not-a-secret",
-                "INTEVIA_POSTGRES_TEST_DB": "test_intevia_living_organism_tu1_plan_precheck",
+                "INTEVIA_POSTGRES_TEST_DB": _standalone_test_database_name(
+                    "plan", "precheck"
+                ),
                 "PYTHONPATH": os.pathsep.join(python_paths),
                 "PYTHONDONTWRITEBYTECODE": "1",
             }

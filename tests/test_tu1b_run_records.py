@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from django.test import SimpleTestCase
 from verification.isolation.run_plan import (
     _run_precheck_suite,
     _standalone_action_environment,
+    _standalone_test_database_name,
 )
 from verification.isolation.runner import IsolationRunner, _runner_print
 from verification.parse_results import parse
@@ -39,6 +41,7 @@ class RunRecordBoundaryTests(SimpleTestCase):
             runner = object.__new__(IsolationRunner)
             runner.debug_sql = False
             runner.pdb = False
+            runner.extra_aliases = ()
             runner.started_ids = []
             runner.outcome_ids = []
             pending_failures = []
@@ -299,7 +302,9 @@ class RunRecordBoundaryTests(SimpleTestCase):
             "INTEVIA_RUN_SUFFIX": "invalid",
             "PYTHONPATH": "caller-python-path",
         }
-        with patch.dict(os.environ, caller_values):
+        with patch.dict(os.environ, caller_values), patch(
+            "verification.isolation.run_plan.os.getpid", return_value=12345
+        ):
             before = {name: os.environ.get(name) for name in names}
             with self.assertRaisesRegex(RuntimeError, "exercise restoration"):
                 with _standalone_action_environment(Path.cwd(), "precheck"):
@@ -313,7 +318,11 @@ class RunRecordBoundaryTests(SimpleTestCase):
                     )
                     self.assertEqual(
                         os.environ["INTEVIA_POSTGRES_TEST_DB"].rsplit("_", 1)[0],
-                        "test_intevia_living_organism_tu1_precheck",
+                        "test_intevia_living_organism_tu1",
+                    )
+                    self.assertEqual(
+                        os.environ["INTEVIA_POSTGRES_TEST_DB"],
+                        _standalone_test_database_name("precheck", "p12345"),
                     )
                     self.assertIn(str(Path.cwd()), os.environ["PYTHONPATH"])
                     self.assertNotIn("caller_database", os.environ["INTEVIA_POSTGRES_TEST_DB"])
@@ -350,6 +359,176 @@ class RunRecordBoundaryTests(SimpleTestCase):
         self.assertLess(route_check, attempt_promotion)
         self.assertIn("-RecordDirectory $preflightDirectory", source)
         self.assertNotIn("New-Item -ItemType Directory -Path $runDirectory", source)
+
+    def test_permitted_skip_policy_is_shared_and_mode_conditioned(self):
+        import json
+
+        policy = json.loads(
+            Path("verification/permitted_skips.json").read_text(encoding="utf-8")
+        )
+        entries = policy["entries"]
+        self.assertEqual(policy["version"], 1)
+        self.assertEqual(len(entries), 4)
+        self.assertEqual(
+            [entry["id"] for entry in entries if entry["condition"] == "always"],
+            [
+                "tests.test_s007_authentication_shell.AuthenticationShellTests.test_stale_epoch_and_absolute_age_flush_sessions",
+                "tests.test_sbg_governance.SBGGovernanceDepartureCascadeTests.test_w_d3_5_departure_vacates_the_seat_for_equal_time_succession",
+                "tests.test_s015_application_authority.ProductionApplicationAuthorityTests.test_ap6_non_superuser_application_role_when_present",
+            ],
+        )
+        self.assertEqual(
+            [
+                entry["id"]
+                for entry in entries
+                if entry["condition"] == "fresh-mode"
+            ],
+            [
+                "tests.test_tt1_template_lifecycle.TemplateLifecycleToolingTests.test_template_clone_parity_and_receipt_cleanup"
+            ],
+        )
+
+        verifier = Path("scripts/verify_integrated.ps1").read_text(
+            encoding="utf-8"
+        )
+        route = Path("verification/route.py").read_text(encoding="utf-8")
+        self.assertIn("function Get-PermittedSkipIds", verifier)
+        self.assertIn('Get-PermittedSkipIds -Mode "clone"', verifier)
+        self.assertIn("verification\\permitted_skips.json", verifier)
+        self.assertIn(
+            '$script:permittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")',
+            verifier,
+        )
+        self.assertIn("load_permitted_skips()", route)
+
+    def test_qualification_attempt_suffix_uses_state_derived_me_dev_root(self):
+        source = Path("scripts/qualify_tu2a.ps1").read_text(encoding="utf-8")
+        allocator_start = source.index("    $nextSuffix = 910001")
+        allocator_end = source.index("        $caseLog =", allocator_start)
+        allocator = source[allocator_start:allocator_end]
+
+        self.assertIn(
+            "Join-Path $routes.DevelopmentRoot",
+            allocator,
+        )
+        self.assertNotIn(
+            "Join-Path $qualificationRoot",
+            allocator,
+        )
+        state_binding = "$authorizedState = Assert-StateBinding"
+        route_binding = "$routes = Get-IntegratedEvidenceRoutes"
+        self.assertIn(state_binding, source)
+        self.assertIn(route_binding, source)
+        self.assertIn("-AuthorizedState $authorizedState", source)
+        self.assertLess(source.index(state_binding), source.index(route_binding))
+
+    def test_standalone_database_names_are_bounded_for_long_suffixes(self):
+        names = {
+            _standalone_test_database_name(action, suffix)
+            for action in ("plan", "precheck", "validate-plan")
+            for suffix in ("1", "999999", "p12345", "x" * 80)
+        }
+        self.assertEqual(len(names), 12)
+        for name in names:
+            self.assertLessEqual(
+                len(name.encode("utf-8")),
+                47,
+                name,
+            )
+
+    def test_integrated_launcher_applies_tag_and_name_bounds_before_database_work(self):
+        powershell = shutil.which("pwsh")
+        if powershell is None:
+            self.fail("PowerShell 7 is required for the integrated name-bound witness")
+
+        helper_path = str(Path("scripts/integrated_state.ps1").resolve()).replace(
+            "'", "''"
+        )
+        command = f"""
+. '{helper_path}'
+$routes = Get-IntegratedEvidenceRoutes `
+    -AuthorizedState ([PSCustomObject]@{{ EvidenceRoot = 'PKTB_TEST'; DatabaseTag = '12345678' }}) `
+    -HomeDirectory $HOME
+if ($routes.DatabaseTagMaxLength -ne 8) {{ throw "wrong maximum tag length" }}
+$maximumName = Assert-IntegratedTestDatabaseName `
+    -Name ($routes.DevelopmentDatabasePrefix + '999999') `
+    -Purpose 'boundary witness'
+if ([System.Text.Encoding]::UTF8.GetByteCount($maximumName) -ne 47) {{
+    throw "six-digit maximum-tag name did not reach the 47-byte boundary"
+}}
+$verificationName = Assert-IntegratedTestDatabaseName `
+    -Name ($routes.VerificationDatabasePrefix + '999999') `
+    -Purpose 'verification boundary witness'
+if ([System.Text.Encoding]::UTF8.GetByteCount($verificationName) -ne 47) {{
+    throw "verification name did not reach the 47-byte boundary"
+}}
+$probeName = Get-IntegratedCloneProbeDatabaseName -RunNonce ('x' * 80)
+if ([System.Text.Encoding]::UTF8.GetByteCount($probeName) -gt 47) {{
+    throw "clone preflight name exceeded the primary-name bound"
+}}
+$tagRejected = $false
+try {{ $null = Assert-IntegratedDatabaseTag -DatabaseTag '123456789' }}
+catch {{ $tagRejected = $_.Exception.Message -match 'six-digit attempt' }}
+if (-not $tagRejected) {{ throw "overlength database tag was accepted" }}
+$nameRejected = $false
+try {{ $null = Assert-IntegratedTestDatabaseName -Name ('x' * 48) -Purpose 'probe' }}
+catch {{ $nameRejected = $_.Exception.Message -match '47-byte primary-name bound' }}
+if (-not $nameRejected) {{ throw "overlength primary database name was accepted" }}
+Write-Output "TAG_MAX=8; SIX_DIGIT_NAME_BYTES=47; OVERLIMIT_REFUSALS=PASS"
+"""
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("TAG_MAX=8; SIX_DIGIT_NAME_BYTES=47; OVERLIMIT_REFUSALS=PASS", result.stdout)
+
+        state_source = Path("scripts/integrated_state.ps1").read_text(encoding="utf-8")
+        launcher_source = Path("scripts/run_integrated_dev.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "$null = Assert-IntegratedDatabaseTag -DatabaseTag $state.database_tag",
+            state_source,
+        )
+        self.assertIn(
+            'test_intevia_living_organism_w_',
+            state_source,
+        )
+        self.assertIn(
+            "$env:VERIFICATION_CLONE_PROBE_DATABASE_NAME = Get-IntegratedCloneProbeDatabaseName",
+            launcher_source,
+        )
+        witness_pattern = re.search(
+            r"\$testCreatedWitnessPattern = '([^']+)'",
+            launcher_source,
+        )
+        self.assertIsNotNone(witness_pattern)
+        for witness_name in (
+            "test_intevia_living_organism_w_2dd0b81f246a",
+            "test_intevia_living_organism_tt1_witness_7c7eff16846d",
+        ):
+            self.assertRegex(witness_name, witness_pattern.group(1))
+        self.assertNotRegex(
+            "test_intevia_living_organism_tt1_witness_not-a-token",
+            witness_pattern.group(1),
+        )
+        self.assertIn(
+            '$Label -cin @("Clone template preflight", "Explicit-label development run")',
+            launcher_source,
+        )
+        attempt_check = launcher_source.index(
+            "$attemptDatabase = Assert-IntegratedTestDatabaseName"
+        )
+        stall_guard = launcher_source.index("if ($StallGuardSelfTest)", attempt_check)
+        self_check_database_call = launcher_source.index(
+            '-Action "check-self-check"', stall_guard
+        )
+        self.assertLess(attempt_check, stall_guard)
+        self.assertLess(attempt_check, self_check_database_call)
 
     def test_run_record_is_written_after_database_reconciliation(self):
         source = Path("scripts/run_integrated_dev.ps1").read_text(encoding="utf-8")
@@ -442,6 +621,7 @@ Write-Output "MISSING:$line"
         runner.checkpoints = []
         runner.emit_errors = 0
         runner.run_plan = None
+        runner.observed_aliases = ["default"]
         emitted = []
         runner._emit = lambda record: emitted.append(record)
 
@@ -466,6 +646,7 @@ Write-Output "MISSING:$line"
         runner.checkpoints = []
         runner.emit_errors = 0
         runner.run_plan = None
+        runner.observed_aliases = ["default"]
         emitted = []
         runner._emit = lambda record: emitted.append(record)
 
@@ -489,6 +670,7 @@ Write-Output "MISSING:$line"
         runner.plan_sha256 = "d" * 64
         runner.checkpoint_stop_id = None
         runner.checkpoint_failure_test = None
+        runner.observed_aliases = ["default"]
         emitted = []
         runner._emit = lambda record: emitted.append(record)
 

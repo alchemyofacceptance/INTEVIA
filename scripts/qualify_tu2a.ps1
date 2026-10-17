@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$HumanLaunch,
-    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_FU2\BINDINGS\TU2AFU2_STATE_S1.json"),
-    [string]$StateSha256 = "afa1738d3fb5adce3c647a4df18291db4637ba82b030ed00a630ce930637017e"
+    [string]$StateFile = (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A_CI\BINDINGS\TU2ACI_STATE_S1_v2.json"),
+    [string]$StateSha256 = "b75a3c363e424faafb4795c8bac5795331a82ef75673c12384abfffd7c10a4d7"
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,7 +87,9 @@ class SeedLeakQualificationTests(_Tu2aLeakCase):
 '@
 
 $qualificationRoot = $null
-$impactRecordPath = Join-Path (Join-Path $HOME "INTEVIA_AGENT_STAGING\PKTB_TU2A") "ME_DEV\TU2A_IMPACT_RECORD.json"
+$impactRecordPath = $null
+$impactRecordSha256 = "cfb4cd7c050cf1d818fce0705411059661c1b9ee01d479325150d9c9d1d7da21"
+$impactRecordSource = "C:\Users\Carewen\INTEVIA_AGENT_STAGING\PKTB_TU2A\ME_DEV\TU2A_IMPACT_RECORD.json"
 $leakPath = Join-Path $repoRoot "tests\test_tu2a_qualification_leak.py"
 $leakBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($leakSource)
 $leakHash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($leakBytes)).ToLowerInvariant()
@@ -360,11 +362,15 @@ function Test-SuccessfulIsolationRun {
 
 try {
     $authorizedState = Assert-StateBinding -AuthorizedStateFile $StateFile -AuthorizedStateSha256 $StateSha256
-    if ($authorizedState.StateId -cne "TU2AFU2_S1" -or
-        $authorizedState.DatabaseTag -cne "tu2afu2" -or
-        $authorizedState.EvidenceRoot -cne "PKTB_TU2A_FU2") {
-        throw "R9: authorized state does not bind the TU2A_FU qualification"
+    if ($authorizedState.StateId -cne "TU2ACI_S1" -or
+        $authorizedState.DatabaseTag -cne "tu2aci" -or
+        $authorizedState.EvidenceRoot -cne "PKTB_TU2A_CI") {
+        throw "R9: authorized state does not bind the TU2A CI qualification"
     }
+    $routes = Get-IntegratedEvidenceRoutes `
+        -AuthorizedState $authorizedState `
+        -HomeDirectory $HOME
+    $impactRecordPath = $impactRecordSource
     $stagingRoot = [System.IO.Path]::GetFullPath(
         (Join-Path $HOME "INTEVIA_AGENT_STAGING")
     )
@@ -382,7 +388,12 @@ try {
     if (-not (Test-Path -LiteralPath $impactRecordPath -PathType Leaf)) {
         throw "impact record is absent"
     }
+    $actualImpactRecordSha256 = (Get-FileHash -LiteralPath $impactRecordPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualImpactRecordSha256 -cne $impactRecordSha256) {
+        throw "R9: Stage 0 impact census digest differs from its accepted binding"
+    }
     $null = Get-Content -LiteralPath $impactRecordPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    Write-Output "IMPACT_RECORD_SHA256=$actualImpactRecordSha256"
 
     if (-not (Test-Path -LiteralPath $qualificationRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $qualificationRoot -Force -ErrorAction Stop | Out-Null
@@ -505,7 +516,7 @@ try {
 
     $nextSuffix = 910001
     foreach ($case in @("Q-A", "Q-B1", "Q-B2", "Q-C", "Q-D")) {
-        while (Test-Path -LiteralPath (Join-Path $qualificationRoot ("attempt_{0}" -f $nextSuffix))) {
+        while (Test-Path -LiteralPath (Join-Path $routes.DevelopmentRoot ("attempt_{0}" -f $nextSuffix))) {
             $nextSuffix++
         }
         $caseLog = Join-Path $qualificationDirectory ($case.ToLowerInvariant() + ".log")
@@ -644,6 +655,8 @@ finally {
             "Overall: $overall",
             "State SHA-256: $StateSha256",
             "Run specification SHA-256: $($authorizedState.State.run_spec_sha256)",
+            "Impact record: $impactRecordPath",
+            "Impact record SHA-256: $actualImpactRecordSha256",
             "Qualification directory: $qualificationDirectory",
             "Candidate binding SHA-256: $candidateBinding",
             ""

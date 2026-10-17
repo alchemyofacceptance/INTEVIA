@@ -709,9 +709,10 @@ $s015$;
                             cursor.execute(sql)
                     if sql_list:
                         self._qualified_database_name()
+                        schema_editor = self.connection.schema_editor()
                         for module_name, function_name in S015_MIGRATION_SEEDS:
                             seed = getattr(importlib.import_module(module_name), function_name)
-                            seed(django_apps, None)
+                            seed(django_apps, schema_editor)
                         after = self._sequence_discipline_findings()
             except Exception as exc:
                 if before:

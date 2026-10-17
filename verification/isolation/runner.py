@@ -78,6 +78,17 @@ def isolation_verdict(cp0_met, suite_ids, started_ids, outcome_ids, checkpoints,
             "coverage mismatch: executed %d, checkpoints %d"
             % (len(executed), len(cp_ids))
         )
+    post_alias = [c for c in checkpoints if c.get("checkpoint") == "CP-A'"]
+    post_ids = [c.get("test") for c in post_alias]
+    required_post = {c["test"] for c in cpa if (c.get("post_teardown_aliases_expected") or c.get("alias_checks")) and c["test"] in executed}
+    missing_post = sorted(required_post - set(post_ids))
+    duplicates = sorted({test_id for test_id in post_ids if post_ids.count(test_id) > 1})
+    unexpected = sorted(set(post_ids) - required_post)
+    failed_post = [c.get("test") for c in post_alias if c.get("test") in required_post and c.get("established") is not True]
+    if missing_post: reasons.append("missing post-test alias checkpoints: %s" % missing_post[:5])
+    if duplicates: reasons.append("duplicate post-test alias checkpoints: %s" % duplicates[:5])
+    if unexpected: reasons.append("unexpected post-test alias checkpoints: %s" % unexpected[:5])
+    if failed_post: reasons.append("post-test alias checks not established at %d checkpoint(s), first %s" % (len(failed_post), failed_post[0]))
     lawful_na = [
         c["test"]
         for c in cpa
@@ -105,6 +116,11 @@ def isolation_verdict(cp0_met, suite_ids, started_ids, outcome_ids, checkpoints,
     if not suite_ids or not executed:
         reasons.append("no tests in suite")
     return ("PASS" if not reasons else "NOT ESTABLISHED"), reasons
+
+
+def due_aliases(extra_aliases, current_databases):
+    current = set(current_databases or ())
+    return sorted(alias for alias in extra_aliases if alias in current)
 
 
 class CheckpointRefused(RuntimeError):
@@ -160,7 +176,9 @@ def database_access(test):
     return ("permitted" if "default" in databases else "forbidden"), databases
 
 
-def sequence_check_summary(captured, databases, ignore_tables=()):
+def sequence_check_summary(
+    captured, databases, ignore_tables=(), checked_aliases=("default",)
+):
     """Summarize sequence checks performed and sequence state not established."""
     ignored = set(ignore_tables)
     observations = [
@@ -183,8 +201,9 @@ def sequence_check_summary(captured, databases, ignore_tables=()):
                     observation["status"],
                 )
             )
+    checked_aliases = set(checked_aliases)
     unobserved_aliases = [
-        alias for alias in (databases or ()) if alias != "default"
+        alias for alias in (databases or ()) if alias not in checked_aliases
     ]
     not_established.extend(
         "database alias %s is not observed by the isolation instrument" % alias
@@ -195,6 +214,21 @@ def sequence_check_summary(captured, databases, ignore_tables=()):
         "sequences_observed": len(observations),
         "not_established": not_established,
     }
+
+
+def capture_baseline(conn=None, *, tolerate_light_errors=False):
+    reference = state.capture(conn=conn)
+    violations = state.check_requirements(reference, S015_TRUNCATE_GUARDIANS)
+    plan = light = None
+    try:
+        plan = state.build_light_plan(reference)
+        light = state.capture_light(plan, conn=conn)
+        violations.extend(state.light_baseline_violations(reference, light))
+    except Exception as exc:
+        if not tolerate_light_errors:
+            raise
+        violations.append("CP-0 light-check baseline error: %s: %s" % (type(exc).__name__, exc))
+    return reference, plan, light, violations
 
 
 def owned_database_problem(database_name, receipt_path, run_nonce, protected_names=()):
@@ -288,6 +322,14 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         old_config = DiscoverRunner.setup_databases(self, **kwargs)
         setup_seconds = time.perf_counter() - setup_started
         self.clone_setup_seconds = setup_seconds
+        self.observed_aliases = sorted(
+            {connection.alias for connection, _, _ in old_config}
+        )
+        self.extra_aliases = [
+            alias for alias in self.observed_aliases if alias != "default"
+        ]
+        self.alias_refs = {}
+
         if mode == "clone" and self.template_receipt is not None:
             _runner_print(
                 "TT1_TEMPLATE_BUILD_SECONDS=%.6f" % self.template_build_seconds
@@ -309,6 +351,11 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         self.outcome_ids = []
         self.ignore_tables = ()
         self.suite_ids = [t.id() for t in iter_test_cases(suite)]
+        self.observed_aliases = getattr(self, "observed_aliases", ["default"])
+        self.extra_aliases = [
+            alias for alias in self.observed_aliases if alias != "default"
+        ]
+        self.alias_refs = {}
         self.timing_records = []
         self.timing_by_id = {}
         self.current_timing_id = None
@@ -321,18 +368,43 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         self.light_plan = None
         self.light_reference = None
         self.cp0_met = False
+        from django.db import connections
+
         database_name = state.connection.settings_dict.get("NAME")
         protected_names = ("intevia", "intevia_dev", os.environ.get("INTEVIA_POSTGRES_DB"))
-        ownership_problem = owned_database_problem(database_name, os.environ.get("VERIFICATION_DB_RECEIPT"),
-                                                   os.environ.get("VERIFICATION_RUN_NONCE"), protected_names)
+        ownership_problems = {}
+        ownership_problem = owned_database_problem(
+            database_name,
+            os.environ.get("VERIFICATION_DB_RECEIPT"),
+            os.environ.get("VERIFICATION_RUN_NONCE"),
+            protected_names,
+        )
         if ownership_problem:
-            violations = [ownership_problem]
+            ownership_problems["default"] = ownership_problem
+        for alias in self.extra_aliases:
+            alias_problem = owned_database_problem(
+                connections[alias].settings_dict.get("NAME"),
+                os.environ.get("VERIFICATION_DB_RECEIPT"),
+                os.environ.get("VERIFICATION_RUN_NONCE"),
+                protected_names,
+            )
+            if alias_problem:
+                ownership_problems[alias] = alias_problem
+        if ownership_problems:
+            violations = [
+                "%s: %s" % (alias, problem)
+                for alias, problem in ownership_problems.items()
+            ]
             self._emit({"checkpoint": "CP-0", "requirements_met": False, "violations": violations,
-                        "suite_ids": self.suite_ids})
+                        "suite_ids": self.suite_ids,
+                        "observed_aliases": self.observed_aliases,
+                        "alias_requirements": {alias: {"requirements_met": False, "violations": [problem]}
+                                               for alias, problem in ownership_problems.items()}})
             _runner_print("ISOLATION CP-0 requirements met: False", file=sys.stderr, flush=True)
-            _runner_print("ISOLATION CP-0 VIOLATION: %s" % ownership_problem, file=sys.stderr, flush=True)
+            for violation in violations:
+                _runner_print("ISOLATION CP-0 VIOLATION: %s" % violation, file=sys.stderr, flush=True)
             self._summary(None)
-            raise RuntimeError("isolation runner refused database before CP-0: %s" % ownership_problem)
+            raise RuntimeError("isolation runner refused database before CP-0: %s" % "; ".join(violations))
         clone_record = None
         template_receipt = None
         template_problem = None
@@ -356,19 +428,13 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                         raise TemplateReceiptInvalid("clone inputs differ from the full template identity")
                 except (KeyError, TemplateIdentityUnavailable, TemplateReceiptInvalid) as exc:
                     template_problem = str(exc)
+        reference_digests = {}
+        alias_requirements = {}
+        alias_references = {}
         try:
-            ref = state.capture()
-            violations = state.check_requirements(ref, S015_TRUNCATE_GUARDIANS)
-            light_reference = None
-            try:
-                self.light_plan = state.build_light_plan(ref)
-                light_reference = state.capture_light(self.light_plan)
-                violations.extend(state.light_baseline_violations(ref, light_reference))
-            except Exception as light_exc:
-                violations.append(
-                    "CP-0 light-check baseline error: %s: %s"
-                    % (type(light_exc).__name__, light_exc)
-                )
+            ref, self.light_plan, light_reference, violations = capture_baseline(
+                tolerate_light_errors=True
+            )
             cp0_digest = state.digest(ref)
             if clone_record and template_receipt:
                 if cp0_digest != clone_record.get("template_cp0_digest") or cp0_digest != template_receipt.get("cp0_digest"):
@@ -377,23 +443,66 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                     template_problem = "template direct-connection refusal was not established"
                 if template_problem:
                     violations.append(template_problem)
-            self.cp0_met = not violations
-            self.reference = ref if self.cp0_met else None
-            self.light_reference = light_reference if self.cp0_met else None
-            self._emit({"checkpoint": "CP-0", "requirements_met": self.cp0_met, "violations": violations,
-                        "reference_digests": {k: state.digest(ref[k]) for k in DIGEST_KEYS},
-                        "trigger_count": len(ref["triggers"]), "suite_ids": self.suite_ids,
-                        "light_check": {
-                            "statements": 4,
-                            "tables": len(self.light_plan["table_names"])
-                            if self.light_plan is not None else 0,
-                        },
-                        "template_identity": clone_record.get("identity") if clone_record else None,
-                        "template_cp0_digest": clone_record.get("template_cp0_digest") if clone_record else None,
-                        "clone_cp0_digest": cp0_digest if clone_record else None})
+            reference_digests["default"] = {
+                key: state.digest(ref[key]) for key in DIGEST_KEYS
+            }
         except Exception as exc:
             violations = ["check error: %s: %s" % (type(exc).__name__, exc)]
-            self._emit({"checkpoint": "CP-0", "requirements_met": False, "violations": violations})
+            ref = None
+            light_reference = None
+            self.light_plan = None
+            cp0_digest = None
+        for alias in self.extra_aliases:
+            try:
+                alias_ref, alias_plan, alias_light, alias_violations = capture_baseline(
+                    connections[alias]
+                )
+                alias_references[alias] = (alias_ref, alias_plan, alias_light)
+                reference_digests[alias] = {
+                    key: state.digest(alias_ref[key]) for key in DIGEST_KEYS
+                }
+                alias_requirements[alias] = {
+                    "requirements_met": not alias_violations,
+                    "violations": alias_violations,
+                }
+            except Exception as exc:
+                alias_requirements[alias] = {
+                    "requirements_met": False,
+                    "violations": [
+                        "check error: %s: %s" % (type(exc).__name__, exc)
+                    ],
+                }
+        alias_violations = [
+            "%s: %s" % (alias, violation)
+            for alias, result in alias_requirements.items()
+            for violation in result["violations"]
+        ]
+        violations.extend(alias_violations)
+        default_met = ref is not None and not (
+            violations[: len(violations) - len(alias_violations)]
+        )
+        self.cp0_met = default_met and not alias_violations
+        self.reference = ref if self.cp0_met else None
+        self.light_reference = light_reference if self.cp0_met else None
+        self.alias_refs = alias_references if self.cp0_met else {}
+        self._emit({
+            "checkpoint": "CP-0",
+            "requirements_met": self.cp0_met,
+            "violations": violations,
+            "reference_digests": reference_digests,
+            "observed_aliases": self.observed_aliases,
+            "alias_requirements": alias_requirements,
+            "trigger_count": len(ref["triggers"]) if ref is not None else 0,
+            "suite_ids": self.suite_ids,
+            "light_check": {
+                "statements": 4,
+                "tables": len(self.light_plan["table_names"])
+                if self.light_plan is not None else 0,
+            },
+            "template_identity": clone_record.get("identity") if clone_record else None,
+            "template_cp0_digest": clone_record.get("template_cp0_digest") if clone_record else None,
+            "clone_cp0_digest": cp0_digest if clone_record else None,
+        })
         _runner_print("ISOLATION CP-0 requirements met: %s" % self.cp0_met, file=sys.stderr, flush=True)
         for v in violations:
             _runner_print("ISOLATION CP-0 VIOLATION: %s" % v, file=sys.stderr, flush=True)
@@ -447,6 +556,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         class IsolationResult(base):
             def startTest(self, test):
                 runner._start_timing(test)
+                unbuffered_stderr = sys.stderr
                 super().startTest(test)
                 self._runner_console_stream = None
                 if not isinstance(sys.stderr, _RunnerConsoleStream):
@@ -461,9 +571,16 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                                 runner.checkpoint_failure_test or "none",
                             )
                         )
-                except BaseException:
+                except BaseException as exc:
+                    _runner_print(
+                        "ISOLATION CP-A REFUSED before %s: %s"
+                        % (test.id(), exc),
+                        file=unbuffered_stderr,
+                        flush=True,
+                    )
                     self._release_runner_output()
                     raise
+                self._install_post_teardown_alias_check(test)
                 runner.started_ids.append(test.id())
 
             def _release_runner_output(self):
@@ -474,6 +591,71 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 if sys.stderr is stream:
                     sys.stderr = stream._stream
                 self._runner_console_stream = None
+
+            def _post_test_alias_check(self, test, teardown_error):
+                if teardown_error is not None:
+                    _runner_print(
+                        "ISOLATION POST-TEARDOWN ERROR after %s: %s"
+                        % (test.id(), type(teardown_error).__name__),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                post_alias = runner.checkpoint_a_after(
+                    test,
+                    teardown_error=teardown_error,
+                )
+                if post_alias is None:
+                    return
+                if post_alias.get("established") is True:
+                    _runner_print(
+                        "ISOLATION CP-A' ESTABLISHED after %s" % test.id(),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                else:
+                    self._release_runner_output()
+                    _runner_print(
+                        "ISOLATION CP-A REFUSED after %s: %s"
+                        % (
+                            test.id(),
+                            post_alias.get(
+                                "reason",
+                                "post-test alias check was not established",
+                            ),
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    self.stop()
+
+            def _install_post_teardown_alias_check(self, test):
+                access, databases = database_access(test)
+                if (
+                    access == "forbidden"
+                    or not due_aliases(runner.extra_aliases, databases)
+                ):
+                    return
+                original_post_teardown = getattr(test, "_post_teardown", None)
+                if not callable(original_post_teardown):
+                    return
+
+                instance_state = getattr(test, "__dict__", {})
+                had_instance_override = "_post_teardown" in instance_state
+                previous_override = instance_state.get("_post_teardown")
+
+                def post_teardown_with_alias_check():
+                    try:
+                        try:
+                            return original_post_teardown()
+                        finally:
+                            self._post_test_alias_check(test, sys.exc_info()[1])
+                    finally:
+                        if had_instance_override:
+                            test._post_teardown = previous_override
+                        else:
+                            delattr(test, "_post_teardown")
+
+                test._post_teardown = post_teardown_with_alias_check
 
             def _outcome(self, test):
                 runner.outcome_ids.append(test.id())
@@ -527,7 +709,53 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
 
         return Result
 
+    def _checkpoint_body(self, conn, reference, light_plan, light_reference, record_key):
+        rec, alias, previous_test = (record_key[key] for key in ("record", "alias", "previous_test"))
+        databases, checked_aliases, trigger = (record_key[key] for key in ("databases", "checked_aliases", "trigger"))
+        if reference is None:
+            rec["reason"] = "CP-0 requirements not met" if alias == "default" else "alias CP-0 reference is not established"
+            return
+        if trigger:
+            self._record_full_comparison(
+                rec, state.capture(conn=conn), databases, trigger=trigger,
+                reference=reference, checked_aliases=checked_aliases,
+                attributed_test=(
+                    rec.get("test")
+                    if record_key.get("annotate_test", True)
+                    else None
+                ),
+            )
+            return
+        light = state.capture_light(light_plan, conn=conn)
+        light_violations = state.compare_light(light_reference, light)
+        sequence_summary = {
+            "performed": ["Q1", "Q2", "Q3", "Q4"],
+            "sequences_observed": light["sequence"]["sequences_observed"],
+            "not_established": ["Q3 %s: %s" % (f["status"], f["sequence"]) for f in light["sequence"]["findings"]],
+        }
+        sequence_summary["not_established"].extend(
+            "database alias %s is not observed by the isolation instrument" % observed_alias
+            for observed_alias in (databases or ())
+            if observed_alias not in checked_aliases
+        )
+        rec.update(capture="light", trigger="light", light_capture=light, sequence_check_summary=sequence_summary)
+        if alias == "default":
+            rec["light_check"] = sequence_summary
+        if not light_violations:
+            rec["established"] = True
+            return
+        label = "" if alias == "default" else "alias "
+        rec.update(capture="full", trigger="mismatch", light_mismatches=light_violations, attributed_to=previous_test,
+                   reason="%sCP-A' mismatch after previous test %s" % (label, previous_test or "none"))
+        self._record_full_comparison(
+            rec, state.capture(conn=conn), databases, trigger="mismatch",
+            reference=reference, checked_aliases=checked_aliases,
+            attributed_test=rec.get("test") if record_key.get("annotate_test", True) else None,
+        )
+
     def checkpoint_a(self, test):
+        from django.db import connections
+
         rec = {
             "checkpoint": "CP-A",
             "test": test.id(),
@@ -540,82 +768,58 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 "sequences_observed": 0,
                 "not_established": [],
             },
+            "post_teardown_aliases_expected": [],
         }
         started = time.perf_counter()
         previous_test = self.started_ids[-1] if self.started_ids else None
         try:
             access, databases = database_access(test)
+            due = due_aliases(self.extra_aliases, databases)
+            checked_aliases = ("default", *due)
             rec.update(database_access=access, effective_databases=databases)
+            rec["post_teardown_aliases_expected"] = due if access != "forbidden" else []
             if access == "forbidden":
-                rec.update(applicable=False, established=None,
-                           capture="none", trigger="not-applicable",
-                           reason="not applicable: database access forbidden by the framework for this test (effective databases %s)" % databases)
-                rec["sequence_check_summary"]["not_established"].append(
-                    "default database access is forbidden for this test"
+                rec.update(
+                    applicable=False, established=None, capture="none",
+                    trigger="not-applicable",
+                    reason="not applicable: database access forbidden by the framework for this test (effective databases %s)" % databases,
                 )
+                rec["sequence_check_summary"]["not_established"].append("default database access is forbidden for this test")
             elif self.reference is None:
                 rec["reason"] = "CP-0 requirements not met"
-                rec["sequence_check_summary"]["not_established"].append(
-                    "CP-0 requirements were not met; CP-A sequence checks did not run"
-                )
+                rec["sequence_check_summary"]["not_established"].append("CP-0 requirements were not met; CP-A sequence checks did not run")
             else:
                 trigger = self._full_capture_trigger(test)
-                if trigger:
-                    rec.update(capture="full", trigger=trigger)
-                    captured = state.capture()
-                    self._record_full_comparison(
-                        rec, captured, databases, trigger=trigger
-                    )
-                else:
-                    light = state.capture_light(self.light_plan)
-                    light_violations = state.compare_light(
-                        self.light_reference, light
-                    )
-                    light_sequence_summary = {
-                        "performed": ["Q1", "Q2", "Q3", "Q4"],
-                        "sequences_observed": light["sequence"][
-                            "sequences_observed"
-                        ],
-                        "not_established": [
-                            "Q3 %s: %s"
-                            % (finding["status"], finding["sequence"])
-                            for finding in light["sequence"]["findings"]
-                        ],
-                    }
-                    rec.update(
-                        capture="light",
-                        trigger="light",
-                        light_capture=light,
-                        light_check=light_sequence_summary,
-                        sequence_check_summary=light_sequence_summary,
-                    )
-                    if light_violations:
-                        rec.update(
-                            capture="full",
-                            trigger="mismatch",
-                            light_mismatches=light_violations,
-                            attributed_to=previous_test,
-                            reason=(
-                                "CP-A' mismatch after previous test %s"
-                                % (previous_test or "none")
-                            ),
-                        )
-                        captured = state.capture()
-                        self._record_full_comparison(
-                            rec, captured, databases, trigger="mismatch"
-                        )
-                        rec["established"] = False
-                    else:
-                        rec["established"] = True
+                rec.update(capture="full" if trigger else "light", trigger=trigger or "light")
+                self._checkpoint_body(
+                    connections["default"], self.reference, self.light_plan,
+                    self.light_reference,
+                    {
+                        "record": rec, "alias": "default",
+                        "previous_test": previous_test, "databases": databases,
+                        "trigger": trigger, "checked_aliases": checked_aliases,
+                    },
+                )
+            if due:
+                alias_trigger = trigger if access != "forbidden" and self.reference is not None else None
+                if rec.get("trigger") == "mismatch":
+                    alias_trigger = "mismatch"
+                rec["alias_checks"] = {
+                    alias: self._alias_checkpoint(
+                        alias, test, previous_test, databases, alias_trigger,
+                        checked_aliases,
+                    ) for alias in due
+                }
+                default_established = access == "forbidden" or rec.get("established") is True
+                aliases_established = all(check.get("established") is True for check in rec["alias_checks"].values())
+                rec["established"] = default_established and aliases_established
+                rec["applicable"] = True
+                if not aliases_established:
+                    rec.setdefault("reason", "one or more due database aliases were not established")
         except Exception as exc:
-            rec.update(
-                established=False,
-                reason="check error: %s: %s" % (type(exc).__name__, exc),
-            )
+            rec.update(established=False, reason="check error: %s: %s" % (type(exc).__name__, exc))
             rec["sequence_check_summary"]["performed"] = ["capture attempted"]
-            rec["sequence_check_summary"]["not_established"].append(
-                "sequence check error: %s: %s" % (type(exc).__name__, exc)
-            )
+            rec["sequence_check_summary"]["not_established"].append("sequence check error: %s: %s" % (type(exc).__name__, exc))
             rec["attributed_to"] = previous_test
         finally:
             rec["t_check"] = time.perf_counter() - started
@@ -624,20 +828,119 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 timing["t_check"] = rec["t_check"]
         if rec.get("established") is not True and rec.get("applicable") is not False:
             rec.setdefault("attributed_to", previous_test)
-            rec.setdefault(
-                "reason",
-                "CP-A' not established after previous test %s"
-                % (previous_test or "none"),
-            )
-            self.checkpoint_stop_id = (
-                self.started_ids[-1] if self.started_ids else None
-            )
+            rec.setdefault("reason", "CP-A' not established after previous test %s" % (previous_test or "none"))
+            self.checkpoint_stop_id = self.started_ids[-1] if self.started_ids else None
             self.checkpoint_failure_test = previous_test
         self.checkpoints.append(rec)
         self._emit(rec)
         label = "NOT APPLICABLE" if rec.get("applicable") is False else ("ESTABLISHED" if rec["established"] else "NOT ESTABLISHED")
         _runner_print("ISOLATION CP-A %s %s" % (label, test.id()), file=sys.stderr, flush=True)
         return rec.get("applicable") is False or rec.get("established") is True
+
+    def checkpoint_a_after(self, test, *, teardown_error=None):
+        access, databases = database_access(test)
+        due = due_aliases(self.extra_aliases, databases)
+        if access == "forbidden" or not due:
+            return None
+
+        started = time.perf_counter()
+        test_id = test.id()
+        checked_aliases = ("default", *due)
+        rec = {
+            "checkpoint": "CP-A'",
+            "test": test_id,
+            "after": "post-teardown",
+            "trigger": "post-teardown",
+            "effective_databases": databases,
+            "observed_aliases": self.observed_aliases,
+            "established": False,
+            "teardown_completed": teardown_error is None,
+        }
+        if teardown_error is not None:
+            rec["post_teardown_error_type"] = type(teardown_error).__name__
+        try:
+            rec["alias_checks"] = {
+                alias: self._alias_checkpoint(
+                    alias, test, test_id, databases, None, checked_aliases
+                )
+                for alias in due
+            }
+            rec["established"] = all(check.get("established") is True for check in rec["alias_checks"].values())
+            if not rec["established"]:
+                rec["attributed_to"] = test_id
+                rec["reason"] = (
+                    "post-test alias state differs from CP-0; attributed to the declaring test"
+                )
+                self.checkpoint_stop_id = test_id
+                self.checkpoint_failure_test = test_id
+        except Exception as exc:
+            rec["reason"] = "post-test alias check error: %s: %s" % (
+                type(exc).__name__,
+                exc,
+            )
+            rec["attributed_to"] = test_id
+            self.checkpoint_stop_id = test_id
+            self.checkpoint_failure_test = test_id
+        finally:
+            elapsed = time.perf_counter() - started
+            rec["t_check"] = elapsed
+            timing = self.timing_by_id.get(test_id)
+            if timing is not None:
+                timing["t_check"] = (timing.get("t_check") or 0.0) + elapsed
+                timing["_stop_at"] = time.perf_counter()
+        self.checkpoints.append(rec)
+        self._emit(rec)
+        return rec
+
+    def _alias_checkpoint(
+        self, alias, test, previous_test, databases, trigger, checked_aliases
+    ):
+        from django.db import connections
+
+        rec = {
+            "test": test.id(),
+            "established": False,
+            "capture": "none",
+            "trigger": trigger or "light",
+            "sequence_check_summary": {
+                "performed": [],
+                "sequences_observed": 0,
+                "not_established": [],
+            },
+        }
+        reference_data = self.alias_refs.get(alias)
+        if reference_data is None:
+            rec["reason"] = "alias CP-0 reference is not established"
+            return rec
+
+        reference, light_plan, light_reference = reference_data
+        conn = connections[alias]
+        try:
+            self._checkpoint_body(
+                conn,
+                reference,
+                light_plan,
+                light_reference,
+                {
+                    "record": rec,
+                    "alias": alias,
+                    "previous_test": previous_test,
+                    "databases": databases,
+                    "trigger": trigger,
+                    "checked_aliases": checked_aliases,
+                },
+            )
+        except Exception as exc:
+            rec.update(
+                established=False,
+                reason="alias check error: %s: %s" % (type(exc).__name__, exc),
+            )
+            rec["sequence_check_summary"]["performed"] = ["capture attempted"]
+            rec["sequence_check_summary"]["not_established"].append(
+                "alias sequence check error: %s: %s"
+                % (type(exc).__name__, exc)
+            )
+        return rec
 
     def _full_capture_trigger(self, test):
         if os.environ.get("VERIFICATION_ISOLATION_PER_TEST") == "1":
@@ -653,21 +956,36 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             return "declared"
         return None
 
-    def _record_full_comparison(self, rec, captured, databases, *, trigger):
+    def _record_full_comparison(
+        self,
+        rec,
+        captured,
+        databases,
+        *,
+        trigger,
+        reference=None,
+        checked_aliases=("default",),
+        attributed_test=None,
+    ):
         rec.update(capture="full", trigger=trigger)
         rec["full_capture"] = captured
         rec["full_capture_digest"] = state.digest(captured)
         data, protection = state.compare(
-            self.reference, captured, self.ignore_tables
+            self.reference if reference is None else reference,
+            captured,
+            self.ignore_tables,
         )
         data = [
-            "%s — observed at CP-A for %s" % (violation, rec["test"])
-            if violation.startswith("REQ-S1 ")
+            "%s — observed at CP-A for %s" % (violation, attributed_test)
+            if attributed_test and violation.startswith("REQ-S1 ")
             else violation
             for violation in data
         ]
         sequence_summary = sequence_check_summary(
-            captured, databases, self.ignore_tables
+            captured,
+            databases,
+            self.ignore_tables,
+            checked_aliases=checked_aliases,
         )
         rec.update(
             data_violations=data,
@@ -679,6 +997,33 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 and not sequence_summary["not_established"]
             ),
         )
+
+    def _full_alias_check(
+        self, alias, reference, databases, checked_aliases, *,
+        include_reference_digest=False
+    ):
+        from django.db import connections
+
+        result = {}
+        self._checkpoint_body(
+            connections[alias],
+            reference,
+            None,
+            None,
+            {
+                "record": result,
+                "alias": alias,
+                "previous_test": None,
+                "databases": databases,
+                "trigger": "full",
+                "checked_aliases": checked_aliases,
+                "annotate_test": False,
+            },
+        )
+        result.pop("trigger", None)
+        if include_reference_digest:
+            result["reference_digest"] = state.digest(reference)
+        return result
 
     def _start_timing(self, test):
         now = time.perf_counter()
@@ -817,25 +1162,50 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 elif self.reference is None:
                     rec["reason"] = "CP-0 requirements not met"
                 else:
-                    captured = state.capture()
-                    rec["full_capture"] = captured
-                    rec["full_capture_digest"] = state.digest(captured)
-                    data, protection = state.compare(
-                        self.reference, captured, self.ignore_tables
+                    self._checkpoint_body(
+                        None,
+                        self.reference,
+                        None,
+                        None,
+                        {
+                            "record": rec,
+                            "alias": "default",
+                            "previous_test": test_id,
+                            "databases": None,
+                            "trigger": "failure",
+                            "checked_aliases": ("default",),
+                            "annotate_test": False,
+                        },
                     )
-                    sequence_summary = sequence_check_summary(
-                        captured, None, self.ignore_tables
-                    )
-                    rec.update(
-                        data_violations=data,
-                        protection_violations=protection,
-                        sequence_check_summary=sequence_summary,
-                        established=(
-                            not data
-                            and not protection
-                            and not sequence_summary["not_established"]
-                        ),
-                    )
+                    access, databases = database_access(test)
+                    aliases = [
+                        alias
+                        for alias in self.extra_aliases
+                        if alias in (databases or ())
+                    ]
+                    if aliases:
+                        rec["alias_checks"] = {}
+                    for alias in aliases:
+                        alias_reference = self.alias_refs.get(alias)
+                        alias_rec = {
+                            "capture": "full",
+                            "established": False,
+                        }
+                        if alias_reference is None:
+                            alias_rec["reason"] = (
+                                "alias CP-0 reference is not established"
+                            )
+                        else:
+                            alias_ref = alias_reference[0]
+                            alias_rec.update(
+                                self._full_alias_check(
+                                    alias,
+                                    alias_ref,
+                                    databases,
+                                    self.observed_aliases,
+                                )
+                            )
+                        rec["alias_checks"][alias] = alias_rec
             except Exception as exc:
                 rec["reason"] = "check error: %s: %s" % (
                     type(exc).__name__,
@@ -851,32 +1221,68 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             "capture": "full",
             "trigger": "run-complete",
             "established": False,
+            "observed_aliases": self.observed_aliases,
+            "reference_digests": {},
+            "alias_checks": {},
         }
+        default_established = False
         try:
             if self.reference is None:
                 rec["reason"] = "CP-0 requirements not met"
             else:
-                captured = state.capture()
-                rec["full_capture"] = captured
-                rec["full_capture_digest"] = state.digest(captured)
-                data, protection = state.compare(
-                    self.reference, captured, self.ignore_tables
+                self._checkpoint_body(
+                    None,
+                    self.reference,
+                    None,
+                    None,
+                    {
+                        "record": rec,
+                        "alias": "default",
+                        "previous_test": None,
+                        "databases": None,
+                        "trigger": "run-complete",
+                        "checked_aliases": ("default",),
+                        "annotate_test": False,
+                    },
                 )
-                sequence_summary = sequence_check_summary(
-                    captured, None, self.ignore_tables
+                rec["reference_digests"]["default"] = state.digest(
+                    self.reference
                 )
-                rec.update(
-                    data_violations=data,
-                    protection_violations=protection,
-                    sequence_check_summary=sequence_summary,
-                    established=(
-                        not data
-                        and not protection
-                        and not sequence_summary["not_established"]
-                    ),
-                )
+                default_established = rec["established"]
         except Exception as exc:
             rec["reason"] = "check error: %s: %s" % (type(exc).__name__, exc)
+        alias_established = []
+        for alias in self.extra_aliases:
+            reference_data = self.alias_refs.get(alias)
+            alias_rec = {
+                "capture": "full",
+                "established": False,
+            }
+            if reference_data is None:
+                alias_rec["reason"] = "alias CP-0 reference is not established"
+            else:
+                reference = reference_data[0]
+                try:
+                    alias_rec.update(
+                        self._full_alias_check(
+                            alias,
+                            reference,
+                            None,
+                            self.observed_aliases,
+                            include_reference_digest=True,
+                        )
+                    )
+                    rec["reference_digests"][alias] = alias_rec["reference_digest"]
+                except Exception as exc:
+                    alias_rec["reason"] = "check error: %s: %s" % (
+                        type(exc).__name__,
+                        exc,
+                    )
+            alias_established.append(alias_rec["established"])
+            rec["alias_checks"][alias] = alias_rec
+        rec["established"] = default_established and all(alias_established)
+        if not rec["established"]:
+            rec["attributed_to"] = "CP-Z"
         self.checkpoints.append(rec)
         self._emit(rec)
         _runner_print(
@@ -937,31 +1343,38 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
     def _summary(self, result):
         verdict, reasons = isolation_verdict(self.cp0_met, self.suite_ids, self.started_ids,
                                              self.outcome_ids, self.checkpoints, self.emit_errors)
-        cpa = [c for c in self.checkpoints if c.get("checkpoint") == "CP-A"]
-        cpz = [c for c in self.checkpoints if c.get("checkpoint") == "CP-Z"]
-        cpf = [c for c in self.checkpoints if c.get("checkpoint") == "CP-F"]
-        ordinary = None
-        if result is not None:
-            ordinary = {"tests_run": result.testsRun, "errors": len(result.errors), "failures": len(result.failures),
-                        "skipped": len(result.skipped), "was_successful": result.wasSuccessful()}
+        checkpoints = {}
+        for record in self.checkpoints:
+            checkpoints.setdefault(record.get("checkpoint"), []).append(record)
+        cpa, post_alias = checkpoints.get("CP-A", []), checkpoints.get("CP-A'", [])
+        cpz, cpf = checkpoints.get("CP-Z", []), checkpoints.get("CP-F", [])
+        ordinary = None if result is None else {
+            "tests_run": result.testsRun, "errors": len(result.errors),
+            "failures": len(result.failures), "skipped": len(result.skipped),
+            "was_successful": result.wasSuccessful(),
+        }
         timing_summary = self._timing_summary()
-        summary = {"checkpoint": "SUMMARY", "isolation_verdict": verdict, "reasons": reasons,
-                   "cp0_requirements_met": self.cp0_met, "suite_tests": len(self.suite_ids),
-                   "checkpoints": len(cpa),
-                   "established": sum(1 for c in cpa if c.get("established") is True),
-                   "applicable": sum(1 for c in cpa if c.get("applicable") is not False),
-                   "not_applicable": sum(1 for c in cpa if c.get("applicable") is False),
-                   "cpz_established": len(cpz) == 1 and cpz[0].get("established") is True,
-                   "cpf_checkpoints": len(cpf),
-                   "timing": timing_summary,
-                   "ordinary_test_verdict": ordinary,
-                   "evidence_claim": "equality at compared properties only; not complete database-state equivalence; "
-                                     "sequence and identity positions and primary keys of framework rows remain excluded from equality; "
-                                     "table-owned sequence configuration (REQ-S0) and next-id invariants (REQ-S1) "
-                                     "are checked at reset boundaries, CP-0, CP-A', CP-F and CP-Z. "
-                                     "The backend checks before teardown flushing and after seed restoration, and checks "
-                                     "the result of the by-name setup reset. The isolation instrument checks at CP-0, CP-A', "
-                                     "CP-F and CP-Z."}
+        summary = {
+            "checkpoint": "SUMMARY", "isolation_verdict": verdict, "reasons": reasons,
+            "cp0_requirements_met": self.cp0_met, "suite_tests": len(self.suite_ids),
+            "checkpoints": len(cpa),
+            "established": sum(c.get("established") is True for c in cpa),
+            "applicable": sum(c.get("applicable") is not False for c in cpa),
+            "not_applicable": sum(c.get("applicable") is False for c in cpa),
+            "cpz_established": len(cpz) == 1 and cpz[0].get("established") is True,
+            "cpf_checkpoints": len(cpf), "observed_aliases": self.observed_aliases,
+            "alias_checkpoints": sum(bool(c.get("alias_checks")) for c in cpa),
+            "alias_post_checkpoints": len(post_alias),
+            "alias_post_checkpoints_established": sum(c.get("established") is True for c in post_alias),
+            "timing": timing_summary, "ordinary_test_verdict": ordinary,
+            "evidence_claim": "equality at compared properties only; not complete database-state equivalence; "
+                              "sequence and identity positions and primary keys of framework rows remain excluded from equality; "
+                              "table-owned sequence configuration (REQ-S0) and next-id invariants (REQ-S1) "
+                              "are checked at reset boundaries, CP-0, CP-A', CP-F and CP-Z. "
+                              "The backend checks before teardown flushing and after seed restoration, and checks "
+                              "the result of the by-name setup reset. The isolation instrument checks at CP-0, CP-A', "
+                              "CP-F and CP-Z.",
+        }
         candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
         candidate_binding_valid = isinstance(candidate_binding, str) and re.fullmatch(
             r"[0-9a-f]{64}", candidate_binding
@@ -1020,7 +1433,6 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 tests_executed=len(executed_ids),
                 tests_not_reached=len(not_reached),
                 executed_matches_plan=match,
-                candidate_binding=summary["candidate_binding"],
                 failing_test=(
                     self.checkpoint_failure_test or stopping_test
                 ),

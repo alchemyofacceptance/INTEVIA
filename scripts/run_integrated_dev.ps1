@@ -336,6 +336,7 @@ $environmentNames = @(
     "VERIFICATION_RUN_NONCE",
     "VERIFICATION_DB_RECEIPT",
     "VERIFICATION_ISOLATION_JSON",
+    "VERIFICATION_CLONE_PROBE_DATABASE_NAME",
     "VERIFICATION_EXPECTED_CORE_HEAD",
     "VERIFICATION_STEP",
     "VERIFICATION_TEMPLATE_MODE",
@@ -352,6 +353,7 @@ $environmentNames = @(
     "INTEVIA_EVIDENCE_ROOT_PATH",
     "INTEVIA_FRESH_AUTHORITY_FILE",
     "INTEVIA_FRESH_AUTHORITY_SHA256",
+    "VERIFICATION_TEST_DATABASE_NAME_MAX_LENGTH",
     "PYTHONPATH",
     "PYTHONUNBUFFERED"
 ) + @(Get-ChildItem Env: | Where-Object { $_.Name -like "VERIFICATION_*" } | ForEach-Object { $_.Name })
@@ -391,7 +393,7 @@ function Protect-OutputText {
 }
 
 function Get-RunDatabaseReconciliation {
-    # P1-F5: ^test_intevia_living_organism_tt1_witness_[0-9a-f]+$ is the only naming exemption.
+    # P1-F5: only the bounded launcher probe and fixed-length TT1 test witness are exempt.
     param(
         [Parameter(Mandatory = $true)][string]$ReceiptPath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$LogLines,
@@ -445,7 +447,7 @@ function Get-RunDatabaseReconciliation {
     $destroyedRecords = @($receiptRecords | Where-Object {
         $_.event -eq "destroyed" -and $_.run_nonce -eq $RunNonce
     })
-    $testCreatedWitnessPattern = '^test_intevia_living_organism_tt1_witness_[0-9a-f]+$'
+    $testCreatedWitnessPattern = '^test_intevia_living_organism_(?:w_[0-9a-f]{12}|tt1_witness_[0-9a-f]{12})$'
     $regularCreatedRecords = @($createdRecords | Where-Object {
         ([string]$_.name) -ceq $PrimaryDatabase -or
         ([string]$_.name) -cnotmatch $testCreatedWitnessPattern
@@ -631,7 +633,7 @@ function Invoke-PythonAndLog {
             $lineText = Protect-OutputText -Text ([string]$_)
             $capturedLines.Add($lineText)
             Write-Host $lineText
-            if ($Label -ceq "Clone template preflight" -and
+            if ($Label -cin @("Clone template preflight", "Explicit-label development run") -and
                 $lineText -match "Destroying test database for alias") {
                 $script:teardownLines++
             }
@@ -762,6 +764,9 @@ try {
     if ($runSuffix -cnotmatch ("^{0}$" -f [regex]::Escape([string]$AttemptNumber))) {
         throw "R9: run suffix must match the attempt number"
     }
+    $attemptDatabase = Assert-IntegratedTestDatabaseName `
+        -Name "$($routes.DevelopmentDatabasePrefix)$runSuffix" `
+        -Purpose "development attempt"
     Write-Output "STATE_FILE=$($authorizedState.StateFile)"
     Write-Output "STATE_ID=$($authorizedState.StateId)"
     Write-Output "STATE_SHA256=$($authorizedState.StateSha256)"
@@ -770,7 +775,7 @@ try {
     Write-Output "EVIDENCE_ROOT=$($authorizedState.EvidenceRoot)"
     Write-Output "DATABASE_TAG=$($authorizedState.DatabaseTag)"
     Write-Output "ME_DEV_ROOT=$($routes.DevelopmentRoot)"
-    Write-Output "ME_DATABASE=$($routes.DevelopmentDatabasePrefix)$runSuffix"
+    Write-Output "ME_DATABASE=$attemptDatabase"
 
     $missingCredentials = [System.Collections.Generic.List[string]]::new()
     $presentEnvironmentNames = @(Get-ChildItem Env: | ForEach-Object { $_.Name })
@@ -817,7 +822,9 @@ try {
     Write-Output "VERIFICATION_KIND=DEVELOPMENT"
     if ($StallGuardSelfTest) {
         $selfCheckLogPath = Join-Path $stageRoot ("STALL_GUARD_SELF_CHECK_{0}.log" -f $runSuffix)
-        $selfCheckDatabase = "$($routes.DevelopmentDatabasePrefix)selfcheck_1"
+        $selfCheckDatabase = Assert-IntegratedTestDatabaseName `
+            -Name "$($routes.DevelopmentDatabasePrefix)sc1" `
+            -Purpose "stall-guard self-check"
         if (Test-Path -LiteralPath $selfCheckLogPath) {
             $priorSelfCheckLines = @(Get-Content -LiteralPath $selfCheckLogPath)
             if ($priorSelfCheckLines.Count -ne 3 -or
@@ -961,8 +968,7 @@ try {
     if (Test-Path -LiteralPath $runDirectory) {
         throw "development attempt directory already exists; refusing reuse"
     }
-    $attemptDatabase = "$($routes.DevelopmentDatabasePrefix)$runSuffix"
-    if ($attemptDatabase.Length -gt 63 -or $attemptDatabase -in @("intevia", "intevia_dev")) {
+    if ($attemptDatabase -in @("intevia", "intevia_dev")) {
         throw "protected or overlength test database name refused"
     }
 
@@ -1009,6 +1015,9 @@ try {
     $env:INTEVIA_POSTGRES_TEST_DB = $attemptDatabase
     $env:INTEVIA_S015_TEST_ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
     $env:VERIFICATION_RUN_NONCE = $runNonce
+    $env:VERIFICATION_TEST_DATABASE_NAME_MAX_LENGTH = [string]$routes.DatabaseNameMaxLength
+    $env:VERIFICATION_CLONE_PROBE_DATABASE_NAME = Get-IntegratedCloneProbeDatabaseName `
+        -RunNonce $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
     $env:VERIFICATION_EXPECTED_CORE_HEAD = "0047_sek1_platform_rule_statement_start"
@@ -1224,7 +1233,10 @@ from verification.ownership import read_receipts, write_receipt
 
 connection = connections["default"]
 nonce = os.environ["VERIFICATION_RUN_NONCE"]
-probe_name = "test_intevia_living_organism_tt1_witness_" + nonce[:12]
+probe_name = os.environ["VERIFICATION_CLONE_PROBE_DATABASE_NAME"]
+name_limit = int(os.environ["VERIFICATION_TEST_DATABASE_NAME_MAX_LENGTH"])
+if len(probe_name.encode("utf-8")) > name_limit:
+    raise RuntimeError("clone preflight database name exceeds the primary-name bound")
 template_started = time.perf_counter()
 template_receipt, rebuilt = prepare_template(
     connection,

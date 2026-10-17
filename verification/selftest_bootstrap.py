@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from verification import bootstrap as bootstrap_mod
+from verification import route as route_mod
 from verification.recording import ParallelExecutionRefused, RecordingResult, RecordingRunnerMixin
 
 
@@ -154,6 +155,23 @@ class BootstrapSurfaceTests(unittest.TestCase):
 
     def _gate(self, run_root):
         return bootstrap_mod.gate(run_root)
+
+    def test_ci_environment_allowlist_is_exact_and_excludes_github_wildcards(self):
+        expected = ("CI", "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_SHA",
+                    "GITHUB_REF", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT",
+                    "GITHUB_WORKFLOW", "RUNNER_OS")
+        self.assertEqual(bootstrap_mod.ROUTE_ENVIRONMENT_ALLOWLIST, expected)
+        environment = {name: "allowed" for name in expected}
+        environment.update(GITHUB_TOKEN="must-not-pass", GITHUB_ENV="must-not-pass")
+        with mock.patch.dict(os.environ, environment, clear=True), \
+                mock.patch.object(bootstrap_mod.subprocess, "run") as run:
+            bootstrap_mod.launch_coordinator(
+                "snapshot", "checkout", "evidence", "run", "launch-token",
+                "a" * 40, "pycache", "dependencies", "site-packages",
+            )
+        passed = run.call_args.kwargs["env"]
+        self.assertEqual({name: passed[name] for name in expected}, {name: "allowed" for name in expected})
+        self.assertTrue({"GITHUB_TOKEN", "GITHUB_ENV"}.isdisjoint(passed))
 
     def test_clean_run_qualifies(self):
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:

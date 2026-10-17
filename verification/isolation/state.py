@@ -117,14 +117,16 @@ EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 OBSERVATION_KEYS = ("sequence_discipline",)
 
 
-def _rows(sql, params=None):
-    with connection.cursor() as cursor:
+def _rows(sql, params=None, conn=None):
+    active_connection = conn if conn is not None else connection
+    with active_connection.cursor() as cursor:
         cursor.execute(sql, params)
         return [tuple(r) for r in cursor.fetchall()]
 
 
-def _sequence_discipline_observations(row_counts):
+def _sequence_discipline_observations(row_counts, conn=None):
     """Capture sequence configuration and next-id state without consuming values."""
+    active_connection = conn if conn is not None else connection
     sequence_rows = _rows(
         """
         SELECT table_relation.relname, column_info.attname, sequence_relation.relname,
@@ -146,10 +148,11 @@ def _sequence_discipline_observations(row_counts):
           AND sequence_relation.relkind = 'S'
           AND table_relation.relkind IN ('r', 'p')
         ORDER BY 1, 2
-        """
+        """,
+        conn=active_connection,
     )
     observations = []
-    quote_name = connection.ops.quote_name
+    quote_name = active_connection.ops.quote_name
     for (
         table,
         column,
@@ -282,8 +285,13 @@ def _sequence_invariant_violation(observation):
 def expected_seed_rows():
     """Run 0003's own seed function against a stub that records what it would create."""
     recorded = []
+    write_aliases = []
 
     class _Manager:
+        def using(self, alias):
+            write_aliases.append(alias)
+            return self
+
         def get_or_create(self, **kwargs):
             defaults = kwargs.pop("defaults", {})
             recorded.append(tuple(sorted({**kwargs, **defaults}.items())))
@@ -292,27 +300,35 @@ def expected_seed_rows():
     class _Model:
         objects = _Manager()
 
+    class _Connection:
+        alias = "default"
+
+    class _SchemaEditor:
+        connection = _Connection()
+
     class _Apps:
-        def get_model(self, app_label, model_name):
+        def get_model(self, _app_label, _model_name):
             return _Model
 
     module = importlib.import_module("core.migrations.0003_seed_triad_roles")
-    module.create_triad_roles(_Apps(), None)
+    module.create_triad_roles(_Apps(), _SchemaEditor())
+    if write_aliases != ["default"] * 3:
+        raise RuntimeError("0003 seed stub did not route every write through its schema editor")
     return sorted(recorded)
 
 
-def capture():
+def capture(conn=None):
     s = {}
     s["triggers"] = _rows(
         """SELECT c.relname, t.tgname, t.tgenabled, t.tgtype, p.proname, md5(p.prosrc)
            FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_proc p ON p.oid = t.tgfoid
-           WHERE n.nspname = current_schema() AND NOT t.tgisinternal ORDER BY 1, 2""")
+           WHERE n.nspname = current_schema() AND NOT t.tgisinternal ORDER BY 1, 2""", conn=conn)
     s["constraints"] = _rows(
         """SELECT c.relname, co.conname, co.contype, co.convalidated, pg_get_constraintdef(co.oid)
            FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = current_schema() ORDER BY 1, 2""")
+           WHERE n.nspname = current_schema() ORDER BY 1, 2""", conn=conn)
     s["ownership_grants"] = _rows(
         """SELECT 'table', c.relname, pg_get_userbyid(c.relowner), coalesce(c.relacl::text, '')
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -321,31 +337,32 @@ def capture():
            SELECT 'function', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
                   pg_get_userbyid(p.proowner), coalesce(p.proacl::text, '')
            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname = current_schema() ORDER BY 1, 2""")
+           WHERE n.nspname = current_schema() ORDER BY 1, 2""", conn=conn)
     s["public_register_insert"] = _rows(
-        "SELECT has_table_privilege('public', 'public.s015_transaction_register', 'INSERT')")[0][0]
+        "SELECT has_table_privilege('public', 'public.s015_transaction_register', 'INSERT')", conn=conn)[0][0]
     s["functions"] = _rows(
         """SELECT p.proname, pg_get_function_identity_arguments(p.oid), md5(p.prosrc), p.prosecdef, p.provolatile
            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname = current_schema() ORDER BY 1, 2""")
+           WHERE n.nspname = current_schema() ORDER BY 1, 2""", conn=conn)
     tables = [r[0] for r in _rows(
         """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') ORDER BY 1""")]
+           WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') ORDER BY 1""", conn=conn)]
     counts = {}
-    with connection.cursor() as cursor:
+    active_connection = conn if conn is not None else connection
+    with active_connection.cursor() as cursor:
         for t in tables:
             cursor.execute('SELECT count(*) FROM "%s"' % t.replace('"', '""'))
             counts[t] = cursor.fetchone()[0]
     s["row_counts"] = counts
-    s["sequence_discipline"] = _sequence_discipline_observations(counts)
+    s["sequence_discipline"] = _sequence_discipline_observations(counts, conn=active_connection)
     s["core_role"] = sorted(
         tuple(sorted({"name": n, "description": d}.items()))
-        for n, d in _rows("SELECT name, description FROM core_role"))
-    s["content_types"] = _rows("SELECT app_label, model FROM django_content_type ORDER BY 1, 2")
+        for n, d in _rows("SELECT name, description FROM core_role", conn=conn))
+    s["content_types"] = _rows("SELECT app_label, model FROM django_content_type ORDER BY 1, 2", conn=conn)
     s["permissions"] = _rows(
         """SELECT ct.app_label, ct.model, p.codename FROM auth_permission p
-           JOIN django_content_type ct ON ct.id = p.content_type_id ORDER BY 1, 2, 3""")
-    s["migrations"] = _rows("SELECT app, name FROM django_migrations ORDER BY 1, 2")
+           JOIN django_content_type ct ON ct.id = p.content_type_id ORDER BY 1, 2, 3""", conn=conn)
+    s["migrations"] = _rows("SELECT app, name FROM django_migrations ORDER BY 1, 2", conn=conn)
     return s
 
 
@@ -412,8 +429,9 @@ SELECT
     }
 
 
-def capture_light(light_plan):
-    with connection.cursor() as cursor:
+def capture_light(light_plan, conn=None):
+    active_connection = conn if conn is not None else connection
+    with active_connection.cursor() as cursor:
         cursor.execute(light_plan["protection_sql"])
         protection = cursor.fetchone()
         cursor.execute(light_plan["row_count_sql"])
@@ -421,8 +439,8 @@ def capture_light(light_plan):
     nonempty_tables = [
         table for table, count in row_counts.items() if count > 0
     ]
-    sequence_report = connection.ops._sequence_discipline_report(nonempty_tables)
-    with connection.cursor() as cursor:
+    sequence_report = active_connection.ops._sequence_discipline_report(nonempty_tables)
+    with active_connection.cursor() as cursor:
         cursor.execute(light_plan["content_sql"])
         content = cursor.fetchone()
     return {

@@ -348,9 +348,21 @@ def gate(run_root):
     return {"qualifying": not refusals, "refusals": refusals, "checks": checks, "records": records}
 
 
+ROUTE_ENVIRONMENT_ALLOWLIST = tuple(
+    "CI GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_SHA GITHUB_REF "
+    "GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_WORKFLOW RUNNER_OS".split()
+)
+
+
 def launch_coordinator(snapshot, checkout, evidence_dir, run_id, launch_token, commit, pycache_prefix, validated_dependency_root, validated_site_packages, skip_mutations=False):
     entry = os.path.join(snapshot, "verification", "run.py")
-    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SystemRoot", "SYSTEMROOT", "LANG") or k.startswith(("INTEVIA_", "LC_", "SSL_CERT_"))}
+    env = {
+        key: value for key, value in os.environ.items()
+        if key in {"PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR",
+                   "SystemRoot", "SYSTEMROOT", "LANG"}
+        or key in ROUTE_ENVIRONMENT_ALLOWLIST
+        or key.startswith(("INTEVIA_", "LC_", "SSL_CERT_"))
+    }
     cmd = [sys.executable, "-I", "-S", "-u", "-X", "utf8", "-X", "pycache_prefix=" + pycache_prefix, entry, "--snapshot", snapshot, "--checkout", checkout, "--evidence-dir", evidence_dir, "--run-id", run_id, "--launch-token", launch_token, "--commit", commit, "--validated-dependency-root", validated_dependency_root, "--validated-site-packages", validated_site_packages]
     if skip_mutations:
         cmd.append("--skip-mutations")

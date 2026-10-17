@@ -18,11 +18,21 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from verification.route import PRIMARY_TEST_DATABASE_NAME_MAX
+
 LABEL_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 MAX_LABELS = 20
 _CONNECTION_GUARD_ACTIVE: ContextVar[bool] = ContextVar(
     "tu1_connection_guard_active", default=False
 )
+
+
+def _standalone_test_database_name(action: str, run_suffix: str) -> str:
+    digest = hashlib.sha256(f"{action}\0{run_suffix}".encode("utf-8")).hexdigest()[:10]
+    name = f"test_intevia_living_organism_tu1_{digest}"
+    if len(name) > PRIMARY_TEST_DATABASE_NAME_MAX:
+        raise RuntimeError("standalone test database name exceeds the primary-name bound")
+    return name
 
 
 @contextmanager
@@ -54,8 +64,8 @@ def _standalone_action_environment(root: Path, action: str):
             "DJANGO_SETTINGS_MODULE": "intevia.test_settings",
             "INTEVIA_S015_TEST_ROUTE": "LIVING_ORGANISM_TEST_LIFECYCLE",
             "INTEVIA_DATABASE_ENGINE": "postgresql",
-            "INTEVIA_POSTGRES_TEST_DB": (
-                f"test_intevia_living_organism_tu1_{action}_{run_suffix}"
+            "INTEVIA_POSTGRES_TEST_DB": _standalone_test_database_name(
+                action, run_suffix
             ),
             "PYTHONPATH": os.pathsep.join(python_paths),
         }
@@ -75,8 +85,8 @@ def _setup_test_django(requirement: str = "R3/R4"):
     os.environ["INTEVIA_S015_TEST_ROUTE"] = "LIVING_ORGANISM_TEST_LIFECYCLE"
     os.environ["INTEVIA_DATABASE_ENGINE"] = "postgresql"
     if not os.environ.get("INTEVIA_POSTGRES_TEST_DB"):
-        os.environ["INTEVIA_POSTGRES_TEST_DB"] = (
-            "test_intevia_living_organism_tu1_plan_precheck"
+        os.environ["INTEVIA_POSTGRES_TEST_DB"] = _standalone_test_database_name(
+            "plan", "precheck"
         )
 
     import django
@@ -599,7 +609,9 @@ def self_test() -> int:
         "DJANGO_SETTINGS_MODULE": "intevia.test_settings",
         "INTEVIA_S015_TEST_ROUTE": "LIVING_ORGANISM_TEST_LIFECYCLE",
         "INTEVIA_DATABASE_ENGINE": "postgresql",
-        "INTEVIA_POSTGRES_TEST_DB": "test_intevia_living_organism_tu1_plan_selftest",
+        "INTEVIA_POSTGRES_TEST_DB": _standalone_test_database_name(
+            "plan", "selftest"
+        ),
     }
     original_environment = {
         name: os.environ.get(name) for name in test_environment

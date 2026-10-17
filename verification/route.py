@@ -27,7 +27,7 @@ Database safety (A1 C-A1-B3; RC-B2, RC-B3 and RC-O1 in v0.3):
             lock serialises route runs with each other and nothing else: it does not stop any other client of the server,
             and it is not an ownership check. Prerequisite: the role can connect to "postgres"; if it cannot, the run is
             refused (INCOMPLETE) rather than run unserialised.
-  Names     test databases are named test_intevia_living_organism_v<run id>_<step code>.
+  Names     test databases use a fixed token derived from the full run id and a step code.
   Creation  the runners create a database only if no database of that name exists, never clobber, and write a receipt
             with its oid after creation. The route's own fixture databases are registered BEFORE CREATE is issued and move
             through ATTEMPTED -> CREATE ISSUED -> CREATED -> CONFIRMED (oid known); an exception at any point leaves the
@@ -68,6 +68,9 @@ from verification.ownership import NONCE_ENV, RECEIPT_ENV, read_receipts  # noqa
 
 ROUTE = "LIVING_ORGANISM_TEST_LIFECYCLE"
 DB_PREFIX = "test_intevia_living_organism_"
+POSTGRES_IDENTIFIER_MAX = 63
+DERIVED_SUFFIX_MAX = 16
+PRIMARY_TEST_DATABASE_NAME_MAX = POSTGRES_IDENTIFIER_MAX - DERIVED_SUFFIX_MAX
 S015_PATTERN = "test_*.py"
 ISOLATION_RUNNER = "verification.isolation.runner.IsolationRunner"
 MUTATION_RUNNER = "verification.mutations.MutationRunner"
@@ -83,6 +86,8 @@ sys.path.insert(0, os.getcwd())
 import django
 django.setup()
 from django.test.runner import DiscoverRunner
+from django.db import connections
+from verification.route import collection_facts
 mode, out_path, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
 if mode == "label":
     suite = DiscoverRunner(verbosity=0).build_suite(rest)
@@ -90,14 +95,90 @@ else:
     suite = DiscoverRunner(verbosity=0, pattern=rest[0], top_level="tests").build_suite(["tests"])
 ids = sorted(t.id() for t in suite)
 failed = [i for i in ids if "loader._FailedTest" in i]
+facts = {}
+if mode == "discover":
+    aliases = {
+        alias: connection.creation._get_test_db_name()
+        for alias, connection in connections.items()
+    }
+    facts = collection_facts(os.path.join(os.getcwd(), "tests"), ids, aliases)
 with open(out_path, "x", encoding="utf-8") as f:
     json.dump({"mode": mode, "args": rest, "count": len(ids), "failed_loads": failed, "run_nonce": os.environ.get("VERIFICATION_RUN_NONCE"),
-               "digest": hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest(), "ids": ids}, f, indent=1)
+               "digest": hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest(), "ids": ids,
+               "facts": facts}, f, indent=1)
 """
 
 
 class RouteRefused(RuntimeError):
     pass
+
+
+def collection_facts(tests_root, test_ids, aliases):
+    """Check intended discovery scope using the framework-collected identifiers."""
+    files = sorted(name for name in os.listdir(tests_root) if name.endswith(".py"))
+    module_names = {
+        parts[1] if parts[0] == "tests" and len(parts) > 1 else parts[0]
+        for parts in (test_id.split(".") for test_id in test_ids)
+        if parts
+    }
+    modules_without_tests = [
+        name[:-3] for name in files
+        if name.startswith("test_") and name[:-3] not in module_names
+    ]
+    outside_discovery_pattern = [
+        name for name in files
+        if name != "__init__.py" and not name.startswith("test_")
+    ]
+    alias_name_overflow = [
+        {"alias": alias, "name_bytes": len(test_name.encode("utf-8"))}
+        for alias, test_name in sorted(aliases.items())
+        if len(test_name.encode("utf-8")) > POSTGRES_IDENTIFIER_MAX
+    ]
+    return {
+        "modules_without_tests": modules_without_tests,
+        "outside_discovery_pattern": outside_discovery_pattern,
+        "alias_name_overflow": alias_name_overflow,
+    }
+
+
+def blocking_collection_facts(facts):
+    return {
+        "G2 modules_without_tests": facts.get("modules_without_tests"),
+        "G4 alias_name_overflow": facts.get("alias_name_overflow"),
+    }
+
+
+def load_permitted_skips():
+    path = os.path.join(ROOT, "verification", "permitted_skips.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            policy = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RouteRefused("R9: permitted-skips policy unavailable or invalid: %s" % exc)
+    if (
+        not isinstance(policy, dict)
+        or set(policy) != {"version", "entries"}
+        or policy.get("version") != 1
+        or not isinstance(policy.get("entries"), list)
+    ):
+        raise RouteRefused("R9: permitted-skips policy has an invalid schema")
+    entries = []
+    seen = set()
+    for entry in policy["entries"]:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"id", "condition", "reason"}
+            or not isinstance(entry["id"], str)
+            or re.fullmatch(r"tests\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){2,}", entry["id"]) is None
+            or entry["condition"] not in ("always", "fresh-mode")
+            or not isinstance(entry["reason"], str)
+            or not entry["reason"].strip()
+            or entry["id"] in seen
+        ):
+            raise RouteRefused("R9: permitted-skips policy contains an invalid entry")
+        seen.add(entry["id"])
+        entries.append(entry)
+    return entries
 
 
 def now():
@@ -201,6 +282,7 @@ def _child_python_env(**extra):
 
 class Route:
     def __init__(self, evidence_dir, run_id):
+        self.permitted_skips = load_permitted_skips()
         self.dir = os.path.abspath(evidence_dir)
         parent = os.path.dirname(self.dir)
         os.makedirs(parent, exist_ok=True)
@@ -209,6 +291,7 @@ class Route:
         except FileExistsError:
             raise RouteRefused("evidence directory already exists: %s (nothing was written)" % self.dir)
         self.run_id = run_id
+        self.run_token = "g" + hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:10]
         self.nonce = uuid.uuid4().hex
         self.steps = []
         self.attempted = []   # [(step id, database name, receipts path)] - attempts, not ownership
@@ -519,41 +602,107 @@ class Route:
 
     def db_name(self, step):
         code = STEP_CODES.get(step, step.lower().replace("-", "_"))
-        name = "%sv%s_%s" % (DB_PREFIX, self.run_id, code)
-        if len(name) > 63:
-            raise RuntimeError("database name %r is longer than 63 characters" % name)
+        name = "%s%s_%s" % (DB_PREFIX, self.run_token, code)
+        if len(name) > PRIMARY_TEST_DATABASE_NAME_MAX:
+            raise RuntimeError(
+                "test database name exceeds the %d-character primary-name bound"
+                % PRIMARY_TEST_DATABASE_NAME_MAX
+            )
         return name
 
+    def database_name_pattern(self):
+        return DB_PREFIX + self.run_token + "\\_%"
+
+    def database_identity(self):
+        return {"run_id": self.run_id, "run_token": self.run_token}
+
     @staticmethod
-    def classify(out, code, expect_fail=False):
-        """(outcome, reason) from parsed results. INCOMPLETE unless every collected test has one lawful terminal outcome."""
-        if not out["reconciled"]:
-            bad = [k for k, v in out["reconciliation"].items() if not v["ok"]]
-            return "INCOMPLETE", "the log does not account for every collected test exactly once (%s)" % "; ".join(bad)
-        bodies = [t["result"] for t in out["tests"]]
+    def classify(
+        out, code, fail_fast=False, permitted_skips=(), mode="clone",
+        expect_fail=False, collected_ids=None, full_suite=False,
+        return_details=False,
+    ):
+        """Classify outcomes and retain the evidence used for the decision."""
+        collected_ids = list(collected_ids or [])
+        tests = out.get("tests", [])
+        policy = {entry["id"]: entry for entry in permitted_skips}
+        failures, skips, reported = [], [], []
+        for test in tests:
+            test_id = test["id"]
+            setup_errors = test.get("setup_errors")
+            teardown_errors = test.get("teardown_errors")
+            if test.get("status_events") or setup_errors or teardown_errors:
+                reported.append(test_id)
+            if test["result"] in ("FAIL", "ERROR", "SUBTEST FAILURES", "NOT REACHED (setup error)", "UNCLASSIFIED") or setup_errors or teardown_errors or test.get("subtest_failures") or test.get("subtest_errors"):
+                failures.append({
+                    "id": test_id,
+                    "result": test["result"],
+                    "exception": test.get("body_exception") or test.get("teardown_exception") or "",
+                })
+            events = int(test.get("skip_events", 0))
+            if events:
+                canonical = test_id if test_id.startswith("tests.") else "tests." + test_id
+                entry = policy.get(canonical)
+                permitted = entry is not None and (entry["condition"] == "always" or entry["condition"] == "fresh-mode" and mode == "fresh")
+                skips.append({
+                    "id": test_id, "events": events, "permitted": permitted,
+                    "reason": entry["reason"] if permitted else (
+                        "not listed in permitted_skips.json" if entry is None else
+                        "condition %s does not hold in %s mode" % (entry["condition"], mode)
+                    ),
+                })
+        not_reached = [test_id for test_id in collected_ids if test_id not in set(reported)]
+        details = {"failures": failures, "skips": skips, "not_reached": not_reached, "reported_ids": reported}
+        result = lambda verdict, reason: (
+            (verdict, reason, details) if return_details else (verdict, reason)
+        )
+        unpermitted_skips = [skip for skip in skips if not skip["permitted"]]
+        if unpermitted_skips:
+            return result("INCOMPLETE", "unpermitted skip(s): %s" % ", ".join(skip["id"] for skip in unpermitted_skips))
+        if full_suite:
+            present = {test_id if test_id.startswith("tests.") else "tests." + test_id for test_id in collected_ids}
+            stale = sorted(entry["id"] for entry in permitted_skips if entry["id"] not in present)
+            if stale:
+                return result("INCOMPLETE", "stale permitted-skip id(s) absent from full collection: %s" % ", ".join(stale))
+        bad = [key for key, value in out.get("reconciliation", {}).items() if not value["ok"]]
+        summary = out.get("summary", {})
+        valid_fail_fast_prefix = bool(
+            fail_fast and collected_ids and failures and code != 0 and reported
+            and reported == collected_ids[:len(reported)]
+            and set(bad) == {"reported tests equal collected identities"}
+            and summary.get("ran") == len(tests)
+            and (summary.get("final") or "").startswith("FAILED")
+        )
+        if not out.get("reconciled") and not valid_fail_fast_prefix:
+            return result("INCOMPLETE", "the log does not account for every collected test exactly once (%s)" % "; ".join(bad or ["parser did not reconcile the result"]))
         if expect_fail:
-            if bodies and all(b == "FAIL" for b in bodies) and out["summary"]["errors"] == 0 and code != 0:
-                return "PASS", ""
-            return "FAIL", "not every target failed by assertion (outcomes %s)" % sorted(set(bodies))
-        if any(b in ("FAIL", "ERROR", "SUBTEST FAILURES", "NOT REACHED (setup error)") for b in bodies) or \
-                any(t["teardown_errors"] or t["setup_errors"] or t["subtest_failures"] or t["subtest_errors"] for t in out["tests"]):
-            return "FAIL", "tests did not all pass (including setup, sub-test or teardown errors)"
-        if any(b != "ok" for b in bodies):
-            return "INCOMPLETE", "a collected test did not run to an ok outcome (%s)" % sorted(set(b for b in bodies if b != "ok"))
-        if code != 0 or not (out["summary"]["final"] or "").startswith("OK"):
-            return "INCOMPLETE", "the runner's verdict or exit status disagrees with the per-test outcomes"
-        return "PASS", ""
+            if tests and all(test["result"] == "FAIL" for test in tests) and summary["errors"] == 0 and not skips and code != 0:
+                return result("PASS", "")
+            return result("FAIL", "not every target failed by assertion (outcomes %s)" % sorted({test["result"] for test in tests}))
+        if failures:
+            suffix = "; %d test(s) not reached after fail-fast" % len(not_reached) if valid_fail_fast_prefix else ""
+            return result("FAIL", "tests did not all pass (including setup, sub-test or teardown errors)%s" % suffix)
+        if not_reached:
+            return result("INCOMPLETE", "tests were not reached: %s" % ", ".join(not_reached))
+        outcomes = {test["result"] for test in tests}
+        if outcomes - {"ok", "skipped"}:
+            return result("INCOMPLETE", "a collected test did not run to an ok or permitted-skip outcome (%s)" % sorted(outcomes - {"ok", "skipped"}))
+        if code != 0 or not (summary["final"] or "").startswith("OK"):
+            return result("INCOMPLETE", "the runner's verdict or exit status disagrees with the per-test outcomes")
+        return result("PASS", "")
 
     def step_offline(self):
         step = {"id": "OFFLINE", "scope": "verification.selftest_parser, verification.selftest_route, verification.selftest_recording, verification.selftest_bootstrap (no database)"}
         log = self.path("OFFLINE_test_output.log")
         env = _child_python_env(PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-        code = self.run_logged([sys.executable, "-m", "unittest", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
+        code = self.run_logged([sys.executable, "-m", "unittest", "-f", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
         out = parse_results.parse(read_text(log), None, log)
         with open(self.path("OFFLINE_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
         step["tests"] = {"ran": out["summary"]["ran"], "verdict": out["summary"]["final"], "exit": code, "reconciled": out["reconciled"]}
-        step["outcome"], reason = self.classify(out, code)
+        step["outcome"], reason = self.classify(
+            out, code, permitted_skips=self.permitted_skips
+        )
         if reason:
             step["reason"] = reason
         return step
@@ -572,6 +721,23 @@ class Route:
             return step
         collection = json.loads(read_text(collection_path))
         step["collection"] = {"count": collection["count"], "digest": collection["digest"], "failed_loads": collection["failed_loads"]}
+        facts = collection.get("facts", {})
+        if mode == "discover":
+            step["collection"]["facts"] = facts
+            failed_facts = blocking_collection_facts(facts)
+            missing_facts = [name for name, value in failed_facts.items() if value is None]
+            failed_facts = {
+                name: value for name, value in failed_facts.items() if value
+            }
+            if missing_facts or failed_facts:
+                step["outcome"] = "INCOMPLETE"
+                step["reason"] = "collection scope facts failed or were missing: %s" % (
+                    "; ".join(
+                        ["missing " + ", ".join(missing_facts)]
+                        + ["%s=%s" % (name, value) for name, value in failed_facts.items()]
+                    )
+                )
+                return step
         if collection.get("run_nonce") != self.nonce or collection["failed_loads"] or not collection["count"]:
             step["outcome"], step["reason"] = "INCOMPLETE", "collection not bound to this run, a module failed to load, or nothing was collected"
             return step
@@ -582,16 +748,41 @@ class Route:
         runner = MUTATION_RUNNER if mutation else ISOLATION_RUNNER
         log = self.path(sid + "_test_output.log")
         self.attempted.append((sid, db, env[RECEIPT_ENV]))
-        code = self.run_logged([sys.executable, "manage.py", "test", *labels, "--testrunner", runner, "--parallel", "1", "--noinput", "-v", "2"], log, env)
+        fail_fast = sid in ("SELF", "S015")
+        test_command = [
+            sys.executable, "manage.py", "test", *labels, "--testrunner", runner,
+            "--parallel", "1", "--noinput", "-v", "2", "--buffer",
+        ]
+        if fail_fast:
+            test_command.append("--failfast")
+        code = self.run_logged(test_command, log, env)
         out = parse_results.parse(read_text(log), collection["ids"], log)
         with open(self.path(sid + "_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
         step["tests"] = {"ran": out["summary"]["ran"], "verdict": out["summary"]["final"], "exit": code, "reconciled": out["reconciled"],
                          "by_outcome": out["test_totals_by_result"], "accounting_violations": out["accounting_violations"],
                          "not_ok": [{"id": t["id"], "result": t["result"], "exception": t["body_exception"]} for t in out["tests"] if t["result"] != "ok"]}
+        template_mode = env.get("VERIFICATION_TEMPLATE_MODE", "clone")
+        outcome, reason, details = self.classify(
+            out,
+            code,
+            fail_fast=fail_fast,
+            permitted_skips=self.permitted_skips,
+            mode=template_mode,
+            expect_fail=expect_fail,
+            collected_ids=collection["ids"],
+            full_suite=(sid == "S015"),
+            return_details=True,
+        )
+        step["tests"].update(
+            failures=details["failures"],
+            skips=details["skips"],
+            not_reached=details["not_reached"],
+            fail_fast=fail_fast,
+            template_mode=template_mode,
+        )
         if mutation:
             step["mutation_applied"] = ("VERIFICATION MUTATION APPLIED: %s" % mutation) in read_text(log)
-        outcome, reason = self.classify(out, code, expect_fail)
         if expect_fail and not step.get("mutation_applied") and outcome == "PASS":
             outcome, reason = "FAIL", "the mutation was not applied"
         if outcome != "INCOMPLETE" and isolation:
@@ -715,7 +906,7 @@ class Route:
         collide = self.create_fixture("OWN-COLLIDE")
         env = self.django_env(collide["name"], "OWN-COLLIDE")
         log = self.path("OWN-COLLIDE_test_output.log")
-        code = self.run_logged([sys.executable, "manage.py", "test", OWNERSHIP_PROBE_TEST, "--testrunner", ISOLATION_RUNNER, "--parallel", "1", "--noinput", "-v", "2"], log, env)
+        code = self.run_logged([sys.executable, "manage.py", "test", OWNERSHIP_PROBE_TEST, "--testrunner", ISOLATION_RUNNER, "--parallel", "1", "--noinput", "-v", "2", "--buffer"], log, env)
         receipts, problem = read_receipts(env[RECEIPT_ENV], self.nonce)
         parsed = parse_results.parse(read_text(log))
         check = {"runner_exit_nonzero": code != 0,
@@ -848,9 +1039,26 @@ class Route:
             rec["state"] = "UNRESOLVED - %s: %s" % (type(exc).__name__, exc)
         return rec
 
+    def cleanup_receipt_file(self, sid, primary_name, receipts_path):
+        receipts, problem = read_receipts(receipts_path, self.nonce)
+        if problem:
+            return [self.cleanup_one(sid, primary_name, receipts_path)]
+        names = [primary_name]
+        names.extend(
+            record["name"]
+            for record in receipts
+            if record.get("event") == "created" and record.get("name")
+        )
+        return [
+            self.cleanup_one(sid, name, receipts_path)
+            for name in dict.fromkeys(names)
+        ]
+
     def finalise_cleanup(self):
         """Runs whatever happened before it. Every attempted name keeps its own record; nothing is replaced by a summary."""
-        records = [self.cleanup_one(sid, name, receipts_path) for sid, name, receipts_path in self.attempted]
+        records = []
+        for sid, name, receipts_path in self.attempted:
+            records.extend(self.cleanup_receipt_file(sid, name, receipts_path))
         records += [self.cleanup_fixture(fx) for fx in self.lifecycle]
         if not records:
             return {"outcome": "NOTHING TO CLEAN", "names": []}
@@ -860,14 +1068,24 @@ class Route:
     # ------------------------------------------------------------------ orchestration
     def run(self, skip_mutations, launch_token=None, snapshot=None, checkout=None, attested_commit=None):
         self.candidate_root = os.path.abspath(checkout or ROOT)
-        summary = {"route": "S015 verification route v0.5", "run_id": self.run_id, "run_nonce": self.nonce, "started": now()}
-        self.say("S015 VERIFICATION ROUTE v0.5  run %s  %s" % (self.run_id, summary["started"]))
+        summary = {
+            "route": "S015 verification route v0.5",
+            **self.database_identity(),
+            "run_nonce": self.nonce,
+            "started": now(),
+        }
+        self.say(
+            "S015 VERIFICATION ROUTE v0.5  run %s  token %s  %s"
+            % (self.run_id, self.run_token, summary["started"])
+        )
         dependency = resolve_dependency_environment()
         summary["execution"] = {"launch_token": launch_token, "root": os.path.abspath(snapshot or ROOT), "entry": os.path.realpath(__file__), "mode": "snapshot-entry" if snapshot else "checkout-entry", "site_dirs": [dependency["site_packages"]]}
         planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
+            for step_code in STEP_CODES:
+                self.db_name(step_code)
             ident = self.identity(checkout=checkout)
             self.candidate_base_commit = attested_commit or ident.get("commit")
             if (
@@ -898,7 +1116,10 @@ class Route:
             summary["server"] = self.server(self.lock_conn)
             summary["advisory_lock"] = self.lock_record()
             self.say("server     : %s" % summary["server"]["version"].split(",")[0])
-            mine = [n for (n,) in self.lock_conn.execute("SELECT datname FROM pg_database WHERE datname LIKE %s", (DB_PREFIX + "v" + self.run_id + "\\_%",)).fetchall()]
+            mine = [n for (n,) in self.lock_conn.execute(
+                "SELECT datname FROM pg_database WHERE datname LIKE %s",
+                (self.database_name_pattern(),),
+            ).fetchall()]
             if mine:
                 raise RouteRefused("databases for this run id already exist and were left untouched: %s" % mine)
             plan = [("OFFLINE", self.step_offline),
@@ -970,7 +1191,7 @@ class Route:
                  "- **Environment:** Python %s, Django %s, psycopg %s, %s" % (env["python"], env.get("django"), env.get("psycopg"), env["platform"]),
                  "- **Server:** %s" % (summary.get("server", {}).get("version", "not reached")),
                  "- **CI:** %s" % (json.dumps(env["ci"]) if env["ci"] else "not a CI run"),
-                 "- **Run:** %s (nonce %s), %s to %s" % (summary["run_id"], summary["run_nonce"], summary["started"], summary["finished"]), ""]
+                 "- **Run:** %s (database token %s; nonce %s), %s to %s" % (summary["run_id"], summary["run_token"], summary["run_nonce"], summary["started"], summary["finished"]), ""]
         if ident.get("working_tree_changes"):
             lines += ["## Working-tree changes tested", ""] + ["- `%s` %s%s `%s`" % (c["status"], c["path"], (" (from %s)" % c["orig_path"]) if c.get("orig_path") else "", c.get("sha256") or c.get("kind")) for c in ident["working_tree_changes"]] + [""]
         lines += ["## Steps", "", "| Step | Outcome | Tests | Isolation | Note |", "|---|---|---|---|---|"]
@@ -980,6 +1201,51 @@ class Route:
             iso = s.get("isolation")
             iso_txt = ("%s; %d applicable, %d established; %d not applicable" % (iso["verdict"], iso["applicable"], iso["established"], iso["not_applicable"])) if iso and iso.get("verdict") else ""
             lines.append("| %s | %s | %s | %s | %s |" % (s["id"], s["outcome"], tests, iso_txt, s.get("reason", s.get("expectation", ""))))
+        outside_discovery_pattern = sorted({
+            name
+            for step in summary["steps"]
+            for name in step.get("collection", {}).get("facts", {}).get(
+                "outside_discovery_pattern", []
+            )
+        })
+        outside_note = ", ".join(
+            "`%s`" % name for name in outside_discovery_pattern
+        ) or "None."
+        lines += [
+            "",
+            "## Discovery note (informational; non-blocking)",
+            "",
+            "- **outside the discovery pattern; not collected:** %s" % outside_note,
+        ]
+        for title, key in (
+            ("Failures", "failures"),
+            ("Skips", "skips"),
+            ("Not reached", "not_reached"),
+        ):
+            lines += ["", "## %s" % title, ""]
+            entries = [
+                (step["id"], item)
+                for step in summary["steps"]
+                for item in (
+                    step.get("tests", {}).get(key, [])
+                    if isinstance(step.get("tests"), dict)
+                    else []
+                )
+            ]
+            if not entries:
+                lines.append("None.")
+            else:
+                for step_id, item in entries:
+                    if isinstance(item, dict):
+                        detail = item.get("result", "")
+                        if key == "skips":
+                            detail = "%s; %s" % (
+                                "permitted" if item.get("permitted") else "UNPERMITTED",
+                                item.get("reason", ""),
+                            )
+                        lines.append("- `%s` (%s): %s" % (item.get("id"), step_id, detail))
+                    else:
+                        lines.append("- `%s` (%s)" % (item, step_id))
         lines += ["", "## Cleanup", ""] + ["- %s (%s): %s" % (n["name"], n.get("step"), n["state"]) for n in summary["cleanup"]["names"]]
         lines += ["", "A PASS is evidence at the checked properties for the tested commit and environment. It is not review, landing, external reproduction or acceptance.", ""]
         with open(self.path("SUMMARY.md"), "x", encoding="utf-8") as f:

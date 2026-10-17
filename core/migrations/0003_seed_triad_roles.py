@@ -25,7 +25,7 @@ def create_triad_roles(apps, schema_editor):
 
     for name, description in roles:
         # Create the role if it does not already exist.
-        Role.objects.get_or_create(
+        Role.objects.using(schema_editor.connection.alias).get_or_create(
             name=name,
             defaults={"description": description}
         )
@@ -41,7 +41,9 @@ def create_triad_roles(apps, schema_editor):
 # ---------------------------------------------------------
 def remove_triad_roles(apps, schema_editor):
     Role = apps.get_model('core', 'Role')
-    Role.objects.filter(name__in=["User", "Gee", "Coe"]).delete()
+    Role.objects.using(schema_editor.connection.alias).filter(
+        name__in=["User", "Gee", "Coe"]
+    ).delete()
 
 
 # ---------------------------------------------------------

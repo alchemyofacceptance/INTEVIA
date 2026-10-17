@@ -1713,9 +1713,7 @@ def uninstall(apps, schema_editor):
 
 
 def restore_platform_rules(apps, schema_editor):
-    from django.db import connection
-
-    with connection.cursor() as cursor:
+    with schema_editor.connection.cursor() as cursor:
         cursor.execute("SELECT public.sbg_seed_platform_rules()")
 
 

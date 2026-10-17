@@ -159,11 +159,33 @@ $script:testStartsBeforeStall = 0
 $script:testPassesBeforeStall = 0
 $script:lastTestLine = "UNAVAILABLE"
 $script:watchdogStalled = $false
-$script:permittedSkipIds = @(
-    "tests.test_s015_application_authority.ProductionApplicationAuthorityTests.test_ap6_non_superuser_application_role_when_present",
-    "tests.test_sbg_governance.SBGGovernanceDepartureCascadeTests.test_w_d3_5_departure_vacates_the_seat_for_equal_time_succession",
-    "tests.test_s007_authentication_shell.AuthenticationShellTests.test_stale_epoch_and_absolute_age_flush_sessions"
-)
+function Get-PermittedSkipIds([ValidateSet("clone", "fresh")][string]$Mode) {
+    $policyPath = Join-Path (Split-Path -Parent $PSScriptRoot) "verification\permitted_skips.json"
+    if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { throw "R9: permitted-skips policy is missing: $policyPath" }
+    try {
+        $policy = Get-Content -LiteralPath $policyPath -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($policy -isnot [System.Collections.IDictionary] -or $policy.Keys.Count -ne 2 -or
+            $policy.version -ne 1 -or $policy.entries -isnot [System.Collections.IEnumerable] -or
+            $policy.entries -is [string]) { throw "invalid schema" }
+        $ids = @()
+        $seen = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($entry in $policy.entries) {
+            if ($entry -isnot [System.Collections.IDictionary] -or $entry.Keys.Count -ne 3 -or
+                $entry.id -isnot [string] -or $entry.id -notmatch '^tests\.[A-Za-z_]\w*(\.[A-Za-z_]\w*){2,}$' -or
+                $entry.condition -cnotin @("always", "fresh-mode") -or
+                $entry.reason -isnot [string] -or -not $entry.reason.Trim() -or
+                -not $seen.Add($entry.id)) { throw "invalid entry" }
+            if ($entry.condition -eq "always" -or ($Mode -eq "fresh" -and $entry.condition -eq "fresh-mode")) { $ids += $entry.id }
+        }
+        return $ids
+    }
+    catch {
+        throw "R9: permitted-skips policy is malformed or invalid: $($_.Exception.Message)"
+    }
+}
+
+$script:permittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")
 $script:teardownLines = 0
 $sourceKind = $null
 $head = $null
