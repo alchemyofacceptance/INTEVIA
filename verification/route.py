@@ -51,6 +51,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,7 @@ DB_PREFIX = "test_intevia_living_organism_"
 POSTGRES_IDENTIFIER_MAX = 63
 DERIVED_SUFFIX_MAX = 16
 PRIMARY_TEST_DATABASE_NAME_MAX = POSTGRES_IDENTIFIER_MAX - DERIVED_SUFFIX_MAX
+ROUTE_TEST_LOCK_TIMEOUT_MS = 120000
 S015_PATTERN = "test_*.py"
 ISOLATION_RUNNER = "verification.isolation.runner.IsolationRunner"
 MUTATION_RUNNER = "verification.mutations.MutationRunner"
@@ -279,6 +281,24 @@ def _child_python_env(**extra):
     else:
         env.pop("PYTHONPYCACHEPREFIX", None)
     return env
+
+
+def _child_pgoptions(inherited):
+    options = shlex.split(inherited, posix=True)
+    for index, option in enumerate(options):
+        if option == "-c":
+            setting = options[index + 1] if index + 1 < len(options) else ""
+        elif option.startswith("--"):
+            setting = option[2:]
+        elif option.startswith("-c"):
+            setting = option[2:].lstrip("=")
+        else:
+            continue
+        name = setting.split("=", 1)[0].replace("-", "_").casefold()
+        if name == "lock_timeout":
+            raise ValueError("inherited PGOPTIONS already sets lock_timeout")
+    route_option = "-c lock_timeout=%d" % ROUTE_TEST_LOCK_TIMEOUT_MS
+    return "%s %s" % (inherited, route_option) if inherited else route_option
 
 
 class Route:
@@ -518,6 +538,7 @@ class Route:
                                 INTEVIA_FRESH_AUTHORITY_SHA256=authority_sha256,
                                 INTEVIA_RUN_SPEC_SHA256=run_spec_sha256,
                                 INTEVIA_RUN_SUFFIX=sid)
+        env["PGOPTIONS"] = _child_pgoptions(os.environ.get("PGOPTIONS", ""))
         env[NONCE_ENV] = self.nonce
         env[RECEIPT_ENV] = self.path(sid + "_db_receipts.jsonl")
         env["VERIFICATION_ISOLATION_JSON"] = self.path(sid + "_isolation.jsonl")

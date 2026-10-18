@@ -154,6 +154,37 @@ class B0PycachePrefixEnv(_Tmp):
         self.assertEqual(step["outcome"], "PASS")
 
 
+    def test_django_env_sets_and_guards_route_lock_timeout(self):
+        r = self.route()
+        with mock.patch.object(
+            r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)
+        ), mock.patch.object(
+            r,
+            "_fresh_authority",
+            return_value=(os.path.join(self.tmp, "authority.txt"), "c" * 64),
+        ):
+            with mock.patch.dict(os.environ):
+                os.environ.pop("PGOPTIONS", None)
+                child_env = r.django_env("test_db", "SELF")
+            self.assertEqual(child_env["PGOPTIONS"], "-c lock_timeout=120000")
+
+            inherited = "-c application_name=route-selftest"
+            with mock.patch.dict(os.environ, {"PGOPTIONS": inherited}):
+                child_env = r.django_env("test_db", "SELF")
+            self.assertEqual(
+                child_env["PGOPTIONS"],
+                inherited + " -c lock_timeout=120000",
+            )
+
+            with mock.patch.dict(
+                os.environ, {"PGOPTIONS": "-c lock_timeout=5s"}
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "inherited PGOPTIONS already sets lock_timeout"
+                ):
+                    r.django_env("test_db", "SELF")
+
+
 class CollectionFactTests(_Tmp):
     def test_g2_uses_collected_ids_and_reports_nonpattern_files(self):
         root = Path(self.tmp)
