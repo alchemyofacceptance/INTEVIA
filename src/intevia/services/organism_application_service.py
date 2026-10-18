@@ -1,4 +1,23 @@
-"""PKT-B S3 applicant and Coordinator application commands."""
+"""Application commands for living organisms (PKT-B S3).
+
+OrganismApplicationService provides applicant submission and withdrawal,
+Coordinator claim, reassignment and decision commands, gateway commands
+to draft and put application settings, questions and governance
+configuration into effect, and the application_status read.
+
+Command execution uses authority_atomic, directly or through the gateway
+effect implementation. The applicant and Coordinator commands and
+effect_gateway_version lock the actor before looking up a receipt by
+actor, action and idempotency key. A receipt must also match the request
+reference and payload fingerprint before its result is served as a
+replay. These paths qualify fresh requests through S015Authority before
+their governed writes. save_gateway_draft also qualifies authority but
+does not look up or write a command receipt; it returns the saved version.
+
+Also defines command and result carriers, receipt decoders, gateway and
+Coordinator helpers, exceptions, and the LO name, CARE executor and
+discussion welcome collaborator interfaces.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -64,6 +83,20 @@ def _governance_enabling_refusal_message(
     recorded_at: datetime,
     code: S015AuthorityRefusalCode,
 ) -> str:
+    """Return the authored message for a refused GOVERNANCE enablement.
+
+    SBG_IL_GRESD selects the fixed message describing a previously active,
+    now dormant GOVERNANCE Circle, its unavailable restoration route and
+    continued Coordinator governance. This helper does not establish those
+    conditions itself.
+
+    Other codes are passed to _sbg_readiness_message with act set to
+    "GOVERNANCE was not switched on" and with the supplied LO, database alias
+    and temporal coordinates. The incomplete-arrangement, unsupported-field
+    and unsupported-eligibility branches read arrangement diagnostics; the
+    field and eligibility messages use their own opening. Diagnostic errors
+    propagate. Raises RuntimeError if the delegated helper returns None.
+    """
     if code is S015AuthorityRefusalCode.SBG_IL_GRESD:
         return (
             "GOVERNANCE was not switched on and nothing changed. This LO's GOVERNANCE Circle "
@@ -86,34 +119,75 @@ def _governance_enabling_refusal_message(
 
 
 class S015ApplicationError(Exception):
+    """Base class for the application service's errors.
+
+    The receipt decoders raise this class directly when their initial
+    dictionary check fails. Errors from missing fields or invalid field
+    conversions are not translated to this class.
+    """
     pass
 
 
 class S015ApplicationAuthorityUnavailable(S015ApplicationError):
+    """Raised when a party the command needs cannot act.
+
+    Covers: the actor's Identity missing or not active, or its credential
+    not active; the actor without the active membership the command
+    requires; at submission, a supplied CARE executor whose Identity is not
+    active or is the applicant's own; and, when an application is admitted,
+    the LO's founding authority basis missing.
+    """
     pass
 
 
 class S015ApplicationRefused(S015ApplicationError):
+    """Application-service refusal carrying a message for its caller.
+
+    Used for rejected requests and for the status read's terminal-integrity
+    check. refusal_code defaults to None. For recognised GOVERNANCE
+    enablement refusals, effect_gateway_version supplies the code from
+    either S015AuthorityDenied or a matching IntegrityError diagnostic.
+    """
     def __init__(
         self,
         message: str,
         *,
         refusal_code: S015AuthorityRefusalCode | None = None,
     ) -> None:
+        """Keep message as the exception text and refusal_code (an
+        S015AuthorityRefusalCode or None) as an attribute.
+        """
         super().__init__(message)
         self.refusal_code = refusal_code
 
 
 class S015ApplicationNotFound(S015ApplicationError):
+    """Raised when the application a command names does not exist, or, at
+    submission, the living organism it names does not exist.
+    """
     pass
 
 
 class LONameSource(Protocol):
-    def name_for(self, living_organism: LivingOrganism) -> str: ...
+    """Protocol for the source of an LO's name, used to word the default
+    application question.
+    """
+    def name_for(self, living_organism: LivingOrganism) -> str:
+        """Return the name of living_organism."""
+        ...
 
 
 class FormationLONameSource:
+    """LONameSource that reads the name recorded at founding: version 1 of
+    the LO's founding content.
+    """
     def name_for(self, living_organism: LivingOrganism) -> str:
+        """Return the name in living_organism's founding content version 1.
+
+        Reads on the organism's own database alias, falling back to "default".
+        Raises S015OperationNotYetImplemented with limit S3-IL-LONAME when the
+        lookup returns no name.
+        """
         database_alias = living_organism._state.db or "default"
         name = LOFoundingContentVersion.objects.using(database_alias).filter(
             living_organism_id=living_organism.pk,
@@ -125,19 +199,69 @@ class FormationLONameSource:
 
 
 class CareExecutor(Protocol):
-    def identity_for(self, living_organism: LivingOrganism) -> Identity: ...
+    """Protocol supplying the Identity that executes CARE actions for an LO.
+
+    On a fresh submission, after the receipt-replay check, a supplied
+    executor's Identity is locked and required to be active and distinct
+    from the applicant. This check precedes the automatic-acceptance branch
+    and also applies when automatic acceptance is off. A matching replay
+    returns without consulting the executor.
+
+    If effective settings require automatic acceptance and no executor was
+    supplied, submission raises S015OperationNotYetImplemented with limit
+    S3-IL-CARE-EXEC. Automatic acceptance records the LO as deciding party
+    and the CARE Identity as the decision's executor and enterer.
+    """
+    def identity_for(self, living_organism: LivingOrganism) -> Identity:
+        """Return the Identity that executes CARE actions for living_organism.
+        """
+        ...
 
 
 class DiscussionWelcome(Protocol):
-    def send_for(self, application: Application, decision: ApplicationDecision) -> None: ...
+    """Protocol for the welcome following an automatic acceptance.
+
+    Submission calls send_for synchronously inside its authority_atomic
+    context, after admission and the submission and acceptance lineage
+    events, and before its final command receipt. This call is not deferred
+    until commit. Exceptions pass through authority_atomic's handling;
+    external delivery is not made rollback-safe by the database transaction.
+    """
+    def send_for(self, application: Application, decision: ApplicationDecision) -> None:
+        """Send the welcome for application's accepted decision."""
+        ...
 
 
 class UnavailableDiscussionWelcome:
+    """Default welcome collaborator that reports the welcome is not yet built.
+
+    If a fresh submission reaches the automatic-welcome call with this
+    default, its implementation-limit exception aborts the submission and
+    rolls back that submission's writes in the service's database transaction.
+    Completing automatic acceptance requires a supplied welcome collaborator
+    as well as the CARE executor and all earlier submission checks.
+    """
     def send_for(self, application: Application, decision: ApplicationDecision) -> None:
+        """Raise S015OperationNotYetImplemented for automatic_welcome with
+        limit S3-IL-NOTICE.
+        """
         raise S015OperationNotYetImplemented("automatic_welcome", "S3-IL-NOTICE", "DISCUSSION")
 
 
 def default_application_question(living_organism: LivingOrganism, name_source: LONameSource | None = None) -> dict[str, str]:
+    """Return the default application question for living_organism.
+
+    Returns "Why do you want to join <name>?" with answer format LONG_ANSWER.
+    Uses name_source when truthy, otherwise FormationLONameSource. Requires
+    the returned name to have exact type str and contain non-whitespace
+    text, or raises S015ApplicationRefused; the accepted name is interpolated
+    unchanged. Name-source errors propagate.
+
+    When creating a new question draft, save_gateway_draft uses these
+    defaults if question_text or answer_format is absent, preserving fields
+    explicitly supplied. It does not use this fallback when updating an
+    existing draft or replace explicitly supplied blank or None values.
+    """
     name = (name_source or FormationLONameSource()).name_for(living_organism)
     if type(name) is not str or not name.strip():
         raise S015ApplicationRefused("formation LO name is required")
@@ -146,6 +270,23 @@ def default_application_question(living_organism: LivingOrganism, name_source: L
 
 @dataclass(frozen=True, slots=True)
 class SubmitApplicationCommand:
+    """Request to submit an application to a living organism.
+
+    Taken by submit_application. credential is the applicant's User;
+    living_organism_id names the LO; answer answers the LO's effective
+    application question (default empty). predecessor_reference optionally
+    names an earlier application of the applicant's to the same LO. Its
+    withdrawal must be effective by effective_at and recorded no later than
+    the new application's recorded_at.
+
+    The carrier does not validate. The command requires request_reference
+    and idempotency_key to be canonical strings (at most 128 and 120
+    characters), the identifiers to be UUIDs and the three times to be
+    timezone-aware, and normalises the times to UTC. All fields enter the
+    request's payload fingerprint, credential through the actor's Identity
+    and access epoch. received_at is the authority evaluation time and is
+    stored on the application and its lineage events.
+    """
     credential: User
     living_organism_id: UUID
     request_reference: str
@@ -159,6 +300,30 @@ class SubmitApplicationCommand:
 
 @dataclass(frozen=True, slots=True)
 class GatewayDraftCommand:
+    """Request to save a draft of an LO's application settings, question or
+    governance configuration.
+
+    Taken by save_gateway_draft. action selects the relation through
+    EFFECT_APPLICATION_SETTINGS, EFFECT_APPLICATION_QUESTION or
+    EFFECT_GOVERNANCE_CONFIGURATION; an unsupported action is refused.
+    fields must be a dict containing only that relation's draftable keys.
+    version_uuid None creates a version; otherwise it selects an existing
+    version of the LO, which must still be a draft.
+
+    The carrier does not validate. The command validates the request keys,
+    living_organism_id and times as for SubmitApplicationCommand, but does
+    not explicitly type-check draft version_uuid. A new version records
+    the three times; an edit leaves those times unchanged.
+
+    Edits apply the supplied fields. When editing a governance configuration
+    whose governance_enabled is None and that key is omitted, the service
+    also fills it from the effective predecessor, defaulting to True if
+    there is no predecessor choice. New governance drafts use the same
+    fallback for an omitted choice. New question drafts fill omitted
+    question_text or answer_format through default_application_question.
+
+    Returns the saved version; no command receipt is recorded for a draft.
+    """
     credential: User
     living_organism_id: UUID
     action: OrganismAction
@@ -173,6 +338,15 @@ class GatewayDraftCommand:
 
 @dataclass(frozen=True, slots=True)
 class EffectGatewayVersionCommand:
+    """Request to put a draft version of an LO's application settings,
+    question or governance configuration into effect.
+
+    Taken by effect_gateway_version. action names the relation as for
+    GatewayDraftCommand; version_uuid names the draft version of that LO.
+    Keys, identifiers and times are validated as for
+    SubmitApplicationCommand and enter the payload fingerprint; effective_at
+    is the effect's effective time.
+    """
     credential: User
     living_organism_id: UUID
     action: OrganismAction
@@ -186,7 +360,15 @@ class EffectGatewayVersionCommand:
 
 @dataclass(frozen=True, slots=True)
 class WithdrawApplicationCommand:
-    """The receiving surface supplies received_at; the applicant does not choose it."""
+    """Request by an applicant to withdraw an application.
+
+    Taken by withdraw_application. application_uuid names the application.
+    Keys, identifiers and times are validated as for
+    SubmitApplicationCommand and enter the payload fingerprint.
+
+    received_at is expected from the receiving surface, not chosen by the
+    applicant; this service does not check where it came from.
+    """
 
     credential: User
     application_uuid: UUID
@@ -199,6 +381,14 @@ class WithdrawApplicationCommand:
 
 @dataclass(frozen=True, slots=True)
 class ClaimApplicationCommand:
+    """Request by a Coordinator to claim an application for review.
+
+    Taken by claim_application, and the base of ReassignApplicationCommand
+    and DecideApplicationCommand. credential is the Coordinator's User;
+    application_uuid names the application. Keys, identifiers and times are
+    validated as for SubmitApplicationCommand and enter the payload
+    fingerprint.
+    """
     credential: User
     application_uuid: UUID
     request_reference: str
@@ -210,16 +400,43 @@ class ClaimApplicationCommand:
 
 @dataclass(frozen=True, slots=True)
 class ReassignApplicationCommand(ClaimApplicationCommand):
+    """Request by a Coordinator to replace the application's current claim
+    with a claim of their own.
+
+    Taken by reassign_application. Same fields as ClaimApplicationCommand.
+    """
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class DecideApplicationCommand(ClaimApplicationCommand):
+    """Request by the Coordinator holding the current claim to decide an
+    application.
+
+    Taken by decide_application. Adds outcome to ClaimApplicationCommand's
+    fields: the string ACCEPT or DECLINE, checked before the actor is
+    locked (TypeError or ValueError otherwise). outcome enters the payload
+    fingerprint.
+    """
     outcome: str
 
 
 @dataclass(frozen=True, slots=True)
 class ApplicationCommandResult:
+    """Result of an applicant or Coordinator command, stored as its receipt.
+
+    recorded_at is the recorded time of the command's primary record: the
+    application, withdrawal, claim, replacement claim or decision.
+    record_uuid identifies the claim (claim and reassign) or the decision
+    (decide) and is None for submission and withdrawal. completion_due_at
+    is set for claims and reassignments, with completion_due_source naming
+    its source. lineage_reference is derived from the action, actor,
+    application and payload fingerprint.
+
+    Results are returned through serve_replay, fresh or replayed, so
+    authority_reference and record_uuid may be WithheldField placeholders
+    for the viewer.
+    """
     application_uuid: UUID
     action: OrganismAction
     recorded_at: datetime
@@ -231,6 +448,10 @@ class ApplicationCommandResult:
     completion_due_source: str | None = None
 
     def receipt_payload(self) -> dict[str, object]:
+        """Return the result as a dict for its command receipt: one key per
+        field, UUIDs as strings, action by value, times through
+        canonical_timestamp, and absent values as None.
+        """
         return {
             "application_uuid": str(self.application_uuid),
             "action": self.action.value,
@@ -245,6 +466,12 @@ class ApplicationCommandResult:
 
     @classmethod
     def replay_field_audiences(cls, result: "ApplicationCommandResult") -> dict[str, tuple[str, ...]]:
+        """Return the replay audiences of result's fields.
+
+        For a decision result, record_uuid is visible only to the PROCESSING or
+        APPLICANT audience. No other field is classified; serve_replay withholds
+        authority_reference by its own rule.
+        """
         if result.action is OrganismAction.DECIDE_APPLICATION:
             return {"record_uuid": ("PROCESSING", "APPLICANT")}
         return {}
@@ -252,6 +479,14 @@ class ApplicationCommandResult:
 
 @dataclass(frozen=True, slots=True)
 class GatewayEffectCommandResult:
+    """Result of effect_gateway_version, stored as its receipt.
+
+    Names the version put into effect, the effect's effective_at, and the
+    LO event appended for it: its event_uuid, event_sequence and
+    lineage_reference. Returned through serve_replay, fresh or replayed, so
+    authority_reference, event_uuid and event_sequence may be WithheldField
+    placeholders for the viewer.
+    """
     version_uuid: UUID
     action: OrganismAction
     effective_at: datetime
@@ -262,6 +497,10 @@ class GatewayEffectCommandResult:
     event_sequence: int | WithheldField
 
     def receipt_payload(self) -> dict[str, object]:
+        """Return the result as a dict for its command receipt: one key per
+        field, UUIDs as strings, action by value and effective_at through
+        canonical_timestamp.
+        """
         return {
             "action": self.action.value,
             "authority_decision_reference": self.authority_decision_reference,
@@ -275,10 +514,19 @@ class GatewayEffectCommandResult:
 
     @classmethod
     def replay_field_audiences(cls, result: "GatewayEffectCommandResult") -> dict[str, str]:
+        """Return the replay audiences of result's fields: event_uuid and
+        event_sequence are visible only to the PROCESSING audience.
+        """
         return {"event_uuid": "PROCESSING", "event_sequence": "PROCESSING"}
 
 
 def _gateway_result_from_receipt(payload: object) -> GatewayEffectCommandResult:
+    """Rebuild a GatewayEffectCommandResult from a stored receipt payload.
+
+    Raises S015ApplicationError unless payload's type is exactly dict.
+    Every field is required; a missing key or a value that does not convert
+    raises its own error. A Z offset in effective_at is read as UTC.
+    """
     if type(payload) is not dict:
         raise S015ApplicationError("gateway receipt payload is malformed")
     return GatewayEffectCommandResult(
@@ -296,7 +544,17 @@ def _gateway_result_from_receipt(payload: object) -> GatewayEffectCommandResult:
 def applicant_eligible(
     identity: Identity, effective_at: datetime, recorded_at: datetime, *, database_alias: str = "default",
 ) -> bool:
-    """Read account history using its one time per transition, occurred_at, not B-G2's separate recorded time."""
+    """Return whether identity's account history makes it eligible to apply.
+
+    Requires a PROVISION transition occurring at or before effective_at,
+    and an ACTIVE resulting state on the latest transition occurring at or
+    before recorded_at, ordered by occurred_at then primary key.
+
+    Both bounds compare the transition's occurred_at. The parameter named
+    recorded_at is a cutoff on that same field; no separate transition
+    recorded-time field is consulted. The helper does not validate the
+    supplied times or establish the other application-admission conditions.
+    """
     history = IdentityTransition.objects.using(database_alias).filter(identity=identity)
     if not history.filter(action=IdentityTransition.Action.PROVISION, occurred_at__lte=effective_at).exists():
         return False
@@ -315,6 +573,24 @@ def _effective_gateway_version(
     database_alias: str, organism: LivingOrganism, action: OrganismAction,
     at: datetime, known_at: datetime | None = None,
 ):
+    """Return the gateway version named by an LO's latest qualifying event.
+
+    action selects application settings, application question or governance
+    configuration. Selects the LO's event for that action effective by at
+    and received and recorded by known_at (default at), in descending order
+    of effective_at, occurred_at, received_at, recorded_at, sequence and
+    event UUID. Returns None if the selected evidence reference is None,
+    including when there is no qualifying event.
+
+    Removes the expected prefix when present, parses the remainder as a UUID
+    and looks up that version. It does not require the prefix or add an LO
+    filter to the version lookup. For application settings, both entitlement
+    election fields must be null. No matching version raises the model's
+    DoesNotExist; reference parsing and other lookup errors propagate.
+
+    Uses the supplied time coordinates without validating them or sampling
+    a clock.
+    """
     model, prefix = _VERSION_KINDS[action]
     known_at = at if known_at is None else known_at
     references = LivingOrganismEvent.objects.using(database_alias).filter(
@@ -358,6 +634,16 @@ def _engagement_settings_basis(
 
 
 def _validate_gateway_answer(question: LOApplicationQuestionVersion, answer: str) -> None:
+    """Check an applicant's answer against the effective question's format.
+
+    SHORT_ANSWER and LONG_ANSWER need text that is not blank, at most 255
+    and 4096 characters once stripped; YES_NO needs YES or NO; MULTIPLE_CHOICE
+    needs one of the question's options. SCALE_COMPLEX needs an integer
+    written plainly (as str(int) would write it) within the bounds of the
+    question's options, which must be at least two values that convert to
+    integers. Any other format fails. Raises S015ApplicationRefused for an
+    answer that is not a string or does not meet its format.
+    """
     if type(answer) is not str:
         raise S015ApplicationRefused("application answer is invalid")
     kind = question.answer_format
@@ -383,7 +669,17 @@ def _validate_gateway_answer(question: LOApplicationQuestionVersion, answer: str
 
 
 def gateway_version_status(database_alias: str, version, at: datetime) -> str:
-    """Derive draft/effective/superseded; PROPOSED is reserved for the unbuilt CQ route."""
+    """Return a gateway version's status at a time: EFFECTIVE, SUPERSEDED or
+    DRAFT.
+
+    Reads the LO's events for the version's relation that are effective,
+    received and recorded by at. EFFECTIVE when the latest of them (ordered
+    as in _effective_gateway_version) names this version; SUPERSEDED when an
+    earlier one does; otherwise DRAFT. No PROPOSED status is derived: change
+    by CQ is not built. version must be a settings, question or governance
+    configuration version; raises ValueError for an entitlement election
+    settings version.
+    """
     if isinstance(version, LOApplicationSettingsVersion) and (
         version.entitlement_choice is not None
         or version.entitlement_election_route is not None
@@ -405,6 +701,17 @@ def gateway_version_status(database_alias: str, version, at: datetime) -> str:
 
 
 def _gateway_version_complete(version) -> bool:
+    """Return whether a gateway version holds every choice needed to put it
+    into effect.
+
+    Settings: not an entitlement election, applications_open and
+    automatic_acceptance chosen, and processing_responsibility LO or
+    APPLICATION_CIRCLE. Question: non-blank question_text, a known
+    answer_format, and two to seven options for MULTIPLE_CHOICE or
+    SCALE_COMPLEX, none otherwise; option values are not checked here.
+    Governance configuration: the four CQ choices made. The GOVERNANCE
+    choice is checked separately when the version is put into effect.
+    """
     if isinstance(version, LOApplicationSettingsVersion):
         return (version.entitlement_choice is None and version.entitlement_election_route is None
                 and version.applications_open is not None and version.automatic_acceptance is not None
@@ -422,6 +729,14 @@ def _gateway_version_complete(version) -> bool:
 
 
 def _result_from_receipt(payload: object) -> ApplicationCommandResult:
+    """Rebuild an ApplicationCommandResult from a stored receipt payload.
+
+    Raises S015ApplicationError unless payload is a dict (a subclass is
+    accepted). record_uuid, completion_due_at and completion_due_source may
+    be absent or None; the other fields are required. A missing required
+    key or a value that does not convert raises its own error. A Z offset
+    in a time is read as UTC.
+    """
     if not isinstance(payload, dict):
         raise S015ApplicationError("application receipt payload is malformed")
     return ApplicationCommandResult(
@@ -504,8 +819,16 @@ def _insert_admission_transition(
 
 
 def _lock_owning_organism(database_alias: str, organism_id) -> None:
-    """Take the registered organism lock (s015_lock_organisms). Every S3 path takes it first among its per-LO locks: before the gateway head,
-    the pair lock, the membership helper and application rows."""
+    """Take the registered organism lock for organism_id through
+    public.s015_lock_organisms.
+
+    Fresh application-service command paths take this lock before their
+    gateway, applicant-LO pair, membership-context and application-row
+    locks. The actor's Identity lock, and any required CARE or applicant
+    Identity lock, precede it. A matching receipt replay can return before
+    this lock is taken. The gateway effect path also calls this helper
+    again after acquiring the organism lock in _gateway_start.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [organism_id])
 
@@ -584,6 +907,13 @@ def _append_application_event(
 
 @dataclass(frozen=True, slots=True)
 class _CoordinatorContext:
+    """What _coordinator_start established for a Coordinator command.
+
+    The locked actor and their locked membership, the locked application,
+    the qualified authority decision, the payload fingerprint, the request
+    keys and the validated times (UTC). Used by claim, reassign and decide
+    and their helpers.
+    """
     actor: Identity
     membership: OrganismMembership
     application: Application
@@ -598,6 +928,17 @@ class _CoordinatorContext:
 
 @dataclass(frozen=True, slots=True)
 class _AdmissionDetails:
+    """What _admit needs to admit an accepted applicant.
+
+    The application; the enterer of the admission records (the deciding
+    Coordinator, or the CARE Identity for automatic acceptance); the
+    authority decision reference recorded on the decision; request keys,
+    fingerprint and times;
+    and, for automatic acceptance, the settings rule that composed the
+    decision (None for a Coordinator's decision). For automatic acceptance
+    the keys and fingerprint are the automatic decision's own, and the
+    times are the application's.
+    """
     application: Application
     enterer: Identity
     authority_decision_reference: str
@@ -726,6 +1067,13 @@ class OrganismApplicationService:
         )
 
     def _pair_lock(self, actor: Identity, organism: LivingOrganism) -> None:
+        """Take a transaction-level advisory lock for this applicant and LO.
+
+        The key is derived from a fixed domain and both identifiers, so
+        submissions by one applicant to one LO run one at a time; submission
+        takes it after the organism lock and before checking for an open
+        application.
+        """
         key = int.from_bytes(hashlib.sha256(
             _PAIR_DOMAIN + actor.identity_id.bytes + organism.organism_id.bytes,
         ).digest()[:8], "big", signed=True)
@@ -1178,6 +1526,14 @@ class OrganismApplicationService:
         )
 
     def _coordinator_office(self, context: _CoordinatorContext) -> ContextualRoleAssignment:
+        """Return the actor's Coordinator office for this LO, required in effect.
+
+        Takes an ACTIVE COORDINATOR role assignment of LIVING_ORGANISM scope on
+        the actor's membership and asks OrganismRoleService (with this service's
+        authority, clock and database alias) whether it is in effect at the
+        command's effective_at. Raises S015ApplicationRefused when there is no
+        such assignment or it is not in effect.
+        """
         office = ContextualRoleAssignment.objects.using(self._alias).select_related("role_definition").filter(
             membership=context.membership, role_definition__code="COORDINATOR",
             role_definition__scope="LIVING_ORGANISM", state="ACTIVE",
@@ -1189,12 +1545,24 @@ class OrganismApplicationService:
         return office
 
     def _csa_route(self, application: Application) -> None:
+        """Refuse an application engaged on a route not yet built.
+
+        Raises S015OperationNotYetImplemented with limit S3-IL-CQ when any
+        engagement is on LO_CQ or CIRCLE_CQ, and with S3-IL-CIRCLE when any is
+        on CIRCLE_CSA.
+        """
         if application.engagements.using(self._alias).filter(route__in=("LO_CQ", "CIRCLE_CQ")).exists():
             raise S015OperationNotYetImplemented("csa_application", "S3-IL-CQ", "DISCUSSION")
         if application.engagements.using(self._alias).filter(route="CIRCLE_CSA").exists():
             raise S015OperationNotYetImplemented("circle_application", "S3-IL-CIRCLE", "DISCUSSION")
 
     def _open_for_coordinator(self, context: _CoordinatorContext) -> None:
+        """Refuse a Coordinator command on an application that is not open.
+
+        Applies _csa_route, then raises S015ApplicationRefused when the
+        application has a withdrawal or a decision. Their effective and recorded
+        times are not considered.
+        """
         self._csa_route(context.application)
         if ApplicationWithdrawal.objects.using(self._alias).filter(application=context.application).exists():
             raise S015ApplicationRefused("application already withdrawn")
@@ -1205,6 +1573,16 @@ class OrganismApplicationService:
         # Runs under the application row lock taken in _coordinator_start: every committed claim or ending visible
         # here was admitted before this command's row, whose recorded_at 0026 sets after the same lock. So no
         # recorded_at bound applies, and no service clock enters (G-2-CLOCK is the declared database-clock limit).
+        """Return the application's current Coordinator claim at effective_at.
+
+        Called under the application-row lock taken by _coordinator_start.
+        Considers claims effective by context.effective_at in descending order
+        of effective_at, recorded_at and primary key, returning the first with
+        no ending effective by that time. Neither claims nor endings have a
+        recorded-time cutoff here, and no service clock is sampled.
+
+        Raises S015ApplicationRefused when no such claim exists.
+        """
         claims = CSAAssignment.objects.using(self._alias).filter(
             application=context.application, effective_at__lte=context.effective_at,
         ).order_by("-effective_at", "-recorded_at", "-pk")
@@ -1682,6 +2060,30 @@ class OrganismApplicationService:
         membership.refresh_from_db(using=self._alias)
 
     def application_status(self, application: Application, state_at: datetime, known_at: datetime) -> str:
+        """Return an application's status at state_at as known at known_at.
+
+        Requires timezone-aware datetime values and normalises both to UTC;
+        invalid values raise TypeError. This method does not qualify a viewer,
+        open a transaction or take explicit row or advisory locks. Its caller
+        must establish permission to expose the result.
+
+        Returns NOT_PRESENT unless the application is effective by state_at
+        and recorded by known_at. Once it is present, the existence of both a
+        decision and a withdrawal raises S015ApplicationRefused, regardless of
+        their times. Otherwise returns DECIDED for a decision within those two
+        bounds, then WITHDRAWN for a withdrawal within them.
+
+        Selects the engagement with the greatest engagement_ordinal within the
+        same bounds, returning WAITING if none exists. A selected route other
+        than LO_CSA raises S015OperationNotYetImplemented: S3-IL-CQ when the
+        route ends in CQ, otherwise S3-IL-CIRCLE.
+
+        For LO_CSA, returns UNABLE if the LO state fold at state_at and known_at
+        returns CLOSED. It also returns UNABLE if the claim named by that
+        engagement is absent within the two bounds, or has an ending within
+        them. Otherwise returns PENDING. The row-selection queries impose no
+        additional occurred_at or received_at cutoff.
+        """
         state_at = _validate_timestamp(state_at, "state_at")
         known_at = _validate_timestamp(known_at, "known_at")
         if not Application.objects.using(self._alias).filter(
