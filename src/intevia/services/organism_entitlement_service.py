@@ -1,4 +1,21 @@
-"""Entitlement election and entitlement command services."""
+"""Entitlement reads and the entitlement commands for a Living Organism.
+
+The reads answer what an organism is entitled to at a time: whether a
+capability is effective (entitlement_effective), the limit for a counted
+dimension (entitlement_limit), whether current usage plus an increment
+stays within it (check_allowance), the effective package with its
+measurements (entitlement_summary), and capability availability
+(capability_status). A read whose time is omitted uses the database's
+current time (database_now), not the host's. The SQL functions
+s015_entitlement_effective and s015_entitlement_limit decide
+effectiveness and limits; the Python reads call them and check what they
+return.
+
+The commands (OrganismEntitlementService) record an organism's
+entitlement election at Birthing and its opt-in to beta access; requests
+to extend access, or to grant it by hand, are refused with authored
+messages.
+"""
 
 from __future__ import annotations
 
@@ -140,16 +157,44 @@ _DIMENSION_PRESENTATION = {
 
 
 class EntitlementAvailabilitySource(Protocol):
+    """Interface for reporting an organism's paid-availability transition.
+
+    activate_beta consults this source after its already-has-beta check.
+    A non-empty exact-str reference causes SE_OFFER_CLOSED; a malformed
+    non-None result causes S015EntitlementTechnicalFailure. None allows the
+    remaining opt-in checks to continue. The Protocol declares the source
+    contract; it does not implement the transition lookup.
+    """
     def paid_availability_transition_reference(
         self,
         living_organism_uuid: UUID,
         effective_at: datetime,
         known_at: datetime,
-    ) -> str | None: ...
+    ) -> str | None:
+        """Report a qualifying transition reference, or None.
+
+        The source contract distinguishes the transition's effective-time
+        cutoff, effective_at, from its knowledge-time cutoff, known_at. Return
+        a non-empty str reference for a transition reported effective and known
+        by those coordinates, or None when the source reports none. This is
+        not an authority decision or a guarantee that an opt-in will succeed.
+        The Protocol supplies no lookup implementation. activate_beta passes
+        its received_at as both coordinates.
+        """
+        ...
 
 
 class ProductionEntitlementAvailabilitySource:
+    """The production paid-availability source, read from entitlements.
+
+    It treats a PAID entitlement of the organism as its paid-availability
+    transition.
+    """
     def __init__(self, *, database_alias: str = "default") -> None:
+        """Bind the source to a database alias.
+
+        An empty or non-string alias raises ValueError.
+        """
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self._alias = database_alias
@@ -160,6 +205,13 @@ class ProductionEntitlementAvailabilitySource:
         effective_at: datetime,
         known_at: datetime,
     ) -> str | None:
+        """Return a reference if the organism has a PAID entitlement, else None.
+
+        Considers the organism's PAID entitlements that took effect by
+        effective_at and were recorded by known_at, whether or not they have
+        since ended. The latest, by effective_at, recorded_at and id, gives the
+        reference "paid-availability-transition:<entitlement UUID>".
+        """
         entitlement = (
             OrganismEntitlement.objects.using(self._alias)
             .filter(
@@ -178,6 +230,14 @@ class ProductionEntitlementAvailabilitySource:
 
 @dataclass(frozen=True, slots=True)
 class EntitlementElectionCommand:
+    """A request to opt an organism into beta access after Birthing.
+
+    Carries the requesting credential, the organism, the request reference
+    and idempotency key, when the request occurred, and the policy version
+    and SHA-256 of the policy text accepted. It names no choice: the opt-in
+    is always COMPLIMENTARY_BETA. The Birthing election arrives on the
+    Birthing command instead.
+    """
     credential: User
     living_organism_uuid: UUID
     request_reference: str
@@ -189,6 +249,10 @@ class EntitlementElectionCommand:
 
 @dataclass(frozen=True, slots=True)
 class EntitlementExtensionCommand:
+    """A request to extend an entitlement, with its references and reason.
+
+    extend_entitlement refuses every such request in this release.
+    """
     credential: User
     entitlement_uuid: UUID
     request_reference: str
@@ -198,6 +262,18 @@ class EntitlementExtensionCommand:
 
 @dataclass(frozen=True, slots=True)
 class EntitlementElectionResult:
+    """Receipt result shape used by the completed beta-opt-in path.
+
+    Carries the organism UUID, offering choice, accepted policy version,
+    optional entitlement UUID, election-event UUID and sequence, lineage
+    reference, and authority and decision references. The current
+    activate_beta producer supplies the composed grant's entitlement UUID.
+    The type and serializer also permit None in that field, but the receipt
+    decoder raises S015CommandReceiptMalformed for it; None alone does not
+    establish that no grant was composed. This frozen data carrier does not
+    validate the field values or prove their consistency with stored events
+    or entitlements.
+    """
     living_organism_uuid: UUID
     offering_choice: str
     policy_version: int
@@ -209,6 +285,11 @@ class EntitlementElectionResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str | int | None]:
+        """Return the result as its receipt payload.
+
+        UUIDs become strings (entitlement_uuid stays None when absent); the
+        other fields are kept as they are.
+        """
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "offering_choice": self.offering_choice,
@@ -228,6 +309,13 @@ class EntitlementElectionResult:
         cls,
         result: EntitlementElectionResult,
     ) -> dict[str, str]:
+        """Return an empty mapping of type-specific replay field audiences.
+
+        Require type(result) to be exactly cls, otherwise raise TypeError.
+        No field-level audience restriction is added by this result type.
+        Viewer authorisation and any general field-withholding rules belong
+        to the replay-serving layer and are not implemented by this method.
+        """
         if type(result) is not cls:
             raise TypeError("entitlement election replay result has the wrong type")
         return {}
@@ -235,7 +323,18 @@ class EntitlementElectionResult:
 
 @dataclass(frozen=True, slots=True)
 class AllowanceCheckResult:
-    """Represent a read-only allowance decision and its authored outcome."""
+    """Outcome of check_allowance: a read-only decision and its message.
+
+    status is "within", "exceeds" or "cannot_check". dimension and increment
+    echo the request. limit_kind and limit are the effective limit for the
+    dimension; limit is None unless the kind is LIMIT. When the kind is
+    LIMIT and usage could be measured, measured_usage is the authoritative
+    usage and proposed_total is measured_usage plus increment; otherwise
+    both are None. unit is the dimension's display unit. code and message
+    are set only for "exceeds" (SE_ALLOWANCE_EXCEEDED) and "cannot_check"
+    (SE_USAGE_UNCHECKABLE); technical_failure is True only for
+    "cannot_check".
+    """
 
     status: Literal["within", "exceeds", "cannot_check"]
     dimension: str
@@ -252,6 +351,13 @@ class AllowanceCheckResult:
 
 @dataclass(frozen=True, slots=True)
 class _PreparedBirthingElection:
+    """What prepare_birthing_election hands to complete_birthing_election.
+
+    The actor, the organism, the election's settings version, the policy
+    text, the authority decision, the offering choice, the request reference
+    and idempotency key, the payload fingerprint, and the occurred,
+    effective and received times.
+    """
     actor: Identity
     organism: LivingOrganism
     version: LOApplicationSettingsVersion
@@ -267,6 +373,22 @@ class _PreparedBirthingElection:
 
 
 def _election_result_from_payload(payload: object) -> EntitlementElectionResult:
+    """Decode a stored beta opt-in receipt, refusing a malformed record.
+
+    Require payload to have type exactly dict with exactly the nine result
+    keys. Require every value except policy_version and event_sequence to
+    have type exactly str; those two to have type exactly int and be at
+    least 1; and offering_choice to be COMPLIMENTARY_BETA. Convert
+    living_organism_uuid, entitlement_uuid and event_uuid with UUID and
+    require each to be in canonical string form, so a None entitlement UUID
+    is refused. The reference fields are checked for type only.
+
+    Each failure raises S015CommandReceiptMalformed, chained to the
+    TypeError or ValueError that detected it: a fault in the stored record,
+    not evidence of a different request. This helper does not verify
+    referenced database records or establish that a replay request matches
+    its receipt.
+    """
     if type(payload) is not dict:
         raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
     try:
@@ -329,25 +451,57 @@ def _election_result_from_payload(payload: object) -> EntitlementElectionResult:
 
 
 class S015EntitlementUnavailable(Exception):
+    """Raised when something an entitlement command needs is not in place.
+
+    For example: the Living Organism is not found, the actor or its
+    membership context cannot be established, no FREE election is recorded
+    before a beta opt-in, or the organism's effective application settings
+    are unavailable.
+    """
     pass
 
 
 class S015EntitlementTechnicalFailure(Exception):
+    """Raised when a checked entitlement result cannot be established safely.
+
+    Examples include a missing or invalid database-function result, usage
+    that cannot be established from the returned authoritative counts, a
+    missing effective free-tier rule in entitlement_summary, and an
+    activate_beta call made inside an existing transaction. Database errors
+    are not uniformly wrapped in this exception; callers handle them as
+    specified by the individual read or command.
+    """
     pass
 
 
 class S015EntitlementRefused(Exception):
+    """A governed refusal of an entitlement command.
+
+    Carries refusal_code and, as its message, the authored text for that code
+    from _ENTITLEMENT_REFUSAL_MESSAGES; it can be raised only for a code that
+    has an authored message.
+    """
     def __init__(
         self,
         refusal_code: S015AuthorityRefusalCode,
     ) -> None:
+        """Use the authored message for refusal_code and keep the code.
+
+        A code with no authored message raises KeyError.
+        """
         super().__init__(_ENTITLEMENT_REFUSAL_MESSAGES[refusal_code])
         self.refusal_code = refusal_code
 
 
 @dataclass(frozen=True, slots=True)
 class MeasurementResult:
-    """Hold the complete, per-anchor outcome of an authoritative usage fold."""
+    """The five tallies of one authoritative usage fold.
+
+    counted, absent_state, not_yet_known, unreadable and anomalous count
+    anchors (distinct identities, for organism_learners) as _measure_usage
+    classifies them. _decide_measurement turns them into usage or a
+    refusal.
+    """
 
     counted: int
     absent_state: int
@@ -360,7 +514,16 @@ def _decide_measurement(
     result: MeasurementResult,
     mode: Literal["check", "summary"],
 ) -> int:
-    """Return complete usage or refuse histories whose meaning is not established."""
+    """Return counted usage, or refuse a history whose meaning is not established.
+
+    Raise ValueError for a mode other than "check" or "summary". In both
+    modes raise S015EntitlementTechnicalFailure if any anchor is unreadable
+    or anomalous; in "check" mode, also if any is not yet known. Otherwise
+    return result.counted. In "summary" mode this is the count within the
+    knowledge view used. This helper returns only that count and leaves the
+    input MeasurementResult unchanged; the caller can report its
+    not_yet_known tally separately.
+    """
     if mode not in {"check", "summary"}:
         raise ValueError("measurement mode is not registered")
     if result.unreadable > 0 or result.anomalous > 0:
@@ -382,7 +545,12 @@ def _is_constraint_violation(
     sqlstate: str,
     constraint_name: str,
 ) -> bool:
-    """Match a database fault only by its driver SQLSTATE and constraint identity."""
+    """Report whether an IntegrityError was caused by one named constraint.
+
+    Walk the error's __cause__ chain and return True when a cause carries
+    the given SQLSTATE (as sqlstate or pgcode) and a diagnostic naming the
+    given constraint; otherwise return False. Message text is not inspected.
+    """
     cause = error.__cause__
     while cause is not None:
         state = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
@@ -403,6 +571,22 @@ def entitlement_effective(
     at: datetime | None = None,
     database_alias: str = "default",
 ) -> bool:
+    """Return whether any qualifying entitlement row supplies a capability.
+
+    Calls s015_entitlement_effective for the organism and capability at
+    `at`. A row qualifies when it contains the capability and effective_at
+    is at or before `at`, and either its end is absent, `at` is before its
+    end, or its source is PAID and `at` is strictly before its end plus
+    seven days. The end of that grace interval is excluded. No recorded-time
+    cutoff or latest-row selection is applied to entitlement rows.
+
+    When `at` is omitted, use database_now on database_alias. An empty
+    capability or one whose type is not exactly str raises ValueError. The
+    capability is not checked against the registered-code list here. The
+    SQL existence test returns False if no matching organism/entitlement
+    row supplies it. A missing result row or non-boolean returned value
+    raises S015EntitlementTechnicalFailure; database errors propagate.
+    """
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     if type(capability) is not str or not capability:
         raise ValueError("capability is required")
@@ -430,6 +614,29 @@ def entitlement_limit(
     at: datetime | None = None,
     database_alias: str = "default",
 ) -> tuple[str, int | None]:
+    """Return the effective dimension limit as (kind, value).
+
+    Calls s015_entitlement_limit for the organism at `at`. SQL selects the
+    latest entitlement row in effect, ordered by effective_at, recorded_at
+    and id descending. A PAID row qualifies until, but not including, its
+    end plus seven days. There is no recorded-time cutoff on entitlement
+    rows; recorded_at is used to break selection ties.
+
+    Only when no entitlement row qualifies, use the latest PLATFORM
+    FREE_TIER rule effective by `at` and recorded no later than the start
+    of the evaluating SQL statement, ordered by effective_from,
+    recorded_at, version and id descending. A missing dimension in a
+    selected entitlement does not cause fallback to the free-tier rule.
+
+    The result is LIMIT with a non-negative integer, or UNLIMITED or
+    NOT_SET with None. When `at` is omitted, use database_now on
+    database_alias. SQL errors, including an unregistered dimension,
+    unknown organism, unavailable limit object, invalid kind or failing
+    integer conversion, propagate as database errors. The Python wrapper
+    raises S015EntitlementTechnicalFailure for no result row, an unexpected
+    kind, a LIMIT value that is not a non-negative int, or a non-None value
+    for an unbounded kind.
+    """
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(
         database_now(database_alias) if at is None else at,
@@ -459,6 +666,14 @@ def entitlement_limit(
 
 
 def _format_dimension_quantity(dimension: str, value: int) -> str:
+    """Render a quantity of a dimension for authored text.
+
+    document_footprint is shown in decimal units (GB, MB, KB) rounded half up
+    to one decimal place, with trailing zeros removed, or as "<n> B" below
+    1,000. Other dimensions show the count with the dimension's unit,
+    singular for exactly 1 and plural otherwise (for example "1 Circle",
+    "9 Circles").
+    """
     if dimension == "document_footprint":
         units = (
             (1_000_000_000, "GB"),
@@ -488,6 +703,32 @@ def _measure_usage(
     *,
     known_at: datetime | None,
 ) -> MeasurementResult:
+    """Fold a dimension's anchor records and classify their histories.
+
+    For circles each Circle of the organism is an anchor, counted when its
+    folded state is not CLOSED. For organism_learners each membership is an
+    anchor, counted when its folded state is ACTIVE or PROBATIONARY, and
+    each tally counts distinct identities within that category. An anchor's
+    state is folded from its events eligible at state time state_at and
+    knowledge time known_at; a known_at of None uses the evaluating
+    statement's timestamp. The anchor query itself has no temporal filter.
+
+    An anchor is unreadable when it has no eligible events across all time.
+    It is absent in state time when it has eligible events across all time
+    but none eligible by state_at. It is not yet known when it has events
+    eligible by state_at but none eligible in the requested knowledge view.
+    It is anomalous when it has events eligible in that knowledge view but
+    they fold to NULL. Return the counted, absent_state, not_yet_known,
+    unreadable and anomalous tallies. A readable state outside the counted
+    states contributes to none of these tallies.
+
+    Raise S015EntitlementTechnicalFailure when the aggregate row is missing
+    or malformed, or when any anchor is unreadable or anomalous; database
+    errors from the query propagate. document_footprint always raises
+    S015EntitlementTechnicalFailure with the explanation that authoritative
+    byte records are required; this helper implements no byte measurement.
+    An unregistered dimension raises ValueError.
+    """
     if dimension == "circles":
         sql = """
             SELECT
@@ -611,7 +852,26 @@ def check_allowance(
     *,
     database_alias: str = "default",
 ) -> AllowanceCheckResult:
-    """Check current authoritative usage plus a validated caller increment."""
+    """Decide whether authoritative usage at at plus an increment fits the limit.
+
+    Read-only: it writes nothing and does not use dashboard state. The caller
+    must supply the request's original bound received_at as at; this helper
+    validates the timestamp but does not bind the request's receipt time.
+    Raise ValueError for an unregistered dimension or an increment whose
+    type is not exactly int or whose value is negative. The limit at at
+    comes from entitlement_limit; an error reading it is raised, not
+    converted. If its kind is UNLIMITED or NOT_SET, the result is "within"
+    and usage is not measured.
+
+    If it is LIMIT, authoritative usage at at is measured with the
+    evaluating statement's current knowledge. If measurement raises
+    DatabaseError or S015EntitlementTechnicalFailure, including an
+    unreadable, anomalous or not-yet-known anchor, the result is
+    "cannot_check" (SE_USAGE_UNCHECKABLE). Otherwise proposed_total is the
+    measured usage plus increment: "exceeds" (SE_ALLOWANCE_EXCEEDED) when
+    it is greater than the limit, "within" when it is not. Usage can change
+    after the check; this read does not reserve the allowance.
+    """
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(at, "at")
     if dimension not in SE_ENTITLEMENT_DIMENSIONS:
@@ -709,6 +969,14 @@ def _measurement_display(
     usage: int | None,
     measurement_reason: str | None,
 ) -> str:
+    """Compose the display line for one dimension in entitlement_summary.
+
+    When usage could not be measured, the line says so, with the allowance,
+    "unlimited", or that no allowance is set. Otherwise: "<label>: <usage>
+    of <limit> in use." for LIMIT; "<label>: unlimited — <usage> in use."
+    for UNLIMITED; and for NOT_SET, the usage, a statement that no limit is
+    currently enforced, and what is counted.
+    """
     label = _DIMENSION_PRESENTATION[dimension][0]
     if measurement_reason is not None:
         if kind == "LIMIT":
@@ -747,7 +1015,56 @@ def entitlement_summary(
     at: datetime | None = None,
     database_alias: str = "default",
 ) -> dict[str, object]:
-    """Return the effective package and explicit per-dimension measurements."""
+    """Return package details, transition candidates and dimension usage.
+
+    Read database_now once on database_alias, including when `at` is
+    explicit; an omitted `at` defaults to that reading. Select the latest
+    entitlement row in effect at `at`, ordered by effective_at, recorded_at
+    and primary key descending, with no recorded-time cutoff. PAID rows
+    remain in effect strictly before their end plus seven days. Use a
+    non-empty tier_reference as the package name; otherwise map
+    COMPLIMENTARY to BETA_COMPLIMENTARY_ACCESS and TRIAL to
+    TRANSITION_TRIAL, or use the source itself.
+
+    With no qualifying entitlement, report FREE_TIER from the latest
+    PLATFORM FREE_TIER rule effective by `at` and recorded by the initial
+    database-time reading, ordered by effective_from, recorded_at,
+    version and primary key descending. Raise
+    S015EntitlementTechnicalFailure if that rule is absent.
+
+    For a selected entitlement, extensions lists its EXTENDED events
+    recorded by `at`, in sequence order; this listing does not additionally
+    filter their effective_at. next_transition is the earliest collected
+    time after `at`: the selected entitlement's end (plus seven days for
+    PAID), a future entitlement row's effective_at, a selected-entitlement
+    event's effective_at when recorded by `at`, or, only when no entitlement
+    is selected, a future FREE_TIER rule's effective_from when recorded by
+    the initial database-time reading. Future entitlement rows have no
+    recorded-time cutoff. If no candidate exists, next_transition is None.
+    This is a candidate time, not a guarantee of a changed allowance.
+
+    For every registered dimension, call entitlement_limit at `at` and
+    attempt _measure_usage at `at`, even for UNLIMITED or NOT_SET. Each
+    limit call uses its own SQL statement-start knowledge cutoff for
+    free-tier rules; Circle and membership state folds use `at` as both
+    state time and knowledge time. Usage counts what is known by `at`;
+    anchors with events eligible at that state time but none eligible in
+    that knowledge view are left out of usage and tallied as not_yet_known.
+    A later event not yet known does not place an anchor in that category
+    when an earlier eligible history is known; usage then follows the
+    fold of the known history. A DatabaseError or
+    S015EntitlementTechnicalFailure from measurement, including an
+    unreadable or anomalous anchor, produces None usage, None
+    not_yet_known and measurement_reason_code UNMEASURABLE. Errors reading
+    the limit propagate. Include the unit, measurement basis and display
+    line; the display line does not mention not_yet_known.
+
+    These queries do not establish a shared snapshot or one knowledge
+    cutoff for the whole result. The returned effective_at is the chosen
+    package's start, not necessarily the requested `at`; effective_until
+    is its stored end, before any PAID grace adjustment. Times are rendered
+    as ISO strings in the result. This function writes nothing.
+    """
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     now = database_now(database_alias)
     effective_at = _validate_timestamp(
@@ -925,7 +1242,13 @@ def capability_status(
     at: datetime | None = None,
     database_alias: str = "default",
 ) -> dict[str, dict[str, bool | str | None]]:
-    """Separate entitlement availability from undelivered owner-slice status."""
+    """Report whether the entitlement makes each capability available.
+
+    "available" is entitlement_effective at `at` (the database's current
+    time when omitted). "enabled" and "in_use" are None, with reason code
+    NOT_YET_DELIVERED: availability is reported apart from whether a
+    capability is switched on or used, which this read does not determine.
+    """
     organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
     effective_at = _validate_timestamp(
         database_now(database_alias) if at is None else at,
@@ -949,6 +1272,22 @@ def capability_status(
 
 
 class OrganismEntitlementService(_OrganismCommandService):
+    """Service for EFFECT_ENTITLEMENT_ELECTION and beta-access refusals.
+
+    The Birthing integration uses prepare_birthing_election before its
+    Birthing event and complete_birthing_election after it, within the
+    caller's transaction. These helpers do not open their own transaction.
+    activate_beta handles a later FREE-to-COMPLIMENTARY_BETA election
+    inside authority_atomic and refuses an existing atomic block.
+    The beta choice composes a grant under BETA_COMPLIMENTARY_ACCESS.
+
+    refuse_person_grant always raises an authored refusal. A correctly
+    typed extension command is refused because that route is unavailable;
+    an incorrectly typed one raises TypeError. Missing-context errors
+    depend on the path: for example, absent effective application settings
+    raise S015EntitlementTechnicalFailure during Birthing preparation and
+    S015EntitlementUnavailable during later opt-in.
+    """
     _action = OrganismAction.EFFECT_ENTITLEMENT_ELECTION
     _not_found = S015EntitlementUnavailable
     _authority_unavailable = S015EntitlementUnavailable
@@ -961,6 +1300,11 @@ class OrganismEntitlementService(_OrganismCommandService):
         database_alias: str = "default",
         availability_source: EntitlementAvailabilitySource | None = None,
     ) -> None:
+        """Bind authority, clock and database alias through the command base.
+
+        Use the supplied availability_source when it is truthy; otherwise
+        construct ProductionEntitlementAvailabilitySource on database_alias.
+        """
         super().__init__(
             authority=authority,
             clock=clock,
@@ -971,6 +1315,7 @@ class OrganismEntitlementService(_OrganismCommandService):
         )
 
     def _replay_result(self, payload: object) -> EntitlementElectionResult:
+        """Rebuild the stored result of a completed opt-in for replay."""
         return _election_result_from_payload(payload)
 
     def _policy_record(
@@ -979,6 +1324,14 @@ class OrganismEntitlementService(_OrganismCommandService):
         policy_version: int,
         policy_text_sha256: str,
     ) -> OrganismEntitlementPolicyText:
+        """Return the recorded policy text for a version, checked by digest.
+
+        Raises ValueError unless policy_version is a positive integer and
+        policy_text_sha256 is 64 lowercase hexadecimal characters. Raises
+        S015EntitlementTechnicalFailure when no text is recorded for that
+        version, or when the stored text's own SHA-256 or its recorded digest
+        differs from the digest given.
+        """
         if type(policy_version) is not int or policy_version <= 0:
             raise ValueError("policy_version must be a positive integer")
         if (
@@ -1012,6 +1365,16 @@ class OrganismEntitlementService(_OrganismCommandService):
         effective_at: datetime,
         received_at: datetime,
     ) -> LOApplicationSettingsVersion | None:
+        """Return the organism's effective election settings version, or None.
+
+        Takes the organism's latest EFFECT_ENTITLEMENT_ELECTION event
+        effective by effective_at and received and recorded by received_at
+        (latest by effective_at, occurred_at, received_at, recorded_at,
+        sequence, then event UUID), and returns the election settings version
+        its evidence reference names. Raises S015EntitlementTechnicalFailure
+        when that reference is malformed or names no election version of this
+        organism.
+        """
         reference = (
             LivingOrganismEvent.objects.using(self._alias)
             .filter(
@@ -1107,10 +1470,19 @@ class OrganismEntitlementService(_OrganismCommandService):
         effective_at: datetime,
         received_at: datetime,
     ) -> LOApplicationSettingsVersion:
-        """Create an election version with only the election-specific payload.
+        """Create a settings-chain version with election-specific payload.
 
-        HG_DECISION_SE_GATE_01_FIX_IN_SE_20261012 and commission §4.1 keep
-        application-settings fields on their own action kind.
+        Record the offering choice, election route, accepted policy version
+        and text digest, and authority source/version. Also record the shared
+        organism, actor and enterer, occurred/effective/received timestamps,
+        and supersedes link to previous_election when supplied. The acting
+        Identity is stored in both actor and enterer on this version row.
+
+        No application-settings-specific values are supplied by this helper;
+        those belong to their own action kind under SE-GATE-01 and commission
+        section 4.1. Callers supply BIRTHING or POST_BIRTHING as the election
+        route. The helper passes its arguments to create; it does not itself
+        validate every value or qualify authority.
         """
         return LOApplicationSettingsVersion.objects.using(self._alias).create(
             living_organism=organism,
@@ -1129,6 +1501,18 @@ class OrganismEntitlementService(_OrganismCommandService):
         )
 
     def _authority_provenance(self) -> tuple[str, str]:
+        """Return the provider identity and version used in the election record.
+
+        Use provider_identity when its type is exactly str; otherwise use the
+        provider class's module-qualified name. Use UNSPECIFIED only when the
+        provider_version attribute is absent. A present None, empty string or
+        value whose type is not exactly str is an invalid version.
+
+        Raise S015EntitlementTechnicalFailure for an invalid version, an empty
+        identity, an identity longer than 255 characters, or a version longer
+        than 32 characters. An empty string identity is rejected, not replaced
+        by the class-name fallback.
+        """
         provider = self._authority.provider
         authority_source = getattr(provider, "provider_identity", None)
         if type(authority_source) is not str:
@@ -1163,6 +1547,25 @@ class OrganismEntitlementService(_OrganismCommandService):
         effective_at: datetime,
         received_at: datetime,
     ) -> _PreparedBirthingElection:
+        """Prepare and record an election version before the Birthing event.
+
+        The caller owns the transaction spanning this preparation, Birthing
+        and complete_birthing_election; this method opens no transaction.
+        Require FREE or COMPLIMENTARY_BETA, otherwise raise ValueError. Check
+        the accepted policy through _policy_record, with that helper's input
+        and technical errors. Missing effective application settings or an
+        already-effective election raises S015EntitlementTechnicalFailure.
+
+        Create the BIRTHING election version, compute the command fingerprint,
+        and qualify an EFFECT_ENTITLEMENT_ELECTION request naming the snapshot
+        and version, evaluated at received_at with the supplied effective_at.
+        On S015AuthorityDenied, call delete on the new version and re-raise
+        the denial if cleanup succeeds. Transactional rollback remains the
+        caller's responsibility; cleanup errors are not separately translated
+        here. Return the prepared actor, organism, version, policy, decision,
+        choice, request references, fingerprint and timestamps. This method
+        appends no event and composes no grant, but it does write the version.
+        """
         if command.offering_choice not in {"FREE", "COMPLIMENTARY_BETA"}:
             raise ValueError("offering_choice must be FREE or COMPLIMENTARY_BETA")
         policy = self._policy_record(
@@ -1276,6 +1679,13 @@ class OrganismEntitlementService(_OrganismCommandService):
         *,
         birthing_event_uuid: UUID,
     ) -> tuple[LivingOrganismEvent, OrganismEntitlement | None]:
+        """Complete a prepared Birthing election once its event exists.
+
+        Appends the election event to the organism's chain and, for
+        COMPLIMENTARY_BETA, composes the beta grant, recorded as composed from
+        the Birthing event. Returns the event with the grant, or with None for
+        FREE.
+        """
         event = self._append_election_event(
             actor=prepared.actor,
             organism=prepared.organism,
@@ -1301,6 +1711,53 @@ class OrganismEntitlementService(_OrganismCommandService):
         return event, entitlement
 
     def activate_beta(self, command: EntitlementElectionCommand) -> EntitlementElectionResult:
+        """Process a later opt-in from FREE to COMPLIMENTARY_BETA.
+
+        Raise S015EntitlementTechnicalFailure if already inside an atomic
+        block; otherwise enter authority_atomic. Lock the actor, validate the
+        request fields, take received_at from the injected service clock, and
+        validate the accepted policy. Set effective_at to that received_at, not to
+        the command's occurred_at. The clock is supplied by the caller.
+
+        Build the fingerprint and acquire the actor/action/idempotency mutex.
+        Ask the base replay path for a matching completed result, with a
+        ReplayViewer using another service-clock reading. Return a non-None
+        replay result before the new-election path. Validation and policy
+        lookup precede this replay check; replay eligibility, access and
+        mismatch handling belong to the base service.
+
+        For a new election, lock the organism and establish membership context.
+        Check first whether _beta_grant_collision finds an existing grant. Every
+        BETA_OPT_IN row for the organism collides, without effective- or
+        recorded-time filters. An AUTHORISED_EXTENSION collides when its start
+        is at or before the original received_at and its end is absent or
+        strictly after that time, using rows visible to the collision-check
+        statement with no recorded_at cutoff. A collision raises
+        S015EntitlementRefused(SE_ALREADY_BETA). Then query paid availability: a
+        non-empty exact-str reference causes SE_OFFER_CLOSED; any other non-None
+        result causes S015EntitlementTechnicalFailure. Require an effective FREE
+        election and effective application settings, otherwise raise
+        S015EntitlementUnavailable.
+
+        Create a POST_BIRTHING election version and read its database-recorded
+        time. Missing recorded_at raises S015EntitlementTechnicalFailure.
+        Qualify authority at max(received_at, version.recorded_at), while
+        retaining effective_at equal to received_at. On S015AuthorityDenied,
+        call delete on the version. If cleanup succeeds, translate
+        C_ROUTE_IS_CQ or SE_OPT_IN_NEEDS_CQ to a S015AuthorityDenied carrying
+        the authored SE_OPT_IN_NEEDS_CQ text and code, preserving the original
+        disclosed_refusal_code and authority_decision_reference; re-raise
+        other authority denials unchanged.
+
+        On approval, append the election event, compose the beta grant from
+        that event's UUID, build the result and call _finalise for the receipt.
+        If the grant insert raises IntegrityError with SQLSTATE 23505 and
+        constraint se_entitlement_beta_one_per_lo_uniq, _compose_beta_grant
+        raises S015EntitlementRefused(SE_ALREADY_BETA); other integrity errors
+        propagate unchanged.
+        This new-election path is within the same authority_atomic block;
+        commit-time handling is supplied by that shared context manager.
+        """
         if connections[self._alias].in_atomic_block:
             raise S015EntitlementTechnicalFailure(
                 "entitlement opt-in cannot run inside an existing transaction"
@@ -1518,12 +1975,24 @@ class OrganismEntitlementService(_OrganismCommandService):
             )
 
     def refuse_person_grant(self) -> None:
+        """Refuse a grant entered by a person.
+
+        Beta access is granted only by composition when an organism opts in.
+        Always raises S015EntitlementRefused with SE_GRANT_NOT_BY_HAND.
+        """
         raise S015EntitlementRefused(S015AuthorityRefusalCode.SE_GRANT_NOT_BY_HAND)
 
     def extend_entitlement(
         self,
         command: EntitlementExtensionCommand,
     ) -> None:
+        """Refuse an extension because its command route is unavailable.
+
+        Raise TypeError unless type(command) is exactly
+        EntitlementExtensionCommand; subclasses are also rejected. Otherwise
+        raise S015EntitlementRefused(SE_EXTENSION_ROUTE_UNAVAILABLE).
+        This method records nothing.
+        """
         if type(command) is not EntitlementExtensionCommand:
             raise TypeError("command must be an EntitlementExtensionCommand")
         raise S015EntitlementRefused(
@@ -1544,6 +2013,32 @@ class OrganismEntitlementService(_OrganismCommandService):
         effective_at: datetime,
         received_at: datetime,
     ) -> LivingOrganismEvent:
+        """Append an entitlement-election event in the caller's transaction.
+
+        Lock the organism and its head event. A null head_event_id raises
+        S015EntitlementTechnicalFailure, as does a predecessor-commitment
+        query returning no row or a NULL commitment. Other ORM and database
+        errors are not uniformly converted by this helper.
+
+        Insert EFFECT_ENTITLEMENT_ELECTION as the head's successor, with both
+        prior_state and resulting_state equal to the predecessor's resulting
+        state. Attribute the act to the Living Organism in STANDING capacity:
+        actor_id is None, actor_state is LIVING_ORGANISM, and the supplied
+        Identity is the enterer with entry_mode TRANSPORT. Store the organism's
+        founding_authority_basis_id separately from the qualified decision's
+        authority_decision_reference. This helper records that decision; it
+        does not itself qualify authority. The founding basis anchors the
+        event to the organism's root authority basis; it does not record that
+        the founder's authority persists. The operative authority is the
+        qualified decision.
+
+        Include the election-version evidence reference, request references,
+        fingerprint, generated lineage reference, temporal basis, supplied
+        timestamps, predecessor commitment and computed parts commitment.
+        Refresh the organism's governed cache using effective_at and a fresh
+        database clock_timestamp() argument, then return the inserted event.
+        This helper does not open or commit its own transaction.
+        """
         organism = (
             LivingOrganism.objects.using(self._alias)
             .select_for_update()
@@ -1649,6 +2144,38 @@ class OrganismEntitlementService(_OrganismCommandService):
         received_at: datetime,
         composed_from_event_uuid: UUID,
     ) -> OrganismEntitlement:
+        """Record a beta grant and its composed GRANTED event.
+
+        Select the PLATFORM BETA_COMPLIMENTARY_ACCESS rule effective by
+        effective_at and recorded by received_at, ordered by effective_from,
+        recorded_at, version and primary key descending. Raise
+        S015EntitlementTechnicalFailure if no rule exists or its body is not
+        exactly a dict. Require capabilities to be exactly a list of exact-str
+        values whose set equals _BETA_CAPABILITY_CODES, and limits to be
+        exactly a dict; otherwise raise S015EntitlementTechnicalFailure.
+        This Python check does not reject duplicate capability entries or
+        validate each dimension's limit structure.
+
+        Create a COMPLIMENTARY entitlement with basis BETA_OPT_IN, the rule's
+        capabilities and limits, the accepted policy version/reference,
+        effective_at as supplied, and effective_until=None. Record
+        ending_condition_reference as the prefix paid-availability-transition:
+        followed by the organism UUID. This method does not execute that
+        ending condition or create the transition trial. If the insert
+        violates the one-beta-grant-per-organism constraint
+        (se_entitlement_beta_one_per_lo_uniq, SQLSTATE 23505), raise
+        S015EntitlementRefused(SE_ALREADY_BETA); other integrity errors
+        propagate unchanged.
+
+        Create its first GRANTED event with entry_mode COMPOSED, the selected
+        rule and rule-version reference, and the supplied originating event
+        UUID. actor_state is NONE and actor is None; the supplied Identity is
+        the enterer. No deciding Identity, authoriser or established composer
+        Identity is recorded. occurred_at and effective_at both use the
+        supplied effective_at; received_at uses the supplied received_at.
+        Return the entitlement. The caller owns the surrounding transaction;
+        this helper does not open or commit one itself.
+        """
         rule = (
             GovernedRule.objects.using(self._alias)
             .filter(
