@@ -1,3 +1,35 @@
+"""Membership commands and own-membership reads for a Living Organism (S015).
+
+OrganismMembershipService provides open_membership and
+transition_membership. The opening path creates a PROPOSED membership and
+its first transition inside transaction.atomic. The transition path runs
+inside authority_atomic and applies authority qualification, edge checks
+and the implemented limits; _STATE_ALLOWED does not by itself establish
+that an edge is delivered.
+
+A successful fresh command writes a membership transition, refreshes the
+governed cache and records a command receipt. Both paths attempt replay
+before their fresh-command work and return a replay result when supplied
+by _attempt_replay.
+
+For a fresh transition reaching the departure checks, a participation
+starting after the departure's effective_at causes a refusal, whether or
+not that participation already has an ending. After writing an ENDED
+transition, the service composes endings at that same effective_at for
+participations starting by departure that have no existing ending row
+(PKT-B SB-G build commission, section 8).
+
+Local checks retain named limits for admission, probation transitions,
+rejoining, leaving with an ACTIVE role assignment, and a transition whose
+(effective_at, occurred_at, received_at) tuple precedes the head's.
+Authority qualification or another earlier check can refuse first.
+
+OrganismMembershipReader filters the reader's own cached memberships to
+ACTIVE, PROBATIONARY, RESTRICTED or SUSPENDED, with state-effective and
+state-known timestamps no later than its reading time.
+qualify_completed_replay requires an atomic block and checks a command
+receipt against the supplied request and authority references.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -75,36 +107,63 @@ _STATE_ALLOWED = {
 
 
 class S015MembershipCommandError(Exception):
+    """Base class for this module's membership-command errors."""
     pass
 
 
 class S015MembershipAuthorityUnavailable(S015MembershipCommandError):
+    """An authority prerequisite for a membership command is unavailable.
+
+    Raised when the actor's Identity, credential or membership context fails
+    its check (passed as the unavailable exception to _lock_actor and
+    _lock_actor_membership_context), or when the LO has no founding
+    authority basis.
+    """
     pass
 
 
 class S015MembershipExists(S015MembershipCommandError):
+    """Opening refused because a membership row already exists for that Identity and LO."""
     pass
 
 
 class S015MembershipNotFound(S015MembershipCommandError):
+    """The LO, target Identity or membership named by a command or read was not found.
+
+    Also used by OrganismMembershipReader when a membership is absent,
+    belongs to another Identity, or is outside its filters.
+    """
     pass
 
 
 class S015MembershipEdgeRefused(S015MembershipCommandError):
+    """A requested state or membership edge is outside the decided set."""
     pass
 
 
 class S015MembershipRefused(S015MembershipCommandError):
+    """An authored refusal of a membership command, carrying its refusal_code.
+
+    transition_membership raises it for a departure dated before one of the
+    member's participations began (SBG_DEPARTURE_PRECEDES_PARTICIPATION).
+    """
     def __init__(self, message: str, *, refusal_code: S015AuthorityRefusalCode) -> None:
         super().__init__(message)
         self.refusal_code = refusal_code
 
 
 class S015MembershipStateUnused(S015MembershipCommandError):
+    """A membership state that v1.0 does not use was requested or found."""
     pass
 
 
 class S015OperationNotYetImplemented(S015MembershipCommandError):
+    """A named limit: an operation the design supports but this build refuses.
+
+    Carries operation, limit_id and owning_slice, and the message
+    "<operation> is supported by the design but not yet built (<limit_id>,
+    <owning_slice>)".
+    """
     def __init__(self, operation: str, limit_id: str, owning_slice: str):
         super().__init__(
             f"{operation} is supported by the design but not yet built ({limit_id}, {owning_slice})"
@@ -116,6 +175,12 @@ class S015OperationNotYetImplemented(S015MembershipCommandError):
 
 @dataclass(frozen=True, slots=True)
 class OpenMembershipCommand:
+    """Inputs to open_membership.
+
+    The actor's credential; the request reference and idempotency key; the
+    occurred, effective and received times; the LO and member Identity
+    UUIDs; and the reason class.
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -129,6 +194,12 @@ class OpenMembershipCommand:
 
 @dataclass(frozen=True, slots=True)
 class TransitionMembershipCommand:
+    """Inputs to transition_membership.
+
+    The actor's credential; the request reference and idempotency key; the
+    occurred, effective and received times; the membership UUID; the
+    requested resulting state; and the reason class.
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -142,6 +213,23 @@ class TransitionMembershipCommand:
 
 @dataclass(frozen=True, slots=True)
 class MembershipCommandResult:
+    """A membership command result, with fields that may be withheld when served.
+
+    The receipt stores the serialized result before serve_replay applies
+    viewer-specific withholding. The shared service applies serve_replay
+    both when returning a newly completed command and on later replay.
+
+    resulting_state, transition_sequence, current_state_effective_at,
+    state_known_at and state_source_event_set_fingerprint are replaced by
+    WithheldField when the viewer lacks the SUBJECT audience.
+    membership_uuid has the same restriction when transition_sequence is 1.
+
+    Separately, authority_reference is replaced by WithheldField whenever
+    _has_pk_valued_reference identifies it as primary-key-valued, regardless
+    of the viewer's audience. These rules do not replace lineage_reference,
+    temporal_basis_kind, temporal_basis_reference or
+    authority_decision_reference.
+    """
     membership_uuid: UUID | WithheldField
     resulting_state: str | WithheldField
     transition_sequence: int | WithheldField
@@ -155,10 +243,18 @@ class MembershipCommandResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
+        """Return the receipt payload for this result (_result_payload)."""
         return _result_payload(self)
 
     @classmethod
     def replay_field_audiences(cls, result: "MembershipCommandResult") -> dict[str, str]:
+        """Return the replay audience of each restricted field.
+
+        resulting_state, transition_sequence, current_state_effective_at,
+        state_known_at and state_source_event_set_fingerprint are for the
+        membership's own Identity (SUBJECT) only; membership_uuid also, when the
+        result is a membership's first transition (sequence 1).
+        """
         fields = {
             "resulting_state": "SUBJECT",
             "transition_sequence": "SUBJECT",
@@ -176,6 +272,13 @@ _OWN_MEMBERSHIP_STATES = frozenset({"ACTIVE", "PROBATIONARY", "RESTRICTED", "SUS
 
 @dataclass(frozen=True, slots=True)
 class OwnMembershipView:
+    """One of a person's own memberships, as returned by OrganismMembershipReader.
+
+    organism_id identifies the LO. state is the membership's stored state.
+    current_state_effective_at is when that state began (field label "the
+    beginning of the current state"). offices lists (role code, scope) pairs
+    for the membership's ACTIVE role assignments in effect at the reading time.
+    """
     organism_id: UUID
     state: str
     current_state_effective_at: datetime = field(
@@ -185,12 +288,30 @@ class OwnMembershipView:
 
 
 class OrganismMembershipReader:
+    """Read memberships belonging to the supplied Identity.
+
+    The class's own queries perform reads without requesting row locks.
+    Membership selection uses cached rows in ACTIVE, PROBATIONARY,
+    RESTRICTED or SUSPENDED whose current_state_effective_at and
+    state_known_at are no later than the reading time. It does not
+    reconstruct membership state by folding membership events.
+
+    Office eligibility is delegated to assignment_in_effect; this
+    description makes no claim about that helper's internal queries.
+    """
     def __init__(
         self,
         *,
         clock: Callable[[], datetime] | None = None,
         database_alias: str = "default",
     ) -> None:
+        """Configure the reader's clock and database alias.
+
+        If clock is given it must be callable (TypeError otherwise) and supplies
+        the reading time; without it, the reading time is the database's
+        clock_timestamp(). database_alias must be a non-empty str (ValueError
+        otherwise); it defaults to "default".
+        """
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
         if type(database_alias) is not str or not database_alias:
@@ -199,6 +320,13 @@ class OrganismMembershipReader:
         self._alias = database_alias
 
     def list_own_memberships(self, reader: Identity) -> list[OwnMembershipView]:
+        """Return the reader's own memberships visible at one reading time.
+
+        Takes the reading time once, then selects memberships for the reader's
+        Identity UUID in the states ACTIVE, PROBATIONARY, RESTRICTED and
+        SUSPENDED whose current_state_effective_at and state_known_at are no
+        later than it, ordered by LO UUID, and builds a view of each.
+        """
         reader_identity_id = self._reader_identity_id(reader)
         now = self._now()
         memberships = OrganismMembership.objects.using(self._alias).filter(
@@ -214,6 +342,16 @@ class OrganismMembershipReader:
         reader: Identity,
         membership_uuid: UUID,
     ) -> OwnMembershipView:
+        """Return one of the supplied Identity's memberships by its UUID.
+
+        Validates that membership_uuid has the required UUID type, then applies
+        the same membership filters as list_own_memberships at one reading time.
+        Raises S015MembershipNotFound("membership not found") when no row
+        matches, whether the membership is absent, belongs to another Identity,
+        or falls outside the permitted states or timestamp bounds.
+
+        Invalid reader or UUID arguments are rejected before this lookup.
+        """
         reader_identity_id = self._reader_identity_id(reader)
         membership_uuid = _canonical_uuid(membership_uuid, "membership_uuid")
         now = self._now()
@@ -230,11 +368,22 @@ class OrganismMembershipReader:
 
     @staticmethod
     def _reader_identity_id(reader: Identity) -> UUID:
+        """Return reader.identity_id after checking its types.
+
+        Raises TypeError unless reader is an instance of Identity and
+        type(reader.identity_id) is UUID. This does not authenticate the caller
+        or check the Identity's current access state.
+        """
         if not isinstance(reader, Identity) or type(reader.identity_id) is not UUID:
             raise TypeError("reader must be an Identity")
         return reader.identity_id
 
     def _now(self) -> datetime:
+        """Return the reading time.
+
+        The configured clock's value, validated by _validate_timestamp, or else
+        the database's clock_timestamp() on this reader's alias.
+        """
         if self._clock is not None:
             return _validate_timestamp(self._clock(), "clock")
         with connections[self._alias].cursor() as cursor:
@@ -242,6 +391,13 @@ class OrganismMembershipReader:
             return cursor.fetchone()[0]
 
     def _view(self, membership: OrganismMembership, now: datetime) -> OwnMembershipView:
+        """Build the OwnMembershipView for one membership at the reading time.
+
+        offices keeps the (code, scope) of each ACTIVE role assignment on this
+        membership, ordered by role code, scope and primary key, for which
+        assignment_in_effect (organism_role_service) reports the assignment in
+        effect at that time.
+        """
         from src.intevia.services.organism_role_service import assignment_in_effect
 
         offices = ContextualRoleAssignment.objects.using(self._alias).filter(
@@ -302,6 +458,21 @@ def _insert_membership_transition_row(
     resulting_state: str,
     reason_class: str,
 ) -> int:
+    """Execute a raw SQL insert of one membership transition and return its id.
+
+    Reads the predecessor's l1_commitment when predecessor_id is supplied;
+    uses None when no predecessor is supplied or the lookup finds no row.
+    Computes parts_commitment with the database's s015_0022_digest and
+    s015_0022_parts_preimage functions for this table and event_uuid.
+
+    Passes the supplied row values and the two derived commitments to a
+    parameterized INSERT ... RETURNING id on database_alias. Performs no
+    explicit Python-side validation of those values and does not open an
+    atomic block or explicitly lock the predecessor row.
+
+    Database errors propagate. Returning an id does not establish that
+    deferred checks have passed or that the surrounding transaction commits.
+    """
     with connections[database_alias].cursor() as cursor:
         if predecessor_id is None:
             predecessor_l1_commitment = None
@@ -412,6 +583,14 @@ def _insert_membership_transition_row(
 
 
 def _parse_canonical_timestamp(value: object) -> datetime:
+    """Parse a timestamp value from a stored receipt payload.
+
+    Requires type(value) to be str, otherwise raises TypeError. Replaces
+    every "Z" with "+00:00" and passes the result to datetime.fromisoformat,
+    allowing its parsing errors to propagate. Raises ValueError unless
+    canonical_timestamp of the parsed value reproduces the stored string
+    exactly, so only the writer's canonical spelling is accepted.
+    """
     if type(value) is not str:
         raise TypeError("timestamp payload must be a string")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -423,6 +602,22 @@ def _parse_canonical_timestamp(value: object) -> datetime:
 def _expected_replay_result(
     payload: object,
 ) -> MembershipCommandResult:
+    """Reconstruct a MembershipCommandResult from a receipt payload, strictly.
+
+    Enforces the writer's receipt contract: the payload must be a dict with
+    exactly the eleven result keys; the reference, state and fingerprint
+    fields must be strings, the temporal basis kind and reference strings or
+    None and present or absent together, and transition_sequence a positive
+    int (bool refused). membership_uuid must be a canonical UUID string;
+    resulting_state must be PROPOSED, ACTIVE, PROBATIONARY or ENDED; the
+    temporal basis kind must be None, RETROSPECTIVE or PROSPECTIVE; the two
+    timestamps must be canonical (_parse_canonical_timestamp).
+
+    A non-dict payload, or KeyError, TypeError or ValueError while checking
+    or building the result, raises S015CommandReceiptMalformed (the record-
+    fault refusal) with the cause chained. It does not compare the result
+    with the recorded transition; the service's _verify_replay_result does.
+    """
     if type(payload) is not dict:
         raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
     try:
@@ -486,6 +681,11 @@ def _expected_replay_result(
 
 
 def _result_payload(result: MembershipCommandResult) -> dict[str, object]:
+    """Return the receipt payload for a result.
+
+    Its eleven fields, keyed by name, with membership_uuid as a string and
+    current_state_effective_at and state_known_at in canonical form.
+    """
     return {
         "authority_decision_reference": result.authority_decision_reference,
         "authority_reference": result.authority_reference,
@@ -508,6 +708,14 @@ def _result_from_membership(
     authority_reference: str,
     authority_decision_reference: str,
 ) -> MembershipCommandResult:
+    """Build the command result after a write.
+
+    resulting_state, transition_sequence, lineage_reference and the temporal
+    basis come from the transition row; membership_uuid and the state
+    coordinates (current_state_effective_at, state_known_at and the source
+    event-set fingerprint) from the refreshed membership; the two authority
+    references are those supplied.
+    """
     return MembershipCommandResult(
         membership_uuid=membership.membership_uuid,
         resulting_state=transition.resulting_state,
@@ -524,6 +732,13 @@ def _result_from_membership(
 
 
 def _validate_member_state(value: object) -> str:
+    """Validate a requested resulting state and return it.
+
+    Validates it as a canonical key of at most 19 characters. Raises
+    S015MembershipStateUnused for SUSPENDED, RESTRICTED or
+    PRIVACY_TRANSFORMED (unused in v1.0), and S015MembershipEdgeRefused for
+    any other state that is not PROPOSED, ACTIVE, PROBATIONARY or ENDED.
+    """
     state = _canonical_key(value, "resulting_state", 19)
     if state in _STATE_UNUSED:
         raise S015MembershipStateUnused(
@@ -535,6 +750,17 @@ def _validate_member_state(value: object) -> str:
 
 
 def _validate_edge(current_state: str, target_state: str, membership: OrganismMembership) -> None:
+    """Check one membership edge against the v1.0 edge rules; raise or return None.
+
+    In order: S015MembershipStateUnused if either state is unused in v1.0;
+    S015OperationNotYetImplemented for ENDED to PROPOSED (rejoining, limit
+    IL-1); S015OperationNotYetImplemented for an ENDED target from ACTIVE or
+    PROBATIONARY while the membership has a contextual role assignment
+    whose stored state is ACTIVE (leaving while holding an office, limit
+    IL-2); S015MembershipEdgeRefused for any other edge not in
+    _STATE_ALLOWED. The office check reads stored assignment states; it does
+    not fold assignment events at an effective time.
+    """
     if current_state in _STATE_UNUSED or target_state in _STATE_UNUSED:
         raise S015MembershipStateUnused(
             f"membership state {current_state}->{target_state} is unused by v1.0 (⟨B.049⟩)"
@@ -552,6 +778,7 @@ def _validate_edge(current_state: str, target_state: str, membership: OrganismMe
 
 
 def _canonical_reason(value: object) -> str:
+    """Validate reason_class as a canonical key of at most 48 characters and return it."""
     return _canonical_key(value, "reason_class", 48)
 
 
@@ -561,6 +788,12 @@ def _target_fingerprint_open(
     living_organism_id: UUID,
     reason_class: str,
 ) -> str:
+    """Return the authority target fingerprint for opening a membership.
+
+    Passes authority_target_fingerprint the action (TRANSITION_MEMBERSHIP),
+    the LO and member Identity UUIDs as strings, the reason class, the
+    resulting state PROPOSED and the target schema.
+    """
     return authority_target_fingerprint(
         {
             "action": _ACTION.value,
@@ -580,6 +813,12 @@ def _target_fingerprint_transition(
     resulting_state: str,
     reason_class: str,
 ) -> str:
+    """Return the authority target fingerprint for a membership transition.
+
+    Passes authority_target_fingerprint the action (TRANSITION_MEMBERSHIP),
+    the LO and membership UUIDs as strings, the reason class, the requested
+    resulting state and the target schema.
+    """
     return authority_target_fingerprint(
         {
             "action": _ACTION.value,
@@ -593,14 +832,35 @@ def _target_fingerprint_transition(
 
 
 class OrganismMembershipService(_OrganismCommandService):
+    """The membership command service: open_membership and transition_membership.
+
+    Declares, for the shared _OrganismCommandService, the action
+    TRANSITION_MEMBERSHIP, S015MembershipNotFound as its not-found exception
+    and S015MembershipAuthorityUnavailable as its unavailable exception;
+    rebuilds replayed results from receipt payloads and, on replay, checks
+    each against its recorded membership transition.
+    """
     _action = _ACTION
     _not_found = S015MembershipNotFound
     _authority_unavailable = S015MembershipAuthorityUnavailable
 
     def _replay_result(self, payload: object) -> MembershipCommandResult:
+        """Rebuild a replayed result from its receipt payload (_expected_replay_result)."""
         return _expected_replay_result(payload)
 
     def _verify_replay_result(self, result: MembershipCommandResult) -> None:
+        """Check a replayed membership result against its recorded transition.
+
+        Raises TypeError unless result is a MembershipCommandResult instance.
+        Reads the transition identified by the result's membership UUID and
+        transition sequence. Requires its action to equal _ACTION.value
+        (OrganismAction.TRANSITION_MEMBERSHIP) and its lineage reference to
+        equal the result's. A missing row or either disagreement raises
+        S015CommandReceiptMalformed with a ValueError cause (RC-1, item 7).
+
+        This check does not compare the other result fields with the transition
+        or recompute its lineage reference. Database-read errors propagate.
+        """
         if not isinstance(result, MembershipCommandResult):
             raise TypeError("membership replay result has the wrong type")
         # RC-1 commission v1.3, item 7 (A2-b): agree with the chain only on replay.
@@ -628,6 +888,14 @@ class OrganismMembershipService(_OrganismCommandService):
         target: dict[str, object],
         command: dict[str, object],
     ) -> str:
+        """Return the command fingerprint for this service's commands.
+
+        Delegates to _command_payload with this module's command domain and
+        schema, the TRANSITION_MEMBERSHIP action, the actor's Identity UUID and
+        access epoch, and the caller's request reference, idempotency key,
+        occurred_at, target and command. Opening and transitions both use the
+        TRANSITION_MEMBERSHIP action (the interim S1 mapping at l.63-64).
+        """
         return _command_payload(
             domain=_COMMAND_DOMAIN,
             schema=_COMMAND_SCHEMA,
@@ -643,11 +911,70 @@ class OrganismMembershipService(_OrganismCommandService):
 
     def open_membership(self, command: OpenMembershipCommand) -> MembershipCommandResult:
         # Keep T-LOCK-1 translation outside atomic so it follows rollback (15 Oct commission, §1).
+        """Open a PROPOSED membership; runs _execute_open in transaction.atomic.
+
+        Uses this service's database alias. The transaction runs inside
+        contention_translated: an OperationalError with SQLSTATE 40P01, 40001
+        or 55P03 becomes S015CommandContended when this is the outermost
+        transaction. Those errors inside an enclosing transaction, and every
+        other exception raised by _execute_open, propagate unchanged; no
+        IntegrityError is mapped to an authored refusal.
+        """
         with contention_translated(self._alias):
             with transaction.atomic(using=self._alias):
                 return self._execute_open(command)
 
     def _execute_open(self, command: OpenMembershipCommand) -> MembershipCommandResult:
+        """Open a membership in PROPOSED; called by open_membership.
+
+        Runs inside the caller's transaction.atomic block, in this order:
+
+        1. Validates the canonical keys, reason, LO UUID and member Identity UUID,
+           and validates and normalises the timestamps; locks the actor's
+           Identity and credential (_lock_actor) and takes the command mutex.
+        2. Reads the LO without requesting a row lock (S015MembershipNotFound
+           if absent) and computes the target and command fingerprints. If
+           _attempt_replay returns a result, returns it with no further work.
+        3. Locks the LO row itself, then reads the target Identity without
+           requesting an additional row lock (S015MembershipNotFound if absent),
+           then locks the actor's membership context. The context helper
+           requires the actor's membership in this LO to be ACTIVE and to have
+           a non-null head transition; allow_probationary is not supplied.
+        4. Calls _evaluate_authority with the actor, its membership context
+           and role references, the request reference and idempotency key,
+           the target fingerprint and received_at. It does not supply
+           effective_at, a target dictionary or living_organism_id; those
+           request fields default to None. The following steps are reached
+           only if authority qualification returns successfully.
+        5. If the LO's founding authority basis id is null, raises
+           S015MembershipAuthorityUnavailable; otherwise locks the basis row.
+        6. Raises S015MembershipExists if a membership row for this Identity and
+           LO already exists, in any state.
+        7. Creates the membership in PROPOSED, its state effective at the
+           command's effective_at and known at its received_at, and writes its
+           first transition: sequence 1, no predecessor and no prior state, the
+           same Identity as actor and enterer, entry_mode TRANSPORT, the
+           decision's references, and a lineage_reference hashed from the
+           constructed lineage payload.
+        8. Re-reads the membership, refreshes the governed cache at
+           effective_at with the database's clock_timestamp(), then
+           re-reads the membership and fetches and refreshes the transition.
+        9. Builds the result and returns it through _finalise.
+
+        The LO row is locked directly; this path does not call
+        _lock_registered_organism. R1 (PKT_LOCK_1_BUILD_COMMISSION_v1_0.md,
+        section 2.4) removes the explicit target Identity lock: this path does
+        not check the target's access state and uses the row for the membership
+        pair lookup and foreign key. This also satisfies I-2's prohibition on
+        explicit locks on another person's Identity after the organism lock.
+        It does not establish the target's eligibility or resolve H25's
+        target-deactivation question.
+
+        The write sequence described here is conditional on successful
+        authority qualification. The supplied production application-authority
+        provider refuses TRANSITION_MEMBERSHIP requests without an ENDED
+        target; this opening path supplies no target.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         reason_class = _canonical_reason(command.reason_class)
@@ -864,6 +1191,19 @@ class OrganismMembershipService(_OrganismCommandService):
         self,
         command: TransitionMembershipCommand,
     ) -> MembershipCommandResult:
+        """Run the membership transition inside an authority_atomic block.
+
+        Delegate to _execute_transition. If an IntegrityError escapes that block,
+        map it only when its cause's diagnostic primary message is exactly
+        SBG_DEPARTURE_PRECEDES_PARTICIPATION and command.resulting_state is ENDED.
+        Reconstruct the authored S015MembershipRefused from the validated command
+        effective_at, the diagnostic detail, and the person and organism slug
+        captured in memory by _execute_transition; raise it from the original error.
+
+        Re-raise other IntegrityErrors, or the matching error when reconstruction
+        returns None. This handler does not catch a deferred constraint failure
+        raised later when a caller's enclosing transaction commits.
+        """
         departure_context: dict[str, str] = {}
         try:
             with authority_atomic(self._alias):
@@ -897,6 +1237,13 @@ class OrganismMembershipService(_OrganismCommandService):
         membership: OrganismMembership,
         effective_at: datetime,
     ) -> S015MembershipRefused | None:
+        """Return the authored refusal for a departure dated before a seat began, or None.
+
+        Finds the membership's earliest participation (by effective_at, recorded_at,
+        pk) whose effective_at is after the departure's effective_at, regardless of
+        any ending, and returns the SBG_DEPARTURE_PRECEDES_PARTICIPATION refusal for
+        it. Returns None when there is none.
+        """
         participation = (
             CircleParticipation.objects.using(self._alias)
             .filter(
@@ -931,6 +1278,12 @@ class OrganismMembershipService(_OrganismCommandService):
         departure_effective_at: str,
         participation_effective_at: str,
     ) -> S015MembershipRefused:
+        """Build the SBG_DEPARTURE_PRECEDES_PARTICIPATION refusal.
+
+        The message names the person, the LO's slug, the departure date, the seat
+        and the date it began, states that nothing changed, and directs the reader
+        to check the leaving date or correct the seat through its own governed route.
+        """
         message = (
             f"{person} was not recorded as leaving {organism_slug}, and nothing changed. "
             f"The leaving date given, {departure_effective_at}, is earlier than "
@@ -953,6 +1306,13 @@ class OrganismMembershipService(_OrganismCommandService):
         person: str | None,
         organism_slug: str | None,
     ) -> S015MembershipRefused | None:
+        """Rebuild the refusal from the completeness guard's JSON detail, or None.
+
+        Requires a JSON object with exactly the keys seat_id and started_at, all of
+        seat_id, started_at, person and organism_slug non-empty strings, and
+        started_at in the exact form YYYY-MM-DDTHH:MM:SS.ffffffZ (it must round-trip
+        unchanged). Returns None when any requirement fails.
+        """
         if type(detail) is not str:
             return None
         try:
@@ -998,6 +1358,29 @@ class OrganismMembershipService(_OrganismCommandService):
         effective_at: datetime,
         received_at: datetime,
     ) -> None:
+        """Compose departure endings for eligible, not-already-ended participations.
+
+        Within the caller's transaction, select and lock this membership's
+        participations with effective_at at or before the supplied effective_at,
+        ordered by primary key and using select_for_update(of=("self",)).
+        The query applies no recorded_at cutoff. Return if it selects no rows.
+
+        Read the selected participations' existing endings, without an ending-date
+        filter. Fetch the U-3 composition rule by its fixed UUID, version 1 and code,
+        then skip every participation with an existing ending.
+
+        For each remaining participation, create a CircleParticipationEnd with
+        actor NONE, null actor and access epoch, capacity NA_NO_PARTY, entry mode
+        COMPOSED, and REFERENCE states for the rule and composer. Use the member's
+        identity as enterer and composer, the fetched rule and its reference, and
+        transition.event_uuid as the causal link. Set effective_at and occurred_at
+        to the supplied effective_at, and received_at to the supplied received_at;
+        recorded_at is assigned by the database.
+
+        Create no separate authority decision. This helper neither selects nor
+        refuses participations starting after effective_at; the caller's earlier
+        check and the database completeness guard address that condition.
+        """
         participations = list(
             CircleParticipation.objects.using(self._alias)
             .select_for_update(of=("self",))
@@ -1050,6 +1433,53 @@ class OrganismMembershipService(_OrganismCommandService):
         command: TransitionMembershipCommand,
         departure_context: dict[str, str],
     ) -> MembershipCommandResult:
+        """Carry out one membership transition; called by transition_membership.
+
+        Runs inside the caller's authority_atomic transaction, in this order:
+
+        1. Validates the canonical keys, reason and membership UUID, validates
+           and normalises the timestamps, and validates the requested state;
+           locks the actor's Identity row and takes the command mutex.
+        2. Reads the membership (S015MembershipNotFound if absent) and computes the
+           target and command fingerprints. If _attempt_replay returns a result,
+           returns it with no further work.
+        3. Takes the registered organism lock, then locks the membership row
+           itself, without locking its joined Identity or LivingOrganism rows
+           through that query. Locks the actor's membership context, which
+           requires ACTIVE membership, or ACTIVE or PROBATIONARY when the actor
+           is ending their own membership, and a non-null head transition.
+        4. Calls _evaluate_authority before _validate_edge and the subsequent
+           local named-limit checks. An authority refusal stops this path before
+           those checks; successful qualification does not bypass them.
+        5. Validates the edge (_validate_edge), then refuses PROPOSED to ACTIVE,
+           PROPOSED to PROBATIONARY and PROBATIONARY to ACTIVE as named limits
+           (S015OperationNotYetImplemented). The edges this method completes are
+           therefore those to ENDED.
+        6. If the membership has no head transition, raises
+           S015MembershipNotFound ("membership head transition not found")
+           before reading any predecessor. Otherwise refuses, as a named limit
+           (IL-3), a command whose (effective_at, occurred_at, received_at) sorts
+           strictly before the head's; for an ENDED target, records the member's
+           display name (or username) and the LO's slug in departure_context and
+           raises the refusal from _departure_precedes_participation, if any; and
+           reads the id of the LO's founding authority basis.
+        7. If the assigned founding basis id is null, raises
+           S015MembershipAuthorityUnavailable. Otherwise locks the basis row
+           and writes the transition with the predecessor's sequence plus one,
+           the same Identity as actor and enterer, entry_mode TRANSPORT, the
+           decision's references, and a lineage_reference hashed from the
+           constructed lineage payload. Refreshes the governed cache at the
+           transition's effective_at with the database's clock_timestamp(),
+           then re-reads the membership and transition.
+        8. For an ENDED target, composes the participation endings
+           (_compose_current_participation_endings).
+        9. Builds the result and returns it through _finalise.
+
+        A membership whose head_transition_id is None is refused at step 6 as
+        not found, before this method reads that predecessor or inserts its
+        transition. Earlier authority, edge and named-limit checks may refuse
+        first. This branch does not itself establish why the head is missing.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         reason_class = _canonical_reason(command.reason_class)
@@ -1298,6 +1728,13 @@ class OrganismMembershipService(_OrganismCommandService):
 
 @dataclass(frozen=True, slots=True)
 class QualifiedOrganismCommandReplay:
+    """A completed command receipt that matched its request.
+
+    Returned by qualify_completed_replay: the receipt's primary key, actor
+    Identity UUID, action, idempotency key, request reference, payload
+    fingerprint, authority decision reference, lineage reference and stored
+    result payload, with the database alias it was read from.
+    """
     database_alias: str
     receipt_pk: int
     actor_identity_id: UUID
@@ -1320,6 +1757,23 @@ def qualify_completed_replay(
     payload_fingerprint: str,
     authority_decision_reference: str,
 ) -> QualifiedOrganismCommandReplay | None:
+    """Look up a command receipt and compare three request-binding fields.
+
+    Requires an atomic block on database_alias, otherwise raises
+    S015CommandAtomicityRequired. Reads the actor Identity without requesting
+    a row lock and returns None if absent. Selects the receipt for that actor,
+    action and idempotency key for update, returning None if absent.
+
+    Only after finding a receipt, validates request_reference as a canonical
+    key of at most 128 characters. Compares that reference, payload_fingerprint
+    and authority_decision_reference with the stored values. A difference
+    raises S015CommandReplayMismatch; a match returns
+    QualifiedOrganismCommandReplay with the receipt data.
+
+    Does not authenticate the caller, check the actor's access state or
+    epoch, resolve the authority decision reference, or reconstruct and
+    validate result_payload.
+    """
     connection = connections[database_alias]
     if not connection.in_atomic_block:
         raise S015CommandAtomicityRequired("outer atomic transaction required")
