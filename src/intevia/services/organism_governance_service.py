@@ -1,3 +1,22 @@
+"""SB-G commands for establishing an LO's GOVERNANCE arrangements and seats.
+
+An LO supplies its own arrangement, creates a dormant GOVERNANCE Circle,
+and records seat requests and admission decisions. SB-G does not activate
+GOVERNANCE or transfer governing authority from the LO's Coordinators
+(SB-G build commission v1.0, section 0, HD-1 A and HD-2 A).
+
+Adoption, Circle creation, seat requests and admission decisions each use
+an authority_atomic scope and a receipt. Compound seating calls compose
+the request and decision stages without an enclosing transaction here.
+
+Receipt replay requires a matching request reference and payload fingerprint
+and is served through serve_replay. Where database IntegrityError refusals
+are translated, the primary message must exactly match a code in that
+command's approved mapping; unmatched IntegrityError exceptions are re-raised.
+
+Sources: SB-G build commission v1.0, sections 0 and 6; HD-3 amendment,
+10 October 2026; SB-G authority and controlled-refusal ruling, same date.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -92,6 +111,12 @@ _ADMISSION_GUARD_REFUSAL_CODES = frozenset({
 def _governance_applicant_identity_uuid(
     applicant_membership: OrganismMembership,
 ) -> str:
+    """Return the applicant Identity's identity_id UUID as a string.
+
+    Used as applicant_identity_uuid in the admission decision's authority
+    target. Reads applicant_membership.identity.identity_id, not the
+    membership's identity_id foreign-key value.
+    """
     return str(applicant_membership.identity.identity_id)
 
 
@@ -99,6 +124,11 @@ def _governance_self_decision(
     applicant_membership: OrganismMembership,
     actor: Identity,
 ) -> bool:
+    """Return True when the applicant's membership belongs to the deciding actor.
+
+    Recorded on the admission decision as self_decision (SB-G build commission
+    v1.0, section 5.4: true iff the decider is the person).
+    """
     return applicant_membership.identity_id == actor.pk
 
 
@@ -109,6 +139,21 @@ def _authored_refusal_message(
     act: str,
     organism_state: str | None = None,
 ) -> str | None:
+    """Return an authored refusal explanation, or None if none is selected.
+
+    Some branches use act as the opening clause; others have a fixed opening.
+    detail supplies code-specific context, with fallback wording where defined.
+    For SBG_LO_NOT_ACTIVE, organism_state must be DORMANT or CLOSED to select
+    the corresponding explanation.
+
+    After the explicit branches, look up the code in _AUTHORED_REFUSALS,
+    which currently supplies SBG_SECOND_GOVERNANCE_CIRCLE.
+
+    SB-G build commission v1.0, section 10.2, requires refusal explanations
+    to state what happened and that nothing changed, why, what can be done,
+    and how to avoid it. This helper selects text; it does not validate that
+    the text satisfies that form.
+    """
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE:
         condition = detail or "the arrangement does not meet its requirements"
         return (
@@ -221,6 +266,19 @@ def _controlled_integrity_refusal(
     detail: str | None,
     act: str,
 ) -> SBGGovernanceRefused | None:
+    """Build a controlled database refusal exception, or return None.
+
+    Read message_primary from exc.__cause__.diag. Return SBGGovernanceRefused
+    only when that message exactly matches the value of an allowed code
+    and an authored explanation is available.
+
+    For SBG_MEMBER_NOT_ELIGIBLE, discard the supplied detail and use the
+    default wording. Return None otherwise; this file's callers then
+    re-raise the original IntegrityError. This helper does not raise it.
+
+    Source: SB-G authority and controlled-refusal ruling,
+    10 October 2026, point 4.
+    """
     message_primary = getattr(
         getattr(exc.__cause__, "diag", None),
         "message_primary",
@@ -244,6 +302,19 @@ def _controlled_integrity_refusal(
 
 
 def _active_governance_circle_seating_refusal(seat_id: str) -> str:
+    """Build the explanation referring to a previously active GOVERNANCE Circle.
+
+    The text says that LO-Coordinator appointment is available in this release
+    only while the GOVERNANCE Circle has never been active, and directs later
+    admission to the Circle's own GOVERNANCE route.
+
+    Selected here when authority qualification denies a
+    GOVERNANCE_CONSTITUTIONAL decision with SBG_SEAT_ROUTE_UNAVAILABLE.
+    This helper formats the explanation; it does not inspect activation
+    history or determine authority.
+
+    Related requirement: SB-G build commission v1.0, section 0, LD-5.
+    """
     return (
         f"Nobody was seated and nothing changed. Seat {seat_id} is filled by appointment by the LO "
         "Coordinators, which this release can use only while the LO's GOVERNANCE Circle has never "
@@ -255,6 +326,11 @@ def _active_governance_circle_seating_refusal(seat_id: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdoptGoverningInstrumentCommand:
+    """Request to adopt a version of the LO's GOVERNANCE arrangement.
+
+    The arrangement is the LO's own; no default exists in code (HD-2 A).
+    Permission row: ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION.
+    """
     credential: User
     living_organism_uuid: UUID
     rule_uuid: UUID
@@ -268,6 +344,10 @@ class AdoptGoverningInstrumentCommand:
 
 @dataclass(frozen=True, slots=True)
 class CreateGovernanceCircleCommand:
+    """Request to create the LO's one GOVERNANCE Circle, dormant.
+
+    Permission row: CREATE_DORMANT_CIRCLE.
+    """
     credential: User
     living_organism_uuid: UUID
     request_reference: str
@@ -277,6 +357,14 @@ class CreateGovernanceCircleCommand:
 
 @dataclass(frozen=True, slots=True)
 class SeatFoundingGovernanceCircleCommand:
+    """Request the compound founding-seating operation for GOVERNANCE.
+
+    Intended for formation before Birthing (SB-G build commission v1.0,
+    section 6). Records the person's own request first, then attempts an
+    ACCEPT decision through CIRCLE_FOUNDING, with separate authorisations.
+
+    A successful request stage can remain recorded if admission is refused.
+    """
     credential: User
     living_organism_uuid: UUID
     circle_uuid: UUID
@@ -289,6 +377,11 @@ class SeatFoundingGovernanceCircleCommand:
 
 @dataclass(frozen=True, slots=True)
 class RequestGovernanceSeatCommand:
+    """A member's own request and consent for a GOVERNANCE seat.
+
+    Permission row: REQUEST_GOVERNANCE_SEAT (HD-3 amendment, 10 Oct 2026).
+    It records consent only: it neither admits nor reserves the seat.
+    """
     credential: User
     living_organism_uuid: UUID
     circle_uuid: UUID
@@ -301,6 +394,18 @@ class RequestGovernanceSeatCommand:
 
 @dataclass(frozen=True, slots=True)
 class DecideGovernanceSeatCommand:
+    """Request an ACCEPT or DECLINE decision on a GOVERNANCE seat request.
+
+    Permission row: ADMIT_CIRCLE_PARTICIPANT. With request_uuid, decides that
+    request. If route is omitted, selects CIRCLE_FOUNDING or
+    GOVERNANCE_CONSTITUTIONAL from the Birthing record visible at the
+    decision's effective_at and received_at.
+
+    Without request_uuid, first records the caller's own request, then attempts
+    the decision through GOVERNANCE_CONSTITUTIONAL. This branch does not use
+    the supplied route. The two stages retain separate authorisations and
+    receipts; a successful request can remain recorded if admission is refused.
+    """
     credential: User
     living_organism_uuid: UUID
     request_reference: str
@@ -316,6 +421,18 @@ class DecideGovernanceSeatCommand:
 
 @dataclass(frozen=True, slots=True)
 class GovernanceActResult:
+    """Result of an arrangement adoption or a GOVERNANCE Circle creation.
+
+    record_uuid is the rule for an adoption and the Circle for a creation;
+    event_uuid and event_sequence are the LO event of the adoption, or the
+    Circle's state event (sequence 1) of the creation. Carries the event's
+    lineage reference and the act's authority and authority-decision references.
+
+    receipt_payload() returns the stored receipt form. replay_field_audiences()
+    returns an empty mapping for a result of exactly this class and raises
+    TypeError otherwise; serve_replay in organism_command_support defines how
+    the mapping is used.
+    """
     living_organism_uuid: UUID
     record_uuid: UUID
     event_uuid: UUID
@@ -344,6 +461,19 @@ class GovernanceActResult:
 
 @dataclass(frozen=True, slots=True)
 class GovernanceSeatingResult:
+    """Result returned by the compound founding-seating operation.
+
+    Carries the LO, request, admission-decision and participation UUIDs,
+    with the decision stage's lineage, authority and authority-decision
+    references.
+
+    receipt_payload() returns these fields as a dictionary, serialising UUIDs
+    as strings. The founding wrapper does not store a separate receipt for
+    this combined result.
+
+    replay_field_audiences() returns an empty mapping when the result's type
+    is exactly cls and raises TypeError otherwise.
+    """
     living_organism_uuid: UUID
     request_uuid: UUID
     decision_uuid: UUID
@@ -372,6 +502,12 @@ class GovernanceSeatingResult:
 
 @dataclass(frozen=True, slots=True)
 class GovernanceSeatRequestResult:
+    """Result of a recorded GOVERNANCE seat request.
+
+    Carries the LO, the request and the request's lineage reference; it has no
+    authority-reference fields. receipt_payload() and replay_field_audiences()
+    behave as for GovernanceActResult.
+    """
     living_organism_uuid: UUID
     request_uuid: UUID
     lineage_reference: str
@@ -392,6 +528,14 @@ class GovernanceSeatRequestResult:
 
 @dataclass(frozen=True, slots=True)
 class GovernanceSeatDecisionResult:
+    """Result of a GOVERNANCE seat decision.
+
+    Carries the request, the admission decision, the participation (None
+    unless the outcome is ACCEPT), and the lineage, authority and
+    authority-decision references. receipt_payload() stores a missing
+    participation as None. replay_field_audiences() behaves as for
+    GovernanceActResult.
+    """
     living_organism_uuid: UUID
     request_uuid: UUID
     decision_uuid: UUID
@@ -421,6 +565,12 @@ class GovernanceSeatDecisionResult:
 
 
 class SBGGovernanceRefused(Exception):
+    """An SB-G refusal this service explains with authored text.
+
+    Carries refusal_code and the explanation as its message. request_uuid is
+    set where the raising path supplies one: the seat-decision paths set it
+    when a request was recorded before the refusal.
+    """
     def __init__(
         self,
         refusal_code: S015AuthorityRefusalCode,
@@ -437,6 +587,14 @@ def _compound_stage_identifiers(
     organism_uuid: UUID,
     interaction_key: str,
 ) -> tuple[str, str, str, str]:
+    """Derive the stage keys and request references for a compound seating.
+
+    Returns the request stage's idempotency key and request reference, then
+    the admission stage's: each is a prefix (sbg:req:, sbg:reqref:, sbg:admit:,
+    sbg:admitref:) followed by the SHA-256 of the canonical JSON of the LO,
+    the interaction key and that stage's action. The same LO and interaction
+    key always give the same four values.
+    """
     values: list[str] = []
     for action, key_prefix, reference_prefix in (
         (
@@ -460,10 +618,31 @@ def _compound_stage_identifiers(
 
 
 class SBGGovernanceUnavailable(Exception):
+    """Signal that required governance context is unavailable.
+
+    Raised directly here when the LO's folded state is not established.
+    Also supplied as the unavailable exception class to imported actor
+    and membership-context locking helpers; their raising conditions
+    are defined in organism_command_support.
+
+    In the seat-request path, an exception with the exact message
+    "actor active membership is required" is translated into
+    SBG_MEMBER_NOT_ELIGIBLE; other such exceptions are re-raised.
+    """
     pass
 
 
 class OrganismGovernanceService:
+    """Governed service for SB-G arrangements, Circle creation and seating.
+
+    Requires an injected clock for received_at. Uses an S015Authority bound
+    to the same database alias, constructing one with
+    ProductionApplicationAuthorityProvider when no authority is supplied.
+
+    The founding-seating method and the decision method's no-request branch
+    compose separately authorised request and admission-decision stages
+    (HD-3 amendment, 10 October 2026).
+    """
     def __init__(
         self,
         *,
@@ -490,6 +669,22 @@ class OrganismGovernanceService:
         self,
         command: AdoptGoverningInstrumentCommand,
     ) -> GovernanceActResult:
+        """Adopt a supplied version of the LO's GOVERNANCE arrangement.
+
+        Permission row: ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION.
+        Writes the rule version, LO adoption event and receipt within the
+        command's authority_atomic scope.
+
+        For an omitted recorded seat participation, raises
+        SBG_VERSION_DROPS_HELD_SEAT when no ending is known or its effective_at
+        is later than the new version's effective_from
+        (SB-G build commission v1.0, section 9).
+
+        Database guard refusals translated on an exact primary-message match:
+        SBG_ARRANGEMENT_INCOMPLETE, SBG_ARRANGEMENT_FIELD_UNSUPPORTED and
+        SBG_ELIGIBILITY_UNSUPPORTED. Other IntegrityError exceptions propagate.
+        Malformed inputs may raise TypeError or ValueError.
+        """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         rule_uuid = _canonical_uuid(command.rule_uuid, "rule_uuid")
         if type(command.version) is not int or command.version < 1:
@@ -527,6 +722,17 @@ class OrganismGovernanceService:
         self,
         command: CreateGovernanceCircleCommand,
     ) -> GovernanceActResult:
+        """Create a dormant GOVERNANCE Circle for the LO.
+
+        Permission row: CREATE_DORMANT_CIRCLE. After authority qualification,
+        writes the Circle, its sequence-1 CREATE_DORMANT event and a receipt
+        within the command's authority_atomic scope.
+
+        The commission requires one GOVERNANCE Circle per LO, reused when
+        GOVERNANCE is re-enabled (SB-G build commission v1.0, section 6).
+        If authority qualification denies with SBG_SECOND_GOVERNANCE_CIRCLE,
+        this service supplies the authored explanation.
+        """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         result = self._execute(
             command=command,
@@ -543,6 +749,22 @@ class OrganismGovernanceService:
         self,
         command: SeatFoundingGovernanceCircleCommand,
     ) -> GovernanceSeatingResult:
+        """Attempt founding GOVERNANCE seating through request and admission stages.
+
+        Uses REQUEST_GOVERNANCE_SEAT followed by ADMIT_CIRCLE_PARTICIPANT with
+        route CIRCLE_FOUNDING and outcome ACCEPT. Each stage has its own
+        authorisation, receipt, derived key and request reference.
+
+        The stages are called separately; a successful request can remain recorded
+        if admission is refused (controlled-refusal ruling, 10 October 2026).
+
+        Derived identifiers are stable for the LO and interaction key. Replay
+        also requires matching stage fingerprints, including effective_at;
+        reusing the interaction key alone does not guarantee replay.
+
+        This is the founding route specified for formation before Birthing
+        (SB-G build commission v1.0, section 6).
+        """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
         rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
@@ -592,6 +814,20 @@ class OrganismGovernanceService:
         self,
         command: RequestGovernanceSeatCommand,
     ) -> GovernanceSeatRequestResult:
+        """Record a member's own GOVERNANCE seat request and consent.
+
+        Permission row: REQUEST_GOVERNANCE_SEAT
+        (HD-3 amendment, 10 October 2026). The request neither admits the member
+        nor reserves the seat; admission requires a separate authorised decision.
+
+        Passes the injected clock's received_at to authority qualification.
+        Local membership validation folds state at effective_at using
+        received_at as the knowledge bound.
+
+        Database guard refusals translated on an exact primary-message match:
+        SBG_MEMBER_NOT_ELIGIBLE and SBG_SEAT_ABSENT.
+        Other IntegrityError exceptions propagate.
+        """
         try:
             return self._request_governance_seat(command)
         except IntegrityError as exc:
@@ -609,6 +845,26 @@ class OrganismGovernanceService:
         self,
         command: RequestGovernanceSeatCommand,
     ) -> GovernanceSeatRequestResult:
+        """Record a member's own GOVERNANCE seat request in one authority_atomic scope.
+
+        Before the scope: validates the command (canonical UUIDs, the seat_id
+        pattern, the keys, and an effective_at no later than the clock's
+        received_at, defaulting to received_at), derives request_uuid from the LO
+        and idempotency key, and fingerprints the request
+        (schema sbg-governance-seat-request-v1).
+
+        Within the scope, in this order: locks the actor and takes the per-actor
+        command mutex; serves a matching receipt through serve_replay, raising
+        ValueError for a mismatched one; locks the registered LO and its row
+        (LookupError if absent); locks the actor's membership context, refusing
+        SBG_MEMBER_NOT_ELIGIBLE when that helper reports that active membership is
+        required; validates the seat through _validate_constitutional_seating in
+        request mode (no enabled, occupancy, Birthing or route requirement); asks
+        the authority to qualify REQUEST_GOVERNANCE_SEAT, rewording a denial where
+        an authored text exists; then writes the CircleJoinRequest (initiated by the
+        applicant, consent_reference set to request_reference) and a receipt citing
+        the authority decision.
+        """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
         rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
@@ -787,9 +1043,19 @@ class OrganismGovernanceService:
             return result
 
     def _request_open_sentence(self, seat_id: str) -> str:
+        """Return the sentence saying the caller's request for seat_id is recorded
+        and remains open.
+
+        The sentence is fixed text; this method does not check the request's status.
+        """
         return f"Your own request for seat {seat_id} is recorded and remains open."
 
     def _request_open_context(self, request_uuid: UUID) -> tuple[str, str] | None:
+        """Return (seat_id, the open-request sentence) for request_uuid, or None.
+
+        Returns None when no CircleJoinRequest with request_uuid is recorded. It
+        checks only that the request exists, not whether it has been decided.
+        """
         seat_id = (
             CircleJoinRequest.objects.using(self._alias)
             .filter(request_uuid=request_uuid)
@@ -804,6 +1070,24 @@ class OrganismGovernanceService:
         self,
         command: DecideGovernanceSeatCommand,
     ) -> GovernanceSeatDecisionResult:
+        """Record an ACCEPT or DECLINE decision on a GOVERNANCE seat request.
+
+        Permission row: ADMIT_CIRCLE_PARTICIPANT. The decision stage writes
+        the admission decision, participation on ACCEPT, and its receipt
+        within one authority_atomic scope.
+
+        Without request_uuid, first records the caller's own request in a
+        separate stage, then attempts a GOVERNANCE_CONSTITUTIONAL decision.
+        A successful request stage can survive refusal of the decision stage
+        (HD-3 amendment and controlled-refusal ruling, 10 October 2026).
+
+        Database admission-guard refusals translated on an exact primary-message
+        match: SBG_MEMBER_NOT_ELIGIBLE, SBG_SEAT_ABSENT, SBG_SEAT_OCCUPIED and
+        SBG_ALREADY_SEATED. Unmatched IntegrityError exceptions propagate.
+
+        Handled admission refusals with available request context include text
+        saying the request remains open and carry request_uuid on the exception.
+        """
         if command.request_uuid is None:
             return self._decide_governance_seat(command)
 
@@ -855,6 +1139,54 @@ class OrganismGovernanceService:
         self,
         command: DecideGovernanceSeatCommand,
     ) -> GovernanceSeatDecisionResult:
+        """Record an ACCEPT or DECLINE decision on a GOVERNANCE seat request.
+
+        Without request_uuid, requires circle_uuid, seat_rule_uuid and a valid
+        seat_id. Uses _compound_stage_identifiers to record the caller's own
+        request through request_governance_seat, then recursively decides that
+        request through GOVERNANCE_CONSTITUTIONAL. The two stages have separate
+        authority_atomic scopes. Handled decision-stage refusals carry the
+        request UUID and the open-request sentence.
+
+        With request_uuid, rejects supplied circle_uuid, seat_rule_uuid or
+        seat_id. Validates outcome, route and times, then fingerprints the
+        decision using schema sbg-governance-seat-decision-v1.
+
+        Within authority_atomic, calls the actor lock helper, takes the command
+        mutex and checks for a receipt. A matching receipt is reconstructed and
+        passed to serve_replay; a reference or fingerprint mismatch raises
+        ValueError. Otherwise, calls the registered-LO lock helper, locks the LO
+        row, obtains the actor's membership context and locks the request.
+
+        Refuses SBG_MEMBER_NOT_ELIGIBLE if the request is missing, belongs to
+        another LO, was not applicant-initiated, or takes effect after the
+        decision.
+
+        Uses the supplied route, or selects GOVERNANCE_CONSTITUTIONAL when a
+        BIRTHING event is effective by effective_at and both received and
+        recorded by received_at; otherwise selects CIRCLE_FOUNDING.
+
+        For CIRCLE_FOUNDING before Birthing, requires the applicant's identity
+        to match the actor, then calls _validate_seating, including its occupancy
+        checks for either outcome. The identity-mismatch branch currently calls
+        _refuse with DENIED, for which no authored message exists, and therefore
+        raises RuntimeError.
+
+        For GOVERNANCE_CONSTITUTIONAL after Birthing, calls
+        _validate_constitutional_seating with governance required to be enabled
+        and occupancy checked only for ACCEPT.
+
+        Calls authority qualification after these branch checks. Rewords
+        SBG_SEAT_ROUTE_UNAVAILABLE denials. If qualification succeeds without a
+        validated seating context, raises RuntimeError.
+
+        Writes the admission decision with the LO as institutional actor in
+        TRANSPORT mode, the actor as deciding and entering identity,
+        self_decision from the applicant/actor identity comparison, and
+        settings_basis rule:<uuid>@<version>#<seat>. Creates a participation only
+        for ACCEPT, then records a receipt citing the authority decision and
+        returns GovernanceSeatDecisionResult.
+        """
         if command.request_uuid is None:
             if (
                 command.circle_uuid is None
@@ -1241,6 +1573,23 @@ class OrganismGovernanceService:
         organism_uuid: UUID,
         payload: dict[str, object],
     ) -> GovernanceActResult:
+        """Run an adoption or a GOVERNANCE Circle creation in one authority_atomic scope.
+
+        Before the scope: validates the keys and times as the seat request does;
+        for a Circle creation, derives circle_uuid from the LO and idempotency key;
+        fingerprints the act (schema sbg-governance-act-v1).
+
+        Within the scope, in this order: locks the actor and takes the command
+        mutex; returns a replayed result when a matching receipt exists (_replay);
+        locks the registered LO and its row and the actor's membership context;
+        builds the authority target, replacing the adoption's source placeholder
+        with _source_at; asks the authority to qualify the act, rewording a denial
+        where an authored text exists (using the LO's folded state for
+        SBG_LO_NOT_ACTIVE). After qualification it validates an adoption
+        (_validate_adoption), writes the act (_write_adoption or _write_circle),
+        then writes a receipt citing the authority decision and the result's
+        lineage reference. Raises ValueError for any other action.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         received_at = _timestamp(self._clock(), "received_at")
@@ -1402,6 +1751,18 @@ class OrganismGovernanceService:
         idempotency_key: str,
         fingerprint: str,
     ) -> GovernanceActResult | None:
+        """Serve an adoption or Circle-creation result from its receipt.
+
+        Look up the actor's receipt for the action and idempotency key using
+        select_for_update; return None when no receipt is found.
+
+        Raise ValueError if the request reference or payload fingerprint differs.
+        Rebuild GovernanceActResult from the stored payload, converting
+        KeyError, TypeError or ValueError during reconstruction into ValueError
+        with the receipt-mismatch message. Other exceptions are not converted here.
+
+        Return the rebuilt result through serve_replay.
+        """
         receipt = (
             OrganismCommandReceipt.objects.using(self._alias)
             .select_for_update()
@@ -1438,6 +1799,13 @@ class OrganismGovernanceService:
         effective_at: datetime,
         recorded_at: datetime,
     ) -> str:
+        """Return the arrangement source for an act.
+
+        LO_PRESCRIPTION when a BIRTHING event of the LO has effective_at at or
+        before effective_at and recorded_at at or before the recorded_at bound;
+        otherwise FOUNDING_BODY_PRESCRIPTION (SB-G build commission v1.0,
+        section 0, HD-2 A).
+        """
         born = LivingOrganismEvent.objects.using(self._alias).filter(
             living_organism=organism,
             action="BIRTHING",
@@ -1452,6 +1820,12 @@ class OrganismGovernanceService:
         effective_at: datetime,
         recorded_at: datetime,
     ) -> str | None:
+        """Return the LO's folded state at (effective_at, recorded_at), or None.
+
+        Calls the database function s015_fold_effective_state for
+        core_livingorganism; raises RuntimeError if it returns no row. The fold's
+        rules are defined by that function, not here.
+        """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
                 "SELECT public.s015_fold_effective_state("
@@ -1473,6 +1847,43 @@ class OrganismGovernanceService:
         effective_at: datetime,
         received_at: datetime,
     ) -> tuple[Circle, GovernedRule]:
+        """Validate seating conditions used by the CIRCLE_FOUNDING branch.
+
+        Returns (circle, rule). Passes "Nobody was seated" as act to refusals.
+
+        Refuses SBG_MEMBER_NOT_ELIGIBLE when membership is missing, belongs to
+        another LO, or does not fold to ACTIVE at effective_at with received_at
+        as the knowledge bound. Refuses SBG_LO_NOT_ACTIVE when the LO folds to
+        DORMANT or CLOSED. If no BIRTHING event is effective by effective_at and
+        both received and recorded by received_at, requires an effective
+        configuration with governance_enabled True.
+
+        Locks the LO's GOVERNANCE Circle. Refuses SBG_GOVERNANCE_CIRCLE_MISSING
+        if it is absent, differs from the payload's Circle, or has no
+        CREATE_DORMANT event effective by effective_at and recorded by
+        received_at.
+
+        Considers arrangement versions recorded by received_at. Refuses
+        SBG_ARRANGEMENT_MISSING if none exist. Selects the requested rule's
+        latest effective version at effective_at; refuses SBG_SEAT_ABSENT if
+        that version or its requested seat is absent.
+
+        Refuses SBG_ARRANGEMENT_INCOMPLETE for an invalid seat list or an
+        unparseable seat start date. A timezone-naive start date, or one later
+        than effective_at, produces SBG_SEAT_ABSENT. Also refuses
+        SBG_SEAT_ABSENT if a version of the same rule effective after the act,
+        but recorded by received_at, lacks a valid seat list containing the seat.
+
+        Checks participations and their endings recorded by received_at.
+        Refuses SBG_SEAT_OCCUPIED for the same rule and seat, or
+        SBG_ALREADY_SEATED for the same person in this Circle, when a matching
+        participation has no ending or its selected ending is after effective_at.
+
+        Raises SBGGovernanceUnavailable if the LO's folded state is None, and
+        RuntimeError if the membership fold returns no row. Does not check the
+        seat's eligibility value or constitutional admission route, and does
+        not itself refuse founding-route use after Birthing.
+        """
         act = "Nobody was seated"
         if membership is None:
             self._refuse(
@@ -1662,6 +2073,33 @@ class OrganismGovernanceService:
         require_supported_route: bool = True,
         act: str = "Nobody was seated",
     ) -> tuple[Circle, GovernedRule]:
+        """Validate a seat for a request or GOVERNANCE_CONSTITUTIONAL decision.
+
+        Returns (circle, rule). Applies the membership, LO-state, Circle,
+        arrangement, seat, start-date and future-effective-version checks
+        described by _validate_seating. Additionally refuses
+        SBG_ELIGIBILITY_UNSUPPORTED unless the seat's eligibility is LO_MEMBER.
+
+        Passes act, defaulting to "Nobody was seated", to _refuse; the authored
+        message helper determines whether each refusal's text uses that value.
+
+        When require_birthing is true, refuses SBG_SEAT_ROUTE_UNAVAILABLE
+        unless a BIRTHING event is effective by effective_at and both received
+        and recorded by received_at. When require_enabled is true, requires an
+        effective configuration with governance_enabled True.
+
+        When require_supported_route is true, refuses
+        SBG_ARRANGEMENT_INCOMPLETE for an unknown admission route or a deciding
+        body that does not match it. Of the valid combinations, permits only
+        APPOINTMENT by office:LO_COORDINATOR; the others produce
+        SBG_SEAT_ROUTE_UNAVAILABLE.
+
+        When check_occupancy is true, applies the SBG_SEAT_OCCUPIED and
+        SBG_ALREADY_SEATED checks described by _validate_seating.
+
+        The seat-request caller sets all four flags to False. This helper does
+        not check whether the GOVERNANCE Circle has ever been activated.
+        """
         if membership is None:
             self._refuse(
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
@@ -1908,6 +2346,15 @@ class OrganismGovernanceService:
         effective_at: datetime,
         received_at: datetime,
     ) -> None:
+        """Validate an arrangement adoption before it is written.
+
+        Refuses with SBG_ARRANGEMENT_INCOMPLETE when effective_from is earlier than
+        the act's effective_at, or when the version does not continue the LO's
+        GOVERNANCE_CONSTITUTION sequence (version 1 for the first; otherwise the
+        latest version recorded by received_at plus one, under the same rule_uuid).
+        Then validates the arrangement body and, when an earlier version exists,
+        refuses a version that leaves out a held seat (_refuse_if_held_seat_dropped).
+        """
         rule_uuid = UUID(payload["rule_uuid"])
         version = payload["version"]
         body = payload["body"]
@@ -1953,6 +2400,41 @@ class OrganismGovernanceService:
         self,
         body: dict[str, object],
     ) -> None:
+        """Validate a GOVERNANCE_CONSTITUTION body at adoption.
+
+        Requires a dict containing exactly seats, officer_roles and
+        election_schedule. officer_roles must be an empty list and
+        election_schedule must be None. seats must be a nonempty list of dicts
+        with unique seat identifiers.
+
+        Each seat must contain exactly seat_id, eligibility, admission_route,
+        deciding_body, term, vacancy_rule and effective_from. Requires a
+        seat_id matching [a-z0-9_-]{1,64}, eligibility LO_MEMBER, term None and
+        vacancy_rule BY_SEAT_ROUTE.
+
+        Requires a string admission route and matching string deciding body:
+        ELECTION uses body:LO_MEMBERSHIP; COOPTION uses body:GOVERNANCE;
+        APPOINTMENT uses office:LO_COORDINATOR or external: followed by 1 to
+        120 characters; EX_OFFICIO uses office: followed by a canonical UUID.
+
+        Requires effective_from to match the timestamp format checked here,
+        with a YYYY-MM-DDT prefix and Z or a signed HH:MM offset, and to parse
+        as a timezone-aware datetime. Does not compare it with the act time.
+
+        Missing fields, malformed structures, duplicate or invalid seat
+        identifiers, invalid route/body combinations and invalid timestamps
+        produce SBG_ARRANGEMENT_INCOMPLETE. Extra fields, nonempty or non-list
+        officer_roles, a non-None election_schedule or term, and a vacancy_rule
+        other than BY_SEAT_ROUTE produce SBG_ARRANGEMENT_FIELD_UNSUPPORTED.
+        Eligibility other than the string LO_MEMBER produces
+        SBG_ELIGIBILITY_UNSUPPORTED.
+
+        Accepting a route/body combination here does not establish that its
+        admission route is available in this release.
+
+        Source: SB-G build commission v1.0, section 5.2.1, as amended by
+        amendment 2.
+        """
         required_fields = {"seats", "officer_roles", "election_schedule"}
         if type(body) is not dict or not required_fields.issubset(body):
             self._refuse(
@@ -2111,6 +2593,15 @@ class OrganismGovernanceService:
         effective_from: datetime,
         received_at: datetime,
     ) -> None:
+        """Refuse a new arrangement version that leaves out a seat still held.
+
+        For each participation recorded by received_at in the LO's GOVERNANCE
+        Circles under the current rule whose seat_id the next version omits:
+        refuses with SBG_VERSION_DROPS_HELD_SEAT when no ending is recorded by
+        received_at, or when the latest recorded ending's effective_at is later
+        than the new version's effective_from (SB-G build commission v1.0,
+        section 9).
+        """
         circles = Circle.objects.using(self._alias).filter(
             parent_organism=organism,
             kind="GOVERNANCE",
@@ -2141,6 +2632,14 @@ class OrganismGovernanceService:
         act: str = "No arrangement was adopted",
         organism_state: str | None = None,
     ) -> NoReturn:
+        """Raise SBGGovernanceRefused using the selected authored explanation.
+
+        Pass code, detail, act and organism_state to _authored_refusal_message.
+        act defaults to "No arrangement was adopted".
+
+        Raise RuntimeError if the message builder returns None for the supplied
+        code and context; otherwise raise SBGGovernanceRefused with that message.
+        """
         message = _authored_refusal_message(
             code,
             detail,
@@ -2164,6 +2663,13 @@ class OrganismGovernanceService:
         effective_at: datetime,
         received_at: datetime,
     ) -> GovernanceActResult:
+        """Write an adopted arrangement version and its LO event; return the result.
+
+        Creates the GOVERNANCE_CONSTITUTION rule version (source from _source_at,
+        entered by the actor, authority_reference naming the new LO event), then
+        the LO event ADOPT_GOVERNING_INSTRUMENT with evidence rule:<uuid>@<version>
+        and the authority decision's reference.
+        """
         rule_uuid = UUID(payload["rule_uuid"])
         event_uuid = uuid4()
         rule = GovernedRule.objects.using(self._alias).create(
@@ -2220,6 +2726,23 @@ class OrganismGovernanceService:
         effective_at: datetime,
         received_at: datetime,
     ) -> GovernanceActResult:
+        """Create a dormant GOVERNANCE Circle and its sequence-1 state event.
+
+        Creates the Circle with no head event and founding_reference set to
+        the authority decision's reference. Inserts a CREATE_DORMANT event
+        with resulting state DORMANT, the LO as institutional actor in
+        TRANSPORT mode, and the supplied actor Identity as enterer.
+
+        The event carries evidence living-organism:<organism_uuid>, the
+        authority-decision reference, the request reference, idempotency key,
+        payload fingerprint and a lineage reference from _lineage.
+
+        Calls s015_refresh_governed_cache for the Circle, then reads the
+        inserted event and returns GovernanceActResult. Cache-refresh
+        behaviour is defined by that database function.
+
+        Source: SB-G build commission v1.0, section 6, Circle creation.
+        """
         circle = Circle.objects.using(self._alias).create(
             circle_uuid=circle_uuid,
             parent_organism=organism,
@@ -2326,6 +2849,28 @@ class OrganismGovernanceService:
         effective_at: datetime,
         received_at: datetime,
     ) -> tuple[int, int]:
+        """Insert the next same-state event on the LO's event chain.
+
+        Selects the LO event with the highest sequence using select_for_update.
+        Raises RuntimeError if no predecessor is found, or if the subsequent
+        commitment lookup finds no row or a missing l1 commitment.
+
+        Inserts the next sequence with the predecessor's id, sequence and
+        l1 commitment. Uses the predecessor's resulting state as both prior
+        and resulting state. Records the LO as institutional actor in
+        TRANSPORT mode and the supplied actor Identity as enterer.
+
+        Carries the supplied evidence and authority-decision references,
+        request reference, idempotency key and payload fingerprint, together
+        with a lineage reference from _lineage.
+
+        Calls s015_refresh_governed_cache for the LO and returns the inserted
+        event's id and sequence. Cache-refresh behaviour is defined by that
+        database function.
+
+        Used for the same-state adoption event specified by the SB-G build
+        commission v1.0, section 6.
+        """
         predecessor = (
             LivingOrganismEvent.objects.using(self._alias)
             .select_for_update()
@@ -2409,6 +2954,12 @@ class OrganismGovernanceService:
 
 
 def _validate_body(body: object) -> dict[str, object]:
+    """Return body unchanged after an exact-dict and encoding check.
+
+    Require type(body) is dict; raise TypeError otherwise.
+    Call canonical_json_bytes to check encoding, allowing its errors
+    to propagate. Arrangement-field validation is performed elsewhere.
+    """
     if type(body) is not dict:
         raise TypeError("body must be an object")
     canonical_json_bytes(body)
@@ -2419,6 +2970,20 @@ def _authority_payload(
     action: OrganismAction,
     payload: dict[str, object],
 ) -> dict[str, object]:
+    """Return the action-specific fields of an SB-G authority target.
+
+    Supports REQUEST_GOVERNANCE_SEAT, ADOPT_GOVERNING_INSTRUMENT,
+    CREATE_DORMANT_CIRCLE and ADMIT_CIRCLE_PARTICIPANT.
+    Raises ValueError for an unsupported action.
+
+    For adoption, return an empty source placeholder and canonicalise
+    effective_from. In the adoption execution path, _execute replaces
+    the placeholder using _source_at before fingerprinting the target
+    and requesting authority qualification.
+
+    For admission, include constitutional_route, deciding_party and
+    outcome only for GOVERNANCE_CONSTITUTIONAL.
+    """
     if action is OrganismAction.REQUEST_GOVERNANCE_SEAT:
         return {
             "circle_uuid": payload["circle_uuid"],
@@ -2465,6 +3030,9 @@ def _authority_target(
     organism_uuid: UUID,
     payload: dict[str, object],
 ) -> dict[str, object]:
+    """Return an authority target: the action, the LO, and the action's fields
+    from _authority_payload.
+    """
     return {
         "action": action.value,
         "organism_uuid": organism_uuid,
@@ -2473,12 +3041,26 @@ def _authority_target(
 
 
 def _timestamp(value: object, name: str) -> datetime:
+    """Return value unchanged if it is an exact, timezone-aware datetime.
+
+    Require type(value) is datetime, a non-None tzinfo and a non-None
+    utcoffset(). Raise TypeError naming the supplied name when one of
+    these checks fails.
+    """
     if type(value) is not datetime or value.tzinfo is None or value.utcoffset() is None:
         raise TypeError(f"{name} must be timezone-aware")
     return value
 
 
 def _canonical_uuid_string(value: str) -> bool:
+    """Return whether value equals its canonical UUID string representation.
+
+    Evaluate str(UUID(value)) == value. Return False if evaluation raises
+    ValueError or TypeError; other exceptions propagate.
+
+    Intended for string input; this helper does not first enforce a
+    string type.
+    """
     try:
         return str(UUID(value)) == value
     except (TypeError, ValueError):
@@ -2486,6 +3068,10 @@ def _canonical_uuid_string(value: str) -> bool:
 
 
 def _lineage(action: str, event_uuid: UUID, subject_uuid: UUID, fingerprint: str) -> str:
+    """Return a lineage reference: "s015l1:" followed by the SHA-256 of the
+    canonical JSON of the action, the event UUID, the payload fingerprint and
+    the subject UUID.
+    """
     return "s015l1:" + hashlib.sha256(canonical_json_bytes({
         "action": action,
         "event_uuid": event_uuid,
