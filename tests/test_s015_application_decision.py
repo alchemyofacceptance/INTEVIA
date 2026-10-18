@@ -1113,6 +1113,44 @@ class ApplicationDecisionTests(TransactionTestCase):
                     occurred_at=NOW, effective_at=NOW, received_at=NOW,
                 )
 
+    def test_application_status_retains_cq_and_circle_route_limits(self):
+        state_at = database_now() + timedelta(days=1)
+        for route, limit, reference in (
+            ("LO_CQ", "S3-IL-CQ", "a" * 64),
+            ("CIRCLE_CSA", "S3-IL-CIRCLE", "b" * 64),
+        ):
+            application = Application.objects.create(
+                applicant=self.applicant,
+                living_organism_id=self.ids["lo"],
+                settings_version_id=self.gateway["core_loapplicationsettingsversion"],
+                question_version_id=self.gateway["core_loapplicationquestionversion"],
+                answer="Test-only applicant answer",
+                actor=self.applicant,
+                enterer=self.applicant,
+                authority_decision_reference="s015d1:" + reference,
+                authority_reference="s3:test:fixture",
+                actor_access_epoch=self.applicant.access_epoch,
+                occurred_at=NOW,
+                effective_at=NOW,
+                received_at=NOW,
+            )
+            ApplicationEngagement.objects.create(
+                application=application,
+                engagement_ordinal=1,
+                route=route,
+                deciding_party_id=self.ids["lo"],
+                engagement_reference="s3:fixture",
+                settings_basis=self.gateway["settings_basis"],
+                actor=self.coordinator,
+                enterer=self.coordinator,
+                occurred_at=NOW,
+                effective_at=NOW,
+                received_at=NOW,
+            )
+            with self.assertRaises(S015OperationNotYetImplemented) as error:
+                self.service().application_status(application, state_at, state_at)
+            self.assertEqual(error.exception.limit_id, limit)
+
     def test_il_ord_claim_application(self):
         """IL-ORD: an unknown UUID returns not-found before the denying provider is asked."""
         self._assert_il_ord("claim")

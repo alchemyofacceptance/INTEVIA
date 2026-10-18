@@ -249,8 +249,11 @@ class ApplicationGatewayTests(TransactionTestCase):
         ))
 
     def effect(self, version, action, suffix=None):
+        return self._effect_with_service(self.service, version, action, suffix)
+
+    def _effect_with_service(self, service, version, action, suffix=None):
         token = suffix or fresh()
-        return self.service.effect_gateway_version(EffectGatewayVersionCommand(
+        return service.effect_gateway_version(EffectGatewayVersionCommand(
             credential=self.actor.credential, living_organism_id=self.organism.organism_id,
             action=action, version_uuid=version.version_uuid,
             request_reference=f"s3:effect:{token}", idempotency_key=f"s3:effect:{token}",
@@ -298,18 +301,28 @@ class ApplicationGatewayTests(TransactionTestCase):
             occurred_at=NOW, effective_at=NOW, received_at=NOW, answer=answer,
         ))
 
+    def _automatic_collaborators(self):
+        with transaction.atomic(), connection.cursor() as cursor:
+            care_pk = seed_identity(cursor, f"fake-care-{fresh()}")
+        care = Identity.objects.select_related("credential").get(pk=care_pk)
+        return care, _TestDiscussionWelcome()
+
     def automatic_gateway(self):
         settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
             "applications_open": True, "automatic_acceptance": True, "processing_responsibility": "LO",
         })
-        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        care, welcome = self._automatic_collaborators()
+        settings_service = OrganismApplicationService(
+            authority=S015Authority(provider=_CoordinatorProvider()),
+            clock=lambda: NOW,
+            care_executor=FakeCareExecutor(care),
+            welcome=welcome,
+        )
+        self._effect_with_service(settings_service, settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
         return settings
 
     def automatic_service(self):
-        with transaction.atomic(), connection.cursor() as cursor:
-            care_pk = seed_identity(cursor, f"fake-care-{fresh()}")
-        care = Identity.objects.select_related("credential").get(pk=care_pk)
-        welcome = _TestDiscussionWelcome()
+        care, welcome = self._automatic_collaborators()
         self.provider = _CoordinatorProvider()
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=self.provider), clock=lambda: NOW,
@@ -496,6 +509,64 @@ class ApplicationGatewayTests(TransactionTestCase):
             )
             latest_reference = cursor.fetchone()[0]
         self.assertEqual(latest_reference, f"application-settings-version:{version.version_uuid}")
+
+    def _assert_automatic_settings_refused(self, service, message, suffix):
+        version = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": True, "processing_responsibility": "LO",
+        })
+        events_before = LivingOrganismEvent.objects.filter(living_organism=self.organism).count()
+        receipts_before = OrganismCommandReceipt.objects.count()
+        initial_settings = LOApplicationSettingsVersion.objects.get(
+            pk=self.gateway["core_loapplicationsettingsversion"],
+        )
+        with self.assertRaisesMessage(S015ApplicationRefused, message) as refused:
+            self._effect_with_service(
+                service, version, OrganismAction.EFFECT_APPLICATION_SETTINGS, suffix,
+            )
+        self.assertIsNone(refused.exception.refusal_code)
+        self.assertEqual(
+            LivingOrganismEvent.objects.filter(living_organism=self.organism).count(),
+            events_before,
+        )
+        self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before)
+        self._assert_latest_settings_effect(initial_settings)
+
+    def test_effecting_automatic_settings_refuses_for_missing_care_first(self):
+        message = (
+            "These settings were not put into effect: automatic acceptance needs a CARE executor, "
+            "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged. You can still "
+            "choose manual processing by the LO's Coordinators."
+        )
+        welcome_service = OrganismApplicationService(
+            authority=S015Authority(provider=_CoordinatorProvider()),
+            clock=lambda: NOW,
+            welcome=_TestDiscussionWelcome(),
+        )
+        self._assert_automatic_settings_refused(
+            welcome_service, message, "care-missing-welcome-supplied",
+        )
+        self._assert_automatic_settings_refused(
+            self.service, message, "both-collaborators-missing",
+        )
+
+    def test_effecting_automatic_settings_refuses_for_unavailable_welcome(self):
+        care, _ = self._automatic_collaborators()
+        care_only_service = OrganismApplicationService(
+            authority=S015Authority(provider=_CoordinatorProvider()),
+            clock=lambda: NOW,
+            care_executor=FakeCareExecutor(care),
+        )
+        self._assert_automatic_settings_refused(
+            care_only_service,
+            "These settings were not put into effect: automatic acceptance needs the welcome for new "
+            "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged. You "
+            "can still choose manual processing by the LO's Coordinators.",
+            "care-supplied-welcome-unavailable",
+        )
+
+    def test_effecting_automatic_settings_succeeds_with_both_collaborators(self):
+        settings = self.automatic_gateway()
+        self._assert_latest_settings_effect(settings)
 
     def test_xw1_lock_cycle_regression_witness(self):
         """On old code, the gateway NOWAIT probe fails while submission waits and submission ends in deadlock detected; corrected order leaves the gateway head free and refuses after closure."""
@@ -702,6 +773,25 @@ class ApplicationGatewayTests(TransactionTestCase):
         application = Application.objects.get(application_uuid=result.application_uuid)
         decision = ApplicationDecision.objects.get(application=application)
         engagement = ApplicationEngagement.objects.get(application=application)
+        self.assertLessEqual(
+            application.recorded_at,
+            engagement.recorded_at,
+            "automatic acceptance application must be recorded no later than its engagement",
+        )
+        self.assertLess(
+            engagement.recorded_at,
+            decision.recorded_at,
+            "automatic acceptance fixture must establish engagement.recorded_at < decision.recorded_at",
+        )
+        state_at = application.effective_at
+        self.assertEqual(
+            self.service.application_status(application, state_at, engagement.recorded_at),
+            "PENDING",
+        )
+        self.assertEqual(
+            self.service.application_status(application, state_at, decision.recorded_at),
+            "DECIDED",
+        )
         admission = OrganismMembershipTransition.objects.get(
             membership__identity=applicant, membership__living_organism=self.organism,
             resulting_state="ACTIVE",

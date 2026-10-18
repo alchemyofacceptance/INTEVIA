@@ -73,6 +73,16 @@ _SBG_ENABLING_REFUSAL_CODES = {
     S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
     S015AuthorityRefusalCode.SBG_IL_GRESD,
 }
+_AUTOMATIC_ACCEPTANCE_CARE_REFUSAL = (
+    "These settings were not put into effect: automatic acceptance needs a CARE executor, "
+    "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged. You can still "
+    "choose manual processing by the LO's Coordinators."
+)
+_AUTOMATIC_ACCEPTANCE_WELCOME_REFUSAL = (
+    "These settings were not put into effect: automatic acceptance needs the welcome for new "
+    "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged. You "
+    "can still choose manual processing by the LO's Coordinators."
+)
 
 
 def _governance_enabling_refusal_message(
@@ -1360,6 +1370,11 @@ class OrganismApplicationService:
                 raise S015OperationNotYetImplemented("cq_configuration", "S3-IL-CQ", "DISCUSSION")
             if isinstance(version, LOApplicationSettingsVersion) and version.processing_responsibility == "APPLICATION_CIRCLE":
                 raise S015OperationNotYetImplemented("circle_application_processing", "S3-IL-CIRCLE", "DISCUSSION")
+            if isinstance(version, LOApplicationSettingsVersion) and version.automatic_acceptance is True:
+                if self._care_executor is None:
+                    raise S015ApplicationRefused(_AUTOMATIC_ACCEPTANCE_CARE_REFUSAL)
+                if isinstance(self._welcome, UnavailableDiscussionWelcome):
+                    raise S015ApplicationRefused(_AUTOMATIC_ACCEPTANCE_WELCOME_REFUSAL)
             _lock_owning_organism(self._alias, organism.organism_id)
             organism = LivingOrganism.objects.using(self._alias).select_for_update().get(pk=organism.pk)
             predecessor = LivingOrganismEvent.objects.using(self._alias).filter(pk=organism.head_event_id).first()
@@ -2074,9 +2089,12 @@ class OrganismApplicationService:
         bounds, then WITHDRAWN for a withdrawal within them.
 
         Selects the engagement with the greatest engagement_ordinal within the
-        same bounds, returning WAITING if none exists. A selected route other
-        than LO_CSA raises S015OperationNotYetImplemented: S3-IL-CQ when the
-        route ends in CQ, otherwise S3-IL-CIRCLE.
+        same bounds, returning WAITING if none exists. A selected LO_AUTOMATIC
+        engagement returns PENDING: its automatic decision does not fall within
+        those bounds. No LO state fold is applied on that route, so this PENDING
+        does not certify that the LO is open. A selected route other than
+        LO_AUTOMATIC or LO_CSA raises S015OperationNotYetImplemented: S3-IL-CQ
+        when the route ends in CQ, otherwise S3-IL-CIRCLE.
 
         For LO_CSA, returns UNABLE if the LO state fold at state_at and known_at
         returns CLOSED. It also returns UNABLE if the claim named by that
@@ -2103,6 +2121,8 @@ class OrganismApplicationService:
         ).order_by("-engagement_ordinal").first()
         if engagement is None:
             return "WAITING"
+        if engagement.route == "LO_AUTOMATIC":
+            return "PENDING"
         if engagement.route != "LO_CSA":
             limit = "S3-IL-CQ" if engagement.route.endswith("CQ") else "S3-IL-CIRCLE"
             raise S015OperationNotYetImplemented("application_status_route", limit, "DISCUSSION")
