@@ -1,68 +1,51 @@
-"""PKT-B slice S2 — office appointments and authorised endings (contextual role assignments).
+"""Office proposals, appointments and authorised endings for an LO (S015).
 
-Commission: COPILOT_COMMISSION_PKT_B_S2_v1_1.md, carrying the Human Governor's rulings of
-29 September 2026. Design: docs/s015/pkt_b/PKT_B_S2_DESIGN_EXTRACT_v1_0.md (⟨B.050⟩, ⟨C.064⟩,
-⟨E2.130⟩, ⟨E1.038⟩, ⟨C.051⟩, ⟨C.023⟩, ⟨E1.016⟩–⟨E1.019⟩, ⟨U5.010⟩), with the S1 extract
-(⟨B.049⟩, ⟨C.037⟩–⟨C.040⟩, ⟨E2.114⟩).
+OrganismRoleService provides propose_assignment and transition_assignment,
+each inside authority_atomic, plus assignment_in_effect and
+open_nominations reads.
 
-Commands: `propose_assignment` (the office anchor plus its sequence-1 PROPOSE event) and
-`transition_assignment` (the decided edges of ⟨B.050⟩: PROPOSED → ACTIVE by ASSIGN — the
-appointment, an explicit act (K-3) — and ACTIVE → ENDED by END or REASSIGN; a fresh appointment
-is a new anchor through `propose_assignment`, U21g-6). Plus the read
-`assignment_in_effect(assignment, at)`: the recorded state stays ACTIVE until an ending is
-recorded; a FIXED term reads not-in-effect at and after `effective_until` (no tolling under the
-default, ⟨E2.130⟩).
+A successful proposal creates a contextual role assignment in PROPOSED
+state for a membership whose stored state is ACTIVE, with a sequence-1
+PROPOSE event. It uses an existing role definition. The transition
+service supports PROPOSED to ACTIVE by ASSIGN and ACTIVE to ENDED by END
+or REASSIGN. A fresh appointment uses a new assignment anchor.
 
-The term and the no-tolling snapshot are appointment content (commission §3.3): the appointing
-ASSIGN command supplies `effective_until_state` / `effective_until` (required for ASSIGN, refused
-for END and REASSIGN), validated against the landed 0022 checks and bound into ASSIGN's target and
-payload fingerprints so the qualified decision covers them, then written on the ASSIGN event's own
-columns. The proposal may carry its proposed term as proposal content in its own fingerprints;
-nothing reads it back, and a chain row's effective_until states when that event's effect ends, so
-the PROPOSE row itself carries NOT_ESTABLISHED / NULL. `suspension_tolls_term = NO` (source:
-`DEFAULT (no settings store)` — no settings store is landed; HD-E6 is open) is snapshotted with
-the appointment and bound likewise, and readably in the receipt. The office event chain has no
-`reason_class` column — the action token records the kind of act — and no landed column can hold
-the tolling value readably (`core_governedeventcontent` is unusable: the L2 canonical form is
-undefined, U-14). That dependency (a readable snapshot home, with HD-E6) is declared, not patched
-round.
+ASSIGN requires the nominee's stored membership state to be ACTIVE and
+refuses a nomination with a membership departure recorded after its
+proposal. It also checks that the authority reference names the consent
+fact selected for that nomination. For self-nomination this is the
+proposal event unless an eligible withdrawal exists; otherwise it is
+the highest-ordinal eligible nominee record, which must be CONSENT.
+Consent eligibility uses the appointment's effective_at and the
+database time sampled by the consent check.
 
-Order inside the transaction (as S1 at d6af911): the atomic block; canonical input validation
-(including refusal of an undecided or unused action or state token); the actor lock; the mutex;
-target resolution so the fingerprint can be built (a missing target is not-found); replay; then
-authority; then every state-reading refusal — the nominee's current membership on ASSIGN (R4
-slice 2), IL-4, the decided edge set, IL-3, PE-04 — then the
-event write with every chain-contract column (TRANSPORT, actor PARTY/STANDING, enterer = actor),
-the cache refresh with `clock_timestamp()`, and the receipt.
+ASSIGN supplies the term; END and REASSIGN reject supplied term fields.
+The term and default no-tolling value are bound into ASSIGN's
+fingerprints. The term is written on the event; the no-tolling value
+and its source are included in the result and receipt, not separate
+event columns. A proposed term is fingerprinted but the PROPOSE event
+and result establish no term.
 
-Implementation limits in force — temporary refusals, not office or membership policy:
-- IL-2 (S5, after the rule home, with HD-C5): a membership departure while an ACTIVE office is
-  held. S1's code names it; S2 changes nothing in S1. The departure's office endings are
-  rule-composed consequences (actor NONE, the Ruling 4 rule reference — ⟨C.023⟩ row 7, ⟨C.051⟩);
-  no genuine rule reference exists in landed data (`core_governedrule` / B-G3 are proposed, not
-  landed), so none is written, and the departure's actor is never substituted.
-- IL-3 (S5): an out-of-order office event (`effective_at, occurred_at, received_at` before the
-  head's), refused after authority, as in S1.
-- IL-4 (S2b, after HD-E6): ACTIVE ⇄ SUSPENDED role suspension — needs the
-  `role_suspension_enabled` setting (no settings store is landed; HD-E6 open) and the constitutional-instrument reference (⟨E1.038⟩).
-- IL-5 (S5, after the rule home): the writer that records a term's end — a scheduled,
-  rule-composed act (actor NONE, the term-end rule). No command is exposed for it in S2.
-  Effective expiry is a read rule (`assignment_in_effect`); the ending is a record.
-- IL-6 (S4): a Circle-scoped office (`circle` not NULL, or a CIRCLE-scoped role definition); refused on propose and on every transition.
-- PE-04 (SB — the Birthing slice): an END or REASSIGN of only the founder's original LO-scope
-  COORDINATOR appointment is refused for a non-founder enterer only while no Birthing event is
-  eligible at the attempted act's coordinates. The founder's own ending, later appointments,
-  non-founder appointments and Circle-scope appointments are not protected by PE-04. Provenance
-  is established by the founding-transaction test or the durable record rule in
-  `_founding_appointment_by_record`; the latter reads no transaction ids or timestamps.
-- IL-8 (SR): appointment to, or any transition of, an office whose role definition is not COORDINATOR. The landed schema lets an
-  organism define offices of its own, beyond COORDINATOR and the root's reserved five (which exist
-  only on the platform root, `s015_platform_root_unset_ck` shipping FALSE-only, D-39); SR's row
-  covers the reserved offices and organism-defined offices alike. The check is an exact code
-  comparison, not a prefix.
+assignment_in_effect combines the cached assignment state with the
+recorded FIXED-term cutoff, returning False at and after effective_until.
+This module exposes no command that automatically records term expiry.
+open_nominations folds assignment state at supplied effective and
+knowledge coordinates and excludes nominations with an eligible
+DECLINE or WITHDRAW record.
 
-The replay substrate (`qualify_completed_replay` / `QualifiedOrganismCommandReplay`) lives in
-src/intevia/services/organism_membership_service.py and is untouched (the Reviewer's F1).
+Commands validate inputs, lock the actor, acquire the command mutex,
+resolve the target and attempt replay. Fresh commands then obtain the
+required actor context and locks and qualify authority before their
+local target-state refusals. Actor-context checks can refuse earlier.
+Successful commands write an event, refresh the governed cache and
+finalise a receipt.
+
+Local implementation limits cover non-LO-scoped definitions,
+non-COORDINATOR codes, role suspension and events whose
+(effective_at, occurred_at, received_at) precedes the head's.
+A non-founder cannot END or REASSIGN an assignment recognised as the
+founder's original appointment while no Birthing event is eligible
+at effective_at and received_at (C_FOUNDER_PROTECTED).
 """
 from __future__ import annotations
 
@@ -149,35 +132,72 @@ _DECIDED_EDGES = {
 
 
 class S015AssignmentCommandError(Exception):
+    """Base class for this module's office-command errors."""
     pass
 
 
 class S015AssignmentAuthorityUnavailable(S015AssignmentCommandError):
+    """An authority prerequisite for an office command is unavailable.
+
+    Raised when the actor's Identity, credential, active membership or
+    membership context fails its check (passed as the unavailable exception
+    to _lock_actor, _read_actor_active_membership and
+    _lock_actor_membership_context), or when the LO has no founding
+    authority basis.
+    """
     pass
 
 
 class S015AssignmentNotFound(S015AssignmentCommandError):
+    """A record an office command needs was not found.
+
+    The membership or role definition named by a proposal, the assignment
+    named by a transition, or the assignment's sequence-1 PROPOSE event or
+    head event.
+    """
     pass
 
 
 class S015AssignmentEdgeRefused(S015AssignmentCommandError):
+    """An office command asks for something outside what this service implements.
+
+    Raised for a state, action or edge outside the implemented set, for
+    PROPOSE sent as a transition, for a role definition belonging to another
+    LO or not active, and for an authority reference that does not name the
+    nominee's consent.
+    """
     pass
 
 
 class S015AssignmentStateUnused(S015AssignmentCommandError):
+    """A state or action that v1.0 does not use (PRIVACY_TRANSFORMED, PRIVACY_TRANSFORM) was requested."""
     pass
 
 
 class S015AssignmentTermRefused(S015AssignmentCommandError):
+    """An appointment's term is missing, outside the vocabulary or inconsistent, or a term was supplied where none is allowed."""
     pass
 
 
 class S015AssignmentMembershipRefused(S015AssignmentCommandError):
+    """The nominee's membership does not allow the office act.
+
+    Raised when a proposal names a PROBATIONARY or otherwise non-ACTIVE
+    membership, and when ASSIGN finds the nominee's stored membership not
+    ACTIVE or a departure recorded after the proposal.
+    """
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class ProposeAssignmentCommand:
+    """Inputs to propose_assignment.
+
+    The actor's credential; the request reference and idempotency key; the
+    occurred, effective and received times; the membership and role
+    definition UUIDs; and the proposed term (effective_until_state, with
+    effective_until when FIXED).
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -192,6 +212,13 @@ class ProposeAssignmentCommand:
 
 @dataclass(frozen=True, slots=True)
 class TransitionAssignmentCommand:
+    """Inputs to transition_assignment.
+
+    The actor's credential; the request reference and idempotency key; the
+    occurred, effective and received times; the assignment UUID; the event
+    action and requested resulting state; and the term, which ASSIGN must
+    supply and END and REASSIGN must leave unset (both default to None).
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -209,6 +236,25 @@ class TransitionAssignmentCommand:
 
 @dataclass(frozen=True, slots=True)
 class AssignmentCommandResult:
+    """An office command result, with fields that may be withheld when served.
+
+    The receipt stores the serialized result before serve_replay applies
+    viewer-specific withholding. The shared service applies serve_replay
+    both when returning a newly completed command and on later replay.
+
+    resulting_state, event_sequence, current_state_effective_at,
+    state_known_at, state_source_event_set_fingerprint,
+    suspension_tolls_term and suspension_tolls_term_source are replaced by
+    WithheldField when the viewer lacks the SUBJECT audience; event_uuid
+    too unless the event is a PROPOSE; effective_until and
+    effective_until_state too when the event is an END or REASSIGN.
+
+    Separately, authority_reference is replaced by WithheldField whenever
+    _has_pk_valued_reference identifies it as primary-key-valued, regardless
+    of the viewer's audience. These rules do not replace assignment_uuid,
+    event_action, lineage_reference, temporal_basis_kind,
+    temporal_basis_reference or authority_decision_reference.
+    """
     assignment_uuid: UUID
     resulting_state: str | WithheldField
     event_uuid: UUID | WithheldField
@@ -228,6 +274,18 @@ class AssignmentCommandResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
+        """Serialize the pre-withholding result for storage in a command receipt.
+
+        Returns seventeen fields keyed by name. Converts assignment_uuid and
+        event_uuid to strings, and current_state_effective_at, state_known_at
+        and a non-None effective_until to canonical timestamps. Copies the
+        remaining field values directly.
+
+        The shared command service calls this before serve_replay applies
+        withholding. This is not a serializer for a viewer-filtered result:
+        it neither rejects WithheldField values explicitly nor encodes them
+        as structured withholding markers.
+        """
         return {
             "assignment_uuid": str(self.assignment_uuid),
             "authority_decision_reference": self.authority_decision_reference,
@@ -252,6 +310,21 @@ class AssignmentCommandResult:
 
     @classmethod
     def replay_field_audiences(cls, result: "AssignmentCommandResult") -> dict[str, str]:
+        """Return the replay audience of each restricted field.
+
+        Marks resulting_state, event_sequence, current_state_effective_at,
+        state_known_at, state_source_event_set_fingerprint,
+        suspension_tolls_term and suspension_tolls_term_source as SUBJECT.
+
+        Also marks event_uuid as SUBJECT unless event_action is PROPOSE, and
+        effective_until and effective_until_state when event_action is END
+        or REASSIGN.
+
+        The shared viewer check identifies SUBJECT as the Identity linked
+        through the assignment's membership; it does not require the assignment
+        to be an active office. This method returns classifications only and
+        does not itself withhold values.
+        """
         audiences = {
             "resulting_state": "SUBJECT",
             "event_sequence": "SUBJECT",
@@ -272,6 +345,39 @@ class AssignmentCommandResult:
     def from_receipt_payload(
         cls, payload: object,
     ) -> "AssignmentCommandResult":
+        """Reconstruct an AssignmentCommandResult from a stored receipt payload, strictly.
+
+        Requires a payload whose type is exactly dict and whose keys are exactly
+        the seventeen result keys. Required textual fields must have type str;
+        effective_until, the temporal basis fields and the tolling fields must
+        be str or None. event_sequence must be a positive int, with bool refused.
+        assignment_uuid and event_uuid must be canonical UUID strings.
+
+        Accepts resulting_state PROPOSED, ACTIVE, PROBATIONARY, SUSPENDED or
+        ENDED, and event_action PROPOSE, ASSIGN, END, REASSIGN or SUSPEND: the
+        declared vocabularies minus PRIVACY_TRANSFORMED and PRIVACY_TRANSFORM.
+        These are decoder vocabularies, not a claim that every corresponding
+        command edge is implemented or that each action/state pairing is valid.
+
+        effective_until_state must be FIXED, NONE or NOT_ESTABLISHED, with a
+        non-None effective_until exactly when it is FIXED. temporal_basis_kind
+        must be None, RETROSPECTIVE or PROSPECTIVE, and its reference must be
+        None exactly when the kind is None. ASSIGN requires suspension_tolls_term
+        "NO" and suspension_tolls_term_source "DEFAULT (no settings store)";
+        other actions require both fields to be None. The two required
+        timestamps and a non-None effective_until must pass
+        _parse_canonical_timestamp.
+
+        A receipt without event_uuid is malformed; no lookup recovers it
+        (RC-1, item 0, the Human Governor's decision). A non-dict payload, or
+        KeyError, TypeError or ValueError while checking or building the result,
+        raises S015CommandReceiptMalformed with the cause chained.
+
+        This decoder does not compare the result with its recorded event;
+        the service's _verify_replay_result performs its separate, limited
+        event check. It does not check timestamp ordering or reference contents
+        beyond the stated type and pairing checks.
+        """
         if type(payload) is not dict:
             raise S015CommandReceiptMalformed() from TypeError("receipt payload must be a dict")
         try:
@@ -384,6 +490,14 @@ class AssignmentCommandResult:
 
 
 def _parse_canonical_timestamp(value: object) -> datetime:
+    """Parse a timestamp value from a stored receipt payload.
+
+    Requires type(value) to be str, otherwise raises TypeError. Replaces
+    every "Z" with "+00:00" and passes the result to datetime.fromisoformat,
+    allowing its parsing errors to propagate. Raises ValueError unless
+    canonical_timestamp of the parsed value reproduces the stored string
+    exactly, so only the writer's canonical spelling is accepted.
+    """
     if type(value) is not str:
         raise TypeError("timestamp payload must be a string")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -398,8 +512,15 @@ def _validate_term(
     effective_until: object,
     effective_at: datetime,
 ) -> tuple[str, datetime | None]:
-    """The landed term vocabulary (0022 until_state_vocab_ck/until_value_ck/until_after_from_ck),
-    refused at input canonicalisation, before any write."""
+    """Validate an appointment's term and return (effective_until_state, effective_until).
+
+    Validates effective_until_state as a canonical key of at most 15
+    characters, which must be FIXED, NONE or NOT_ESTABLISHED. effective_until
+    is required exactly when the state is FIXED; when given, it is validated
+    as a timestamp and must be later than effective_at. Each failure raises
+    S015AssignmentTermRefused, except the canonical-key and timestamp checks,
+    which raise their own TypeError or ValueError. Writes nothing.
+    """
     state = _canonical_key(effective_until_state, "effective_until_state", 15)
     if state not in {"FIXED", "NONE", "NOT_ESTABLISHED"}:
         raise S015AssignmentTermRefused(f"effective_until_state {state} is not in the landed vocabulary")
@@ -416,6 +537,13 @@ def _validate_term(
 
 
 def _validate_resulting_state(value: object) -> str:
+    """Validate a requested resulting state and return it.
+
+    Validates it as a canonical key of at most 19 characters. Raises
+    S015AssignmentStateUnused for PRIVACY_TRANSFORMED (unused in v1.0), and
+    S015AssignmentEdgeRefused for a state outside PROPOSED, ACTIVE,
+    PROBATIONARY, SUSPENDED and ENDED.
+    """
     state = _canonical_key(value, "resulting_state", 19)
     if state in _STATE_UNUSED:
         raise S015AssignmentStateUnused(
@@ -427,6 +555,13 @@ def _validate_resulting_state(value: object) -> str:
 
 
 def _validate_event_action(value: object) -> str:
+    """Validate a transition's event action and return it.
+
+    Validates it as a canonical key of at most 17 characters. Raises
+    S015AssignmentStateUnused for PRIVACY_TRANSFORM (unused in v1.0), and
+    S015AssignmentEdgeRefused for an action outside the vocabulary or for
+    PROPOSE, which only propose_assignment performs.
+    """
     action = _canonical_key(value, "action", 17)
     if action in _ACTION_UNUSED:
         raise S015AssignmentStateUnused(
@@ -442,8 +577,20 @@ def _validate_event_action(value: object) -> str:
 
 
 def _validate_assignment_edge(*, current_state: str, action: str, target_state: str) -> None:
-    """The decided edge set (⟨B.050⟩) and IL-4, after authority. PROPOSED -> ENDED, every
-    PROBATIONARY edge and every other edge are refused without a write."""
+    """Check an office edge against this service's implemented transition set.
+
+    First raises S015OperationNotYetImplemented for role suspension
+    (IL-4, S2b) when action is SUSPEND or the state pair is ACTIVE to
+    SUSPENDED or SUSPENDED to ACTIVE, regardless of the other argument.
+
+    If that suspension check does not apply, allows only PROPOSED to ACTIVE
+    by ASSIGN and ACTIVE to ENDED by END or REASSIGN. Every other combination,
+    including PROPOSED to ENDED and edges involving PROBATIONARY, raises
+    S015AssignmentEdgeRefused.
+
+    Returns None for an allowed combination. Performs no writes or authority
+    qualification; _execute_transition calls it after authority qualification.
+    """
     if (
         action == "SUSPEND"
         or (current_state == "ACTIVE" and target_state == "SUSPENDED")
@@ -495,6 +642,21 @@ def _insert_assignment_event_row(
     prior_state: str | None,
     resulting_state: str,
 ) -> int:
+    """Execute a raw SQL insert of one assignment state event and return its id.
+
+    Reads the predecessor's l1_commitment when predecessor_id is supplied;
+    uses None when no predecessor is supplied or the lookup finds no row.
+    Computes parts_commitment with the database's s015_0022_digest and
+    s015_0022_parts_preimage functions for this table and event_uuid.
+
+    Passes the supplied row values and the two derived commitments to a
+    parameterized INSERT ... RETURNING id on database_alias. Performs no
+    explicit Python-side validation of those values and does not open an
+    atomic block or explicitly lock the predecessor row.
+
+    Database errors propagate. Returning an id does not establish that
+    deferred checks have passed or that the surrounding transaction commits.
+    """
     with connections[database_alias].cursor() as cursor:
         if predecessor_id is None:
             predecessor_l1_commitment = None
@@ -607,8 +769,13 @@ def _head_assign_term(
     database_alias: str,
     assignment_id: int,
 ) -> tuple[str, datetime | None] | None:
-    """The term the appointing decision supplied, snapshotted on the ASSIGN event, if one is
-    recorded."""
+    """Return the term recorded on the assignment's latest ASSIGN event, or None.
+
+    Reads effective_until_state and effective_until from the ASSIGN event
+    with the highest sequence for this assignment, by raw SQL on
+    database_alias. Returns None when no ASSIGN event exists. Does not look
+    at later END or REASSIGN events.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             """
@@ -632,7 +799,23 @@ def assignment_in_effect(
     *,
     database_alias: str = "default",
 ) -> bool:
-    """Return the cached state subject to the recorded fixed-term expiry rule."""
+    """Apply the recorded fixed-term expiry check to the supplied assignment's state.
+
+    Requires type(assignment) to be ContextualRoleAssignment, otherwise
+    raises TypeError. Validates at as a timestamp and reads the latest
+    ASSIGN event's term from database_alias.
+
+    Returns False when that term is FIXED, effective_until is present,
+    and at is at or after effective_until. Otherwise returns whether
+    the supplied assignment object's state is ACTIVE.
+
+    Does not refresh the supplied object, fold events at at, check the
+    appointment's start against at, or filter the term read by effective
+    or knowledge time. This is not a historical as-of-state query.
+
+    Applies no tolling and performs no writes. Reaching the fixed-term end
+    changes this return value without recording an ending.
+    """
     if type(assignment) is not ContextualRoleAssignment:
         raise TypeError("assignment must be a ContextualRoleAssignment")
     moment = _validate_timestamp(at, "at")
@@ -643,14 +826,34 @@ def assignment_in_effect(
 
 
 class OrganismRoleService(_OrganismCommandService):
+    """The office command service: propose_assignment and transition_assignment, and two reads.
+
+    Declares, for the shared _OrganismCommandService, the action
+    TRANSITION_CONTEXTUAL_ROLE, S015AssignmentNotFound as its not-found
+    exception and S015AssignmentAuthorityUnavailable as its unavailable
+    exception; rebuilds replayed results from receipt payloads and, on
+    replay, checks each against its recorded assignment event.
+    """
     _action = _ACTION
     _not_found = S015AssignmentNotFound
     _authority_unavailable = S015AssignmentAuthorityUnavailable
 
     def _replay_result(self, payload: object) -> AssignmentCommandResult:
+        """Rebuild a replayed result from its receipt payload (AssignmentCommandResult.from_receipt_payload)."""
         return AssignmentCommandResult.from_receipt_payload(payload)
 
     def _verify_replay_result(self, result: AssignmentCommandResult) -> None:
+        """Check a replayed office result against its recorded assignment event.
+
+        Raises TypeError unless result is an AssignmentCommandResult instance.
+        Reads the event identified by the result's assignment UUID and event
+        sequence. Requires its event UUID, action and lineage reference to equal
+        the result's. A missing row or any disagreement raises
+        S015CommandReceiptMalformed with a ValueError cause (RC-1, item 7).
+
+        This check does not compare the other result fields with the event or
+        recompute its lineage reference. Database-read errors propagate.
+        """
         if not isinstance(result, AssignmentCommandResult):
             raise TypeError("role replay result has the wrong type")
         # RC-1 commission v1.3, item 7 (A2-b): agree with the chain only on replay.
@@ -682,6 +885,13 @@ class OrganismRoleService(_OrganismCommandService):
         target: dict[str, object],
         command: dict[str, object],
     ) -> str:
+        """Return the command fingerprint for a role command.
+
+        Delegates to _command_payload with this module's command domain, schema
+        and action, the actor's Identity UUID and access epoch, the request
+        reference, the idempotency key, the occurred time, and the supplied
+        target and command dictionaries.
+        """
         return _command_payload(
             domain=_COMMAND_DOMAIN,
             schema=_COMMAND_SCHEMA,
@@ -696,17 +906,35 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
     def propose_assignment(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
+        """Propose an office assignment within authority_atomic.
+
+        Runs _execute_propose on this service's database alias and returns its
+        result. A matching completed request is reconstructed from its receipt
+        and served through the replay viewer rules.
+        """
         with authority_atomic(self._alias):
             return self._execute_propose(command)
 
     def transition_assignment(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
+        """Appoint or end an office assignment within authority_atomic.
+
+        Runs _execute_transition on this service's database alias and returns
+        its result. REASSIGN ends the existing assignment; a replacement
+        appointment requires a new assignment anchor.
+
+        A matching completed request is reconstructed from its receipt and
+        served through the replay viewer rules.
+        """
         with authority_atomic(self._alias):
             return self._execute_transition(command)
 
     def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime) -> bool:
-        """A read, not a record: False when the appointment's term is FIXED and `at` is at or
-        after `effective_until` (no tolling under the default), otherwise the cached state's
-        reading. The recorded state stays ACTIVE until an ending is recorded (IL-5 is unbuilt)."""
+        """Apply assignment_in_effect using this service's database alias.
+
+        Uses the supplied object's state and the latest recorded ASSIGN term,
+        with at used for the fixed-term expiry check. Does not refresh the
+        object or reconstruct its historical state.
+        """
         return assignment_in_effect(assignment, at, database_alias=self._alias)
 
     def open_nominations(
@@ -716,7 +944,24 @@ class OrganismRoleService(_OrganismCommandService):
         effective_at: datetime,
         known_at: datetime,
     ) -> list[ContextualRoleAssignment]:
-        """Return PROPOSED offices not closed by a terminal nominee act at these coordinates."""
+        """Select the LO's open nominations at supplied effective and knowledge times.
+
+        Validates the LO UUID and both timestamps. Returns an empty list when
+        the LO is absent.
+
+        Selects assignment ids whose s015_effective_state projection at
+        effective_at and known_at is PROPOSED, excluding any assignment with
+        a DECLINE or WITHDRAW consent record whose effective_at and recorded_at
+        are no later than those respective bounds. The exclusion matches the
+        assignment, without separately matching a proposal or nominee.
+
+        Then loads the selected assignments with membership and role_definition,
+        ordered by id. These are model rows loaded at retrieval time, not
+        historical projections of those rows at the supplied coordinates.
+
+        This method performs no viewer-authorisation check and requests no
+        explicit row locks.
+        """
         organism_uuid = _canonical_uuid(living_organism_uuid, "living_organism_uuid")
         effective_moment = _validate_timestamp(effective_at, "effective_at")
         known_moment = _validate_timestamp(known_at, "known_at")
@@ -745,6 +990,40 @@ class OrganismRoleService(_OrganismCommandService):
         return list(assignments)
 
     def _execute_propose(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
+        """Execute an office proposal within the caller's authority_atomic block.
+
+        Validates the request reference, idempotency key, timestamps, UUIDs and
+        proposed term; locks the actor, takes the command mutex and reads the
+        nominee's membership with its Identity and LO. A missing membership
+        raises S015AssignmentNotFound. Builds target and command fingerprints
+        including the proposed term and default no-tolling value, and returns
+        a replay result if _attempt_replay supplies one.
+
+        For a fresh command, checks the actor's stored ACTIVE membership before
+        acquiring the registered LO lock. Re-reads and locks the nominee's
+        membership with of=("self",), without requesting locks on its joined
+        Identity or LO, then locks the actor's membership context and qualifies
+        authority.
+
+        If qualification returns, the local checks proceed in this order:
+        require a founding authority basis and lock its row; resolve and lock
+        the role definition; require it to belong to the same LO and be active;
+        refuse non-LO scope, then a code other than COORDINATOR; refuse a
+        PROBATIONARY nominee, then any other stored state that is not ACTIVE.
+
+        These checks raise S015AssignmentAuthorityUnavailable for a missing
+        basis, S015AssignmentNotFound for an unknown definition,
+        S015AssignmentEdgeRefused for a different LO or inactive definition,
+        S015OperationNotYetImplemented for unsupported scope or code, and
+        S015AssignmentMembershipRefused for the nominee's state. Earlier actor
+        checks or authority qualification can refuse before these checks.
+
+        Creates a PROPOSED assignment and its sequence-1 PROPOSE event.
+        The event and result carry effective_until_state NOT_ESTABLISHED and
+        effective_until None; the proposed term is bound into fingerprints,
+        not established as the event's term. Refreshes the governed cache and
+        finalises the receipt.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -955,6 +1234,58 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
     def _execute_transition(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
+        """Execute an office transition within the caller's authority_atomic block.
+
+        Validates the request reference, idempotency key, timestamps, assignment
+        UUID, event action and requested resulting state. ASSIGN requires
+        effective_until_state and validates its term through _validate_term;
+        every other admitted action rejects supplied term fields. Missing or
+        inconsistent term content raises S015AssignmentTermRefused; canonical
+        key and timestamp validation can also raise TypeError or ValueError.
+
+        Locks the actor, takes the command mutex and reads the assignment with
+        its membership, LO, Identity and role definition, raising
+        S015AssignmentNotFound if the assignment is absent. Builds the target
+        and command fingerprints; ASSIGN includes its term and the default
+        no-tolling value and source. Returns a replay result if available.
+
+        For a fresh command, performs an early stored-ACTIVE actor-membership
+        check for ASSIGN, REASSIGN and another person's END. Self-END skips
+        only that early check. ASSIGN then locks the LO row directly; other
+        actions acquire the registered LO lock and lock the assignment and
+        membership using of=("self", "membership"). Every action then obtains
+        the actor's locked membership context, requiring ACTIVE state and a
+        head transition, and qualifies authority.
+
+        After qualification, ASSIGN locks the assignment and its joined
+        membership and role definition. It raises S015AssignmentMembershipRefused
+        unless the nominee's stored membership state is ACTIVE. It then requires
+        a sequence-1 PROPOSE event, raising S015AssignmentNotFound if absent,
+        and refuses if an ENDED membership transition was recorded after that
+        proposal. It verifies the nominee's consent against the authority
+        reference through _verify_assign_consent.
+
+        Next, in order, it refuses non-LO scope and non-COORDINATOR codes with
+        S015OperationNotYetImplemented; validates the current state and edge;
+        requires a head event; and refuses an event whose
+        (effective_at, occurred_at, received_at) sorts before the head's tuple.
+
+        For END or REASSIGN, where a founder is recorded and the actor is not
+        that founder, an assignment recognised as the founding appointment is
+        protected while no Birthing fact is eligible at effective_at and
+        received_at. This raises S015AuthorityDenied with C_FOUNDER_PROTECTED.
+
+        Requires a founding authority basis, raising
+        S015AssignmentAuthorityUnavailable if its reference is absent, and
+        locks the basis row. Writes the next event at head sequence plus one:
+        ASSIGN writes its validated term; END and REASSIGN write
+        NOT_ESTABLISHED with no effective_until.
+
+        Refreshes the governed cache and constructs the result. The result
+        includes the default tolling value and source only for ASSIGN; these
+        are not cache-refresh inputs or separate event columns. Finalises the
+        receipt and serves the result through the viewer rules.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -1256,6 +1587,39 @@ class OrganismRoleService(_OrganismCommandService):
         authority_reference: str,
     ) -> None:
         # RC-1 commission v1.3, item 4 (Human Governor-approved text (b)).
+        """Check ASSIGN's authority reference against the nominee's consent.
+
+        Called by _execute_transition after authority qualification and its
+        nominee-membership checks. This helper does not itself qualify authority.
+
+        Raises S015AssignmentNotFound if the assignment's sequence-1 PROPOSE
+        event is missing. Reads clock_timestamp() from the database as the
+        knowledge bound for consent records.
+
+        For a self-nomination, where the proposal's actor is the nominee, the
+        expected reference is "e:<proposal_event_uuid>" unless a WITHDRAW for
+        this assignment and proposal has effective_at no later than the supplied
+        effective_at and recorded_at no later than the knowledge bound.
+
+        For another person's nomination, considers consent records for this
+        assignment, proposal and nominee membership within those same time
+        bounds. The record with the greatest ordinal supplies
+        "c:<consent_uuid>" only if its action is CONSENT. No record, or any
+        other latest action, leaves no expected reference.
+
+        The authority evidence must be readable: a reference whose type is not
+        exactly str, lacks the "s015a1:" prefix, is not valid JSON after it, or
+        does not decode to an object raises S015AssignmentEdgeRefused with the
+        Human Governor's record-fault text (b) (RC-1, item 4). A readable
+        reference then raises S015AssignmentEdgeRefused with the case-specific
+        message if no expected reference exists or its "u" value differs from
+        the expected one.
+
+        This helper only reads records and raises refusals; it writes no
+        appointment or receipt. The caller has already qualified authority.
+        It is the surrounding transaction, not this helper alone, that governs
+        rollback of any earlier work when this exception propagates.
+        """
         record_fault_message = (
             "Appointment not completed: the recorded authority evidence for this appointment could not be read. "
             "No appointment was made by this attempt. This is a record fault, not a withdrawal or decline by "
@@ -1367,6 +1731,28 @@ class OrganismRoleService(_OrganismCommandService):
         prior_state: str | None,
         resulting_state: str,
     ) -> int:
+        """Write one assignment state event and return its id.
+
+        For ASSIGN, END and REASSIGN, records actor_state LIVING_ORGANISM
+        with actor_id and actor_access_epoch set to None. Other actions,
+        including PROPOSE, record actor_state PARTY with the supplied actor
+        Identity's id and access epoch.
+
+        In both cases, records the supplied actor Identity as the enterer,
+        entry_mode TRANSPORT and actor_capacity STANDING. Sets composing-rule
+        and composer states to NA_TRANSPORT, with their references unset.
+
+        Derives the temporal basis through _resulting_temporal_basis. Builds
+        an "s015l1:" lineage reference by hashing the lineage schema bytes
+        followed by the canonical JSON of the selected command fields. Those
+        fields include the supplied actor Identity's UUID and access epoch,
+        including for an LO act.
+
+        Passes the event values, authority basis, authority-decision reference,
+        authority reference as evidence, and term fields to
+        _insert_assignment_event_row. Supplies None for l1_commitment and
+        l2_commitment; this method does not compute them.
+        """
         temporal_basis_kind, temporal_basis_reference = _resulting_temporal_basis(
             payload_fingerprint=payload_fingerprint,
             effective_at=effective_at,
@@ -1436,6 +1822,16 @@ class OrganismRoleService(_OrganismCommandService):
         decision,
         effective_at: datetime,
     ) -> AssignmentCommandResult:
+        """Refresh the assignment's governed cache and build the command result.
+
+        Calls s015_refresh_governed_cache for the assignment at effective_at,
+        with the database clock (clock_timestamp) as the knowledge time, reloads
+        the assignment and the new event, and builds the result from them: the
+        event's state, sequence, action, lineage and temporal basis; the
+        assignment's state coordinates; the supplied term; the default
+        no-tolling value and source only when with_tolling is set; and the
+        authority and authority-decision references.
+        """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
                 "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
