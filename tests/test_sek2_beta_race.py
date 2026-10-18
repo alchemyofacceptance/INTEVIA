@@ -6,7 +6,7 @@ from threading import Barrier
 from unittest.mock import patch
 from uuid import uuid4
 
-from django.db import IntegrityError, close_old_connections, connections
+from django.db import IntegrityError, close_old_connections, connections, transaction
 from django.test import TransactionTestCase
 
 from core.models import (
@@ -38,6 +38,7 @@ from tests.se_route_support import (
     TEST_POLICY_SHA256,
     TEST_POLICY_VERSION,
     add_test_coordinator,
+    declared_event_less_entitlement_rows,
     ensure_test_policy_text,
 )
 
@@ -93,28 +94,27 @@ def _state():
 
 
 def _seed_beta_row(route, *, effective_at):
-    """Insert the pre-cleared event-less beta row used by collision witnesses."""
-    rule = GovernedRule.objects.get(
-        scope_kind="PLATFORM",
-        scope_organism__isnull=True,
-        scope_circle__isnull=True,
-        code="BETA_COMPLIMENTARY_ACCESS",
+    """Insert a composed beta grant for the collision witnesses."""
+    policy = OrganismEntitlementPolicyText.objects.get(
+        policy_version=TEST_POLICY_VERSION
     )
-    beta_row = OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="BETA_OPT_IN",
-        policy_reference=f"policy-text:v{TEST_POLICY_VERSION}",
-        policy_version=TEST_POLICY_VERSION,
-        capabilities=rule.body["capabilities"],
-        limits=rule.body["limits"],
-        effective_at=effective_at,
-        effective_until=None,
-        ending_condition_reference=(
-            f"paid-availability-transition:{route.organism.organism_id}"
-        ),
+    source_event = (
+        LivingOrganismEvent.objects.filter(living_organism=route.organism)
+        .order_by("-sequence")
+        .first()
     )
-    beta_row.refresh_from_db(fields=("recorded_at",))
+    if source_event is None:
+        raise AssertionError("the beta fixture route has no source event")
+    with transaction.atomic():
+        beta_row = route.birthing_service._entitlement_service._compose_beta_grant(
+            actor=route.founder,
+            organism=route.organism,
+            policy=policy,
+            effective_at=effective_at,
+            received_at=database_now(),
+            composed_from_event_uuid=source_event.event_uuid,
+        )
+    beta_row.refresh_from_db(fields=("effective_at", "recorded_at"))
     return beta_row
 
 
@@ -126,25 +126,30 @@ def _seed_extension(route, *, effective_at, effective_until=None):
         scope_circle__isnull=True,
         code="BETA_COMPLIMENTARY_ACCESS",
     )
-    extension = OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="AUTHORISED_EXTENSION",
-        policy_reference=f"policy-text:v{TEST_POLICY_VERSION}",
-        policy_version=TEST_POLICY_VERSION,
-        capabilities=rule.body["capabilities"],
-        limits=rule.body["limits"],
-        effective_at=effective_at,
-        effective_until=effective_until,
-        ending_condition_reference=(
-            f"paid-availability-transition:{route.organism.organism_id}"
-        ),
-    )
+    with declared_event_less_entitlement_rows(
+        "family 8: AUTHORISED_EXTENSION has no admissible first event in v1.0"
+    ):
+        extension = OrganismEntitlement.objects.create(
+            living_organism=route.organism,
+            source="COMPLIMENTARY",
+            basis="AUTHORISED_EXTENSION",
+            policy_reference=f"policy-text:v{TEST_POLICY_VERSION}",
+            policy_version=TEST_POLICY_VERSION,
+            capabilities=rule.body["capabilities"],
+            limits=rule.body["limits"],
+            effective_at=effective_at,
+            effective_until=effective_until,
+            ending_condition_reference=(
+                f"paid-availability-transition:{route.organism.organism_id}"
+            ),
+        )
     extension.refresh_from_db(fields=("recorded_at",))
     return extension
 
 
 class BetaOptInRaceTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def _assert_ordered_collision(self, *, winner_is_coordinator):
@@ -322,11 +327,19 @@ class BetaOptInRaceTests(TransactionTestCase):
         """W-K2.C3: collide on a beta row even when its recorded/effective times are later."""
         route = _free_route()
         received_at = database_now()
+        grant_effective_at = database_now()
         existing = _seed_beta_row(
             route,
-            effective_at=received_at + timedelta(days=1),
+            effective_at=grant_effective_at,
         )
+        self.assertGreater(existing.effective_at, received_at)
         self.assertGreater(existing.recorded_at, received_at)
+        grant_event = OrganismEntitlementEvent.objects.get(
+            entitlement=existing,
+            sequence=1,
+            event_type="GRANTED",
+        )
+        self.assertGreater(grant_event.received_at, existing.effective_at)
         before = _state()
         service = _service(clock=lambda: received_at)
         command = _command(
@@ -354,7 +367,7 @@ class BetaOptInRaceTests(TransactionTestCase):
     def test_w_k2_c3_extension_effective_at_receipt_recorded_later_collides(self):
         """W-K2.C3: a visible extension collides even when recorded after receipt."""
         route = _free_route()
-        received_at = database_now() - timedelta(seconds=5)
+        received_at = database_now()
         extension = _seed_extension(
             route,
             effective_at=received_at,
@@ -435,10 +448,19 @@ class BetaOptInRaceTests(TransactionTestCase):
         """W-K2.C4: translate the named unique-index race and roll back all writes."""
         route = _free_route()
         received_at = database_now()
-        _seed_beta_row(
+        grant_effective_at = database_now()
+        existing = _seed_beta_row(
             route,
-            effective_at=received_at + timedelta(days=1),
+            effective_at=grant_effective_at,
         )
+        self.assertGreater(existing.effective_at, received_at)
+        self.assertGreater(existing.recorded_at, received_at)
+        grant_event = OrganismEntitlementEvent.objects.get(
+            entitlement=existing,
+            sequence=1,
+            event_type="GRANTED",
+        )
+        self.assertGreater(grant_event.received_at, existing.effective_at)
         before = _state()
         service = _service(clock=lambda: received_at)
         command = _command(

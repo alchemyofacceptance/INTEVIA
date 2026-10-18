@@ -43,6 +43,7 @@ from tests.s015_0021_support import (
     T0,
     append_event,
     database_now,
+    current_applied_core_head,
     current_core_leaf,
     empty_fp,
     fresh,
@@ -118,17 +119,23 @@ def _assert_catalog_restored(test_case, reference):
         set(reference["row_counts"]),
         "table set not restored",
     )
-    head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0047_sek1_platform_rule_statement_start")
-    test_case.assertEqual(len(after["triggers"]), 470)
+    head = current_applied_core_head(connection)[0][1]
+    test_case.assertEqual(head, "0048_se_entitlement_granted_event_guard")
+    test_case.assertEqual(
+        len(after["triggers"]),
+        isolation_state.REQUIRED_TRIGGER_COUNT[head],
+    )
     test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
 
 
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
-    head = current_core_leaf(connection)[0][1]
-    test_case.assertEqual(head, "0047_sek1_platform_rule_statement_start")
-    test_case.assertEqual(len(reference["triggers"]), 470)
+    head = current_applied_core_head(connection)[0][1]
+    test_case.assertEqual(head, "0048_se_entitlement_granted_event_guard")
+    test_case.assertEqual(
+        len(reference["triggers"]),
+        isolation_state.REQUIRED_TRIGGER_COUNT[head],
+    )
     nonempty = isolation_state.unexpected_data_rows(reference)
     test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
     for table in LEGACY_EMPTY_TABLES:
@@ -318,9 +325,12 @@ class ApplicationDecisionTests(TransactionTestCase):
 
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
-        head = current_core_leaf(connection)[0][1]
-        self.assertEqual(head, "0047_sek1_platform_rule_statement_start")
-        self.assertEqual(len(reference["triggers"]), 470)
+        head = current_applied_core_head(connection)[0][1]
+        self.assertEqual(head, "0048_se_entitlement_granted_event_guard")
+        self.assertEqual(
+            len(reference["triggers"]),
+            isolation_state.REQUIRED_TRIGGER_COUNT[head],
+        )
         nonempty = isolation_state.unexpected_data_rows(reference)
         self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")
         for table in LEGACY_EMPTY_TABLES:

@@ -4,14 +4,138 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+import inspect
+import unittest
 
+from django.db import connections, transaction
 from core.models import OrganismEntitlementPolicyText
 from src.intevia.services.organism_authority import S015AuthorityDenied
 
 
+EVENT_LESS_ENTITLEMENT_DECLARATIONS: list[tuple[str, str]] = []
+
 TEST_POLICY_TEXT = "TEST FIXTURE — beta offer policy text, not for production"
 TEST_POLICY_VERSION = 1
 TEST_POLICY_SHA256 = hashlib.sha256(TEST_POLICY_TEXT.encode("utf-8")).hexdigest()
+
+
+class EventLessEntitlementRestorationError(RuntimeError):
+    """Expose a guard-restoration failure without losing a fixture exception."""
+
+    def __init__(
+        self,
+        *,
+        using: str,
+        fixture_error: BaseException | None,
+        restoration_error: BaseException,
+    ) -> None:
+        self.using = using
+        self.fixture_error = fixture_error
+        self.restoration_error = restoration_error
+        fixture_result = (
+            "after fixture failure"
+            if fixture_error is not None
+            else "after fixture completion"
+        )
+        super().__init__(
+            "failed to restore test-only trigger "
+            "s015_organismentitlement_granted_guard "
+            f"for database alias {using!r} {fixture_result}"
+        )
+
+
+def _current_test_id() -> str:
+    frame = inspect.currentframe()
+    if frame is None:
+        raise RuntimeError("the test declaration has no active frame")
+    frame = frame.f_back
+    try:
+        while frame is not None:
+            case = frame.f_locals.get("self")
+            if isinstance(case, unittest.TestCase):
+                return case.id()
+            frame = frame.f_back
+    finally:
+        del frame
+    raise RuntimeError("event-less entitlement declaration is outside a test case")
+
+
+@contextmanager
+def declared_event_less_entitlement_rows(reason: str, *, using: str = "default"):
+    """Create event-less test rows during exclusive setup on a disposable DB.
+
+    Disabling the trigger affects the selected physical database, including any
+    aliases or mirrors that target it. Callers must finish this fixture setup
+    before other threads, workers, or connections can use that database. The
+    trigger is disabled in autocommit, the fixture runs atomically, and the
+    trigger is restored in autocommit after commit or rollback. If fixture
+    execution fails and restoration succeeds, the original exception is
+    re-raised unchanged. A restoration failure raises
+    EventLessEntitlementRestorationError, retaining both errors. Process death
+    can prevent restoration; discard that development database before another
+    run. This test-only helper does not change K3-PROD.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("an event-less entitlement declaration needs a reason")
+
+    active_connection = connections[using]
+    with active_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT pg_get_userbyid(relation.relowner), current_user
+              FROM pg_class relation
+              JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+             WHERE namespace.nspname = 'public'
+               AND relation.relname = 'core_organismentitlement'
+               AND relation.relkind = 'r'
+            """
+        )
+        ownership = cursor.fetchone()
+    if ownership is None or ownership[0] != ownership[1]:
+        raise AssertionError(
+            "the test connection role must own core_organismentitlement "
+            "to declare event-less rows"
+        )
+
+    if active_connection.in_atomic_block or not active_connection.get_autocommit():
+        raise RuntimeError(
+            "event-less entitlement declarations must run outside a transaction"
+        )
+
+    test_id = _current_test_id()
+    trigger_disabled = False
+
+    def restore_guard(fixture_error: BaseException | None) -> None:
+        try:
+            with active_connection.cursor() as cursor:
+                cursor.execute(
+                    "ALTER TABLE public.core_organismentitlement "
+                    "ENABLE TRIGGER s015_organismentitlement_granted_guard"
+                )
+        except BaseException as restoration_error:
+            raise EventLessEntitlementRestorationError(
+                using=using,
+                fixture_error=fixture_error,
+                restoration_error=restoration_error,
+            ) from restoration_error
+
+    try:
+        with active_connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE public.core_organismentitlement "
+                "DISABLE TRIGGER s015_organismentitlement_granted_guard"
+            )
+            trigger_disabled = True
+        EVENT_LESS_ENTITLEMENT_DECLARATIONS.append((test_id, reason))
+        with transaction.atomic(using=using):
+            yield
+    except BaseException as fixture_error:
+        if trigger_disabled:
+            restore_guard(fixture_error)
+        raise
+    else:
+        if trigger_disabled:
+            restore_guard(None)
 
 
 @contextmanager

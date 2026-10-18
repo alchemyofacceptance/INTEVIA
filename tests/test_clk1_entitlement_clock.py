@@ -32,6 +32,7 @@ from src.intevia.services.organism_entitlement_service import (
 )
 from tests.sb2_route_support import database_now as test_database_now
 from tests.sb2_route_support import prepare_route
+from tests.se_route_support import declared_event_less_entitlement_rows
 
 
 _LIMITS = {
@@ -89,17 +90,20 @@ class DatabaseNowNoDatabaseTests(SimpleTestCase):
 
 
 def _make_entitlement(route, *, effective_at, effective_until=None, limits=None):
-    entitlement = OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="TRANSITION_TRIAL",
-        policy_reference="fixture:trial",
-        policy_version=1,
-        capabilities=["APPLICATION_CIRCLE"],
-        limits=_LIMITS if limits is None else limits,
-        effective_at=effective_at,
-        effective_until=effective_until,
-    )
+    with declared_event_less_entitlement_rows(
+        "family 3: TRIAL entitlement with controlled effective window"
+    ):
+        entitlement = OrganismEntitlement.objects.create(
+            living_organism=route.organism,
+            source="COMPLIMENTARY",
+            basis="TRANSITION_TRIAL",
+            policy_reference="fixture:trial",
+            policy_version=1,
+            capabilities=["APPLICATION_CIRCLE"],
+            limits=_LIMITS if limits is None else limits,
+            effective_at=effective_at,
+            effective_until=effective_until,
+        )
     entitlement.refresh_from_db()
     return entitlement
 
@@ -169,6 +173,8 @@ class _ExtensionFixtureQuerySet:
 
 
 class EntitlementDatabaseClockTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def test_w1_omitted_at_uses_database_time_under_both_host_skews(self):

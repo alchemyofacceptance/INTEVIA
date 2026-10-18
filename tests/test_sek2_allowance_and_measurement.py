@@ -58,6 +58,7 @@ from tests.sb2_route_support import birth, prepare_route
 from tests.se_route_support import (
     TEST_POLICY_VERSION,
     add_test_coordinator,
+    declared_event_less_entitlement_rows,
     ensure_test_policy_text,
 )
 
@@ -191,26 +192,31 @@ def _seed_learner_limit(route, *, effective_at):
         scope_circle__isnull=True,
         code="BETA_COMPLIMENTARY_ACCESS",
     )
-    return OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="BETA_OPT_IN",
-        policy_reference=f"policy-text:v{TEST_POLICY_VERSION}",
-        policy_version=TEST_POLICY_VERSION,
-        capabilities=list(SE_ENTITLEMENT_CAPABILITY_CODES),
-        limits={
-            "circles": {"kind": "UNLIMITED"},
-            "organism_learners": {"kind": "LIMIT", "value": 9},
-            "document_footprint": {"kind": "NOT_SET"},
-        },
-        effective_at=effective_at,
-        ending_condition_reference=(
-            f"paid-availability-transition:{route.organism.organism_id}"
-        ),
-    )
+    with declared_event_less_entitlement_rows(
+        "family 9: test-only learner limit for membership usage measurement"
+    ):
+        return OrganismEntitlement.objects.create(
+            living_organism=route.organism,
+            source="COMPLIMENTARY",
+            basis="BETA_OPT_IN",
+            policy_reference=f"policy-text:v{TEST_POLICY_VERSION}",
+            policy_version=TEST_POLICY_VERSION,
+            capabilities=list(SE_ENTITLEMENT_CAPABILITY_CODES),
+            limits={
+                "circles": {"kind": "UNLIMITED"},
+                "organism_learners": {"kind": "LIMIT", "value": 9},
+                "document_footprint": {"kind": "NOT_SET"},
+            },
+            effective_at=effective_at,
+            ending_condition_reference=(
+                f"paid-availability-transition:{route.organism.organism_id}"
+            ),
+        )
 
 
 class AllowanceMeasurementTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def _read_only(self, operation):

@@ -61,7 +61,6 @@ from tests.s015_0021_support import (
     append_event,
     database_now,
     current_applied_core_head,
-    current_core_leaf,
     migrate_to_target_with_restore,
     refresh,
     seed_identity,
@@ -72,6 +71,7 @@ from tests.se_route_support import (
     TEST_POLICY_SHA256,
     TEST_POLICY_TEXT,
     TEST_POLICY_VERSION,
+    declared_event_less_entitlement_rows,
     disclose_authority_refusal_code,
     ensure_test_policy_text,
 )
@@ -260,8 +260,10 @@ class SEEntitlementMigrationTests(TransactionTestCase):
     def _assert_0046_state(self):
         self._assert_se_schema_state(SE_MIGRATION)
 
-    def _assert_received_0047_state(self):
-        self._assert_se_schema_state(SEK1_MIGRATION)
+    def _assert_received_head_state(self):
+        self._assert_se_schema_state(
+            ("core", "0048_se_entitlement_granted_event_guard")
+        )
 
     def _assert_se_schema_state(self, expected_head):
         applied = MigrationRecorder(connection).applied_migrations()
@@ -269,7 +271,12 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertIn(SE_MIGRATION, applied)
         self.assertIn(expected_head, applied)
         self.assertTrue(NEW_TABLES.issubset(self._core_tables()))
-        self.assertEqual(self._trigger_count(), 470)
+        import verification.isolation.state as isolation_state
+
+        self.assertEqual(
+            self._trigger_count(),
+            isolation_state.REQUIRED_TRIGGER_COUNT[expected_head[1]],
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -296,12 +303,22 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             "core.migrations.0046_se_entitlement_foundation"
         )
         expected_bodies = dict(migration.SE_FUNCTION_BODIES)
-        if expected_head == SEK1_MIGRATION:
+        if expected_head[1] in {
+            "0047_sek1_platform_rule_statement_start",
+            "0048_se_entitlement_granted_event_guard",
+        }:
             sek1_migration = importlib.import_module(
                 "core.migrations.0047_sek1_platform_rule_statement_start"
             )
             expected_bodies["s015_entitlement_limit"] = (
                 sek1_migration._ENTITLEMENT_LIMIT_BODY
+            )
+        if expected_head[1] == "0048_se_entitlement_granted_event_guard":
+            guard_migration = importlib.import_module(
+                "core.migrations.0048_se_entitlement_granted_event_guard"
+            )
+            expected_bodies["s015_guard_entitlement_granted"] = (
+                guard_migration.FUNCTION_SQL.split("AS $$", 1)[1].rsplit("$$", 1)[0]
             )
         with connection.cursor() as cursor:
             cursor.execute(
@@ -383,7 +400,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
         self._assert_0045_state(original_tables - NEW_TABLES)
         self.restore_received_migrations()
-        self._assert_received_0047_state()
+        self._assert_received_head_state()
 
     def test_w_se_m3_setup_failure_cleanup_restores_0046(self):
         original_tables = self._core_tables()
@@ -402,7 +419,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(len(result.errors), 1)
         self.assertIn("intentional SE setup failure", result.errors[0][1])
         self.assertEqual(self._core_tables(), original_tables)
-        self._assert_received_0047_state()
+        self._assert_received_head_state()
 
     def test_w_se_m4_reverse_refuses_when_any_se_record_exists(self):
         migrate_to_target_with_restore(self, SE_MIGRATION)
@@ -470,26 +487,25 @@ class SEEntitlementMigrationTests(TransactionTestCase):
 
 def _seed_beta_entitlement(route, *, effective_at):
     policy_version, _ = ensure_test_policy_text()
-    rule = GovernedRule.objects.get(
-        scope_kind="PLATFORM",
-        scope_organism__isnull=True,
-        scope_circle__isnull=True,
-        code="BETA_COMPLIMENTARY_ACCESS",
+    policy = OrganismEntitlementPolicyText.objects.get(
+        policy_version=policy_version
     )
-    return OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="BETA_OPT_IN",
-        policy_reference=f"policy-text:v{policy_version}",
-        policy_version=policy_version,
-        capabilities=rule.body["capabilities"],
-        limits=rule.body["limits"],
-        effective_at=effective_at,
-        effective_until=None,
-        ending_condition_reference=(
-            f"paid-availability-transition:{route.organism.organism_id}"
-        ),
+    source_event = (
+        LivingOrganismEvent.objects.filter(living_organism=route.organism)
+        .order_by("-sequence")
+        .first()
     )
+    if source_event is None:
+        raise AssertionError("the beta fixture route has no source event")
+    with transaction.atomic():
+        return route.birthing_service._entitlement_service._compose_beta_grant(
+            actor=route.founder,
+            organism=route.organism,
+            policy=policy,
+            effective_at=effective_at,
+            received_at=database_now(),
+            composed_from_event_uuid=source_event.event_uuid,
+        )
 
 
 def _se_record_counts():
@@ -524,19 +540,22 @@ def _allowance_state():
 def _seed_entitlement_limits(route, *, effective_at, limits):
     """Seed a test-only entitlement with explicit, authored limit shapes."""
     policy_version, _ = ensure_test_policy_text()
-    return OrganismEntitlement.objects.create(
-        living_organism=route.organism,
-        source="COMPLIMENTARY",
-        basis="BETA_OPT_IN",
-        policy_reference=f"policy-text:v{policy_version}",
-        policy_version=policy_version,
-        capabilities=list(SE_ENTITLEMENT_CAPABILITY_CODES),
-        limits=limits,
-        effective_at=effective_at,
-        ending_condition_reference=(
-            f"paid-availability-transition:{route.organism.organism_id}"
-        ),
-    )
+    with declared_event_less_entitlement_rows(
+        f"family 2: test-only entitlement limit shape {limits!r}"
+    ):
+        return OrganismEntitlement.objects.create(
+            living_organism=route.organism,
+            source="COMPLIMENTARY",
+            basis="BETA_OPT_IN",
+            policy_reference=f"policy-text:v{policy_version}",
+            policy_version=policy_version,
+            capabilities=list(SE_ENTITLEMENT_CAPABILITY_CODES),
+            limits=limits,
+            effective_at=effective_at,
+            ending_condition_reference=(
+                f"paid-availability-transition:{route.organism.organism_id}"
+            ),
+        )
 
 
 def _table_state(model, **filters):
@@ -736,10 +755,15 @@ class SEEntitlementGatewayGuardTests(TransactionTestCase):
 
 
 def _insert_extension_event(entitlement, actor, received_at):
-    return OrganismEntitlementEvent.objects.create(
+    first_grant = OrganismEntitlementEvent.objects.get(
         entitlement=entitlement,
         sequence=1,
-        predecessor=None,
+        event_type="GRANTED",
+    )
+    return OrganismEntitlementEvent.objects.create(
+        entitlement=entitlement,
+        sequence=2,
+        predecessor=first_grant,
         event_type="EXTENDED",
         actor_state="PARTY",
         actor=actor,
@@ -837,6 +861,8 @@ class SEEntitlementExtensionGuardTests(TransactionTestCase):
 
 class SEEntitlementAllowanceDashboardTests(TransactionTestCase):
     """W-SE.A1 and W-SE.D1 allowance and dashboard data-contract witnesses."""
+
+    ISOLATION_FULL_CAPTURE = True
 
     reset_sequences = True
 
@@ -1380,6 +1406,7 @@ class SEEntitlementCommandTests(TransactionTestCase):
         self.assertIsNotNone(version_recorded_at)
         if version_recorded_at is None:
             self.fail("the entitlement election version has no database record time")
+        self.assertGreater(version_recorded_at, election_event.received_at)
         decision = AuthorityDecision.objects.get(
             decision_reference=election_event.authority_decision_reference
         )
@@ -1390,7 +1417,7 @@ class SEEntitlementCommandTests(TransactionTestCase):
         self.assertEqual(election_event.effective_at, election_event.received_at)
         self.assertEqual(
             decision.evaluated_at,
-            max(election_event.received_at, version_recorded_at),
+            election_event.received_at,
         )
         self.assertEqual(election_version.entitlement_choice, "COMPLIMENTARY_BETA")
         self.assertEqual(election_version.entitlement_election_route, "POST_BIRTHING")
@@ -1619,27 +1646,32 @@ class SEEntitlementCommandTests(TransactionTestCase):
 
 
 class SEEntitlementFunctionTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
     reset_sequences = True
 
     def test_w_se_f1_effective_boundaries_include_paid_grace_but_not_complimentary_grace(self):
         paid_route = prepare_route()
         paid_start = database_now()
         paid_end = paid_start + timedelta(days=30)
-        OrganismEntitlement.objects.create(
-            living_organism=paid_route.organism,
-            source="PAID",
-            basis="PAID",
-            policy_reference="fixture:paid",
-            policy_version=1,
-            capabilities=["APPLICATION_CIRCLE"],
-            limits={
-                "circles": {"kind": "UNLIMITED"},
-                "organism_learners": {"kind": "NOT_SET"},
-                "document_footprint": {"kind": "NOT_SET"},
-            },
-            effective_at=paid_start,
-            effective_until=paid_end,
-        )
+        with declared_event_less_entitlement_rows(
+            "family 4: PAID entitlement for effective-boundary arithmetic"
+        ):
+            OrganismEntitlement.objects.create(
+                living_organism=paid_route.organism,
+                source="PAID",
+                basis="PAID",
+                policy_reference="fixture:paid",
+                policy_version=1,
+                capabilities=["APPLICATION_CIRCLE"],
+                limits={
+                    "circles": {"kind": "UNLIMITED"},
+                    "organism_learners": {"kind": "NOT_SET"},
+                    "document_footprint": {"kind": "NOT_SET"},
+                },
+                effective_at=paid_start,
+                effective_until=paid_end,
+            )
         self.assertFalse(
             entitlement_effective(
                 paid_route.organism.organism_id,
@@ -1679,21 +1711,24 @@ class SEEntitlementFunctionTests(TransactionTestCase):
         trial_route = prepare_route()
         trial_start = database_now()
         trial_end = trial_start + timedelta(days=1)
-        OrganismEntitlement.objects.create(
-            living_organism=trial_route.organism,
-            source="COMPLIMENTARY",
-            basis="TRANSITION_TRIAL",
-            policy_reference="fixture:trial",
-            policy_version=1,
-            capabilities=["APPLICATION_CIRCLE"],
-            limits={
-                "circles": {"kind": "UNLIMITED"},
-                "organism_learners": {"kind": "NOT_SET"},
-                "document_footprint": {"kind": "NOT_SET"},
-            },
-            effective_at=trial_start,
-            effective_until=trial_end,
-        )
+        with declared_event_less_entitlement_rows(
+            "family 4: TRIAL entitlement for effective-boundary arithmetic"
+        ):
+            OrganismEntitlement.objects.create(
+                living_organism=trial_route.organism,
+                source="COMPLIMENTARY",
+                basis="TRANSITION_TRIAL",
+                policy_reference="fixture:trial",
+                policy_version=1,
+                capabilities=["APPLICATION_CIRCLE"],
+                limits={
+                    "circles": {"kind": "UNLIMITED"},
+                    "organism_learners": {"kind": "NOT_SET"},
+                    "document_footprint": {"kind": "NOT_SET"},
+                },
+                effective_at=trial_start,
+                effective_until=trial_end,
+            )
         self.assertTrue(
             entitlement_effective(
                 trial_route.organism.organism_id,
@@ -1732,20 +1767,23 @@ class SEEntitlementFunctionTests(TransactionTestCase):
 
         rule = GovernedRule.objects.get(code="BETA_COMPLIMENTARY_ACCESS")
         policy_version, _ = ensure_test_policy_text()
-        OrganismEntitlement.objects.create(
-            living_organism=route.organism,
-            source="TRIAL",
-            basis="TRANSITION_TRIAL",
-            policy_reference=f"policy-text:v{policy_version}",
-            policy_version=policy_version,
-            capabilities=rule.body["capabilities"],
-            limits={
-                "circles": {"kind": "LIMIT", "value": 4},
-                "organism_learners": {"kind": "UNLIMITED"},
-                "document_footprint": {"kind": "NOT_SET"},
-            },
-            effective_at=at + timedelta(microseconds=1),
-        )
+        with declared_event_less_entitlement_rows(
+            "family 5: TRIAL entitlement for latest-row limit selection"
+        ):
+            OrganismEntitlement.objects.create(
+                living_organism=route.organism,
+                source="TRIAL",
+                basis="TRANSITION_TRIAL",
+                policy_reference=f"policy-text:v{policy_version}",
+                policy_version=policy_version,
+                capabilities=rule.body["capabilities"],
+                limits={
+                    "circles": {"kind": "LIMIT", "value": 4},
+                    "organism_learners": {"kind": "UNLIMITED"},
+                    "document_footprint": {"kind": "NOT_SET"},
+                },
+                effective_at=at + timedelta(microseconds=1),
+            )
         later = at + timedelta(seconds=1)
         self.assertEqual(
             entitlement_limit(route.organism.organism_id, "circles", at=later),
@@ -1817,12 +1855,16 @@ class SEEntitlementGuardTests(TransactionTestCase):
         entitlement = _seed_beta_entitlement(route, effective_at=received_at)
         before = _se_record_counts()
         before_decisions = _table_state(AuthorityDecision)
+        first_grant = OrganismEntitlementEvent.objects.get(
+            entitlement=entitlement,
+            sequence=1,
+        )
         with self.assertRaises(DatabaseError) as refused:
             with transaction.atomic():
                 OrganismEntitlementEvent.objects.create(
                     entitlement=entitlement,
-                    sequence=1,
-                    predecessor=None,
+                    sequence=2,
+                    predecessor=first_grant,
                     event_type="GRANTED",
                     actor_state="PARTY",
                     actor=route.founder,

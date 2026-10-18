@@ -19,6 +19,8 @@ messages.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -562,6 +564,47 @@ def _is_constraint_violation(
             return True
         cause = cause.__cause__
     return False
+
+
+_ENTITLEMENT_GUARD_FAILURE_TEXT = (
+    "Beta access could not be activated because the system could not confirm "
+    "the required record of the grant. This attempt made no changes. This is a "
+    "system recording fault, not a refusal of your organisation’s eligibility "
+    "for beta access. The fault needs to be checked before you retry."
+)
+
+
+def _is_entitlement_granted_guard_failure(error: IntegrityError) -> bool:
+    """Match only the guard SQLSTATE and primary message on the same cause."""
+    cause = error.__cause__
+    while cause is not None:
+        state = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        diagnostic = getattr(cause, "diag", None)
+        if (
+            state == "23000"
+            and getattr(diagnostic, "message_primary", None)
+            == "SE_ENTITLEMENT_WITHOUT_GRANT"
+        ):
+            return True
+        cause = cause.__cause__
+    return False
+
+
+@contextmanager
+def _entitlement_guard_atomic(alias: str) -> Iterator[None]:
+    """Translate the identified deferred guard failure after rollback."""
+    try:
+        with authority_atomic(alias):
+            yield
+    except IntegrityError as exc:
+        if (
+            not connections[alias].in_atomic_block
+            and _is_entitlement_granted_guard_failure(exc)
+        ):
+            raise S015EntitlementTechnicalFailure(
+                _ENTITLEMENT_GUARD_FAILURE_TEXT
+            ) from exc
+        raise
 
 
 def entitlement_effective(
@@ -1739,15 +1782,17 @@ class OrganismEntitlementService(_OrganismCommandService):
         election and effective application settings, otherwise raise
         S015EntitlementUnavailable.
 
-        Create a POST_BIRTHING election version and read its database-recorded
-        time. Missing recorded_at raises S015EntitlementTechnicalFailure.
-        Qualify authority at max(received_at, version.recorded_at), while
-        retaining effective_at equal to received_at. On S015AuthorityDenied,
-        call delete on the version. If cleanup succeeds, translate
-        C_ROUTE_IS_CQ or SE_OPT_IN_NEEDS_CQ to a S015AuthorityDenied carrying
-        the authored SE_OPT_IN_NEEDS_CQ text and code, preserving the original
-        disclosed_refusal_code and authority_decision_reference; re-raise
-        other authority denials unchanged.
+        Create a POST_BIRTHING election version and qualify authority at
+        received_at, with effective_at also equal to received_at. For this
+        action only, the authority provider recognises the request's own new
+        version by its bound identity (this request's version_uuid, this
+        organism), not by its record time; every other qualification check
+        still applies (PKT-SE-K4). On S015AuthorityDenied, call delete on the
+        version. If cleanup succeeds, translate C_ROUTE_IS_CQ or
+        SE_OPT_IN_NEEDS_CQ to a S015AuthorityDenied carrying the authored
+        SE_OPT_IN_NEEDS_CQ text and code, preserving the original
+        disclosed_refusal_code and authority_decision_reference; re-raise other
+        authority denials unchanged.
 
         On approval, append the election event, compose the beta grant from
         that event's UUID, build the result and call _finalise for the receipt.
@@ -1755,14 +1800,20 @@ class OrganismEntitlementService(_OrganismCommandService):
         constraint se_entitlement_beta_one_per_lo_uniq, _compose_beta_grant
         raises S015EntitlementRefused(SE_ALREADY_BETA); other integrity errors
         propagate unchanged.
-        This new-election path is within the same authority_atomic block;
-        commit-time handling is supplied by that shared context manager.
+        This new-election path is within the same authority_atomic block.
+        If the database's commit-time guard refuses the transaction because
+        the new entitlement row has no first GRANTED event
+        (SE_ENTITLEMENT_WITHOUT_GRANT, SQLSTATE 23000), the whole attempt is
+        rolled back and S015EntitlementTechnicalFailure is raised with the
+        authored recording-fault text (PKT-SE-K3). Other commit-time
+        IntegrityErrors propagate unchanged. Existing PKT-LOCK-1 contention
+        translation remains in force for its named OperationalError SQLSTATEs.
         """
         if connections[self._alias].in_atomic_block:
             raise S015EntitlementTechnicalFailure(
                 "entitlement opt-in cannot run inside an existing transaction"
             )
-        with authority_atomic(self._alias):
+        with _entitlement_guard_atomic(self._alias):
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
@@ -1888,12 +1939,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                 effective_at=effective_at,
                 received_at=received_at,
             )
-            version.refresh_from_db(using=self._alias, fields=["recorded_at"])
-            if version.recorded_at is None:
-                raise S015EntitlementTechnicalFailure(
-                    "the entitlement election version record time is unavailable"
-                )
-            evaluated_at = max(received_at, version.recorded_at)
+            evaluated_at = received_at
             target = {
                 "action": self._action.value,
                 "organism_uuid": organism_uuid,

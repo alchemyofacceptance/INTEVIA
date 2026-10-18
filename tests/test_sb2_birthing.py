@@ -1630,6 +1630,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 ("core", "0045_sbg_governance_formation"),
                 ("core", "0046_se_entitlement_foundation"),
                 ("core", "0047_sek1_platform_rule_statement_start"),
+                ("core", "0048_se_entitlement_granted_event_guard"),
             }
         ]
         lower_targets.append(("core", "0043_p1_governed_registration"))

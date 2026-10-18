@@ -247,8 +247,11 @@ class SEK1MigrationTests(TransactionTestCase):
         old_body = dict(se_migration.SE_FUNCTION_BODIES)[
             "s015_entitlement_limit"
         ]
+        received_targets = tuple(
+            MigrationExecutor(connection).loader.graph.leaf_nodes()
+        )
         self.addCleanup(
-            lambda: MigrationExecutor(connection).migrate([SEK1_MIGRATION])
+            lambda: MigrationExecutor(connection).migrate(list(received_targets))
         )
 
         MigrationExecutor(connection).migrate([SE_MIGRATION])

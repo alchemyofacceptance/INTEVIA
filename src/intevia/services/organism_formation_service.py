@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
@@ -73,7 +75,10 @@ from src.intevia.services.organism_formation_authority import (
     founding_authority_request,
 )
 from src.intevia.services.organism_membership_service import _insert_membership_transition_row
-from src.intevia.services.organism_entitlement_service import OrganismEntitlementService
+from src.intevia.services.organism_entitlement_service import (
+    OrganismEntitlementService,
+    _is_entitlement_granted_guard_failure,
+)
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:COMMAND:v1\x00"
@@ -1818,6 +1823,23 @@ class S015BirthingTechnicalFailure(Exception):
     pass
 
 
+@contextmanager
+def _birthing_guard_atomic(alias: str) -> Iterator[None]:
+    try:
+        with authority_atomic(alias):
+            yield
+    except IntegrityError as exc:
+        if (
+            not connections[alias].in_atomic_block
+            and _is_entitlement_granted_guard_failure(exc)
+        ):
+            raise S015BirthingTechnicalFailure(
+                "BIRTHING could not be completed because of a technical problem; "
+                "nothing was saved. Try again; if it persists, report it."
+            ) from exc
+        raise
+
+
 class OrganismBirthingService(_OrganismCommandService):
     _action = OrganismAction.TRANSITION_LIVING_ORGANISM
     _not_found = S015BirthingNotFound
@@ -1856,7 +1878,8 @@ class OrganismBirthingService(_OrganismCommandService):
                     "nothing was saved. Try again; if it persists, report it."
                 )
 
-            with authority_atomic(self._alias):
+            # PKT-SE-K3: translate its deferred grant guard only after rollback.
+            with _birthing_guard_atomic(self._alias):
                 actor = _lock_actor(
                     database_alias=self._alias,
                     credential=command.credential,

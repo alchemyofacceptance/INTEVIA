@@ -62,6 +62,7 @@ from django.db import connection
 #               decision (4), participation (5), ending (4), membership-end completeness (1) [D]
 #         0046: 458 + 12 = 470 - record-time, validate, immutable, and truncate
 #               triggers for each of the three SE tables [D]
+#         0048: 470 + 1 = 471 - deferred first-GRANTED-event constraint trigger [D]
 # REQ-G1  the fifteen required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -87,6 +88,7 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0045_sbg_governance_formation": {"core_governedrule": 1},
     "0046_se_entitlement_foundation": {"core_governedrule": 3},
     "0047_sek1_platform_rule_statement_start": {"core_governedrule": 3},
+    "0048_se_entitlement_granted_event_guard": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -112,7 +114,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0044_sb2_birthing_snapshot": 433,
                           "0045_sbg_governance_formation": 458,
                           "0046_se_entitlement_foundation": 470,
-                          "0047_sek1_platform_rule_statement_start": 470}
+                          "0047_sek1_platform_rule_statement_start": 470,
+                          "0048_se_entitlement_granted_event_guard": 471}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 OBSERVATION_KEYS = ("sequence_discipline",)
 

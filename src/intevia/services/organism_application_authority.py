@@ -2380,8 +2380,12 @@ class ProductionApplicationAuthorityProvider:
             candidates = model.objects.using(self.database_alias).filter(
                 version_uuid=request.version_uuid,
                 living_organism=organism,
-                recorded_at__lte=request.evaluated_at,
             )
+            if request.action is not OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
+                candidates = candidates.filter(
+                    recorded_at__lte=request.evaluated_at,
+                )
+            # K4-a: the election is bound by request identity; authority remains at received_at.
             if request.action is OrganismAction.EFFECT_APPLICATION_SETTINGS:
                 candidates = candidates.filter(
                     entitlement_choice__isnull=True,
