@@ -1,3 +1,33 @@
+"""SB-G GOVERNANCE formation schema and database guards.
+
+Adds governed-rule, seat-request, admission-decision, participation and
+participation-ending relations, together with Circle kinds and their
+constraints. On PostgreSQL, install() installs eleven new PL/pgSQL
+functions, replaces two guard functions from migration 0044, creates
+twenty-five triggers, widens two Circle-event actor constraints and
+invokes the PLATFORM-rule seeder.
+
+The replacement guards add GOVERNANCE readiness, the constitutional
+reference in the Birthing snapshot, and support for the adoption act.
+
+Function bodies are assembled from Python string constants. Import
+performs marker and body-structure checks. render_sql(table_columns)
+additionally invokes variable checks: column-collision checks for new
+functions and declaration/prefix checks for variables added to the
+replacement functions.
+
+On PostgreSQL, uninstall() refuses if LO-scoped governed rules or any
+seat requests, admission decisions, participations or participation
+endings exist. Otherwise it removes this migration's triggers and new
+functions and restores the replaced guard bodies and Circle-event
+constraints.
+
+This describes migration 0045. The definition present in a database
+depends on which migrations have been applied or reversed.
+
+Sources: SB-G build commission v1.0 and amendment 1.
+"""
+
 import importlib
 import re
 import uuid
@@ -341,6 +371,19 @@ BEGIN
 END
 """
 
+# sbg_assign_governedrule_commitment: BEFORE INSERT on core_governedrule
+# through sbg_governedrule_commitment. Rejects a non-null supplied
+# text_commitment. Resolves the scope UUID from the referenced LO or Circle;
+# a non-PLATFORM scope with no resolved UUID is refused. PLATFORM uses null
+# as the scope_uuid value.
+#
+# Builds a text preimage with outer keys in this order: body, code,
+# effective_from, rule_uuid, scope_kind, scope_uuid, version. The body
+# value is to_json(NEW.body)::text; this function does not separately
+# canonicalise or recursively sort it. Assigns text_commitment using
+# s015_0022_digest('s015r1', preimage).
+#
+# Governing: SB-G build commission v1.0, section 5.2 (text_commitment).
 _GOVERNEDRULE_COMMITMENT_BODY = r"""
 DECLARE
     v_scope_uuid uuid;
@@ -377,6 +420,53 @@ BEGIN
 END
 """
 
+# sbg_guard_governedrule: BEFORE INSERT on core_governedrule through
+# sbg_governedrule_validate.
+#
+# First checks version, rule_uuid, text_commitment and
+# decided_at <= effective_from, raising SBG_GOVERNEDRULE_INVALID on the
+# stated invalid conditions. PLATFORM rows must have no scope target or
+# enterer and must name the U-3 rule with source PLATFORM_RULING.
+# LIVING_ORGANISM rows must target an LO, have no Circle target, have an
+# enterer, name GOVERNANCE_CONSTITUTION, use a founding-body or LO source,
+# and match the lo-event: reference pattern checked here. Other scopes
+# are refused with SBG_GOVERNEDRULE_SCOPE_INVALID.
+#
+# Checks that version is one greater than the visible maximum for
+# rule_uuid and that existing versions have the same scope targets and
+# code (SBG_GOVERNEDRULE_VERSION_INVALID). An existing constitution with
+# another rule_uuid for the same LO produces SBG_GOVERNEDRULE_ALREADY_EXISTS.
+# The U-3 platform rule must match its fixed UUID, version, authority
+# reference, body and dates (SBG_GOVERNEDRULE_PLATFORM_INVALID).
+#
+# For a constitution, a non-object body, missing or extra top-level keys,
+# officer_roles other than [], or election_schedule other than JSON null
+# produces SBG_ARRANGEMENT_FIELD_UNSUPPORTED. seats must be a nonempty
+# array whose extracted seat_id values are distinct and non-null
+# (SBG_ARRANGEMENT_INCOMPLETE).
+#
+# Each seat must be an object with exactly seat_id, eligibility,
+# admission_route, deciding_body, term, vacancy_rule and effective_from;
+# missing or extra seat keys produce SBG_ARRANGEMENT_INCOMPLETE.
+# A term other than JSON null or vacancy_rule other than BY_SEAT_ROUTE
+# produces SBG_ARRANGEMENT_FIELD_UNSUPPORTED.
+#
+# Requires a string seat_id matching the stated identifier pattern,
+# eligibility LO_MEMBER (SBG_ELIGIBILITY_UNSUPPORTED otherwise), and
+# string route/body values matching ELECTION/body:LO_MEMBERSHIP,
+# COOPTION/body:GOVERNANCE, APPOINTMENT/office:LO_COORDINATOR or
+# external:<1-120 characters>, or EX_OFFICIO/office:<hyphenated UUID>.
+# The EX_OFFICIO UUID pattern accepts either letter case.
+#
+# Requires a string effective_from matching the timestamp pattern with
+# Z or a signed HH:MM offset, then casts it to timestamptz. Invalid
+# identifiers, route/body combinations, timestamp shapes, and the
+# caught timestamp-format or overflow errors produce
+# SBG_ARRANGEMENT_INCOMPLETE.
+#
+# Governing: commission v1.0 sections 5.2 and 5.2.1, amendment 1 row 4,
+# and amendment 2. This describes the implemented refusal codes;
+# the extra-seat-key discrepancy is recorded separately.
 _GOVERNEDRULE_GUARD_BODY = r"""
 DECLARE
     v_max_version integer;
@@ -568,6 +658,25 @@ BEGIN
 END
 """
 
+# sbg_guard_governedrule_adopting_event: AFTER INSERT FOR EACH ROW on
+# core_governedrule through the DEFERRABLE INITIALLY DEFERRED constraint
+# trigger sbg_governedrule_adopting_event. Checking can be forced earlier
+# with SET CONSTRAINTS. PLATFORM rows return without these event checks.
+#
+# Requires authority_reference to match lo-event:<hyphenated UUID> and
+# resolve to an ADOPT_GOVERNING_INSTRUMENT event of the same LO.
+# The rule's effective_from must not precede the event's effective_at;
+# decided_at must equal its occurred_at; and the event's evidence_reference
+# must equal rule:<rule_uuid>@<version>.
+#
+# Tests for a BIRTHING event of the same LO with effective_at no later
+# than the adopting event's effective_at and recorded_at no later than
+# its recorded_at. Requires LO_PRESCRIPTION when such an event exists,
+# otherwise FOUNDING_BODY_PRESCRIPTION. This query has no received_at
+# condition. Failed checks raise SBG_GOVERNEDRULE_EVENT_INVALID.
+#
+# Governing: commission v1.0 section 5.2 (authority_reference and
+# effective_from), amendment 1 row 7, amendment 2 (decided_at).
 _GOVERNEDRULE_ADOPTING_EVENT_BODY = r"""
 DECLARE
     v_event_uuid uuid;
@@ -661,6 +770,22 @@ BEGIN
 END
 """
 
+# sbg_guard_circlejoinrequest: BEFORE INSERT on core_circlejoinrequest through
+# sbg_circlejoinrequest_validate. In order:
+# - SBG_CIRCLEJOINREQUEST_INVALID unless initiated_by is APPLICANT and
+#   consent_reference is non-NULL with btrim(consent_reference) nonempty;
+# - SBG_CIRCLEJOINREQUEST_CONSENT_INVALID unless the membership exists, has an
+#   LO, and its identity matches enterer_identity_id;
+# - SBG_CIRCLEJOINREQUEST_CIRCLE_INVALID unless the Circle belongs to that LO,
+#   is of kind GOVERNANCE, and folds DORMANT or ELIGIBLE at the request's
+#   effective_at and recorded_at;
+# - SBG_MEMBER_NOT_ELIGIBLE unless the membership folds ACTIVE at those
+#   coordinates;
+# - SBG_SEAT_ABSENT unless the LO's GOVERNANCE_CONSTITUTION version for
+#   seat_rule_uuid, latest by effective_from, recorded_at and version among
+#   those effective and recorded by the request's coordinates, lists seat_id
+#   with a start no later than the request's effective_at.
+# Governing: commission v1.0 sections 5.3 and 9; amendment 1.
 _CIRCLEJOINREQUEST_GUARD_BODY = r"""
 DECLARE
     v_identity_id bigint;
@@ -728,6 +853,36 @@ BEGIN
 END
 """
 
+# sbg_guard_circleadmissiondecision: BEFORE INSERT on core_circleadmissiondecision
+# through sbg_circleadmissiondecision_validate. In order:
+# - SBG_CIRCLEDECISION_REQUEST_INVALID unless the request exists and the
+#   decision's seat_rule_uuid and seat_id match the request's;
+# - SBG_CIRCLEDECISION_INVALID for an invalid route combination, outcome or
+#   authority-reference format: CIRCLE_FOUNDING requires NOT_APPLICABLE and
+#   FOUNDING_BODY; GOVERNANCE_CONSTITUTIONAL requires APPOINTMENT and
+#   office:LO_COORDINATOR; outcome is ACCEPT or DECLINE; the reference matches
+#   ^s015d1:[0-9a-f]{64}$. This branch relies on column constraints for NULLs;
+# - SBG_CIRCLEDECISION_IDENTITY_INVALID if the membership lookup fails, the
+#   request's Circle and membership have different LO identifiers, or
+#   self_decision differs from (deciding_identity_id = membership.identity_id);
+# - SBG_SEAT_ABSENT unless the matching LO GOVERNANCE_CONSTITUTION version for
+#   seat_rule_uuid, latest by effective_from, recorded_at and version among
+#   those effective and recorded by the decision's coordinates, lists seat_id
+#   with a start no later than the decision's effective_at;
+# - SBG_CIRCLEDECISION_SETTINGS_BASIS_INVALID unless settings_basis is exactly
+#   rule:<rule_uuid>@<version>#<seat_id> for that selected version and seat;
+# - SBG_CIRCLEDECISION_TRANSPORT_INVALID unless actor_state is LIVING_ORGANISM,
+#   actor_id and actor_access_epoch are NULL, actor_capacity is STANDING,
+#   entry_mode is TRANSPORT, enterer_identity_id equals deciding_identity_id,
+#   composing_rule_state and composer_state are NA_TRANSPORT, and
+#   composing_rule_reference and composer_identity_id are NULL.
+# This function checks authority-reference syntax, not the decider's authority
+# or the referenced decision. It does not fold applicant membership state or
+# check Birthing. The separate deferred participation occupancy guard checks
+# ACTIVE membership when a participation is inserted. One decision per request
+# is enforced by the request column's uniqueness, not by this function.
+# Governing: commission v1.0 sections 5.4 and 9; transport shape referenced
+# there to section 5.6; amendment 1.
 _CIRCLEADMISSIONDECISION_GUARD_BODY = r"""
 DECLARE
     v_request public.core_circlejoinrequest%ROWTYPE;
@@ -812,6 +967,26 @@ BEGIN
 END
 """
 
+# sbg_guard_circleparticipation: BEFORE INSERT on core_circleparticipation
+# through sbg_circleparticipation_validate. In order:
+# - SBG_CIRCLEPARTICIPATION_DECISION_INVALID unless the admission decision
+#   exists with outcome ACCEPT and a request, the participation's Circle and
+#   membership match the request's, its seat_rule_uuid and seat_id match the
+#   decision's, its effective_at equals the decision's effective_at, and that
+#   time is not before the decision's occurred_at;
+# - SBG_CIRCLEPARTICIPATION_TRANSPORT_INVALID unless actor_state is
+#   LIVING_ORGANISM, actor_id and actor_access_epoch are NULL, actor_capacity
+#   is STANDING, entry_mode is TRANSPORT, enterer_identity_id matches the
+#   decision's enterer, composing_rule_state and composer_state are
+#   NA_TRANSPORT, and composing_rule_reference and composer_identity_id
+#   are NULL.
+# Membership state, seat occupancy and one-seat-per-person are checked by
+# sbg_guard_circleparticipation_occupancy, initially deferred.
+# The decision column's uniqueness enforces at most one participation per
+# decision. This function does not establish that the decision was inserted
+# in the same transaction as the participation.
+# Governing: commission v1.0 sections 5.5 and 9; transport shape referenced
+# there to section 5.6; amendment 1.
 _CIRCLEPARTICIPATION_GUARD_BODY = r"""
 DECLARE
     v_decision public.core_circleadmissiondecision%ROWTYPE;
@@ -850,6 +1025,38 @@ BEGIN
 END
 """
 
+# sbg_guard_circleparticipation_occupancy: AFTER INSERT FOR EACH ROW through
+# the DEFERRABLE INITIALLY DEFERRED constraint trigger
+# sbg_circleparticipation_occupancy; SET CONSTRAINTS can force earlier checking.
+# First takes pg_advisory_xact_lock(1396852529,
+# hashtext(seat_rule_uuid::text || '#' || seat_id)). After the membership/LO
+# check, also locks hashtext('person#' || circle_id || '#' || identity_id)
+# in the same advisory-lock class. These transaction-scoped locks serialize
+# checks sharing either key; hash collisions can add unrelated contention.
+# The commission's visibility argument relies on READ COMMITTED reads after
+# lock acquisition, not on the locks alone.
+#
+# In order:
+# - SBG_MEMBER_NOT_ELIGIBLE if the membership lookup fails or its LO differs
+#   from the Circle's LO;
+# - after the person lock, samples clock_timestamp() once into v_known_at;
+# - SBG_MEMBER_NOT_ELIGIBLE unless membership folds ACTIVE at NEW.effective_at
+#   and NEW.recorded_at;
+# - SBG_SEAT_ABSENT unless the matching LO GOVERNANCE_CONSTITUTION version,
+#   selected by effective_from DESC, recorded_at DESC, version DESC among
+#   versions effective and recorded by NEW's coordinates, lists seat_id with
+#   a start no later than NEW.effective_at;
+# - SBG_SEAT_ABSENT if any matching later-effective version recorded by
+#   NEW.recorded_at omits seat_id;
+# - SBG_SEAT_OCCUPIED if another participation in this Circle for the same
+#   rule UUID and seat, recorded by v_known_at, has no ending recorded by
+#   v_known_at or has such an ending effective after NEW.effective_at;
+# - SBG_ALREADY_SEATED if another participation in this Circle for the same
+#   identity, recorded by v_known_at, has no ending recorded by v_known_at
+#   effective at or before NEW.effective_at.
+# Neither occupancy query filters the other participation by its start time.
+# v_known_at is this invocation's check-time cutoff, not a commit timestamp.
+# Governing: commission v1.0 section 9; amendment 1.
 _CIRCLEPARTICIPATION_OCCUPANCY_BODY = r"""
 DECLARE
     v_circle public.core_circle%ROWTYPE;
@@ -978,6 +1185,28 @@ BEGIN
 END
 """
 
+# sbg_guard_circleparticipationend: BEFORE INSERT on core_circleparticipationend
+# through sbg_circleparticipationend_validate (guard 2 — validity). Only the
+# composed ending of the departure cascade is admitted. In order:
+# - SBG_CIRCLEPARTICIPATIONEND_ACTOR_INVALID unless actor_state is NONE with
+#   actor_id and actor_access_epoch NULL, actor_capacity NA_NO_PARTY,
+#   entry_mode COMPOSED, composing_rule_state and composer_state REFERENCE,
+#   enterer_identity_id present and equal to composer_identity_id, and
+#   composing_rule_id and composed_from_event_uuid present;
+# - SBG_CIRCLEPARTICIPATIONEND_TIME_INVALID if the participation is missing or
+#   the ending's effective_at is before the participation's effective_at;
+# - SBG_CIRCLEPARTICIPATIONEND_ACTOR_INVALID unless the enterer is the
+#   participating member's identity;
+# - SBG_CIRCLEPARTICIPATIONEND_RULE_INVALID unless the composing rule is the
+#   PLATFORM U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION rule composing
+#   core_circleparticipationend, is the operative version at the ending's
+#   effective_at and recorded_at, and composing_rule_reference is
+#   rule:<rule_uuid>@<version> of that row;
+# - SBG_CIRCLEPARTICIPATIONEND_TRANSITION_INVALID unless the named transition
+#   belongs to the participation's membership, results in ENDED, has the
+#   ending's effective_at, and the ending's occurred_at and received_at equal
+#   the transition's effective_at and received_at.
+# Governing: commission v1.0 sections 8.3 and 8.4 (guard 2); amendment 1, row 22.
 _CIRCLEPARTICIPATIONEND_GUARD_BODY = r"""
 DECLARE
     v_participation public.core_circleparticipation%ROWTYPE;
@@ -1056,6 +1285,24 @@ BEGIN
 END
 """
 
+# sbg_guard_membership_end_completeness: AFTER INSERT FOR EACH ROW on
+# core_organismmembershiptransition through the DEFERRABLE INITIALLY DEFERRED
+# constraint trigger sbg_membership_end_completeness (guard 1 - completeness).
+# SET CONSTRAINTS can force earlier checking.
+# Transitions not resulting in ENDED return without further checks.
+#
+# For an ENDED transition, checks for any participation of NEW.membership_id
+# that starts after NEW.effective_at or has no ending effective at or before
+# NEW.effective_at.
+# If one exists:
+# - selects a future-starting participation with no ending effective by the
+#   departure, ordered by effective_at, recorded_at, then id;
+# - if found, raises SBG_DEPARTURE_PRECEDES_PARTICIPATION with JSON DETAIL
+#   containing seat_id and started_at (UTC with six fractional-second digits);
+# - otherwise raises SBG_MEMBERSHIP_END_PARTICIPATION_INCOMPLETE.
+# Each query uses the rows visible to it, without a recorded_at filter.
+# This function takes no explicit lock of its own.
+# Governing: commission v1.0 section 8.4 (guard 1); amendment 1, row 25.
 _MEMBERSHIP_END_COMPLETENESS_BODY = r"""
 DECLARE
     v_incomplete boolean;
