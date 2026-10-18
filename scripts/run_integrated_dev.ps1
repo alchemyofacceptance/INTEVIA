@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet("fresh", "clone")][string]$Mode = "clone",
+    [ValidateSet("DEVELOPMENT", "CLOSURE_EXCEPTION")][string]$RunKind = "DEVELOPMENT",
     [int]$AttemptNumber = 0,
     [ValidatePattern("^[1-9][0-9]*$")][string]$RunSuffix,
     [string[]]$Labels = @(),
@@ -9,7 +10,6 @@ param(
     [string]$StateFile,
     [string]$StateSha256,
     [switch]$CleanupTemplate,
-    [switch]$FullSuiteParity,
     [switch]$FailFast,
     [ValidateRange(1, 60)][int]$StallMinutes = 5,
     [switch]$StallGuardSelfTest,
@@ -99,6 +99,147 @@ function Get-CommandLogOutput {
     return @($logLines[$startIndex..($endIndex - 1)])
 }
 
+function Write-AuthorizedRunSpecDigest {
+    param([Parameter(Mandatory = $true)]$AuthorizedState)
+
+    Write-Output "RUN_SPEC_SHA256=$($AuthorizedState.State.run_spec_sha256)"
+}
+
+function Set-AuthorizedRunSpecDigestForChild {
+    param([Parameter(Mandatory = $true)]$AuthorizedState)
+
+    $env:INTEVIA_RUN_SPEC_SHA256 = [string]$AuthorizedState.State.run_spec_sha256
+}
+
+function Get-LockTimeoutObservationProblems {
+    param(
+        [Parameter(Mandatory = $true)][string]$Line,
+        [Parameter(Mandatory = $true)][int]$ExpectedMilliseconds
+    )
+
+    $problems = [System.Collections.Generic.List[string]]::new()
+    if ($Line -notmatch "^LOCK_TIMEOUT_EFFECTIVE alias=(?<alias>[^ ]+) value_ms=(?<value>[0-9]+) unit=(?<unit>[^ ]+)$") {
+        $problems.Add("CP-0 lock-timeout observation was malformed")
+        return $problems.ToArray()
+    }
+    $alias = $Matches.alias
+    $value = $Matches.value
+    $unit = $Matches.unit
+
+    $observedTimeout = 0
+    if (-not [int]::TryParse($value, [ref]$observedTimeout)) {
+        $problems.Add("CP-0 lock-timeout value was not an integer")
+    }
+    elseif ($observedTimeout -ne $ExpectedMilliseconds) {
+        $problems.Add(
+            "lock timeout on alias '$alias' was $observedTimeout ms; expected $ExpectedMilliseconds ms"
+        )
+    }
+    if ($unit -cne "ms") {
+        $problems.Add("lock timeout on alias '$alias' was not reported in milliseconds")
+    }
+    return $problems.ToArray()
+}
+
+function Get-VerificationKindLine {
+    param(
+        [ValidateSet("DEVELOPMENT", "CLOSURE_EXCEPTION")][string]$RunKind = "DEVELOPMENT"
+    )
+
+    return "VERIFICATION_KIND=$RunKind"
+}
+
+function New-IntegratedRunRecordData {
+    param(
+        [ValidateSet("DEVELOPMENT", "CLOSURE_EXCEPTION")][string]$RunKind = "DEVELOPMENT",
+        [Parameter(Mandatory = $true)][string]$PlanHash,
+        [Parameter(Mandatory = $true)][string]$Candidate,
+        [Parameter(Mandatory = $true)][int]$TestsPlanned
+    )
+
+    return [ordered]@{
+        classification = "TEST_ATTEMPT"
+        result = "FAIL"
+        plan_sha256 = $PlanHash
+        failing_test = $null
+        candidate = $Candidate
+        tests_planned = $TestsPlanned
+        tests_executed = 0
+        tests_not_reached = $TestsPlanned
+        executed_matches_plan = "NOT_STARTED"
+        pyright_pre_run = "pyright: removed by Human decision, 16 Oct"
+        run_kind = $RunKind
+    }
+}
+
+function Get-PermittedSkipIds {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("clone", "fresh")][string]$Mode,
+        [string]$PolicyPath = (Join-Path $repoRoot "verification\permitted_skips.json")
+    )
+
+    if (-not (Test-Path -LiteralPath $PolicyPath -PathType Leaf)) {
+        throw "R9: permitted-skips policy is missing: $PolicyPath"
+    }
+    try {
+        $policy = Get-Content -LiteralPath $PolicyPath -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($policy -isnot [System.Collections.IDictionary] -or $policy.Keys.Count -ne 2 -or
+            $policy.version -ne 1 -or $policy.entries -isnot [System.Collections.IEnumerable] -or
+            $policy.entries -is [string]) { throw "invalid schema" }
+        $ids = @()
+        $seen = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($entry in $policy.entries) {
+            if ($entry -isnot [System.Collections.IDictionary] -or $entry.Keys.Count -ne 3 -or
+                $entry.id -isnot [string] -or $entry.id -notmatch '^tests\.[A-Za-z_]\w*(\.[A-Za-z_]\w*){2,}$' -or
+                $entry.condition -cnotin @("always", "fresh-mode") -or
+                $entry.reason -isnot [string] -or -not $entry.reason.Trim() -or
+                -not $seen.Add($entry.id)) { throw "invalid entry" }
+            if ($entry.condition -eq "always" -or ($Mode -eq "fresh" -and $entry.condition -eq "fresh-mode")) {
+                $ids += $entry.id
+            }
+        }
+        return $ids
+    }
+    catch {
+        throw "R9: permitted-skips policy is malformed or invalid: $($_.Exception.Message)"
+    }
+}
+
+function Test-ClosureSkipAccounting {
+    param(
+        [AllowNull()][object]$ReportedSkipCount,
+        [AllowEmptyCollection()][string[]]$SkipTestIds = @(),
+        [AllowEmptyCollection()][string[]]$PermittedSkipIds = @()
+    )
+
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $reportedCount = 0
+    if ($null -eq $ReportedSkipCount -or
+        -not [int]::TryParse([string]$ReportedSkipCount, [ref]$reportedCount) -or
+        $reportedCount -lt 0) {
+        $problems.Add("reported skip count is missing or invalid")
+    }
+    elseif ($reportedCount -ne $SkipTestIds.Count) {
+        $problems.Add("reported skip count does not equal the identified skip count")
+    }
+    if (@($SkipTestIds | Select-Object -Unique).Count -ne $SkipTestIds.Count) {
+        $problems.Add("skipped test identifiers are not unique")
+    }
+    foreach ($skipId in @($SkipTestIds | Where-Object { $_ -notin $PermittedSkipIds })) {
+        $problems.Add("unpermitted skipped test: $skipId")
+    }
+    return $problems.ToArray()
+}
+
+function Set-PrintedSummaryFromLine {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
+
+    if ($Line -match "^test_[^\s]+\s+\((?<testId>tests\.[^)]+)\)\s+\.\.\.\s+skipped(?:\s|$)") {
+        $script:printedSummary.skip_ids.Add($Matches.testId)
+    }
+}
+
 if ($LaunchSelfTest) {
     Set-Location -LiteralPath $repoRoot
     $earlierTestOutput = [PSCustomObject]@{
@@ -158,6 +299,196 @@ if ($LaunchSelfTest) {
         }
     }
     Write-Output "R9 command-section uniqueness self-test=PASS"
+
+    $syntheticRunSpecDigest = "c" * 64
+    $syntheticAuthorizedState = [PSCustomObject]@{
+        State = [PSCustomObject]@{
+            run_spec_sha256 = $syntheticRunSpecDigest
+        }
+    }
+    $previousRunSpecBinding = Get-Item -LiteralPath "Env:INTEVIA_RUN_SPEC_SHA256" `
+        -ErrorAction SilentlyContinue
+    try {
+        Write-AuthorizedRunSpecDigest -AuthorizedState $syntheticAuthorizedState
+        Set-AuthorizedRunSpecDigestForChild -AuthorizedState $syntheticAuthorizedState
+        $childPowerShell = [System.Environment]::ProcessPath
+        if ([string]::IsNullOrWhiteSpace($childPowerShell) -or
+            -not (Test-Path -LiteralPath $childPowerShell -PathType Leaf)) {
+            throw "R11: PowerShell child executable is unavailable"
+        }
+        $childOutput = @(& $childPowerShell `
+            -NoLogo -NoProfile -NonInteractive `
+            -Command 'Write-Output ("RUN_SPEC_BINDING_CHILD=" + $env:INTEVIA_RUN_SPEC_SHA256)' 2>&1)
+        $childExitCode = $LASTEXITCODE
+        $childBindingLine = @($childOutput | Where-Object {
+            [string]$_ -ceq "RUN_SPEC_BINDING_CHILD=$syntheticRunSpecDigest"
+        })
+        if ($childExitCode -ne 0 -or $childBindingLine.Count -ne 1) {
+            throw "R11: authorized run-spec digest did not reach the child process"
+        }
+        Write-Output $childBindingLine[0]
+    }
+    finally {
+        if ($null -ne $previousRunSpecBinding) {
+            Set-Item -LiteralPath "Env:INTEVIA_RUN_SPEC_SHA256" `
+                -Value ([string]$previousRunSpecBinding.Value) -ErrorAction Stop
+        }
+        else {
+            Remove-Item -LiteralPath "Env:INTEVIA_RUN_SPEC_SHA256" `
+                -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Output "RUN_SPEC_BINDING_EXECUTABLE_WITNESS=PASS"
+
+    $correctTimeoutProblems = @(Get-LockTimeoutObservationProblems `
+        -Line "LOCK_TIMEOUT_EFFECTIVE alias=default value_ms=120000 unit=ms" `
+        -ExpectedMilliseconds 120000)
+    $wrongTimeoutUnitProblems = @(Get-LockTimeoutObservationProblems `
+        -Line "LOCK_TIMEOUT_EFFECTIVE alias=default value_ms=120000 unit=s" `
+        -ExpectedMilliseconds 120000)
+    $wrongTimeoutValueProblems = @(Get-LockTimeoutObservationProblems `
+        -Line "LOCK_TIMEOUT_EFFECTIVE alias=default value_ms=120001 unit=ms" `
+        -ExpectedMilliseconds 120000)
+    if ($correctTimeoutProblems.Count -ne 0 -or
+        $wrongTimeoutUnitProblems -notcontains "lock timeout on alias 'default' was not reported in milliseconds" -or
+        $wrongTimeoutValueProblems -notcontains "lock timeout on alias 'default' was 120001 ms; expected 120000 ms") {
+        throw "C CP-0 lock-timeout unit and numeric comparison self-test failed"
+    }
+    Write-Output "CP-0 lock-timeout unit=ms comparison=PASS REFUSED=unit=s and mismatched value"
+
+    $closureRecord = New-IntegratedRunRecordData `
+        -RunKind "CLOSURE_EXCEPTION" `
+        -PlanHash ("a" * 64) `
+        -Candidate "candidate" `
+        -TestsPlanned 1
+    if ($closureRecord.run_kind -cne "CLOSURE_EXCEPTION" -or
+        (Get-VerificationKindLine -RunKind "CLOSURE_EXCEPTION") -cne "VERIFICATION_KIND=CLOSURE_EXCEPTION") {
+        throw "D RunKind closure-exception self-test failed"
+    }
+    Write-Output "D RunKind closure-exception record and verification-kind self-test=PASS"
+    $developmentRecord = New-IntegratedRunRecordData `
+        -PlanHash ("b" * 64) `
+        -Candidate "candidate" `
+        -TestsPlanned 1
+    if ($developmentRecord.run_kind -cne "DEVELOPMENT" -or
+        (Get-VerificationKindLine) -cne "VERIFICATION_KIND=DEVELOPMENT") {
+        throw "D RunKind development-default self-test failed"
+    }
+    Write-Output "D RunKind development default self-test=PASS"
+
+    $clonePermittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")
+    if ($clonePermittedSkipIds.Count -eq 0) {
+        throw "E2 committed clone skip policy has no permitted always entry"
+    }
+    $permittedSkipProblems = @(Test-ClosureSkipAccounting `
+        -ReportedSkipCount 1 `
+        -SkipTestIds @($clonePermittedSkipIds[0]) `
+        -PermittedSkipIds $clonePermittedSkipIds)
+    if ($permittedSkipProblems.Count -ne 0) {
+        throw "E2 permitted-skip accounting self-test failed"
+    }
+    Write-Output "E2 permitted skip accounting self-test=PASS"
+    $unpermittedSkipProblems = @(Test-ClosureSkipAccounting `
+        -ReportedSkipCount 1 `
+        -SkipTestIds @("tests.sample.SkipChecks.test_unpermitted") `
+        -PermittedSkipIds $clonePermittedSkipIds)
+    if (@($unpermittedSkipProblems | Where-Object { $_ -like "unpermitted skipped test:*" }).Count -ne 1) {
+        throw "E2 unpermitted-skip refusal self-test failed"
+    }
+    Write-Output "E2 unpermitted skip refusal self-test=PASS"
+    $incompleteSkipProblems = @(Test-ClosureSkipAccounting `
+        -ReportedSkipCount 2 `
+        -SkipTestIds @($clonePermittedSkipIds[0]) `
+        -PermittedSkipIds $clonePermittedSkipIds)
+    $unidentifiedSkipProblems = @(Test-ClosureSkipAccounting `
+        -ReportedSkipCount 1 `
+        -SkipTestIds @() `
+        -PermittedSkipIds $clonePermittedSkipIds)
+    if ($incompleteSkipProblems.Count -eq 0 -or $unidentifiedSkipProblems.Count -eq 0) {
+        throw "E2 incomplete skip accounting self-test failed"
+    }
+    Write-Output "E2 incomplete skip accounting self-test=PASS"
+
+    $skipPolicyTestDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "intevia-skip-policy-" + [guid]::NewGuid().ToString("N")
+    )
+    $missingSkipPolicyPath = Join-Path $skipPolicyTestDirectory "missing.json"
+    $malformedSkipPolicyPath = Join-Path $skipPolicyTestDirectory "malformed.json"
+    try {
+        [System.IO.Directory]::CreateDirectory($skipPolicyTestDirectory) | Out-Null
+        [System.IO.File]::WriteAllText(
+            $malformedSkipPolicyPath,
+            "{",
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        foreach ($policyPath in @($missingSkipPolicyPath, $malformedSkipPolicyPath)) {
+            $policyRefused = $false
+            try {
+                [void](Get-PermittedSkipIds -Mode "clone" -PolicyPath $policyPath)
+            }
+            catch {
+                if ($_.Exception.Message -notmatch "R9: permitted-skips policy") { throw }
+                $policyRefused = $true
+            }
+            if (-not $policyRefused) {
+                throw "E2 missing or malformed skip policy was not refused"
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $skipPolicyTestDirectory -PathType Container) {
+            Remove-Item -LiteralPath $skipPolicyTestDirectory -Recurse -Force -ErrorAction Stop
+        }
+    }
+    Write-Output "E2 missing and malformed skip policy refusal self-test=PASS"
+    $script:printedSummary = [PSCustomObject]@{
+        skip_ids = [System.Collections.Generic.List[string]]::new()
+    }
+    Set-PrintedSummaryFromLine `
+        -Line "test_skip (tests.sample.SkipChecks.test_identified) ... skipped by policy"
+    if ($script:printedSummary.skip_ids.Count -ne 1 -or
+        $script:printedSummary.skip_ids[0] -cne "tests.sample.SkipChecks.test_identified") {
+        throw "E2 printed skip identifier self-test failed"
+    }
+    Write-Output "E2 skipped-test identification self-test=PASS"
+
+    $watchTimestamp = [datetime]::new(2026, 10, 17, 12, 0, 0, [DateTimeKind]::Utc)
+    $watchThreshold = [TimeSpan]::FromMinutes(5)
+    $forwardTimestamp = Update-WatchdogInactivity `
+        -LastSeenWrite $watchTimestamp `
+        -CurrentWrite $watchTimestamp.AddSeconds(1) `
+        -LastChangeElapsed ([TimeSpan]::FromMinutes(4)) `
+        -NowElapsed ([TimeSpan]::FromMinutes(4).Add([TimeSpan]::FromSeconds(1))) `
+        -Threshold $watchThreshold
+    if ($forwardTimestamp.IsStalled -or
+        $forwardTimestamp.LastSeenWrite -ne $watchTimestamp.AddSeconds(1) -or
+        $forwardTimestamp.LastChangeElapsed -ne ([TimeSpan]::FromMinutes(4).Add([TimeSpan]::FromSeconds(1)))) {
+        throw "G watchdog forward timestamp change self-test failed"
+    }
+    Write-Output "G watchdog forward timestamp change resets inactivity=PASS"
+    $backwardTimestamp = Update-WatchdogInactivity `
+        -LastSeenWrite $watchTimestamp `
+        -CurrentWrite $watchTimestamp.AddSeconds(-1) `
+        -LastChangeElapsed ([TimeSpan]::FromMinutes(4)) `
+        -NowElapsed ([TimeSpan]::FromMinutes(4).Add([TimeSpan]::FromSeconds(1))) `
+        -Threshold $watchThreshold
+    if ($backwardTimestamp.IsStalled -or
+        $backwardTimestamp.LastSeenWrite -ne $watchTimestamp.AddSeconds(-1) -or
+        $backwardTimestamp.LastChangeElapsed -ne ([TimeSpan]::FromMinutes(4).Add([TimeSpan]::FromSeconds(1)))) {
+        throw "G watchdog backward timestamp change self-test failed"
+    }
+    Write-Output "G watchdog backward timestamp change resets inactivity=PASS"
+    $unchangedTimestamp = Update-WatchdogInactivity `
+        -LastSeenWrite $watchTimestamp `
+        -CurrentWrite $watchTimestamp `
+        -LastChangeElapsed ([TimeSpan]::Zero) `
+        -NowElapsed $watchThreshold `
+        -Threshold $watchThreshold
+    if (-not $unchangedTimestamp.IsStalled -or
+        $unchangedTimestamp.LastChangeElapsed -ne [TimeSpan]::Zero) {
+        throw "G watchdog monotonic threshold self-test failed"
+    }
+    Write-Output "G watchdog unchanged timestamp reaches monotonic threshold=PASS"
 
     $selfTestEnvironment = @{
         DJANGO_SETTINGS_MODULE = "intevia.test_settings"
@@ -224,6 +555,10 @@ if ($LaunchSelfTest) {
     return
 }
 if (-not $FailFast) { throw "R1: fail-fast is mandatory and cannot be disabled" }
+if ($RunKind -eq "CLOSURE_EXCEPTION" -and
+    [string]::IsNullOrWhiteSpace($PlanFile)) {
+    throw "R3/R10: a closure exception requires its resolved -PlanFile"
+}
 if ((-not $Labels -or $Labels.Count -eq 0) -and
     [string]::IsNullOrWhiteSpace($PlanFile)) {
     throw "R3: at least one test label is required when no plan file is supplied"
@@ -235,99 +570,6 @@ if ([string]::IsNullOrWhiteSpace($StateFile) -or
 Write-IntegratedGuardSummary -FailFast:$FailFast -StallMinutes $StallMinutes
 . (Join-Path $PSScriptRoot "integrated_state.ps1")
 $originalLocation = Get-Location
-$fullSuiteParityLabels = @(
-    "tests.test_s015_application_authority",
-    "tests.test_s015_application_service",
-    "tests.test_s015_application_gateway",
-    "tests.test_s015_application_decision",
-    "tests.test_s015_application_reads",
-    "tests.test_s015_application_schema",
-    "tests.test_s015_authority",
-    "tests.test_s015_role_command",
-    "tests.test_s015_membership_command",
-    "tests.test_s015_membership_service",
-    "tests.test_s015_models",
-    "tests.test_s015_migrations",
-    "tests.test_s015_postgresql_guardians",
-    "tests.test_s015_packet_guardians",
-    "tests.test_s015_register_cleanup",
-    "tests.test_s015_0021_positive_controls",
-    "tests.test_s015_0021_negative_direct_sql",
-    "tests.test_s015_0022_contract",
-    "tests.test_s015_0024_commitment_preimages",
-    "tests.test_s015_test_harness",
-    "tests.test_tt1_identity",
-    "tests.test_tt1_ownership",
-    "tests.test_tt1_template_lifecycle",
-    "tests.test_sb1_founding_terms_phases",
-    "tests.test_sb2_birthing",
-    "tests.test_p1_registration_service",
-    "tests.test_p1_identity_guardian",
-    "tests.test_p1_migration_restore",
-    "tests.test_s007_authentication_shell",
-    "tests.test_s007_identity_foundation",
-    "tests.test_s007_postgresql",
-    "tests.test_s007_provision_first_human",
-    "tests.test_s010_direct_self_registration",
-    "tests.test_s010_direct_self_registration_postgresql",
-    "tests.test_education_course_migrations",
-    "tests.test_event_attendance_migrations",
-    "tests.test_event_registration_postgresql",
-    "tests.test_event_resource_relationship_migrations",
-    "tests.test_profile_effect_migrations",
-    "tests.test_profile_effect_postgresql",
-    "tests.test_s007_identity_migrations",
-    "tests.test_service_activity_migrations",
-    "tests.test_service_activity_models",
-    "tests.test_care_foundation",
-    "tests.test_contribution_archive",
-    "tests.test_contribution_authority",
-    "tests.test_contribution_correction",
-    "tests.test_contribution_models",
-    "tests.test_contribution_postgresql",
-    "tests.test_contribution_privacy",
-    "tests.test_contribution_service",
-    "tests.test_education_course_models",
-    "tests.test_education_course_postgresql",
-    "tests.test_education_course_readback",
-    "tests.test_education_course_service",
-    "tests.test_event_attendance_foundation",
-    "tests.test_event_attendance_postgresql",
-    "tests.test_event_registration_foundation",
-    "tests.test_event_resource_relationship_models",
-    "tests.test_event_resource_relationship_policy",
-    "tests.test_event_resource_relationship_postgresql",
-    "tests.test_event_resource_relationship_readback",
-    "tests.test_event_resource_relationship_service",
-    "tests.test_events_authority",
-    "tests.test_events_evidence",
-    "tests.test_events_lifecycle",
-    "tests.test_events_models",
-    "tests.test_events_observation",
-    "tests.test_library_exact_version_contract",
-    "tests.test_library_exact_version_policy",
-    "tests.test_library_exact_version_postgresql",
-    "tests.test_library_exact_version_transaction_boundary",
-    "tests.test_library_foundation",
-    "tests.test_library_postgresql",
-    "tests.test_observation_integration",
-    "tests.test_profile_effect_models",
-    "tests.test_profile_effect_service",
-    "tests.test_s009_personal_event_home",
-    "tests.test_service_activity_postgresql",
-    "tests.test_service_activity_qualification",
-    "tests.test_service_activity_readback",
-    "tests.test_service_activity_service",
-    "tests.test_service_delivery_evidence",
-    "tests.test_service_event_association",
-    "tests.test_service_library_association",
-    "tests.test_service_lifecycle",
-    "tests.test_service_models",
-    "tests.test_service_postgresql",
-    "tests.test_service_versions",
-    "tests.test_sbg_governance",
-    "tests.test_se_entitlement"
-)
 $environmentNames = @(
     "INTEVIA_DATABASE_ENGINE",
     "INTEVIA_S015_TEST_ROUTE",
@@ -710,14 +952,6 @@ try {
     $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
     Set-Location -LiteralPath $repoRoot
 
-    if ($FullSuiteParity) {
-        if ($Mode -ne "clone" -or -not $CleanupTemplate) {
-            throw "full-suite parity mode requires clone mode with template cleanup"
-        }
-        if ([string]::IsNullOrWhiteSpace($PlanFile) -or $Labels.Count -gt 0) {
-            throw "R3: full-suite parity mode requires its resolved -PlanFile and no -Labels"
-        }
-    }
     if ($PlanFile) {
         if ($Labels.Count -gt 0) {
             throw "R3: specify either -PlanFile or -Labels, not both"
@@ -738,6 +972,9 @@ try {
     }
     if (@($Labels | Sort-Object -Unique).Count -ne $Labels.Count) {
         throw "duplicate test labels are refused"
+    }
+    if ($RunKind -eq "CLOSURE_EXCEPTION") {
+        $script:permittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")
     }
     if ($CleanupTemplate -and $Mode -ne "clone") {
         throw "template cleanup is only valid for a clone-mode run"
@@ -818,12 +1055,13 @@ try {
     }
     Write-Output "FRESH_AUTHORITY=$freshAuthorityDigest"
     Write-Output "MODE=$Mode"
-    Write-Output "RUN_SPEC_SHA256=$($authorizedState.State.run_spec_sha256)"
-    Write-Output "VERIFICATION_KIND=DEVELOPMENT"
+    Write-AuthorizedRunSpecDigest -AuthorizedState $authorizedState
+    Write-Output (Get-VerificationKindLine -RunKind $RunKind)
     if ($StallGuardSelfTest) {
         $selfCheckLogPath = Join-Path $stageRoot ("STALL_GUARD_SELF_CHECK_{0}.log" -f $runSuffix)
+        $selfCheckNumbering = "sc1"
         $selfCheckDatabase = Assert-IntegratedTestDatabaseName `
-            -Name "$($routes.DevelopmentDatabasePrefix)sc1" `
+            -Name "$($routes.DevelopmentDatabasePrefix)$selfCheckNumbering" `
             -Purpose "stall-guard self-check"
         if (Test-Path -LiteralPath $selfCheckLogPath) {
             $priorSelfCheckLines = @(Get-Content -LiteralPath $selfCheckLogPath)
@@ -851,7 +1089,7 @@ try {
             -Action "check-self-check" `
             -DatabaseName $selfCheckDatabase `
             -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
-            -Numbering "selfcheck_1")
+            -Numbering $selfCheckNumbering)
         $presenceMatches = @($presenceLines | Where-Object {
             $_ -match "^SELF_CHECK_DATABASE_EXISTS=(True|False)$"
         })
@@ -875,7 +1113,7 @@ try {
             -Action "create-self-check" `
             -DatabaseName $selfCheckDatabase `
             -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
-            -Numbering "selfcheck_1")
+            -Numbering $selfCheckNumbering)
         $createdOidLines = @($createLines | Where-Object {
             $_ -match "^CREATED_OID=[0-9]+$"
         })
@@ -900,7 +1138,7 @@ try {
             -LogPath $selfCheckLogPath `
             -RunRoot $stageRoot `
             -DatabaseOwnershipRoot $routes.DevelopmentDatabasePrefix `
-            -Numbering "selfcheck_1" `
+            -Numbering $selfCheckNumbering `
             -StallThresholdMinutes $StallMinutes `
             -DatabaseName $selfCheckDatabase `
             -DatabaseOid $selfCheckOid `
@@ -1000,7 +1238,7 @@ try {
         "FRESH_AUTHORITY=$freshAuthorityDigest"
         "FAILFAST=ON"
         "RUN_SPEC_SHA256=$($authorizedState.State.run_spec_sha256)"
-        "VERIFICATION_KIND=DEVELOPMENT"
+        (Get-VerificationKindLine -RunKind $RunKind)
     )) {
         Add-Content -LiteralPath $logPath -Value $line -Encoding utf8
     }
@@ -1042,7 +1280,7 @@ try {
         $testPythonPath += $env:PYTHONPATH
     }
     $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $testPythonPath)
-    $env:INTEVIA_RUN_SPEC_SHA256 = [string]$authorizedState.State.run_spec_sha256
+    Set-AuthorizedRunSpecDigestForChild -AuthorizedState $authorizedState
     $bindingRun = Invoke-PythonAndLog `
         -Label "Candidate source binding" `
         -LogPath $logPath `
@@ -1099,14 +1337,6 @@ try {
             -PlanData $planData `
             -CandidateBinding $candidateBinding
         throw "R7: execution plan digest differs from validated plan"
-    }
-    if ($FullSuiteParity) {
-        $plannedLabels = @($planData.labels)
-        if ($plannedLabels.Count -ne $fullSuiteParityLabels.Count -or
-            @($plannedLabels | Where-Object { $_ -cnotin $fullSuiteParityLabels }).Count -gt 0 -or
-            @($fullSuiteParityLabels | Where-Object { $_ -cnotin $plannedLabels }).Count -gt 0) {
-            throw "R10: full-suite parity plan differs from the commissioned 91 verification entries"
-        }
     }
     $env:INTEVIA_RUN_PLAN_FILE = $resolvedRunPlanFile
     $env:INTEVIA_RUN_PLAN_SHA256 = $planHash
@@ -1185,18 +1415,11 @@ print("DATABASE_TAG_REGISTER=" + json.dumps(result, sort_keys=True))
         $env:VERIFICATION_ISOLATION_JSON = $isolationPath
         $env:INTEVIA_RUN_PLAN_FILE = $resolvedRunPlanFile
 
-        $script:runRecordData = [ordered]@{
-            classification = "TEST_ATTEMPT"
-            result = "FAIL"
-            plan_sha256 = $planHash
-            failing_test = $null
-            candidate = $candidateBinding
-            tests_planned = [int]$planData.tests.Count
-            tests_executed = 0
-            tests_not_reached = [int]$planData.tests.Count
-            executed_matches_plan = "NOT_STARTED"
-            pyright_pre_run = "pyright: removed by Human decision, 16 Oct"
-        }
+        $script:runRecordData = New-IntegratedRunRecordData `
+            -RunKind $RunKind `
+            -PlanHash $planHash `
+            -Candidate $candidateBinding `
+            -TestsPlanned ([int]$planData.tests.Count)
 
         Write-Output "ATTEMPT=$AttemptNumber"
     Write-Output "RUN_SUFFIX=$runSuffix"
@@ -1335,6 +1558,11 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
             if ($FailFast) {
                 $testArguments += "--failfast"
             }
+            if ($RunKind -eq "CLOSURE_EXCEPTION") {
+                $script:printedSummary = [PSCustomObject]@{
+                    skip_ids = [System.Collections.Generic.List[string]]::new()
+                }
+            }
             $testRun = Invoke-WatchedPythonAndLog `
                 -Label "Explicit-label development run" `
                 -LogPath $logPath `
@@ -1349,6 +1577,18 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
             $testCode = $testRun.ExitCode
             if ($testCode -ne 0) {
                 $runProblems.Add("development test batch returned status $testCode")
+            }
+            if ($RunKind -eq "CLOSURE_EXCEPTION") {
+                $closureRunLogLines = @(Get-CommandLogOutput `
+                    -LogPath $logPath -Label "Explicit-label development run")
+                foreach ($line in $closureRunLogLines) {
+                    Set-PrintedSummaryFromLine -Line $line
+                }
+                $script:skipTestIds = @($script:printedSummary.skip_ids.ToArray())
+                Write-Output "TEST_SKIP_IDS=$($script:skipTestIds -join ',')"
+                if ($null -ne $script:runRecordData) {
+                    $script:runRecordData["skip_test_ids"] = @($script:skipTestIds)
+                }
             }
         }
     }
@@ -1432,6 +1672,15 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
                 Write-Output "TEST_FAILURES=$($counts.failures)"
                 Write-Output "TEST_ERRORS=$($counts.errors)"
                 Write-Output "TEST_SKIPPED=$($counts.skipped)"
+                if ($RunKind -eq "CLOSURE_EXCEPTION") {
+                    $skipAccountingProblems = @(Test-ClosureSkipAccounting `
+                        -ReportedSkipCount $counts.skipped `
+                        -SkipTestIds $script:skipTestIds `
+                        -PermittedSkipIds $script:permittedSkipIds)
+                    foreach ($problem in $skipAccountingProblems) {
+                        $runProblems.Add($problem)
+                    }
+                }
                 if ($Mode -eq "clone" -and $cp0Records.Count -eq 1 -and
                     ($cp0Records[0].template_identity -eq $null -or
                      $cp0Records[0].template_cp0_digest -ne $cp0Records[0].clone_cp0_digest)) {
@@ -1459,6 +1708,20 @@ print("CLONE_PROBE_DATABASE=" + probe_name)
         $developmentRunLogLines = @(Get-CommandLogOutput `
             -LogPath $logPath -Label "Explicit-label development run" |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $timeoutEvidenceLines = @($developmentRunLogLines | Where-Object {
+            $_ -match "^LOCK_TIMEOUT_EFFECTIVE(?:\s|$)"
+        })
+        if ($timeoutEvidenceLines.Count -eq 0) {
+            $runProblems.Add("CP-0 did not report the effective lock timeout on an open test connection")
+        }
+        foreach ($line in $timeoutEvidenceLines) {
+            $timeoutProblems = @(Get-LockTimeoutObservationProblems `
+                -Line $line `
+                -ExpectedMilliseconds ([int]$script:lockTimeoutMilliseconds))
+            foreach ($problem in $timeoutProblems) {
+                $runProblems.Add($problem)
+            }
+        }
         $reconciliationLogLines += $developmentRunLogLines
         $reconciliation = Get-RunDatabaseReconciliation `
             -ReceiptPath $receiptPath -LogLines $reconciliationLogLines -RunNonce $runNonce `

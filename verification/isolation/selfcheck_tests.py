@@ -548,3 +548,36 @@ class CheckpointApplicabilitySelfChecks(SimpleTestCase):
         self.assertIs(recorded[0][0], test)
         self.assertGreaterEqual(recorded[0][1], 0)
         self.assertTrue(recorded[0][2])
+
+
+class PlannerSelectionSelfChecks(SimpleTestCase):
+    def test_failed_loaders_are_refused_and_valid_control_is_loaded(self):
+        from .run_plan import _loader_cases
+
+        with self.assertRaisesRegex(
+            ValueError, "R3: test selection contains failed loader entries"
+        ):
+            _loader_cases(
+                ["verification.isolation.selfcheck_tests.NoSuchClassForTU2F2Witness"]
+            )
+        with self.assertRaisesRegex(
+            ValueError, "R3: test selection contains failed loader entries"
+        ):
+            _loader_cases(
+                ["verification.isolation.no_such_module_tu2f2.AnyClass"]
+            )
+
+        cases = _loader_cases(
+            [
+                "verification.isolation.selfcheck_tests."
+                "CheckpointApplicabilitySelfChecks."
+                "test_n1_access_is_taken_from_effective_databases_not_class_name"
+            ]
+        )
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(
+            cases[0].id(),
+            "verification.isolation.selfcheck_tests."
+            "CheckpointApplicabilitySelfChecks."
+            "test_n1_access_is_taken_from_effective_databases_not_class_name",
+        )

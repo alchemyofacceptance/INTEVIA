@@ -390,17 +390,23 @@ class RunRecordBoundaryTests(SimpleTestCase):
             ],
         )
 
-        verifier = Path("scripts/verify_integrated.ps1").read_text(
+        launcher = Path("scripts/run_integrated_dev.ps1").read_text(
             encoding="utf-8"
         )
         route = Path("verification/route.py").read_text(encoding="utf-8")
-        self.assertIn("function Get-PermittedSkipIds", verifier)
-        self.assertIn('Get-PermittedSkipIds -Mode "clone"', verifier)
-        self.assertIn("verification\\permitted_skips.json", verifier)
+        self.assertIn("function Get-PermittedSkipIds", launcher)
+        self.assertIn("verification\\permitted_skips.json", launcher)
         self.assertIn(
             '$script:permittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")',
-            verifier,
+            launcher,
         )
+        closure_path = launcher.index('if ($RunKind -eq "CLOSURE_EXCEPTION")')
+        policy_load = launcher.index(
+            '$script:permittedSkipIds = @(Get-PermittedSkipIds -Mode "clone")',
+            closure_path,
+        )
+        state_load = launcher.index("$authorizedState = Get-IntegratedState", policy_load)
+        self.assertLess(policy_load, state_load)
         self.assertIn("load_permitted_skips()", route)
 
     def test_qualification_attempt_suffix_uses_state_derived_me_dev_root(self):
@@ -457,12 +463,6 @@ $maximumName = Assert-IntegratedTestDatabaseName `
     -Purpose 'boundary witness'
 if ([System.Text.Encoding]::UTF8.GetByteCount($maximumName) -ne 47) {{
     throw "six-digit maximum-tag name did not reach the 47-byte boundary"
-}}
-$verificationName = Assert-IntegratedTestDatabaseName `
-    -Name ($routes.VerificationDatabasePrefix + '999999') `
-    -Purpose 'verification boundary witness'
-if ([System.Text.Encoding]::UTF8.GetByteCount($verificationName) -ne 47) {{
-    throw "verification name did not reach the 47-byte boundary"
 }}
 $probeName = Get-IntegratedCloneProbeDatabaseName -RunNonce ('x' * 80)
 if ([System.Text.Encoding]::UTF8.GetByteCount($probeName) -gt 47) {{
@@ -541,129 +541,51 @@ Write-Output "TAG_MAX=8; SIX_DIGIT_NAME_BYTES=47; OVERLIMIT_REFUSALS=PASS"
         self.assertIn('$temporaryRecordPath = "$runRecordPath.tmp"', source)
         self.assertIn('"required_controls_passed"] = $requiredControlsPassed', source)
 
-    def test_verifier_passes_run_spec_binding_or_unavailable(self):
-        powershell = shutil.which("pwsh") or shutil.which("powershell")
+    def test_integrated_launcher_passes_run_spec_binding_to_child(self):
+        powershell = shutil.which("pwsh")
         if powershell is None:
-            self.fail("PowerShell is required to execute the verifier binding witness")
+            self.fail("PowerShell 7 is required for the executable run-spec binding witness")
 
-        verifier_path = Path("scripts/verify_integrated.ps1").resolve()
-        quoted_path = "'" + str(verifier_path).replace("'", "''") + "'"
-        command = f"""
-$verifierPath = {quoted_path}
-$tokens = $null
-$parseErrors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    $verifierPath, [ref]$tokens, [ref]$parseErrors
-)
-if ($parseErrors.Count -gt 0) {{ throw $parseErrors[0].Message }}
-foreach ($name in @("Get-Sha256Bytes", "Get-SourceBinding", "Set-RunSpecBinding")) {{
-    $definition = $ast.FindAll(
-        {{ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }},
-        $true
-    ) | Where-Object {{ $_.Name -eq $name }} | Select-Object -First 1
-    if ($null -eq $definition) {{ throw "Verifier function not found: $name" }}
-    Invoke-Expression $definition.Extent.Text
-}}
-function Get-IntegratedState {{
-    param([string]$StateFile, [string]$StateSha256)
-    return $script:authorizedState
-}}
-$head = (& git rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0) {{ throw "Could not resolve test HEAD" }}
-$script:authorizedState = [PSCustomObject]@{{
-    SourceKind = "COMMITTED"
-    Head = $head
-    MergeCommit = "test-merge"
-    BaseCommit = "test-base"
-    StateSha256 = ("1" * 64)
-    StateId = "test-state"
-    StateFile = "test-state.json"
-    EvidenceRoot = "PKTB_TEST"
-    DatabaseTag = "tu1b"
-    State = [PSCustomObject]@{{ run_spec_sha256 = ("a" * 64) }}
-}}
-$binding = Get-SourceBinding -AuthorizedStateFile "test-state.json" `
-    -AuthorizedStateSha256 ("1" * 64)
-if ($binding.State.run_spec_sha256 -cne ("a" * 64)) {{
-    throw "Source binding did not retain the state's run-spec digest"
-}}
-$line = Set-RunSpecBinding -SourceBinding $binding
-if ($line -cne ("RUN_SPEC_SHA256=" + ("a" * 64)) -or
-    $env:INTEVIA_RUN_SPEC_SHA256 -cne ("a" * 64)) {{
-    throw "Verifier did not print and pass the state's run-spec digest"
-}}
-Write-Output "PRESENT:$line"
-$script:authorizedState.State = [PSCustomObject]@{{}}
-$binding = Get-SourceBinding -AuthorizedStateFile "test-state.json" `
-    -AuthorizedStateSha256 ("1" * 64)
-$line = Set-RunSpecBinding -SourceBinding $binding
-if ($line -cne "RUN_SPEC_SHA256=UNAVAILABLE" -or
-    $env:INTEVIA_RUN_SPEC_SHA256 -cne "UNAVAILABLE") {{
-    throw "Missing run-spec digest was not marked UNAVAILABLE"
-}}
-Write-Output "MISSING:$line"
-"""
-        with tempfile.TemporaryDirectory() as temporary:
-            git_root = Path(temporary)
-            subprocess.run(
-                ["git", "init"],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            subprocess.run(
-                ["git", "config", "--local", "user.name", "TU1B Test"],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "config",
-                    "--local",
-                    "user.email",
-                    "tu1b-test@example.invalid",
-                ],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            (git_root / "fixture.txt").write_text("fixture\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "add", "--", "fixture.txt"],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "commit.gpgsign=false",
-                    "commit",
-                    "-m",
-                    "test verifier witness",
-                ],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            result = subprocess.run(
-                [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
-                cwd=git_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        expected_digest = "c" * 64
+        launcher_path = str(Path("scripts/run_integrated_dev.ps1").resolve())
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                launcher_path,
+                "-LaunchSelfTest",
+            ],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("PRESENT:RUN_SPEC_SHA256=" + ("a" * 64), result.stdout.splitlines())
-        self.assertIn("MISSING:RUN_SPEC_SHA256=UNAVAILABLE", result.stdout.splitlines())
+        self.assertIn("RUN_SPEC_SHA256=" + expected_digest, result.stdout)
+        self.assertIn("RUN_SPEC_BINDING_CHILD=" + expected_digest, result.stdout)
+        self.assertIn("RUN_SPEC_BINDING_EXECUTABLE_WITNESS=PASS", result.stdout)
+        self.assertIn(
+            "CP-0 lock-timeout unit=ms comparison=PASS "
+            "REFUSED=unit=s and mismatched value",
+            result.stdout,
+        )
+
+        source = Path("scripts/run_integrated_dev.ps1").read_text(encoding="utf-8")
+        digest_output_call = (
+            "Write-AuthorizedRunSpecDigest -AuthorizedState $authorizedState"
+        )
+        child_digest_binding = (
+            "Set-AuthorizedRunSpecDigestForChild -AuthorizedState $authorizedState"
+        )
+        child_launch = '$bindingRun = Invoke-PythonAndLog'
+
+        self.assertIn(digest_output_call, source)
+        self.assertIn(child_digest_binding, source)
+        self.assertLess(source.index(digest_output_call), source.index(child_launch))
+        self.assertLess(source.index(child_digest_binding), source.index(child_launch))
 
     def test_isolation_summary_reports_unavailable_candidate_binding_explicitly(self):
         runner = object.__new__(IsolationRunner)

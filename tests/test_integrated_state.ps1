@@ -10,6 +10,8 @@ $originalLocation = Get-Location
 $temporaryRoot = Join-Path $env:TEMP ("int2-integrated-state-" + [guid]::NewGuid().ToString("N"))
 $results = [System.Collections.Generic.List[string]]::new()
 $failure = $null
+$runSpecificationPath = Join-Path $PSScriptRoot "..\docs\operations\RUN_REQUIREMENTS.md"
+$runSpecificationSha256 = (Get-FileHash -LiteralPath $runSpecificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 function Invoke-Git {
     param(
@@ -108,6 +110,8 @@ function New-StateDocument {
         branch = $Branch
         evidence_root = $EvidenceRoot
         database_tag = $DatabaseTag
+        run_spec_version = "v1.38"
+        run_spec_sha256 = $runSpecificationSha256
         base_commit = $BaseCommit
         integrated_root = $Line.IntegratedRoot
         merge = [ordered]@{
@@ -391,13 +395,9 @@ try {
     $routeB = Get-IntegratedEvidenceRoutes -AuthorizedState $routeBState -HomeDirectory $routeHome
     $routeADatabaseME = "$($routeA.DevelopmentDatabasePrefix)3"
     $routeBDatabaseME = "$($routeB.DevelopmentDatabasePrefix)3"
-    $routeADatabaseVR = "$($routeA.VerificationDatabasePrefix)3"
-    $routeBDatabaseVR = "$($routeB.VerificationDatabasePrefix)3"
     if ($routeA.DevelopmentRoot -ceq $routeB.DevelopmentRoot -or
-        $routeA.VerificationRoot -ceq $routeB.VerificationRoot -or
-        $routeADatabaseME -ceq $routeBDatabaseME -or
-        $routeADatabaseVR -ceq $routeBDatabaseVR) {
-        throw "different validated states did not produce distinct evidence routes"
+        $routeADatabaseME -ceq $routeBDatabaseME) {
+        throw "different validated states did not produce distinct development routes"
     }
     if (Test-Path -LiteralPath $routeHome -PathType Container) {
         throw "route preflight created a folder"
@@ -405,12 +405,8 @@ try {
     $results.Add("CASE_m_DYNAMIC_ROUTE_PREFLIGHT=PASS (database-free; no folders created)")
     Write-Output "CASE_m_STATE_A_ME_DEV=$($routeA.DevelopmentRoot)"
     Write-Output "CASE_m_STATE_B_ME_DEV=$($routeB.DevelopmentRoot)"
-    Write-Output "CASE_m_STATE_A_VERIFICATION=$($routeA.VerificationRoot)"
-    Write-Output "CASE_m_STATE_B_VERIFICATION=$($routeB.VerificationRoot)"
     Write-Output "CASE_m_STATE_A_DATABASE_ME=$routeADatabaseME"
     Write-Output "CASE_m_STATE_B_DATABASE_ME=$routeBDatabaseME"
-    Write-Output "CASE_m_STATE_A_DATABASE_VR=$routeADatabaseVR"
-    Write-Output "CASE_m_STATE_B_DATABASE_VR=$routeBDatabaseVR"
     Write-Output "CASE_m_DATABASE_ACCESS=NONE"
     Write-Output "CASE_m_FOLDERS_CREATED=False"
 

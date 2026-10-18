@@ -83,6 +83,7 @@ jobs:
       # A throwaway password for the job's own service container; it protects nothing outside this job.
       INTEVIA_POSTGRES_PASSWORD: intevia-ci-disposable
       INTEVIA_POSTGRES_DB: postgres
+      PGOPTIONS: "-c lock_timeout=120s"
       # The one sha this job binds to, everywhere. On a pull_request it is the PR head commit; on a push or a
       # manual dispatch there is no PR, so it is the pushed commit and they are the same thing.
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

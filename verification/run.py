@@ -11,7 +11,6 @@ owns `summary.json`. An invocation without `--snapshot` records
 from __future__ import annotations
 
 import argparse
-import datetime
 import hashlib
 import importlib.abc
 import json
@@ -23,10 +22,6 @@ import traceback
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def read_text(path):

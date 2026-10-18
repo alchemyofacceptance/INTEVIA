@@ -267,9 +267,7 @@ function Get-IntegratedEvidenceRoutes {
     $stageRoot = Join-Path (Join-Path $HomeDirectory "INTEVIA_AGENT_STAGING") $evidenceRoot
     return [PSCustomObject]@{
         DevelopmentRoot = Join-Path $stageRoot "ME_DEV"
-        VerificationRoot = Join-Path $stageRoot "VERIFICATION_OF_RECORD"
         DevelopmentDatabasePrefix = "test_intevia_living_organism_${databaseTag}_me_"
-        VerificationDatabasePrefix = "test_intevia_living_organism_${databaseTag}_vr_"
         DatabaseNameMaxLength = $script:MaxTestDatabaseNameLength
         DatabaseTagMaxLength = $script:MaxDatabaseTagLength
     }

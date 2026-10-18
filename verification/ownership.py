@@ -14,6 +14,8 @@ module replaces the creation and destruction paths of the runner's database conn
 
 Receipts are JSON lines in the file named by VERIFICATION_DB_RECEIPT, each carrying the run nonce from
 VERIFICATION_RUN_NONCE. The route's cleanup reads them to decide ownership. keepdb is refused.
+The `at` field is a host-clock diagnostic timestamp (UTC, ISO 8601) for receipt provenance under §5zzl item 6(a);
+it is never compared with database time and is excluded from identity comparisons.
 """
 import datetime
 import json
@@ -27,7 +29,8 @@ class CollisionRefused(RuntimeError):
     pass
 
 
-def _now():
+def _host_clock_iso():
+    """Host-clock diagnostic timestamp (UTC, ISO 8601) for receipt provenance; §5zzl item 6(a); never compared with database time."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
@@ -35,7 +38,7 @@ def write_receipt(event, **fields):
     path, nonce = os.environ.get(RECEIPT_ENV), os.environ.get(NONCE_ENV)
     if not path or not nonce:
         raise RuntimeError("%s and %s must be set by the verification route" % (RECEIPT_ENV, NONCE_ENV))
-    record = {"event": event, "run_nonce": nonce, "at": _now(), "pid": os.getpid(), **fields}
+    record = {"event": event, "run_nonce": nonce, "at": _host_clock_iso(), "pid": os.getpid(), **fields}
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=str) + "\n")
         f.flush()

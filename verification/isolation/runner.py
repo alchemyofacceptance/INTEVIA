@@ -55,6 +55,27 @@ CURRENT = {"runner": None}
 DIGEST_KEYS = ("triggers", "constraints", "functions", "ownership_grants", "core_role", "content_types", "permissions", "migrations")
 
 
+def _observe_lock_timeout(connection, alias):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT setting, unit FROM pg_settings WHERE name = 'lock_timeout'"
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise RuntimeError("lock_timeout was absent from pg_settings")
+    try:
+        value_ms = int(row[0])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("lock_timeout setting was not an integer") from exc
+    unit = str(row[1])
+    print(
+        "LOCK_TIMEOUT_EFFECTIVE alias=%s value_ms=%d unit=%s"
+        % (alias, value_ms, unit),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def isolation_verdict(cp0_met, suite_ids, started_ids, outcome_ids, checkpoints, emit_errors):
     """Pure function: returns (verdict, reasons). Separated so it can be tested without a database."""
     reasons = []
@@ -438,6 +459,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             ref, self.light_plan, light_reference, violations = capture_baseline(
                 tolerate_light_errors=True
             )
+            _observe_lock_timeout(state.connection, "default")
             cp0_digest = state.digest(ref)
             if clone_record and template_receipt:
                 if cp0_digest != clone_record.get("template_cp0_digest") or cp0_digest != template_receipt.get("cp0_digest"):
@@ -460,6 +482,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
                 alias_ref, alias_plan, alias_light, alias_violations = capture_baseline(
                     connections[alias]
                 )
+                _observe_lock_timeout(connections[alias], alias)
                 alias_references[alias] = (alias_ref, alias_plan, alias_light)
                 reference_digests[alias] = {
                     key: state.digest(alias_ref[key]) for key in DIGEST_KEYS

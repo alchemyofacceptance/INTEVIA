@@ -293,6 +293,29 @@ function Write-StallActivitySnapshot {
     Write-WatchdogLogLine -LineText "STALL_PG_STAT_ACTIVITY_END" -LogPath $LogPath
 }
 
+function Update-WatchdogInactivity {
+    param(
+        [Parameter(Mandatory = $true)][datetime]$LastSeenWrite,
+        [Parameter(Mandatory = $true)][datetime]$CurrentWrite,
+        [Parameter(Mandatory = $true)][timespan]$LastChangeElapsed,
+        [Parameter(Mandatory = $true)][timespan]$NowElapsed,
+        [Parameter(Mandatory = $true)][timespan]$Threshold
+    )
+
+    if ($CurrentWrite -ne $LastSeenWrite) {
+        return [PSCustomObject]@{
+            LastSeenWrite = $CurrentWrite
+            LastChangeElapsed = $NowElapsed
+            IsStalled = $false
+        }
+    }
+    return [PSCustomObject]@{
+        LastSeenWrite = $LastSeenWrite
+        LastChangeElapsed = $LastChangeElapsed
+        IsStalled = ($NowElapsed - $LastChangeElapsed) -ge $Threshold
+    }
+}
+
 function Invoke-WatchedPythonAndLog {
     param(
         [Parameter(Mandatory = $true)][string]$Label,
@@ -346,6 +369,8 @@ function Invoke-WatchedPythonAndLog {
     $stdoutTask = $process.StandardOutput.ReadLineAsync()
     $stderrTask = $process.StandardError.ReadLineAsync()
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastLogWrite = (Get-Item -LiteralPath $LogPath -ErrorAction Stop).LastWriteTimeUtc
+    $lastChangeElapsed = $watch.Elapsed
     $stalled = $false
     $processEnded = $false
     $databaseAbsent = $false
@@ -375,8 +400,16 @@ function Invoke-WatchedPythonAndLog {
         }
 
         if (-not $process.HasExited) {
-            $lastLogWrite = (Get-Item -LiteralPath $LogPath -ErrorAction Stop).LastWriteTimeUtc
-            if ([DateTime]::UtcNow - $lastLogWrite -ge [TimeSpan]::FromMinutes($StallThresholdMinutes)) {
+            $currentLogWrite = (Get-Item -LiteralPath $LogPath -ErrorAction Stop).LastWriteTimeUtc
+            $inactivity = Update-WatchdogInactivity `
+                -LastSeenWrite $lastLogWrite `
+                -CurrentWrite $currentLogWrite `
+                -LastChangeElapsed $lastChangeElapsed `
+                -NowElapsed $watch.Elapsed `
+                -Threshold ([TimeSpan]::FromMinutes($StallThresholdMinutes))
+            $lastLogWrite = $inactivity.LastSeenWrite
+            $lastChangeElapsed = $inactivity.LastChangeElapsed
+            if ($inactivity.IsStalled) {
                 $stalled = $true
                 $script:watchdogStalled = $true
                 $stallDetectedSeconds = $watch.Elapsed.TotalSeconds

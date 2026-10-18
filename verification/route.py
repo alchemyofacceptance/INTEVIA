@@ -14,7 +14,7 @@ Steps (each PASS, FAIL or INCOMPLETE):
   IDENTITY    the commit, git tree of the working files, and every change with its bytes; a failure makes the run INCOMPLETE
   OFFLINE     verification.selftest_parser, verification.selftest_route, verification.selftest_recording and verification.selftest_bootstrap (no database)
   SELF        the isolation instrument's self-check under the isolation runner
-  S015        the S015 test set (tests/, pattern test_s015_*.py) under the isolation runner
+  S015        the S015 test set (tests/, pattern test_*.py) under the isolation runner
   OWNERSHIP   live checks of the database safeguards: a colliding database is refused and left untouched; a replaced
               database is not dropped; an owned database is dropped only by its oid
   LOCK        live check that two route runs configured with DIFFERENT connection databases still contend for the lock
@@ -181,7 +181,8 @@ def load_permitted_skips():
     return entries
 
 
-def now():
+def host_clock_utc():
+    """Host-clock diagnostic timestamp (UTC) for run-summary provenance; §5zzl item 6(a); never compared with database time."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -1072,7 +1073,7 @@ class Route:
             "route": "S015 verification route v0.5",
             **self.database_identity(),
             "run_nonce": self.nonce,
-            "started": now(),
+            "started": host_clock_utc(),
         }
         self.say(
             "S015 VERIFICATION ROUTE v0.5  run %s  token %s  %s"
@@ -1166,7 +1167,7 @@ class Route:
             summary["scope_note"] = "discrimination checks skipped by request"
         cleanup_problem = cleanup["outcome"] not in ("CLEAN", "NOTHING TO CLEAN")
         exit_code = 3 if cleanup_problem else {"PASS": 0, "FAIL": 1, "INCOMPLETE": 2}[result]
-        summary.update(steps=self.steps, cleanup=cleanup, result=result, exit_status=exit_code, finished=now())
+        summary.update(steps=self.steps, cleanup=cleanup, result=result, exit_status=exit_code, finished=host_clock_utc())
         if self.candidate_state_path is not None:
             summary["ci_candidate_binding"] = {
                 "state_file": os.path.basename(self.candidate_state_path),
@@ -1272,6 +1273,7 @@ def main(argv=None):
     ap.add_argument("--commit", default=None)
     ap.add_argument("--skip-mutations", action="store_true")
     a = ap.parse_known_args(argv)[0]
+    # Time-prefixed run identifier from the host clock; identity only, item 6(a).
     run_id = a.run_id or (datetime.datetime.now(datetime.timezone.utc).strftime("%y%m%d%H%M%S") + uuid.uuid4().hex[:4])
     if not re.fullmatch(r"[a-z0-9]{1,20}", run_id):
         ap.error("--run-id must be 1-20 lowercase letters or digits")
