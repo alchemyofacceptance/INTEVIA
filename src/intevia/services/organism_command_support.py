@@ -62,24 +62,48 @@ def _lock_registered_organism(database_alias: str, organism_id) -> None:
 
 
 class S015CommandSubstrateError(Exception):
+    """Base class for this module's command-substrate-specific exceptions."""
     pass
 
 
 class S015CommandAtomicityRequired(S015CommandSubstrateError):
+    """Raised by acquire_organism_command_mutex when it is called outside an
+    atomic block.
+    """
     pass
 
 
 class S015CommandMutexUnavailable(S015CommandSubstrateError):
+    """Raised by acquire_organism_command_mutex when the database is not
+    PostgreSQL.
+    """
     pass
 
 
 class S015CommandReplayMismatch(S015CommandSubstrateError):
+    """Raised when a completed receipt does not match the request it is
+    replayed for; raised in this module by _OrganismCommandService.
+    """
     pass
 
 
 class S015CommandReceiptMalformed(S015CommandSubstrateError):
+    """Raised when a stored command result fails reconstruction or replay checks.
+
+    Carries the Human Governor's fixed record-fault text (a), distinguishing
+    a record fault from evidence that a different request was submitted.
+    The receipt decoders and the membership and role replay-chain checks
+    raise it. A genuine request mismatch remains S015CommandReplayMismatch.
+
+    On the existing-receipt replay path these checks precede new domain
+    work. The shared _finalise path also calls a decoder, after inserting
+    the new receipt. The exception itself neither prevents prior writes
+    nor performs rollback; transaction handling must uphold the message's
+    assurance that this attempt made no new changes.
+    """
     def __init__(self) -> None:
         # RC-1 commission v1.3, item 1 (text (a), as resolved by the Human Governor).
+        """Create the refusal with the fixed record-fault text (a)."""
         super().__init__(
             "The earlier record of this request could not be read. This attempt made no new changes. "
             "This is a record fault, not evidence that you submitted a different request; it needs to "
@@ -88,9 +112,24 @@ class S015CommandReceiptMalformed(S015CommandSubstrateError):
 
 
 class S015CommandContended(S015CommandSubstrateError):
-    """T-LOCK-1 outcome for residual contention; retain SQLSTATE and cause (15 Oct commission, §1)."""
+    """Authored outcome for residual database contention (T-LOCK-1).
+
+    contention_translated raises this from an OperationalError whose direct
+    cause carries SQLSTATE 40P01 (deadlock detected), 40001 (serialization
+    failure) or 55P03 (lock not available), when no atomic block remains
+    open on the selected connection. The command wrappers place that
+    translation outside their transaction so the named statement or commit
+    failure is handled after rollback.
+
+    The message is T-LOCK-1, the Human Governor's text, stating that the
+    attempt made no changes. diagnostic_sqlstate records the code, and the
+    translator preserves the original OperationalError as the cause.
+    Constructing this exception does not itself roll back a transaction.
+    Nothing is retried.
+    """
 
     def __init__(self, diagnostic_sqlstate: Literal["40P01", "40001", "55P03"]) -> None:
+        """Set the T-LOCK-1 message and record diagnostic_sqlstate."""
         super().__init__(
             "Your request could not be completed because it conflicted with another database operation. "
             "This attempt made no changes. Please wait a moment before trying again. "
@@ -101,12 +140,22 @@ class S015CommandContended(S015CommandSubstrateError):
 
 @dataclass(frozen=True, slots=True)
 class WithheldField:
+    """Placeholder value for a result field withheld during replay.
+
+    Stores the field name and an audience label: APPLICANT, PROCESSING or
+    SUBJECT. serve_replay uses the first declared audience when no declared
+    audience permits access, and SUBJECT for its independent
+    authority-reference withholding rule.
+    """
     field: str
     audience: Literal["APPLICANT", "PROCESSING", "SUBJECT"]
 
 
 @dataclass(frozen=True, slots=True)
 class ReplayViewer:
+    """The viewer of a replayed result: the Identity's primary key and UUID, and
+    the time of viewing (validated as timezone-aware by serve_replay).
+    """
     identity_pk: int
     identity_id: UUID
     now: datetime
@@ -114,11 +163,20 @@ class ReplayViewer:
 
 @dataclass(frozen=True, slots=True)
 class ReplayResultType:
+    """The exact result class a replayed payload must have, and the database alias
+    used to evaluate the viewer's audiences.
+    """
     result_class: type
     database_alias: str
 
 
 def withheld_fields(result: object) -> tuple[WithheldField, ...]:
+    """Return a tuple of WithheldField values found in a dataclass instance.
+
+    Inspects the instance's fields in dataclass field order and includes
+    values that are instances of WithheldField. Raises TypeError for a
+    non-dataclass value or a dataclass class rather than an instance.
+    """
     if not is_dataclass(result) or isinstance(result, type):
         raise TypeError("result must be a dataclass instance")
     return tuple(
@@ -226,6 +284,33 @@ def _has_pk_valued_reference(reference: object) -> bool:
 
 
 def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
+    """Apply declared audience checks and authority-reference withholding.
+
+    Requires a ReplayViewer, a ReplayResultType and a dataclass payload
+    instance whose exact class is result_type.result_class. Requires the
+    viewer's identity_pk to be an int, identity_id to be a UUID and now to
+    be a timezone-aware datetime; invalid values raise TypeError.
+
+    Obtains field classifications from the result class's
+    replay_field_audiences(payload). A string audience is treated as a
+    single audience. For each classified field, retains its value if any
+    declared audience check succeeds; otherwise replaces it with
+    WithheldField using the first declared audience as the label.
+
+    SUBJECT compares the viewer's UUID with the subject resolved through
+    membership_uuid or assignment_uuid. APPLICANT and PROCESSING require
+    a resolved LO, an Identity matching both viewer identifiers, and an
+    active-identity result from _present_application_audiences, evaluated
+    at viewer.now on result_type.database_alias.
+
+    Independently replaces authority_reference with a SUBJECT-labelled
+    WithheldField whenever _has_pk_valued_reference matches it, regardless
+    of the viewer's audiences. This rule also applies when the field
+    classification mapping is empty.
+
+    Returns a dataclass replacement when any field is withheld; otherwise
+    returns the original payload.
+    """
     if not isinstance(viewer, ReplayViewer):
         raise TypeError("viewer must be a ReplayViewer")
     if not isinstance(result_type, ReplayResultType):
@@ -253,7 +338,28 @@ def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
 
 @contextmanager
 def authority_atomic(database_alias: str):
-    """Place T-LOCK-1 translation outside the authority transaction (15 Oct commission, §1)."""
+    """Run an atomic block that defers S015AuthorityDenied, inside contention translation.
+
+    Uses transaction.atomic on database_alias. Catches S015AuthorityDenied
+    from the body and, if atomic exit succeeds, raises the same exception
+    afterwards. The caught denial does not itself trigger rollback of this
+    block. All surviving writes in the block remain subject to normal
+    transaction or savepoint handling; an enclosing transaction can still
+    roll them back.
+
+    The block runs inside contention_translated. An OperationalError with
+    SQLSTATE 40P01, 40001 or 55P03, from the body or from the block's exit,
+    becomes S015CommandContended when no atomic block remains open on the
+    connection afterwards. Inside an enclosing transaction those errors,
+    and every other exception, propagate unchanged. Nothing is retried.
+
+    This helper does not write or count AuthorityDecision records, isolate
+    a refusal from other writes, or guarantee a successful commit.
+    SB-G build commission v1.0, section 10.1, relies on this mechanism
+    together with the provider's writes and the caller's transaction scope.
+    The contention translation is PKT-LOCK-1's
+    (PKT_LOCK_1_BUILD_COMMISSION_v1_0.md, section 2.6).
+    """
     with contention_translated(database_alias):
         refusal = None
         with transaction.atomic(using=database_alias):
@@ -267,7 +373,27 @@ def authority_atomic(database_alias: str):
 
 @contextmanager
 def contention_translated(database_alias: str):
-    """Translate only named SQLSTATEs after rollback, per the 15 Oct T-LOCK-1 terms (§1)."""
+    """Translate named contention after the wrapped transaction block exits.
+
+    Place this wrapper outside the command's transaction block on
+    database_alias. It does not open, commit or roll back a transaction.
+    The transaction block is responsible for rolling back the named
+    statement or commit failure before that failure reaches this wrapper.
+
+    An OperationalError whose direct cause's sqlstate is 40P01, 40001 or
+    55P03 is raised as S015CommandContended(sqlstate), from the original
+    exception, only when no atomic block remains open on database_alias.
+    If an enclosing atomic block remains, or the error does not match,
+    the original exception propagates unchanged. Nothing is retried.
+
+    Used outside transaction.atomic by authority_atomic and by
+    OrganismMembershipService.open_membership. The no-open-atomic-block
+    check restricts translation to the outermost case; it is not a separate
+    check that rollback occurred.
+
+    Source: PKT_LOCK_1_BUILD_COMMISSION_v1_0.md, section 2.6, with the Human
+    Governor's outermost-transaction correction in section 3.2.
+    """
     try:
         yield
     except OperationalError as exc:
@@ -346,6 +472,19 @@ def command_mutex_key(
     action: OrganismAction,
     idempotency_key: str,
 ) -> int:
+    """Return the signed 64-bit advisory-lock key for a command identity.
+
+    Hashes _MUTEX_DOMAIN, actor_identity_id.bytes, a NUL separator,
+    action.value encoded as ASCII, another NUL separator, and the
+    idempotency key encoded as UTF-8. Returns the first eight SHA-256
+    digest bytes interpreted as a signed big-endian integer.
+
+    Requires actor_identity_id to have exact type UUID and action to have
+    exact type OrganismAction. The idempotency key must be a nonempty
+    string of at most 120 characters, already NFC-normalised and stripped
+    of surrounding whitespace. Invalid types raise TypeError; a
+    noncanonical idempotency-key string raises ValueError.
+    """
     if type(actor_identity_id) is not UUID:
         raise TypeError("actor_identity_id must be a UUID")
     if type(action) is not OrganismAction:
@@ -369,6 +508,20 @@ def acquire_organism_command_mutex(
     action: OrganismAction,
     idempotency_key: str,
 ) -> int:
+    """Acquire the actor/action/idempotency-key mutex and return its key.
+
+    Requires a nonempty string database_alias, raising ValueError otherwise.
+    Raises S015CommandAtomicityRequired if the selected connection is not
+    in an atomic block, then S015CommandMutexUnavailable if its vendor is
+    not PostgreSQL.
+
+    Computes command_mutex_key and acquires its transaction-scoped
+    PostgreSQL advisory lock with pg_advisory_xact_lock. Input-validation
+    errors from command_mutex_key propagate.
+
+    The lock is normally retained until transaction end; rolling back a
+    savepoint that acquired it can release that acquisition earlier.
+    """
     if type(database_alias) is not str or not database_alias:
         raise ValueError("database_alias is required")
     connection = connections[database_alias]
@@ -408,16 +561,26 @@ def _lock_actor(
     credential: User,
     unavailable: type[Exception],
 ) -> Identity:
-    """Apply I-1 to I-3 and the actor-standing timing rule.
+    """Lock the actor's Identity and its credential, check both, return the Identity.
 
-    I-1 locks the actor Identity and credential at NO KEY UPDATE before any
-    organism lock. I-2 takes no other person's Identity or credential lock
-    after the organism lock; I-3 takes a needed other Identity at KEY SHARE
-    before it. Judge the actor's standing at received_at and keep it unchanged
-    from this lock through commit. See
-    HG_DECISION_SEK2_F1_LOCK_ORDER_REPAIR_20261015_CAPTURE.txt,
-    HG_DECISION_PKT_LOCK_1_DESIGN_ADOPTION_WITH_AMENDMENTS_20261015_CAPTURE.txt,
-    and PKT_LOCK_1_BUILD_COMMISSION_v1_0.md.
+    Locks the Identity holding this credential, and the credential row,
+    with SELECT ... FOR NO KEY UPDATE OF both (rule I-1: the actor first,
+    never FOR UPDATE). Raises the supplied unavailable exception when no
+    Identity has this credential, when its access_state is not ACTIVE, or
+    when its credential is not active.
+
+    Callers take this lock before any organism lock. Rules I-2 and I-3 bind
+    the caller, not this helper: after an organism lock, no explicit lock
+    on another person's Identity or credential; another Identity that is
+    genuinely needed is locked before the organism lock, at FOR KEY SHARE.
+    The timing rule also binds the command: the actor's standing is judged
+    as of received_at and must hold unchanged from this lock until commit.
+    This helper checks access_state and the credential's is_active as read
+    under its lock; it does not compare them with received_at.
+
+    Sources: PKT_LOCK_1_BUILD_COMMISSION_v1_0.md, section 2.1;
+    HG_DECISION_SEK2_F1_LOCK_ORDER_REPAIR_20261015_CAPTURE.txt;
+    HG_DECISION_PKT_LOCK_1_DESIGN_ADOPTION_WITH_AMENDMENTS_20261015_CAPTURE.txt.
     """
     try:
         identity = (
@@ -443,6 +606,22 @@ def _lock_actor_membership_context(
     unavailable: type[Exception],
     allow_probationary: bool = False,
 ) -> tuple[OrganismMembership, tuple[str, ...]]:
+    """Lock and return the actor's membership and active role-head references.
+
+    Selects the membership for the actor UUID and LO UUID for update.
+    Requires state ACTIVE, or ACTIVE or PROBATIONARY when allow_probationary
+    is true, and a non-null head transition. Raises the supplied unavailable
+    exception with "actor active membership is required" if the membership
+    is absent or fails either requirement.
+
+    Evaluates a select_for_update query for this membership's ACTIVE role
+    assignments with non-null head state events, joining those events and
+    ordering by assignment primary key. Returns the membership and a tuple
+    of the selected head events' lineage references in that order.
+
+    Uses the stored membership and assignment states; it does not perform
+    an effective-time state fold.
+    """
     try:
         membership = (
             OrganismMembership.objects.using(database_alias)
@@ -564,6 +743,12 @@ class _OrganismCommandService:
         raise NotImplementedError
 
     def _verify_replay_result(self, result: object) -> None:
+        """Hook for a service to check a rebuilt replay result against its chain.
+
+        Called by _attempt_replay after _replay_result and before the result is
+        served. This base version accepts every result; the membership and role
+        services override it.
+        """
         return None
 
     def _lock_existing_receipt(
@@ -661,6 +846,24 @@ class _OrganismCommandService:
         idempotency_key: str,
         viewer: ReplayViewer,
     ):
+        """Serve the stored result of an already-completed request, if there is one.
+
+        Locks the actor's receipt for this action and idempotency key through
+        _lock_existing_receipt. No receipt returns None so the caller can
+        continue new work. A different request reference or payload fingerprint
+        raises S015CommandReplayMismatch before decoding.
+
+        Otherwise rebuilds the stored result with _replay_result, invokes
+        _verify_replay_result, then returns serve_replay's result for the supplied
+        viewer, including its withholding rules. Membership and role services
+        override the verification hook; the base hook performs no check.
+
+        The concrete decoders and verification hooks raise
+        S015CommandReceiptMalformed for the record-validation failures they
+        recognise. This method catches no exceptions: database-read failures,
+        wrong-type errors and errors from serving the result propagate from
+        the operation that raises them.
+        """
         receipt = self._lock_existing_receipt(
             actor=actor,
             request_reference=request_reference,
