@@ -1,4 +1,24 @@
-"""SERVICE-owned command service for S012 Activity orchestration."""
+"""Command service for Service Activity orchestration.
+
+First execution of an authorised command records a lifecycle transition
+and its evidence references. The lifecycle is CREATE to UNASSIGNED;
+ASSIGN from UNASSIGNED to ASSIGNED; ACCEPT from ASSIGNED to IN_PROGRESS
+or DECLINE from ASSIGNED to DECLINED; SUBMIT from IN_PROGRESS to SUBMITTED;
+REVIEW from SUBMITTED to REVIEWED; COMPLETE from REVIEWED to COMPLETED;
+and CANCEL from any non-terminal state to CANCELLED.
+
+Each public command enters an atomic block on the service's database
+alias, requests locks for the actor's Identity and credential, and
+qualifies authority through the injected ServiceCommandAuthority.
+Replay is looked up by actor, action and idempotency key. Epoch or payload
+fingerprint mismatches are refused; a matching replay reconstructs a
+result from stored records and retains their authority references rather
+than appending another transition.
+
+Activities preserve their initiating domain and opaque references.
+These records describe lifecycle occurrences, not work quality, approval
+or value; referenced external content is not fetched or interpreted.
+"""
 
 from __future__ import annotations
 
@@ -61,43 +81,78 @@ CANCEL_SOURCES = frozenset({
 
 
 class ServiceActivityCommandError(Exception):
+    """Base class for the service-specific command errors defined in this module.
+
+    Not raised directly in this module.
+    """
     pass
 
 
 class ServiceActivityConflict(ServiceActivityCommandError):
+    """Base class for replay conflicts and inconsistent stored replay data.
+
+    Not raised directly in this module; see its three subclasses.
+    """
     pass
 
 
 class ServiceActivityCrossEpochConflict(ServiceActivityConflict):
+    """The same actor, action and idempotency key were first used under a different access epoch."""
     pass
 
 
 class ServiceActivityPayloadConflict(ServiceActivityConflict):
+    """The same actor, action and idempotency key arrived with a different payload fingerprint."""
     pass
 
 
 class ServiceActivityMalformedReplay(ServiceActivityConflict):
+    """A replay reconstruction check found missing or inconsistent stored data.
+
+    Examples include missing related records, an Activity identifier mismatch,
+    or evidence whose occurrence time, supplier or kind does not match the transition.
+    """
     pass
 
 
 class ServiceActivityLifecycleError(ServiceActivityCommandError):
+    """The command's lifecycle requirements are not met.
+
+    Covers an unpublished Service, a non-current ServiceVersion, an Activity in
+    the wrong source state, or a missing required assignment, submission or review.
+    """
     pass
 
 
 class ServiceActivityValidationError(ServiceActivityCommandError):
+    """A command value fails the service's validation checks.
+
+    Examples include invalid references or identifiers, a timestamp without a
+    timezone, an invalid initiating domain, or duplicate submission-support references.
+    """
     pass
 
 
 class ServiceActivityNotFound(ServiceActivityCommandError):
+    """The ServiceVersion named by a create command does not exist."""
     pass
 
 
 class ServiceActivityActorError(ServiceActivityCommandError):
+    """The actor or assignee is missing or inactive, including an inactive credential.
+
+    Also raised when the actor is not the assignee required to accept or decline
+    an assignment, or to submit work.
+    """
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class CreateServiceActivityCommand:
+    """Input to create an Activity for a ServiceVersion.
+
+    The caller supplies the new activity_id. The references are validated by the service, not here.
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -111,6 +166,7 @@ class CreateServiceActivityCommand:
 
 @dataclass(frozen=True, slots=True)
 class AssignServiceActivityCommand:
+    """Input to assign an unassigned Activity to an Identity, with the assignment's reference and basis."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -123,6 +179,7 @@ class AssignServiceActivityCommand:
 
 @dataclass(frozen=True, slots=True)
 class AcceptServiceAssignmentCommand:
+    """Input for the assignee to accept their assignment."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -132,6 +189,7 @@ class AcceptServiceAssignmentCommand:
 
 @dataclass(frozen=True, slots=True)
 class DeclineServiceAssignmentCommand:
+    """Input for the assignee to decline their assignment, with the basis for declining."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -142,6 +200,7 @@ class DeclineServiceAssignmentCommand:
 
 @dataclass(frozen=True, slots=True)
 class SubmitServiceWorkCommand:
+    """Input to submit work on an Activity in progress, with the submission reference and its supporting references."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -153,6 +212,7 @@ class SubmitServiceWorkCommand:
 
 @dataclass(frozen=True, slots=True)
 class ReviewServiceWorkCommand:
+    """Input to review submitted work, with the review reference and the reference to its record."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -164,6 +224,7 @@ class ReviewServiceWorkCommand:
 
 @dataclass(frozen=True, slots=True)
 class CompleteServiceActivityCommand:
+    """Input to complete a reviewed Activity, with the reference to the completion record."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -174,6 +235,7 @@ class CompleteServiceActivityCommand:
 
 @dataclass(frozen=True, slots=True)
 class CancelServiceActivityCommand:
+    """Input to cancel an Activity that is not yet in a terminal state, with the basis for cancelling."""
     credential: User
     request_reference: str
     idempotency_key: str
@@ -184,6 +246,13 @@ class CancelServiceActivityCommand:
 
 @dataclass(frozen=True, slots=True)
 class CreateServiceActivityResult:
+    """Outcome of creating an Activity.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+
+    Returned for a first execution and for a matching replay alike.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -196,6 +265,11 @@ class CreateServiceActivityResult:
 
 @dataclass(frozen=True, slots=True)
 class AssignServiceActivityResult:
+    """Outcome of assigning an Activity, including the assignment ID.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -209,6 +283,11 @@ class AssignServiceActivityResult:
 
 @dataclass(frozen=True, slots=True)
 class AcceptServiceAssignmentResult:
+    """Outcome of accepting an assignment.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, and authority references. The evidence field is an empty tuple.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -221,6 +300,11 @@ class AcceptServiceAssignmentResult:
 
 @dataclass(frozen=True, slots=True)
 class DeclineServiceAssignmentResult:
+    """Outcome of declining an assignment.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -233,6 +317,11 @@ class DeclineServiceAssignmentResult:
 
 @dataclass(frozen=True, slots=True)
 class SubmitServiceWorkResult:
+    """Outcome of submitting work, including the work submission ID.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -246,6 +335,11 @@ class SubmitServiceWorkResult:
 
 @dataclass(frozen=True, slots=True)
 class ReviewServiceWorkResult:
+    """Outcome of reviewing work, including the service activity review ID.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -259,6 +353,11 @@ class ReviewServiceWorkResult:
 
 @dataclass(frozen=True, slots=True)
 class CompleteServiceActivityResult:
+    """Outcome of completing an Activity.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -271,6 +370,11 @@ class CompleteServiceActivityResult:
 
 @dataclass(frozen=True, slots=True)
 class CancelServiceActivityResult:
+    """Outcome of cancelling an Activity.
+
+    Carries the activity ID, resulting state, transition ID, sequence and lineage
+    reference, evidence, and authority references.
+    """
     activity_id: UUID
     resulting_state: ServiceActivityState
     transition_id: int
@@ -282,6 +386,13 @@ class CancelServiceActivityResult:
 
 
 def _canonical_bytes(obj: object) -> bytes:
+    """Encode an object as the canonical JSON bytes the fingerprints hash.
+
+    Use UTF-8 JSON with sorted keys, compact separators and unescaped
+    non-ASCII characters. NaN and infinite floats raise ValueError.
+    Unsupported object types raise TypeError; other serialization and UTF-8
+    encoding errors also propagate.
+    """
     return json.dumps(
         obj,
         ensure_ascii=False,
@@ -292,6 +403,13 @@ def _canonical_bytes(obj: object) -> bytes:
 
 
 def _target_fingerprint(action: ServiceCommandAction, activity_id: UUID, **extras: object) -> str:
+    """Return the authority target fingerprint for an action on an Activity.
+
+    The target holds the action, the activity ID as a string and the target
+    schema, updated with any extra fields the caller passes (ASSIGN passes
+    the assignee's identity ID). Return the hex SHA-256 of the target domain
+    tag followed by the target's canonical bytes.
+    """
     target = {
         "action": action.value,
         "activity_id": str(activity_id),
@@ -313,6 +431,15 @@ def _payload_fingerprint(
     command: dict,
     evidence: list[dict],
 ) -> str:
+    """Return the command payload fingerprint compared on replay.
+
+    The payload holds the action, the actor's identity ID and access epoch,
+    the request reference, the idempotency key, the occurrence time in
+    canonical UTC form, the target, the command fields and the evidence
+    entries, with the command schema. Return the hex SHA-256 of the command
+    domain tag followed by the payload's canonical bytes. Lists among the
+    command fields keep their order; mapping keys are sorted.
+    """
     payload = {
         "action": action.value,
         "actor_access_epoch": actor_access_epoch,
@@ -338,6 +465,14 @@ def _lineage_reference(
     payload_fingerprint: str,
     occurred_at: datetime,
 ) -> str:
+    """Return a transition's lineage reference: "s012l1:" and a hex SHA-256.
+
+    The digest covers the lineage domain tag followed by the canonical bytes
+    of the action, activity ID, sequence, actor identity ID and access epoch,
+    payload fingerprint, occurrence time in canonical UTC form and lineage
+    schema. The evidence entries are covered through the payload
+    fingerprint; the authority references are not covered.
+    """
     lineage = {
         "action": action.value,
         "activity_id": str(activity_id),
@@ -353,6 +488,12 @@ def _lineage_reference(
 
 
 def _validate_reference(value: str, name: str, maximum: int) -> str:
+    """Return a reference string with surrounding whitespace stripped.
+
+    Raise ServiceActivityValidationError unless the value is a str whose
+    stripped form has from 1 to maximum characters; name identifies the
+    field in the message.
+    """
     if not isinstance(value, str):
         raise ServiceActivityValidationError(f"{name} must be a string")
     stripped = value.strip()
@@ -362,12 +503,24 @@ def _validate_reference(value: str, name: str, maximum: int) -> str:
 
 
 def _validate_occurred_at(value: datetime) -> datetime:
+    """Return a timezone-aware datetime converted to UTC.
+
+    Raise ServiceActivityValidationError for a value that is not a datetime
+    or has no UTC offset. The time is not compared with any clock or with
+    earlier transitions.
+    """
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ServiceActivityValidationError("occurred_at must be timezone-aware")
     return value.astimezone(timezone.utc)
 
 
 def _sorted_evidence_dicts(evidence_tuples: list[tuple[str, str]], actor_identity_id: UUID) -> list[dict]:
+    """Build a command's evidence entries for fingerprinting, in canonical order.
+
+    Each (kind, reference) pair becomes a mapping of evidence_kind, reference
+    and supplied_by_identity_id, the supplier always being the actor. The
+    entries are sorted by the UTF-8 bytes of the kind, then of the reference.
+    """
     actor_str = str(actor_identity_id)
     entries = [
         {"evidence_kind": kind, "reference": ref, "supplied_by_identity_id": actor_str}
@@ -378,16 +531,30 @@ def _sorted_evidence_dicts(evidence_tuples: list[tuple[str, str]], actor_identit
 
 
 def _evidence_result_from_rows(rows) -> EvidenceResult:
+    """Return evidence rows as sorted (kind, reference) pairs for a result.
+
+    Pairs are sorted by the UTF-8 bytes of the kind value, then of the
+    reference. A stored kind outside the evidence kinds raises ValueError.
+    """
     items = [(ServiceActivityEvidenceKind(r.evidence_kind), r.reference) for r in rows]
     items.sort(key=lambda t: (t[0].value.encode("utf-8"), t[1].encode("utf-8")))
     return tuple(items)
 
 
 def _is_postgresql(alias: str) -> bool:
+    """Report whether the database alias's ENGINE setting names postgresql."""
     return "postgresql" in connections[alias].settings_dict.get("ENGINE", "")
 
 
 class ServiceActivityService:
+    """Execute Service Activity commands against one database alias.
+
+    Each public command method enters an atomic block, which may be nested
+    within a caller's transaction. The injected authority qualifies whether
+    the actor may act. This class checks actor eligibility, lifecycle state
+    and replay conditions, and writes first-execution records or reconstructs
+    a stored result.
+    """
     def __init__(
         self,
         *,
@@ -395,6 +562,12 @@ class ServiceActivityService:
         clock: Callable[[], datetime],
         database_alias: str = "default",
     ) -> None:
+        """Bind the service to an authority, a clock and a database alias.
+
+        Refuses an authority that is not a ServiceCommandAuthority, an authority bound to a different alias, a
+        clock that is not callable, and an empty alias. The clock supplies the time at which authority is
+        evaluated, not the command's occurred_at.
+        """
         if not isinstance(authority, ServiceCommandAuthority):
             raise TypeError("authority must be a ServiceCommandAuthority")
         if authority.database_alias != database_alias:
@@ -408,6 +581,11 @@ class ServiceActivityService:
         self._alias = database_alias
 
     def _lock_actor(self, credential: User) -> Identity:
+        """Lock and return the command actor's Identity, with its credential, for the current transaction.
+
+        Refuses with ServiceActivityActorError if no Identity belongs to the credential, if the Identity is not
+        ACTIVE, or if the credential is not active.
+        """
         try:
             identity = (
                 Identity.objects.using(self._alias)
@@ -424,6 +602,11 @@ class ServiceActivityService:
         return identity
 
     def _lock_remaining_identities(self, pks: set[int], actor_pk: int) -> dict[int, Identity]:
+        """Lock the other Identities a command touches, in ascending key order, and return them by key.
+
+        The actor is excluded, since it is already locked. Rows are returned without an eligibility check;
+        callers check only the identities that must be active.
+        """
         remaining = sorted(pks - {actor_pk})
         if not remaining:
             return {}
@@ -437,6 +620,10 @@ class ServiceActivityService:
         return {r.pk: r for r in rows}
 
     def _require_active_identity(self, identity: Identity, label: str) -> None:
+        """Refuse with ServiceActivityActorError unless the Identity and its credential are both active.
+
+        The label names the role in the error message, for example "assignee".
+        """
         if identity.access_state != Identity.AccessState.ACTIVE:
             raise ServiceActivityActorError(f"{label} Identity is not active")
         if not identity.credential.is_active:
@@ -450,6 +637,16 @@ class ServiceActivityService:
         request_reference: str,
         idempotency_key: str,
     ):
+        """Build an authority request for this call and return its qualification result.
+
+        Read the injected clock, validate its result as a timezone-aware datetime
+        and normalise it to UTC. The request carries that evaluation time, the
+        database alias, actor key, identity and current access epoch, action,
+        target fingerprint, request reference and idempotency key.
+
+        Clock, validation and authority exceptions propagate. The authority is
+        called only after clock-result validation succeeds.
+        """
         evaluated_at = _validate_occurred_at(self._clock())
         request = ServiceCommandAuthorityRequest(
             database_alias=self._alias,
@@ -472,6 +669,12 @@ class ServiceActivityService:
         expected_epoch: int,
         expected_fingerprint: str,
     ):
+        """Lock and return a stored transition for the actor, action and idempotency key.
+
+        Return None when none is found. The expected_epoch and
+        expected_fingerprint parameters are unused here. Callers separately
+        compare those values through _resolve_replay and reconstruct the result.
+        """
         existing = (
             ServiceActivityTransition.objects.using(self._alias)
             .select_for_update()
@@ -485,12 +688,24 @@ class ServiceActivityService:
         return existing
 
     def _resolve_replay(self, existing: ServiceActivityTransition, expected_epoch: int, expected_fingerprint: str):
+        """Compare a stored transition's access epoch and payload fingerprint.
+
+        Raise ServiceActivityCrossEpochConflict for an epoch mismatch, then
+        ServiceActivityPayloadConflict for a fingerprint mismatch. Return None
+        when both match. Command-specific reconstruction performs further checks.
+        """
         if existing.actor_access_epoch != expected_epoch:
             raise ServiceActivityCrossEpochConflict("cross-epoch conflict")
         if existing.payload_fingerprint != expected_fingerprint:
             raise ServiceActivityPayloadConflict("payload conflict")
 
     def _write_evidence(self, transition, actor, authority_reference: str, occurred_at: datetime, evidence_tuples: list[tuple[str, str]]):
+        """Save evidence references on the service's database alias and return the rows.
+
+        Create one row per (kind, reference) pair, bound to the supplied transition,
+        actor, authority reference and occurrence time. Return the saved rows as
+        a list. The caller supplies the enclosing transaction.
+        """
         rows = []
         for kind_value, ref in evidence_tuples:
             rows.append(ServiceActivityEvidenceReference(
@@ -506,6 +721,14 @@ class ServiceActivityService:
         return rows
 
     def _reconstruct_evidence(self, transition) -> EvidenceResult:
+        """Return stored evidence as a sorted tuple of (kind, reference) pairs.
+
+        Raise ServiceActivityMalformedReplay if a row's occurrence time differs
+        from the transition's, or its supplier differs from the transition's actor.
+        Order pairs by the UTF-8 bytes of the kind value and reference; return an
+        empty tuple when no rows exist. Command-specific reconstruction checks
+        the allowed evidence kinds and counts.
+        """
         rows = list(
             ServiceActivityEvidenceReference.objects.using(self._alias)
             .filter(transition=transition)
@@ -518,6 +741,17 @@ class ServiceActivityService:
         return _evidence_result_from_rows(rows)
 
     def _try_insert_with_savepoint(self, write_fn, replay_fn):
+        """Run a write with named-constraint recovery on PostgreSQL.
+
+        Call within an existing transaction on the service's alias. On PostgreSQL,
+        run write_fn inside a nested atomic block. If an IntegrityError reports
+        the constraint named by _IDEM_CONSTRAINT, roll back that block and call
+        replay_fn within the enclosing transaction. Return the callback's result;
+        other errors and failures of replay_fn propagate.
+
+        On other databases, call write_fn directly without adding a savepoint
+        or this recovery path.
+        """
         if _is_postgresql(self._alias):
             try:
                 with transaction.atomic(using=self._alias):
@@ -533,10 +767,40 @@ class ServiceActivityService:
             return write_fn()
 
     def create_service_activity(self, command: CreateServiceActivityCommand) -> CreateServiceActivityResult:
+        """Create an Activity or replay its stored CREATE result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_create.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_create(command)
 
     def _execute_create(self, command: CreateServiceActivityCommand) -> CreateServiceActivityResult:
+        """Execute CREATE within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise references and occurrence time; validate the
+        activity ID, ServiceVersion key and initiating domain. Find the version,
+        raising ServiceActivityNotFound if absent, then lock its Service and the
+        ServiceVersion, lock the actor, qualify authority, and compute the command
+        payload fingerprint.
+
+        If a transition already exists for this actor, CREATE and idempotency key,
+        compare its epoch and fingerprint and reconstruct its result. Authority
+        qualification therefore precedes replay lookup.
+
+        For first execution, require a PUBLISHED Service and its current version,
+        otherwise raising ServiceActivityLifecycleError. Write an UNASSIGNED
+        Activity preserving the initiating domain and reference, its sequence-one
+        transition with authority and lineage references, its head link, and one
+        ACTIVITY_BASIS evidence row. Bind the Activity creation, transition and
+        evidence occurrence to the normalised command occurred_at.
+
+        Published/current-version checks apply only after no replay was found.
+        Use _try_insert_with_savepoint for the writes: PostgreSQL recovery is
+        limited to the named actor/action/idempotency constraint and still applies
+        the replay comparisons and reconstruction checks. Other write failures
+        propagate.
+        """
         action = ServiceCommandAction.CREATE
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -654,6 +918,18 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_create(self, trans: ServiceActivityTransition, activity_id: UUID) -> CreateServiceActivityResult:
+        """Reconstruct a CREATE result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID, matching Activity
+        creation and transition occurrence times, sequence one, and no previous
+        transition. Reconstruct evidence with its occurrence/supplier checks and
+        require exactly one ACTIVITY_BASIS pair. Raise
+        ServiceActivityMalformedReplay for these checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference and
+        authority references with the reconstructed evidence. The recorded state
+        is used even if the Activity has subsequently changed state.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -676,10 +952,47 @@ class ServiceActivityService:
         )
 
     def assign_service_activity(self, command: AssignServiceActivityCommand) -> AssignServiceActivityResult:
+        """Assign an Activity or replay its stored ASSIGN result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_assign.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_assign(command)
 
     def _execute_assign(self, command: AssignServiceActivityCommand) -> AssignServiceActivityResult:
+        """Execute ASSIGN within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key, occurrence
+        time, assignment reference and assignment basis reference, and require
+        UUIDs for the activity and assignee identity IDs. Lock the Activity, then
+        the actor; a missing Activity propagates ServiceActivity.DoesNotExist.
+        Lock the assignee Identity with its credential, raising
+        ServiceActivityActorError if it is absent or if it or its credential is not
+        active. The actor may assign the Activity to itself.
+
+        Qualify authority against a target naming the activity and the assignee,
+        then compute the command payload fingerprint. If a transition already
+        exists for this actor, ASSIGN and idempotency key, compare its epoch and
+        fingerprint and reconstruct its result. The assignee's eligibility check
+        and authority qualification therefore both precede replay lookup.
+
+        For first execution, require the Activity to be UNASSIGNED, otherwise
+        raising ServiceActivityLifecycleError, and lock its head transition. Write
+        the UNASSIGNED to ASSIGNED transition with authority and lineage
+        references; one assignment row recording the assignee, the actor as
+        assigner and the assignment reference; the Activity's new state and head;
+        and one ASSIGNMENT_BASIS evidence row supplied by the actor. Bind the
+        transition, assignment and evidence occurrence to the normalised command
+        occurred_at. The assignment reference is fingerprinted and stored on the
+        assignment row; it is not an evidence row.
+
+        An Activity has at most one assignment, and no command reassigns it. Use
+        _try_insert_with_savepoint for the writes: PostgreSQL recovery is limited
+        to the named actor/action/idempotency constraint and still applies the
+        replay comparisons and reconstruction checks. Other write failures
+        propagate.
+        """
         action = ServiceCommandAction.ASSIGN
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -812,6 +1125,19 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_assign(self, trans: ServiceActivityTransition, activity_id: UUID) -> AssignServiceActivityResult:
+        """Reconstruct an ASSIGN result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID. Require the
+        assignment row written by that transition, with an assignment time equal
+        to the transition's occurrence time. Reconstruct evidence with its
+        occurrence/supplier checks and require exactly one ASSIGNMENT_BASIS pair.
+        Raise ServiceActivityMalformedReplay for these checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference and
+        authority references, the assignment ID and the reconstructed evidence.
+        The recorded state is used even if the Activity has subsequently changed
+        state.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -837,10 +1163,39 @@ class ServiceActivityService:
         )
 
     def accept_service_assignment(self, command: AcceptServiceAssignmentCommand) -> AcceptServiceAssignmentResult:
+        """Accept an assignment or replay its stored ACCEPT_ASSIGNMENT result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_accept.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_accept(command)
 
     def _execute_accept(self, command: AcceptServiceAssignmentCommand) -> AcceptServiceAssignmentResult:
+        """Execute ACCEPT within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key and
+        occurrence time, and require a UUID activity ID. Lock the Activity, then
+        the actor; a missing Activity propagates ServiceActivity.DoesNotExist.
+        Lock the Activity's assignment, raising ServiceActivityLifecycleError if
+        none exists, and raise ServiceActivityActorError unless the actor is the
+        assignee. These checks precede authority qualification.
+
+        Qualify authority against a target naming the activity, then compute the
+        command payload fingerprint. If a transition already exists for this
+        actor, ACCEPT_ASSIGNMENT and idempotency key, compare its epoch and
+        fingerprint and reconstruct its result.
+
+        For first execution, require the Activity to be ASSIGNED, otherwise
+        raising ServiceActivityLifecycleError, and lock its head transition. Write
+        the ASSIGNED to IN_PROGRESS transition with authority and lineage
+        references, bound to the normalised command occurred_at, and the
+        Activity's new state and head. ACCEPT writes no evidence row and no child
+        record. Use _try_insert_with_savepoint for the writes: PostgreSQL recovery
+        is limited to the named actor/action/idempotency constraint and still
+        applies the replay comparisons and reconstruction checks. Other write
+        failures propagate.
+        """
         action = ServiceCommandAction.ACCEPT_ASSIGNMENT
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -937,6 +1292,16 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_accept(self, trans: ServiceActivityTransition, activity_id: UUID) -> AcceptServiceAssignmentResult:
+        """Reconstruct an ACCEPT result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID, then require that
+        the transition has no evidence rows. Raise ServiceActivityMalformedReplay
+        for these checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference and
+        authority references with empty evidence. The recorded state is used even
+        if the Activity has subsequently changed state.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -955,10 +1320,41 @@ class ServiceActivityService:
         )
 
     def decline_service_assignment(self, command: DeclineServiceAssignmentCommand) -> DeclineServiceAssignmentResult:
+        """Decline an assignment or replay its stored DECLINE_ASSIGNMENT result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_decline.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_decline(command)
 
     def _execute_decline(self, command: DeclineServiceAssignmentCommand) -> DeclineServiceAssignmentResult:
+        """Execute DECLINE within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key, occurrence
+        time and decline basis reference, and require a UUID activity ID. Lock the
+        Activity, then the actor; a missing Activity propagates
+        ServiceActivity.DoesNotExist. Lock the Activity's assignment, raising
+        ServiceActivityLifecycleError if none exists, and raise
+        ServiceActivityActorError unless the actor is the assignee. These checks
+        precede authority qualification.
+
+        Qualify authority against a target naming the activity, then compute the
+        command payload fingerprint. If a transition already exists for this
+        actor, DECLINE_ASSIGNMENT and idempotency key, compare its epoch and
+        fingerprint and reconstruct its result.
+
+        For first execution, require the Activity to be ASSIGNED, otherwise
+        raising ServiceActivityLifecycleError, and lock its head transition. Write
+        the ASSIGNED to DECLINED transition with authority and lineage references,
+        the Activity's new state and head, and one DECLINE_BASIS evidence row
+        supplied by the actor, all bound to the normalised command occurred_at.
+        DECLINED is terminal: no command moves a declined Activity, and it is not
+        returned for reassignment. Use _try_insert_with_savepoint for the writes:
+        PostgreSQL recovery is limited to the named actor/action/idempotency
+        constraint and still applies the replay comparisons and reconstruction
+        checks. Other write failures propagate.
+        """
         action = ServiceCommandAction.DECLINE_ASSIGNMENT
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -1059,6 +1455,16 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_decline(self, trans: ServiceActivityTransition, activity_id: UUID) -> DeclineServiceAssignmentResult:
+        """Reconstruct a DECLINE result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID. Reconstruct
+        evidence with its occurrence/supplier checks and require exactly one
+        DECLINE_BASIS pair. Raise ServiceActivityMalformedReplay for these checked
+        mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference,
+        authority references and the reconstructed evidence.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -1077,10 +1483,56 @@ class ServiceActivityService:
         )
 
     def submit_service_work(self, command: SubmitServiceWorkCommand) -> SubmitServiceWorkResult:
+        """Submit work for an Activity or replay its stored SUBMIT_WORK result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_submit.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_submit(command)
 
     def _execute_submit(self, command: SubmitServiceWorkCommand) -> SubmitServiceWorkResult:
+        """Execute SUBMIT within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key,
+        occurrence time and submission reference; require a UUID activity ID and
+        a tuple of submission support references. Each support reference is
+        validated and normalised, and a duplicate after normalisation raises
+        ServiceActivityValidationError. The tuple may be empty.
+
+        Lock the Activity, then the actor; a missing Activity propagates
+        ServiceActivity.DoesNotExist. Lock the Activity's assignment, raising
+        ServiceActivityLifecycleError if none exists, and raise
+        ServiceActivityActorError unless the actor is the assignee. These checks
+        precede authority qualification.
+
+        Qualify authority against a target naming the activity, then compute the
+        command payload fingerprint, including the submission reference and the
+        normalised support references in their input order. If a transition
+        already exists for this actor, SUBMIT_WORK and idempotency key, compare
+        its epoch and fingerprint and reconstruct its result. With the other
+        replay inputs unchanged, reordering distinct support references changes
+        the fingerprint and raises ServiceActivityPayloadConflict. Returned
+        evidence pairs are sorted by the UTF-8 bytes of their kind and
+        reference; that ordering does not make the command support-reference
+        tuple unordered.
+
+        For first execution, require the Activity to be IN_PROGRESS, otherwise
+        raising ServiceActivityLifecycleError, and lock its head transition.
+        Write the IN_PROGRESS to SUBMITTED transition with authority and lineage
+        references; one work submission recording the actor as submitter and the
+        submission reference; the Activity's new state and head; and one
+        SUBMISSION_SUPPORT evidence row per support reference, supplied by the
+        actor. Bind the transition, submission and evidence occurrence to the
+        normalised command occurred_at. The submission stores references, not
+        work content. An Activity has at most one submission, and no command
+        resubmits it.
+
+        Use _try_insert_with_savepoint for the writes: PostgreSQL recovery is
+        limited to the named actor/action/idempotency constraint and still
+        applies the replay comparisons and reconstruction checks. Other write
+        failures propagate.
+        """
         action = ServiceCommandAction.SUBMIT_WORK
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -1207,6 +1659,20 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_submit(self, trans: ServiceActivityTransition, activity_id: UUID) -> SubmitServiceWorkResult:
+        """Reconstruct a SUBMIT result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID. Require the work
+        submission row written by that transition, with a submission time equal
+        to the transition's occurrence time. Reconstruct evidence with its
+        occurrence/supplier checks and require every pair to be
+        SUBMISSION_SUPPORT; any number, including none, is accepted. Raise
+        ServiceActivityMalformedReplay for these checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference and
+        authority references, the work submission ID and the reconstructed
+        evidence. The recorded state is used even if the Activity has
+        subsequently changed state.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -1233,10 +1699,51 @@ class ServiceActivityService:
         )
 
     def review_service_work(self, command: ReviewServiceWorkCommand) -> ReviewServiceWorkResult:
+        """Review submitted work or replay its stored REVIEW_WORK result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_review.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_review(command)
 
     def _execute_review(self, command: ReviewServiceWorkCommand) -> ReviewServiceWorkResult:
+        """Execute REVIEW within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key,
+        occurrence time, review reference and review record reference, and
+        require a UUID activity ID. Lock the Activity, then the actor with its
+        credential. A missing Activity propagates ServiceActivity.DoesNotExist;
+        a missing actor Identity, an inactive Identity or an inactive credential
+        raises ServiceActivityActorError. Lock the Activity's assignment,
+        raising ServiceActivityLifecycleError if none exists, then lock the
+        assignee and the Activity's creator, other than the actor, in ascending
+        key order; their current eligibility is not checked.
+
+        Beyond actor eligibility, this method imposes no reviewer-role or
+        separation-of-duties restriction: an eligible assignee or creator may
+        review if the injected authority qualifies that actor. Qualify authority
+        against a target naming the activity, then compute the command payload
+        fingerprint. If a transition already exists for this actor, REVIEW_WORK
+        and idempotency key, compare its epoch and fingerprint and reconstruct
+        its result.
+
+        For first execution, require the Activity to be SUBMITTED, otherwise
+        raising ServiceActivityLifecycleError, then lock its head transition and
+        its work submission; a missing submission also raises
+        ServiceActivityLifecycleError. Write the SUBMITTED to REVIEWED
+        transition with authority and lineage references; one review of that
+        submission recording the actor as reviewer and the review reference; the
+        Activity's new state and head; and one REVIEW_RECORD evidence row
+        supplied by the actor, all bound to the normalised command occurred_at.
+        The review records that a review occurred, with its references; it
+        carries no verdict. A submission has at most one review.
+
+        Use _try_insert_with_savepoint for the writes: PostgreSQL recovery is
+        limited to the named actor/action/idempotency constraint and still
+        applies the replay comparisons and reconstruction checks. Other write
+        failures propagate.
+        """
         action = ServiceCommandAction.REVIEW_WORK
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -1352,6 +1859,19 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_review(self, trans: ServiceActivityTransition, activity_id: UUID) -> ReviewServiceWorkResult:
+        """Reconstruct a REVIEW result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID. Require the review
+        row written by that transition, with a review time equal to the
+        transition's occurrence time. Reconstruct evidence with its
+        occurrence/supplier checks and require exactly one REVIEW_RECORD pair.
+        Raise ServiceActivityMalformedReplay for these checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference and
+        authority references, the review ID and the reconstructed evidence. The
+        recorded state is used even if the Activity has subsequently changed
+        state.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -1377,10 +1897,54 @@ class ServiceActivityService:
         )
 
     def complete_service_activity(self, command: CompleteServiceActivityCommand) -> CompleteServiceActivityResult:
+        """Complete a reviewed Activity or replay its stored COMPLETE_ACTIVITY result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_complete.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_complete(command)
 
     def _execute_complete(self, command: CompleteServiceActivityCommand) -> CompleteServiceActivityResult:
+        """Execute COMPLETE within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key,
+        occurrence time and completion record reference, and require a UUID
+        activity ID. Lock the Activity, then the actor with its credential. A
+        missing Activity propagates ServiceActivity.DoesNotExist; a missing
+        actor Identity, an inactive Identity or an inactive credential raises
+        ServiceActivityActorError. Lock the Activity's assignment, its work
+        submission and that submission's review, raising
+        ServiceActivityLifecycleError if any is missing, then lock the assignee,
+        the creator and the reviewer, other than the actor, in ascending key
+        order; their current eligibility is not checked. These lookups precede
+        authority qualification, replay lookup and the state check. The first
+        missing required record raises the lifecycle error; when the assignment
+        and submission exist but the review does not, the missing review is
+        refused before the Activity's state is checked.
+
+        Beyond actor eligibility, this method imposes no completer-role or
+        separation-of-duties restriction; the injected authority decides whether
+        the eligible actor may complete. Qualify authority against a target
+        naming the activity, then compute the command payload fingerprint. If a
+        transition already exists for this actor, COMPLETE_ACTIVITY and
+        idempotency key, compare its epoch and fingerprint and reconstruct its
+        result.
+
+        For first execution, require the Activity to be REVIEWED, otherwise
+        raising ServiceActivityLifecycleError, and lock its head transition.
+        Write the REVIEWED to COMPLETED transition with authority and lineage
+        references, the Activity's new state and head, and one COMPLETION_RECORD
+        evidence row supplied by the actor, all bound to the normalised command
+        occurred_at. COMPLETE writes no child record. COMPLETED is terminal;
+        completion records the lifecycle occurrence only, not that the work was
+        accepted, approved or of any quality.
+
+        Use _try_insert_with_savepoint for the writes: PostgreSQL recovery is
+        limited to the named actor/action/idempotency constraint and still
+        applies the replay comparisons and reconstruction checks. Other write
+        failures propagate.
+        """
         action = ServiceCommandAction.COMPLETE_ACTIVITY
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -1483,6 +2047,16 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_complete(self, trans: ServiceActivityTransition, activity_id: UUID) -> CompleteServiceActivityResult:
+        """Reconstruct a COMPLETE result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID, then reconstruct
+        evidence with its occurrence/supplier checks and require exactly one
+        COMPLETION_RECORD pair. Raise ServiceActivityMalformedReplay for these
+        checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference,
+        authority references and the reconstructed evidence.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -1501,10 +2075,50 @@ class ServiceActivityService:
         )
 
     def cancel_service_activity(self, command: CancelServiceActivityCommand) -> CancelServiceActivityResult:
+        """Cancel an Activity or replay its stored CANCEL_ACTIVITY result.
+
+        Enter an atomic block on the service's database alias and delegate to
+        _execute_cancel.
+        """
         with transaction.atomic(using=self._alias):
             return self._execute_cancel(command)
 
     def _execute_cancel(self, command: CancelServiceActivityCommand) -> CancelServiceActivityResult:
+        """Execute CANCEL within the caller's transaction, or reconstruct a matching replay.
+
+        Validate and normalise the request reference, idempotency key,
+        occurrence time and cancellation basis reference, and require a UUID
+        activity ID. Lock the Activity, then the actor with its credential; a
+        missing Activity propagates ServiceActivity.DoesNotExist. Raise
+        ServiceActivityActorError if the actor Identity is absent or if the
+        Identity or its credential is not active.
+
+        Read the Activity's assignment and work submission, and the submission's
+        review where present, without locking those rows. Then lock the creator
+        and any assignee and reviewer, other than the actor, in ascending key
+        order; their current eligibility is not checked.
+
+        Beyond actor eligibility, this method imposes no role restriction on who
+        may cancel; the injected authority decides. Qualify authority against a
+        target naming the activity, then compute the command payload fingerprint.
+        If a transition already exists for this actor, CANCEL_ACTIVITY and
+        idempotency key, compare its epoch and fingerprint and reconstruct its
+        result.
+
+        For first execution, require a non-terminal state (UNASSIGNED, ASSIGNED,
+        IN_PROGRESS, SUBMITTED or REVIEWED), otherwise raising
+        ServiceActivityLifecycleError, and lock the head transition. Write a
+        transition from the current state to CANCELLED with authority and
+        lineage references, the Activity's new state and head, and one
+        CANCELLATION_BASIS evidence row supplied by the actor. Bind the transition
+        and evidence occurrence to the normalised command occurred_at. CANCEL
+        writes no separate child record, and CANCELLED is terminal.
+
+        Use _try_insert_with_savepoint for the writes: PostgreSQL recovery is
+        limited to the named actor/action/idempotency constraint and still
+        applies the replay comparisons and reconstruction checks. Other write
+        failures propagate.
+        """
         action = ServiceCommandAction.CANCEL_ACTIVITY
         request_ref = _validate_reference(command.request_reference, "request_reference", 128)
         idem_key = _validate_reference(command.idempotency_key, "idempotency_key", 120)
@@ -1625,6 +2239,16 @@ class ServiceActivityService:
         return self._try_insert_with_savepoint(_write, _replay_after_race)
 
     def _reconstruct_cancel(self, trans: ServiceActivityTransition, activity_id: UUID) -> CancelServiceActivityResult:
+        """Reconstruct a CANCEL result from the supplied stored transition.
+
+        Load its Activity and check the requested activity ID, then reconstruct
+        evidence with its occurrence/supplier checks and require exactly one
+        CANCELLATION_BASIS pair. Raise ServiceActivityMalformedReplay for these
+        checked mismatches.
+
+        Return the transition's recorded state, sequence, lineage reference,
+        authority references and the reconstructed evidence.
+        """
         activity = ServiceActivity.objects.using(self._alias).get(pk=trans.activity_id)
         if activity.activity_id != activity_id:
             raise ServiceActivityMalformedReplay("activity_id mismatch")
@@ -1643,6 +2267,10 @@ class ServiceActivityService:
         )
 
     def _lock_head(self, activity: ServiceActivity):
+        """Lock and return the Activity's head transition, or None if it has none.
+
+        The head is taken from the Activity row as already loaded and locked.
+        """
         if activity.head_transition_id is None:
             return None
         return (
@@ -1652,6 +2280,10 @@ class ServiceActivityService:
         )
 
     def _get_assignment(self, activity: ServiceActivity) -> ServiceActivityAssignment:
+        """Lock and return the Activity's assignment.
+
+        Raise ServiceActivityLifecycleError if no assignment exists.
+        """
         try:
             return (
                 ServiceActivityAssignment.objects.using(self._alias)
@@ -1662,6 +2294,10 @@ class ServiceActivityService:
             raise ServiceActivityLifecycleError("no assignment exists for this Activity")
 
     def _get_submission(self, activity: ServiceActivity) -> ServiceWorkSubmission:
+        """Lock and return the Activity's work submission.
+
+        Raise ServiceActivityLifecycleError if no work submission exists.
+        """
         try:
             return (
                 ServiceWorkSubmission.objects.using(self._alias)
@@ -1672,6 +2308,10 @@ class ServiceActivityService:
             raise ServiceActivityLifecycleError("no work submission exists for this Activity")
 
     def _get_review(self, submission: ServiceWorkSubmission) -> ServiceActivityReview:
+        """Lock and return the review of a work submission.
+
+        Raise ServiceActivityLifecycleError if no review exists.
+        """
         try:
             return (
                 ServiceActivityReview.objects.using(self._alias)
