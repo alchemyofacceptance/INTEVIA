@@ -4693,6 +4693,92 @@ class GovernedVisibilityGrant(_S015ImmutableAnchor):
     )
 
 
+class IntakeEntry(models.TextChoices):
+    FOUND_LIVING_ORGANISM = "FOUND_LIVING_ORGANISM", "Found living organism"
+    ADVANCE_PHASE = "ADVANCE_PHASE", "Advance phase"
+    BIRTHING = "BIRTHING", "Birthing"
+    ADOPT_GOVERNING_INSTRUMENT = "ADOPT_GOVERNING_INSTRUMENT", "Adopt governing instrument"
+    CREATE_GOVERNANCE_CIRCLE = "CREATE_GOVERNANCE_CIRCLE", "Create governance circle"
+    REQUEST_GOVERNANCE_SEAT = "REQUEST_GOVERNANCE_SEAT", "Request governance seat"
+    DECIDE_GOVERNANCE_SEAT = "DECIDE_GOVERNANCE_SEAT", "Decide governance seat"
+    DECIDE_GOVERNANCE_SEAT_COMPOUND = (
+        "DECIDE_GOVERNANCE_SEAT_COMPOUND",
+        "Decide governance seat (compound)",
+    )
+    SEAT_GOVERNANCE_CIRCLE = "SEAT_GOVERNANCE_CIRCLE", "Seat governance circle"
+    SUBMIT_APPLICATION = "SUBMIT_APPLICATION", "Submit application"
+    WITHDRAW_APPLICATION = "WITHDRAW_APPLICATION", "Withdraw application"
+    CLAIM_APPLICATION = "CLAIM_APPLICATION", "Claim application"
+    REASSIGN_APPLICATION = "REASSIGN_APPLICATION", "Reassign application"
+    DECIDE_APPLICATION = "DECIDE_APPLICATION", "Decide application"
+    SAVE_GATEWAY_DRAFT = "SAVE_GATEWAY_DRAFT", "Save gateway draft"
+    EFFECT_GATEWAY_VERSION = "EFFECT_GATEWAY_VERSION", "Effect gateway version"
+    OPEN_MEMBERSHIP = "OPEN_MEMBERSHIP", "Open membership"
+    TRANSITION_MEMBERSHIP = "TRANSITION_MEMBERSHIP", "Transition membership"
+    PROPOSE_ASSIGNMENT = "PROPOSE_ASSIGNMENT", "Propose assignment"
+    TRANSITION_ASSIGNMENT = "TRANSITION_ASSIGNMENT", "Transition assignment"
+    RECORD_OFFICE_CONSENT = "RECORD_OFFICE_CONSENT", "Record office consent"
+    ACTIVATE_BETA = "ACTIVATE_BETA", "Activate beta"
+
+
+_H100_COMPOUND_ENTRIES = (
+    IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+    IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
+)
+
+
+class CommandIntake(_S015AppendOnly):
+    """Append-only binding between one admitted request and its database time."""
+
+    actor = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="command_intakes",
+    )
+    actor_identity_id = models.UUIDField()
+    actor_access_epoch = models.BigIntegerField()
+    entry = models.CharField(max_length=40, choices=IntakeEntry.choices)
+    action = models.CharField(max_length=64)
+    idempotency_key = models.CharField(max_length=120)
+    request_reference = models.CharField(max_length=128)
+    request_fingerprint = models.CharField(max_length=64)
+    fingerprint_schema = models.CharField(max_length=32)
+    target_organism_id = models.UUIDField(null=True, blank=True)
+    received_at = models.DateTimeField(editable=False)
+
+    class Meta:
+        db_table = "core_commandintake"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("actor", "action", "idempotency_key"),
+                name="h100_intake_actor_action_key_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(entry__in=[entry.value for entry in IntakeEntry]),
+                name="h100_intake_entry_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(request_fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="h100_intake_fingerprint_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(actor_access_epoch__gte=0),
+                name="h100_intake_epoch_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(entry__in=[entry.value for entry in _H100_COMPOUND_ENTRIES])
+                    & Q(target_organism_id__isnull=False)
+                )
+                | (
+                    ~Q(entry__in=[entry.value for entry in _H100_COMPOUND_ENTRIES])
+                    & Q(target_organism_id__isnull=True)
+                ),
+                name="h100_intake_compound_target_match",
+            ),
+        ]
+
+
 class OrganismCommandReceipt(_S015AppendOnly):
     receipt_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     actor = models.ForeignKey(

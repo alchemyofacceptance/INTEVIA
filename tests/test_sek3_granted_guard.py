@@ -37,6 +37,7 @@ from tests.se_route_support import (
     declared_event_less_entitlement_rows,
     ensure_test_policy_text,
 )
+from verification.isolation import state as isolation_state
 from tests.test_se_entitlement import (
     _birthing_command,
     _election_command,
@@ -203,6 +204,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
                 self.assertFalse(_migration_is_recorded())
                 _assert_applied_core_head(self, PREVIOUS[1])
                 previous_trigger_count = _trigger_count()
+                self.assertEqual(
+                    previous_trigger_count,
+                    isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
+                )
                 ensure_test_policy_text()
                 grant = _seed_beta_entitlement(route, effective_at=database_now())
                 event = OrganismEntitlementEvent.objects.get(
@@ -215,7 +220,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
                 self.assertTrue(_migration_is_recorded())
                 _assert_applied_core_head(self, MIGRATION[1])
                 self.assertEqual(_records_state(), before_forward)
-                self.assertEqual(_trigger_count(), previous_trigger_count + 1)
+                self.assertEqual(
+                    _trigger_count(),
+                    isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]],
+                )
                 self.assertEqual(_function_count(), 1)
                 _assert_guard_present(self)
                 self.assertEqual(
@@ -247,6 +255,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
         with _rollback_migration_work(self):
             MigrationExecutor(connection).migrate([PREVIOUS])
             previous_trigger_count = _trigger_count()
+            self.assertEqual(
+                previous_trigger_count,
+                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
+            )
             row = _create_eventless_beta(route)
             before_forward = _records_state()
             with self.assertRaisesRegex(RuntimeError, "exactly one first GRANTED event") as obstruction:
@@ -256,7 +268,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
             self.assertFalse(_migration_is_recorded())
             _assert_applied_core_head(self, PREVIOUS[1])
             self.assertEqual(_records_state(), before_forward)
-            self.assertEqual(_trigger_count(), previous_trigger_count)
+            self.assertEqual(
+                _trigger_count(),
+                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
+            )
             _assert_guard_absent(self)
 
         self.assertEqual(_records_state(), before)
@@ -268,12 +283,18 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
         with _rollback_migration_work(self):
             MigrationExecutor(connection).migrate([PREVIOUS])
             self.assertFalse(_migration_is_recorded())
-            self.assertEqual(_trigger_count(), original_trigger_count - 1)
+            self.assertEqual(
+                _trigger_count(),
+                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
+            )
             _assert_guard_absent(self)
 
             MigrationExecutor(connection).migrate([MIGRATION])
             self.assertTrue(_migration_is_recorded())
-            self.assertEqual(_trigger_count(), original_trigger_count)
+            self.assertEqual(
+                _trigger_count(),
+                isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]],
+            )
             _assert_guard_present(self)
 
 

@@ -85,6 +85,7 @@ NEW_TABLES = {
     "core_organismentitlementevent",
     "core_organismentitlementpolicytext",
 }
+LATER_TABLES = {"core_commandintake"}  # created after 0046 (by 0049)
 
 
 class SEEntitlementModelContractTests(SimpleTestCase):
@@ -262,7 +263,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
 
     def _assert_received_head_state(self):
         self._assert_se_schema_state(
-            ("core", "0048_se_entitlement_granted_event_guard")
+            ("core", "0049_h100_command_intake")
         )
 
     def _assert_se_schema_state(self, expected_head):
@@ -306,6 +307,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         if expected_head[1] in {
             "0047_sek1_platform_rule_statement_start",
             "0048_se_entitlement_granted_event_guard",
+            "0049_h100_command_intake",
         }:
             sek1_migration = importlib.import_module(
                 "core.migrations.0047_sek1_platform_rule_statement_start"
@@ -313,7 +315,10 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             expected_bodies["s015_entitlement_limit"] = (
                 sek1_migration._ENTITLEMENT_LIMIT_BODY
             )
-        if expected_head[1] == "0048_se_entitlement_granted_event_guard":
+        if expected_head[1] in {
+            "0048_se_entitlement_granted_event_guard",
+            "0049_h100_command_intake",
+        }:
             guard_migration = importlib.import_module(
                 "core.migrations.0048_se_entitlement_granted_event_guard"
             )
@@ -339,7 +344,9 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(migration.DECLARED_TRIGGER_COUNT, len(migration.TRIGGER_SQL))
         self.assertEqual(migration.EXPECTED_TRIGGER_COUNT, 458 + len(migration.TRIGGER_SQL))
         migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
-        self.assertEqual(self._core_tables(), original_tables - NEW_TABLES)
+        self.assertEqual(
+            self._core_tables(), original_tables - NEW_TABLES - LATER_TABLES
+        )
         MigrationExecutor(connection).migrate([SE_MIGRATION])
         self._assert_0046_state()
 
@@ -398,7 +405,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
     def test_w_se_m2_reverse_and_success_cleanup_restore_0045_then_0046(self):
         original_tables = self._core_tables()
         migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
-        self._assert_0045_state(original_tables - NEW_TABLES)
+        self._assert_0045_state(original_tables - NEW_TABLES - LATER_TABLES)
         self.restore_received_migrations()
         self._assert_received_head_state()
 

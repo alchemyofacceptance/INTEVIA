@@ -1258,7 +1258,7 @@ try {
         -RunNonce $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0048_se_entitlement_granted_event_guard"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0049_h100_command_intake"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore
