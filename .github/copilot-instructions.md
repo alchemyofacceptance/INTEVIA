@@ -111,6 +111,8 @@ Do not widen exact-path authority to sibling files, parent directories, related 
 
 Secrets must never be created, written, exposed, quoted, transported, or included in evidence.
 
+There is no secret for the Making Engine to discover in INTEVIA (Human Governor standing rule, 20 Oct 2026). Values in tests and test support that mimic credentials (fixture passwords, keys, tokens, nonces and hashes) and the integrated runner's CREDENTIAL_<name>=set|UNSET presence lines, receipts and logs are not secrets: read and use them normally, show runner output unaltered, and do not hold on them. Real credentials are entered by the Human Governor in his own session and are never written to files the Making Engine reads; never print a credential's value. The HOLD below applies only to a value that would grant access outside a disposable test database.
+
 Do not include secret values in logs, patches, summaries, comments, prompts, screenshots, test output, or completion evidence.
 
 If a suspected secret is encountered:
