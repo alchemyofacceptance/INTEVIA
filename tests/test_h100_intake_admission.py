@@ -8,7 +8,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.sessions.models import Session
-from django.db import connection, connections, transaction
+from django.db import OperationalError, connection, connections, transaction
+from django.db.backends.utils import CursorWrapper
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
@@ -18,10 +19,12 @@ from src.intevia.services import command_intake
 from src.intevia.services.command_intake import (
     ActorRef,
     IntakeBinding,
+    IntakeAdmissionTechnicalFailure,
     IntakeRecord,
     IntakeShape,
     IntakeUnexpectedHistory,
     S015CommandAtomicityRequired,
+    S015CommandContended,
     _require_not_in_atomic_block,
     _resolve_actor,
     admit_request,
@@ -136,6 +139,150 @@ class H100IntakeAdmissionTests(TransactionTestCase):
                 connection.rollback()
                 connection.set_autocommit(True)
             cleanup_workers([worker], timeout=12.0)
+
+    def test_admission_lock_timeout_is_contended_and_saves_nothing(self):
+        shape = _shape()
+        holder_pid = backend_pid(connection)
+        params = _insert_params(self.actor, self.entry, shape)
+        connection.set_autocommit(False)
+        with connection.cursor() as cursor:
+            cursor.execute(command_intake.INSERT_COMMAND_INTAKE_SQL, params)
+            held_row = cursor.fetchone()
+        self.assertIsNotNone(held_row)
+
+        def contend():
+            try:
+                with connections["default"].cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '200ms'")
+                self._admit(shape)
+            finally:
+                with connections["default"].cursor() as cursor:
+                    cursor.execute("RESET lock_timeout")
+
+        worker = None
+        try:
+            worker = start_worker(contend)
+            contender_pid = worker.pid()
+            with connection.cursor() as cursor:
+                wait_until_blocked(
+                    cursor,
+                    contender_pid,
+                    holder_pid,
+                    query_fragment="INSERT INTO public.core_commandintake",
+                    timeout=5.0,
+                )
+            result = worker.result(timeout=5.0)
+            self.assertIsInstance(result, S015CommandContended)
+            self.assertEqual(result.diagnostic_sqlstate, "55P03")
+            self.assertEqual(
+                str(result),
+                "Your request could not be completed because it conflicted with another database operation. "
+                "This attempt made no changes. Please wait a moment before trying again. "
+                "If this keeps happening, note the time it occurred; it needs to be checked.",
+            )
+            self.assertIsInstance(result.__cause__, OperationalError)
+            self.assertEqual(
+                getattr(result.__cause__.__cause__, "sqlstate", None),
+                "55P03",
+            )
+        finally:
+            if worker is not None:
+                cleanup_workers([worker], timeout=12.0)
+            if not connection.get_autocommit():
+                connection.rollback()
+                connection.set_autocommit(True)
+
+        self.assertFalse(
+            CommandIntake.objects.filter(
+                actor_id=self.actor.pk,
+                action=ACTION,
+                idempotency_key=shape.idempotency_key,
+            ).exists()
+        )
+        self.assertTrue(self._admit(shape).first)
+
+    def test_admission_statement_timeout_is_technical_and_saves_nothing(self):
+        shape = _shape()
+        holder_pid = backend_pid(connection)
+        params = _insert_params(self.actor, self.entry, shape)
+        connection.set_autocommit(False)
+        with connection.cursor() as cursor:
+            cursor.execute(command_intake.INSERT_COMMAND_INTAKE_SQL, params)
+            held_row = cursor.fetchone()
+        self.assertIsNotNone(held_row)
+
+        def contend():
+            try:
+                with connections["default"].cursor() as cursor:
+                    cursor.execute("SET lock_timeout = 0")
+                    cursor.execute("SET statement_timeout = '200ms'")
+                self._admit(shape)
+            finally:
+                with connections["default"].cursor() as cursor:
+                    cursor.execute("RESET lock_timeout")
+                    cursor.execute("RESET statement_timeout")
+
+        worker = None
+        try:
+            worker = start_worker(contend)
+            contender_pid = worker.pid()
+            with connection.cursor() as cursor:
+                wait_until_blocked(
+                    cursor,
+                    contender_pid,
+                    holder_pid,
+                    query_fragment="INSERT INTO public.core_commandintake",
+                    timeout=5.0,
+                )
+            result = worker.result(timeout=5.0)
+            self.assertIsInstance(result, IntakeAdmissionTechnicalFailure)
+            self.assertEqual(
+                str(result),
+                f"{ACTION} could not be admitted because of a technical problem; "
+                "nothing was saved. Try again; if it persists, report it.",
+            )
+            self.assertEqual(
+                getattr(result.__cause__.__cause__, "sqlstate", None),
+                "57014",
+            )
+        finally:
+            if worker is not None:
+                cleanup_workers([worker], timeout=12.0)
+            if not connection.get_autocommit():
+                connection.rollback()
+                connection.set_autocommit(True)
+
+        self.assertFalse(
+            CommandIntake.objects.filter(
+                actor_id=self.actor.pk,
+                action=ACTION,
+                idempotency_key=shape.idempotency_key,
+            ).exists()
+        )
+
+    def test_admission_connection_loss_is_uncertain_injected(self):
+        shape = _shape()
+        original_execute = CursorWrapper.execute
+        injected_error = OperationalError("injected admission connection loss")
+        no_sqlstate_cause = RuntimeError("injected connection failure")
+
+        def execute_with_connection_loss(cursor, sql, params=None):
+            if sql == command_intake.INSERT_COMMAND_INTAKE_SQL:
+                raise injected_error from no_sqlstate_cause
+            return original_execute(cursor, sql, params)
+
+        with patch.object(CursorWrapper, "execute", new=execute_with_connection_loss):
+            with self.assertRaises(IntakeAdmissionTechnicalFailure) as raised:
+                self._admit(shape)
+
+        self.assertEqual(
+            str(raised.exception),
+            f"{ACTION} could not be confirmed because the connection to the database was lost; "
+            "this request may or may not have been received. Send the same request again with the same "
+            "request key: INTEVIA will find the earlier receipt or receive it now. If it persists, report it.",
+        )
+        self.assertIs(raised.exception.__cause__, injected_error)
+        self.assertIsNone(getattr(injected_error.__cause__, "sqlstate", None))
 
     def test_first_admission_and_identical_retry_share_the_database_time(self):
         shape = _shape()

@@ -10,7 +10,7 @@ from typing import Callable, Iterable
 from uuid import UUID
 
 from django.conf import settings
-from django.db import connections, transaction
+from django.db import DatabaseError, connections, transaction
 
 from core.models import Identity, IntakeEntry
 from core.organism_contract import OrganismAction
@@ -20,6 +20,7 @@ from src.intevia.services.service_authority import (
 )
 from src.intevia.services.organism_command_support import (
     S015CommandAtomicityRequired,
+    S015CommandContended,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
     _canonical_key,
@@ -1110,10 +1111,17 @@ def admit_request(
     actor_ref: ActorRef,
     shape: IntakeShape,
 ) -> BoundRequest:
-    """Commit or recover the immutable request binding before command execution."""
+    """Commit or recover the immutable request binding before command execution.
+
+    Database errors with SQLSTATE 55P03 become contention, those with another
+    SQLSTATE become technical admission failures stating nothing was saved, and
+    those without SQLSTATE become uncertain connection failures stating the
+    request may or may not have been received.
+    """
     _require_admission_state(alias)
     entry = IntakeEntry(entry)
     action = _normalise_shape(entry, shape)
+    action_text = action if action is not None else entry.value
     fingerprint = intake_fingerprint(
         entry=entry,
         action=action,
@@ -1126,57 +1134,66 @@ def admit_request(
         omitted=shape.omitted,
     )
 
-    row = _existing_row(alias, actor_ref.pk, action, shape.idempotency_key)
-    if row is None:
-        row = _refuse_unexpected_history(
-            alias,
-            actor_ref,
-            entry,
-            action,
-            shape,
-        )
-    if row is None:
-        with connections[alias].cursor() as cursor:
-            cursor.execute(
-                INSERT_COMMAND_INTAKE_SQL,
-                [
-                    actor_ref.pk,
-                    actor_ref.identity_id,
-                    actor_ref.access_epoch,
+    first = False
+    try:
+        row = _existing_row(alias, actor_ref.pk, action, shape.idempotency_key)
+        if row is None:
+            row = _refuse_unexpected_history(
+                alias,
+                actor_ref,
+                entry,
+                action,
+                shape,
+            )
+        if row is None:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    INSERT_COMMAND_INTAKE_SQL,
+                    [
+                        actor_ref.pk,
+                        actor_ref.identity_id,
+                        actor_ref.access_epoch,
+                        entry.value,
+                        action,
+                        shape.idempotency_key,
+                        shape.request_reference,
+                        fingerprint,
+                        FINGERPRINT_SCHEMA,
+                        shape.target_organism_id,
+                    ],
+                )
+                inserted = cursor.fetchone()
+            if inserted is not None:
+                row = (
+                    inserted[0],
                     entry.value,
-                    action,
-                    shape.idempotency_key,
                     shape.request_reference,
                     fingerprint,
                     FINGERPRINT_SCHEMA,
+                    inserted[1],
                     shape.target_organism_id,
-                ],
-            )
-            inserted = cursor.fetchone()
-        if inserted is not None:
-            row = (
-                inserted[0],
-                entry.value,
-                shape.request_reference,
-                fingerprint,
-                FINGERPRINT_SCHEMA,
-                inserted[1],
-                shape.target_organism_id,
-            )
-            return _bound_from_row(
-                row,
-                entry=entry,
-                action=action,
-                actor=actor_ref,
-                shape=shape,
-                fingerprint=fingerprint,
-                first=True,
-            )
-        row = _existing_row(alias, actor_ref.pk, action, shape.idempotency_key)
-        if row is None:
+                )
+                first = True
+            else:
+                row = _existing_row(alias, actor_ref.pk, action, shape.idempotency_key)
+                if row is None:
+                    raise IntakeAdmissionTechnicalFailure(
+                        "the conflicting request binding could not be read back"
+                    )
+    except DatabaseError as exc:
+        sqlstate = getattr(exc.__cause__, "sqlstate", None)
+        if sqlstate == "55P03":
+            raise S015CommandContended("55P03") from exc
+        if sqlstate is not None:
             raise IntakeAdmissionTechnicalFailure(
-                "the conflicting request binding could not be read back"
-            )
+                f"{action_text} could not be admitted because of a technical problem; "
+                "nothing was saved. Try again; if it persists, report it."
+            ) from exc
+        raise IntakeAdmissionTechnicalFailure(
+            f"{action_text} could not be confirmed because the connection to the database was lost; "
+            "this request may or may not have been received. Send the same request again with the same "
+            "request key: INTEVIA will find the earlier receipt or receive it now. If it persists, report it."
+        ) from exc
     return _bound_from_row(
         row,
         entry=entry,
@@ -1184,7 +1201,7 @@ def admit_request(
         actor=actor_ref,
         shape=shape,
         fingerprint=fingerprint,
-        first=False,
+        first=first,
     )
 
 
