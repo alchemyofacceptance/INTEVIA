@@ -113,7 +113,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
             credential=(actor or self.applicant).credential,
             living_organism_id=organism_uuid or self.organism_uuid,
             request_reference=request or f"s3:submit:{self.tag}", idempotency_key=key or f"s3:key:{self.tag}",
-            occurred_at=effective_at, effective_at=effective_at, received_at=NOW,
+            occurred_at=effective_at, effective_at=effective_at,
             predecessor_reference=predecessor,
             answer="Test-only applicant answer",
         )
@@ -122,7 +122,7 @@ class S015ApplicantCommandTests(TransactionTestCase):
         return WithdrawApplicationCommand(
             credential=(actor or self.applicant).credential, application_uuid=application.application_uuid,
             request_reference=request or f"s3:withdraw:{self.tag}", idempotency_key=key or f"s3:withdraw:key:{self.tag}",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         )
 
     def submitted(self):

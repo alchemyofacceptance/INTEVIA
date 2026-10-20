@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import InitVar, dataclass
+from dataclasses import InitVar, dataclass, replace
 from datetime import datetime
 from enum import Enum
 import hashlib
-from typing import Iterable
+from typing import Callable, Iterable
 from uuid import UUID
 
+from django.conf import settings
 from django.db import connections, transaction
 
-from core.models import IntakeEntry
+from core.models import Identity, IntakeEntry
 from core.organism_contract import OrganismAction
 from src.intevia.services.service_authority import (
     canonical_json_bytes,
@@ -21,6 +22,9 @@ from src.intevia.services.organism_command_support import (
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
+    _canonical_key,
+    _canonical_uuid,
+    _validate_timestamp,
 )
 
 
@@ -85,10 +89,136 @@ class BoundRequest:
     first: bool
     parent: BoundRequest | None
     _sentinel: InitVar[object]
+    content_verified: bool = False
 
     def __post_init__(self, _sentinel: object) -> None:
         if _sentinel is not _CONSTRUCTOR_SENTINEL:
             raise TypeError("BoundRequest must be created by the intake boundary")
+
+    @classmethod
+    def for_test(
+        cls,
+        entry: IntakeEntry,
+        command: object,
+        *,
+        received_at: datetime,
+        actor: ActorRef,
+    ) -> BoundRequest:
+        if not getattr(settings, "INTEVIA_TEST_CONTEXT", False):
+            raise IntakeAdmissionTechnicalFailure(
+                "test-only bound requests require INTEVIA_TEST_CONTEXT"
+            )
+        shape = application_shape(entry, command)
+        action = _action_for(entry, shape.action)
+        fingerprint = intake_fingerprint(
+            entry=entry,
+            action=action,
+            actor_identity_id=actor.identity_id,
+            actor_access_epoch=actor.access_epoch,
+            request_reference=shape.request_reference,
+            idempotency_key=shape.idempotency_key,
+            target=shape.target,
+            command=shape.command,
+            omitted=shape.omitted,
+        )
+        return cls(
+            entry=entry,
+            action=action,
+            idempotency_key=shape.idempotency_key,
+            request_reference=shape.request_reference,
+            request_fingerprint=fingerprint,
+            actor_pk=actor.pk,
+            actor_identity_id=actor.identity_id,
+            actor_access_epoch=actor.access_epoch,
+            received_at=_validate_timestamp(received_at, "received_at"),
+            intake_id=None,
+            target_organism_id=shape.target_organism_id,
+            first=False,
+            parent=None,
+            _sentinel=_CONSTRUCTOR_SENTINEL,
+        )
+
+    def verify_content(self, command: object, entry: IntakeEntry) -> BoundRequest:
+        try:
+            if type(entry) is not IntakeEntry or self.entry != entry:
+                raise _request_binding_mismatch()
+            shape = application_shape(entry, command)
+            action = _action_for(entry, shape.action)
+            fingerprint = intake_fingerprint(
+                entry=entry,
+                action=action,
+                actor_identity_id=self.actor_identity_id,
+                actor_access_epoch=self.actor_access_epoch,
+                request_reference=shape.request_reference,
+                idempotency_key=shape.idempotency_key,
+                target=shape.target,
+                command=shape.command,
+                omitted=shape.omitted,
+            )
+        except (TypeError, ValueError) as exc:
+            raise _request_binding_mismatch() from exc
+        if (
+            self.action != action
+            or self.idempotency_key != shape.idempotency_key
+            or self.request_reference != shape.request_reference
+            or self.request_fingerprint != fingerprint
+        ):
+            raise _request_binding_mismatch()
+        if self.intake_id is None and not getattr(settings, "INTEVIA_TEST_CONTEXT", False):
+            raise _request_binding_mismatch()
+        return replace(
+            self,
+            content_verified=True,
+            _sentinel=_CONSTRUCTOR_SENTINEL,
+        )
+
+    def verify(
+        self,
+        command: object,
+        actor: Identity,
+        entry: IntakeEntry,
+        alias: str,
+    ) -> None:
+        bound = self.verify_content(command, entry)
+        if bound.actor_identity_id != actor.identity_id or bound.actor_pk != actor.pk:
+            raise _request_binding_mismatch()
+        if bound.actor_access_epoch != actor.access_epoch:
+            from src.intevia.services.organism_application_service import (
+                S015ApplicationAuthorityUnavailable,
+            )
+
+            raise S015ApplicationAuthorityUnavailable(
+                "actor access epoch changed after intake; nothing was done"
+            )
+        if bound.intake_id is not None:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT actor_id, actor_identity_id, actor_access_epoch, entry, action,
+                           idempotency_key, request_reference, request_fingerprint,
+                           received_at, target_organism_id
+                      FROM public.core_commandintake
+                     WHERE id = %s
+                    """,
+                    [bound.intake_id],
+                )
+                row = cursor.fetchone()
+            expected = (
+                bound.actor_pk,
+                bound.actor_identity_id,
+                bound.actor_access_epoch,
+                entry.value,
+                bound.action,
+                bound.idempotency_key,
+                bound.request_reference,
+                bound.request_fingerprint,
+                bound.received_at,
+                bound.target_organism_id,
+            )
+            if row != expected:
+                raise _request_binding_mismatch()
+        if bound.parent is not None:
+            raise _request_binding_mismatch()
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +346,21 @@ ACTIVATION_GROUPS: dict[str, frozenset[IntakeEntry]] = {
     "G4": G4,
     "G5": G5,
 }
-ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset()
+ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
+    {
+        IntakeEntry.SUBMIT_APPLICATION,
+        IntakeEntry.WITHDRAW_APPLICATION,
+        IntakeEntry.CLAIM_APPLICATION,
+        IntakeEntry.REASSIGN_APPLICATION,
+        IntakeEntry.DECIDE_APPLICATION,
+    }
+)
+
+
+def _request_binding_mismatch() -> IntakeAdmissionTechnicalFailure:
+    return IntakeAdmissionTechnicalFailure(
+        "the request being executed is not the request that was admitted; nothing was done"
+    )
 
 
 def _canonical_value(value: object) -> object:
@@ -534,6 +678,166 @@ def _normalise_shape(entry: IntakeEntry, shape: IntakeShape) -> str:
     if type(shape.omitted) is not tuple or any(type(name) is not str for name in shape.omitted):
         raise TypeError("omitted must be a tuple of field names")
     return action
+
+
+def _application_keys_and_times(
+    request_reference: object,
+    idempotency_key: object,
+    occurred_at: object,
+    effective_at: object,
+    received_at: object,
+) -> tuple[str, str, datetime, datetime]:
+    request_reference = _canonical_key(request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(idempotency_key, "idempotency_key", 120)
+    occurred_at = _validate_timestamp(occurred_at, "occurred_at")
+    effective_at = _validate_timestamp(effective_at, "effective_at")
+    if received_at is not None:
+        raise ValueError("received_at is assigned by INTEVIA")
+    return request_reference, idempotency_key, occurred_at, effective_at
+
+
+def _submit_application_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import SubmitApplicationCommand
+
+    if type(command) is not SubmitApplicationCommand:
+        raise TypeError("application entry requires SubmitApplicationCommand")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
+    predecessor_uuid = (
+        None
+        if command.predecessor_reference is None
+        else _canonical_uuid(command.predecessor_reference, "predecessor_reference")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"living_organism_id": organism_uuid},
+        command={
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "predecessor_reference": predecessor_uuid,
+            "answer": command.answer,
+        },
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _withdraw_application_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import WithdrawApplicationCommand
+
+    if type(command) is not WithdrawApplicationCommand:
+        raise TypeError("application entry requires WithdrawApplicationCommand")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"application_uuid": application_uuid},
+        command={"occurred_at": occurred_at, "effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _claim_application_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import ClaimApplicationCommand
+
+    if type(command) is not ClaimApplicationCommand:
+        raise TypeError("application entry requires ClaimApplicationCommand")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"application_uuid": application_uuid},
+        command={"occurred_at": occurred_at, "effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _reassign_application_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import ReassignApplicationCommand
+
+    if type(command) is not ReassignApplicationCommand:
+        raise TypeError("application entry requires ReassignApplicationCommand")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"application_uuid": application_uuid},
+        command={"occurred_at": occurred_at, "effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _decide_application_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import DecideApplicationCommand
+
+    if type(command) is not DecideApplicationCommand:
+        raise TypeError("application entry requires DecideApplicationCommand")
+    outcome = _canonical_key(command.outcome, "outcome", 7)
+    if outcome not in {"ACCEPT", "DECLINE"}:
+        raise ValueError("outcome must be ACCEPT or DECLINE")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"application_uuid": application_uuid},
+        command={"occurred_at": occurred_at, "effective_at": effective_at, "outcome": outcome},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+APPLICATION_SHAPES: dict[IntakeEntry, Callable[[object], IntakeShape]] = {
+    IntakeEntry.SUBMIT_APPLICATION: _submit_application_shape,
+    IntakeEntry.WITHDRAW_APPLICATION: _withdraw_application_shape,
+    IntakeEntry.CLAIM_APPLICATION: _claim_application_shape,
+    IntakeEntry.REASSIGN_APPLICATION: _reassign_application_shape,
+    IntakeEntry.DECIDE_APPLICATION: _decide_application_shape,
+}
+
+
+def application_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    """Return the pure submitted-command projection for an active application entry."""
+    if type(entry) is not IntakeEntry or entry not in APPLICATION_SHAPES:
+        raise ValueError("entry has no application intake shape")
+    return APPLICATION_SHAPES[entry](command)
 
 
 def _bound_from_row(

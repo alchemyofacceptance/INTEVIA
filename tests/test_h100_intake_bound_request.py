@@ -1,0 +1,556 @@
+"""H100 C2a bound-request projection and execution witnesses."""
+
+from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
+from unittest import skipUnless
+from unittest.mock import patch
+from uuid import uuid4
+
+from django.contrib.auth.models import User
+from django.db import connection, transaction
+from django.test import (
+    SimpleTestCase,
+    TransactionTestCase,
+    override_settings,
+)
+from django.test.utils import CaptureQueriesContext
+
+from core.models import (
+    Application,
+    AuthorityDecision,
+    CommandIntake,
+    Identity,
+    IdentityTransition,
+    OrganismCommandReceipt,
+)
+from src.intevia.services import command_intake as command_intake_module
+from src.intevia.services.command_intake import (
+    ACTIVE_ENTRIES,
+    ActorRef,
+    BoundRequest,
+    IntakeAdmissionTechnicalFailure,
+    IntakeEntry,
+    application_shape,
+)
+from src.intevia.services.organism_application_service import (
+    ClaimApplicationCommand,
+    DecideApplicationCommand,
+    OrganismApplicationService,
+    ReassignApplicationCommand,
+    SubmitApplicationCommand,
+    WithdrawApplicationCommand,
+)
+from src.intevia.services.organism_authority import (
+    S015Authority,
+    S015OwnApplicantAuthorityRequest,
+    S015OwnApplicantAuthorityResponse,
+    S015PostFoundingAuthorityResponse,
+)
+from tests.s015_0021_support import database_now, fresh, seed_identity
+from tests.sb2_route_support import birth, prepare_route, route_test_now
+
+
+UTC = timezone.utc
+T0 = datetime(2026, 9, 29, 12, tzinfo=UTC)
+
+
+def _command_set(credential: User):
+    application_uuid = uuid4()
+    return {
+        IntakeEntry.SUBMIT_APPLICATION: SubmitApplicationCommand(
+            credential=credential,
+            living_organism_id=uuid4(),
+            request_reference="h100:submit:reference",
+            idempotency_key="h100:submit:key",
+            occurred_at=T0,
+            effective_at=T0,
+            predecessor_reference=uuid4(),
+            answer="a",
+        ),
+        IntakeEntry.WITHDRAW_APPLICATION: WithdrawApplicationCommand(
+            credential=credential,
+            application_uuid=application_uuid,
+            request_reference="h100:withdraw:reference",
+            idempotency_key="h100:withdraw:key",
+            occurred_at=T0,
+            effective_at=T0,
+        ),
+        IntakeEntry.CLAIM_APPLICATION: ClaimApplicationCommand(
+            credential=credential,
+            application_uuid=application_uuid,
+            request_reference="h100:claim:reference",
+            idempotency_key="h100:claim:key",
+            occurred_at=T0,
+            effective_at=T0,
+        ),
+        IntakeEntry.REASSIGN_APPLICATION: ReassignApplicationCommand(
+            credential=credential,
+            application_uuid=application_uuid,
+            request_reference="h100:reassign:reference",
+            idempotency_key="h100:reassign:key",
+            occurred_at=T0,
+            effective_at=T0,
+        ),
+        IntakeEntry.DECIDE_APPLICATION: DecideApplicationCommand(
+            credential=credential,
+            application_uuid=application_uuid,
+            request_reference="h100:decide:reference",
+            idempotency_key="h100:decide:key",
+            occurred_at=T0,
+            effective_at=T0,
+            outcome="DECLINE",
+        ),
+    }
+
+
+def _test_actor() -> ActorRef:
+    return ActorRef(pk=91, identity_id=uuid4(), access_epoch=4)
+
+
+def _fingerprint(entry: IntakeEntry, command: object, actor: ActorRef) -> str:
+    return BoundRequest.for_test(
+        entry,
+        command,
+        received_at=T0 + timedelta(seconds=3),
+        actor=actor,
+    ).request_fingerprint
+
+
+class ApplicationShapeTests(SimpleTestCase):
+    """Exercise pure intake projections without database access."""
+
+    def setUp(self):
+        self.credential = User(username="h100-projection")
+        self.actor = _test_actor()
+        self.commands = _command_set(self.credential)
+
+    def test_active_set_and_exact_type_dispatch(self):
+        self.assertEqual(
+            ACTIVE_ENTRIES,
+            frozenset(
+                {
+                    IntakeEntry.SUBMIT_APPLICATION,
+                    IntakeEntry.WITHDRAW_APPLICATION,
+                    IntakeEntry.CLAIM_APPLICATION,
+                    IntakeEntry.REASSIGN_APPLICATION,
+                    IntakeEntry.DECIDE_APPLICATION,
+                }
+            ),
+        )
+        for entry, command in self.commands.items():
+            with self.subTest(entry=entry):
+                application_shape(entry, command)
+        with self.assertRaises(TypeError):
+            application_shape(
+                IntakeEntry.CLAIM_APPLICATION,
+                self.commands[IntakeEntry.REASSIGN_APPLICATION],
+            )
+        with self.assertRaises(TypeError):
+            application_shape(
+                IntakeEntry.REASSIGN_APPLICATION,
+                self.commands[IntakeEntry.CLAIM_APPLICATION],
+            )
+        with self.assertRaises(TypeError):
+            application_shape(
+                IntakeEntry.CLAIM_APPLICATION,
+                self.commands[IntakeEntry.DECIDE_APPLICATION],
+            )
+
+    def test_each_projection_matches_the_commissioned_shape(self):
+        for entry, command in self.commands.items():
+            shape = application_shape(entry, command)
+            with self.subTest(entry=entry):
+                self.assertEqual(shape.idempotency_key, command.idempotency_key)
+                self.assertEqual(shape.request_reference, command.request_reference)
+                self.assertEqual(shape.omitted, ())
+                self.assertIsNone(shape.target_organism_id)
+                if entry is IntakeEntry.SUBMIT_APPLICATION:
+                    self.assertEqual(
+                        shape.target,
+                        {"living_organism_id": command.living_organism_id},
+                    )
+                    self.assertEqual(
+                        shape.command,
+                        {
+                            "occurred_at": command.occurred_at,
+                            "effective_at": command.effective_at,
+                            "predecessor_reference": command.predecessor_reference,
+                            "answer": command.answer,
+                        },
+                    )
+                else:
+                    self.assertEqual(
+                        shape.target,
+                        {"application_uuid": command.application_uuid},
+                    )
+                    expected_command: dict[str, object] = {
+                        "occurred_at": command.occurred_at,
+                        "effective_at": command.effective_at,
+                    }
+                    if entry is IntakeEntry.DECIDE_APPLICATION:
+                        expected_command["outcome"] = command.outcome
+                    self.assertEqual(shape.command, expected_command)
+
+    def test_every_material_field_changes_the_fingerprint(self):
+        replacements = {
+            IntakeEntry.SUBMIT_APPLICATION: {
+                "living_organism_id": uuid4(),
+                "predecessor_reference": uuid4(),
+                "answer": "b",
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "request_reference": "h100:submit:reference-2",
+                "idempotency_key": "h100:submit:key-2",
+            },
+            IntakeEntry.WITHDRAW_APPLICATION: {
+                "application_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "request_reference": "h100:withdraw:reference-2",
+                "idempotency_key": "h100:withdraw:key-2",
+            },
+            IntakeEntry.CLAIM_APPLICATION: {
+                "application_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "request_reference": "h100:claim:reference-2",
+                "idempotency_key": "h100:claim:key-2",
+            },
+            IntakeEntry.REASSIGN_APPLICATION: {
+                "application_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "request_reference": "h100:reassign:reference-2",
+                "idempotency_key": "h100:reassign:key-2",
+            },
+            IntakeEntry.DECIDE_APPLICATION: {
+                "application_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "outcome": "ACCEPT",
+                "request_reference": "h100:decide:reference-2",
+                "idempotency_key": "h100:decide:key-2",
+            },
+        }
+        for entry, fields in replacements.items():
+            baseline = self.commands[entry]
+            baseline_fingerprint = _fingerprint(entry, baseline, self.actor)
+            for field, value in fields.items():
+                with self.subTest(entry=entry, field=field):
+                    self.assertNotEqual(
+                        baseline_fingerprint,
+                        _fingerprint(entry, replace(baseline, **{field: value}), self.actor),
+                    )
+
+    def test_identical_commands_and_equivalent_timestamps_reproduce_fingerprint(self):
+        command = self.commands[IntakeEntry.SUBMIT_APPLICATION]
+        self.assertEqual(
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, command, self.actor),
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, command, self.actor),
+        )
+        equivalent = replace(
+            command,
+            occurred_at=T0.astimezone(timezone(timedelta(hours=5))),
+            effective_at=T0.astimezone(timezone(timedelta(hours=5))),
+        )
+        self.assertEqual(
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, command, self.actor),
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, equivalent, self.actor),
+        )
+        different_credential = replace(command, credential=User(username="another"))
+        self.assertEqual(
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, command, self.actor),
+            _fingerprint(IntakeEntry.SUBMIT_APPLICATION, different_credential, self.actor),
+        )
+
+    def test_received_at_is_rejected_in_each_projection(self):
+        for entry, command in self.commands.items():
+            with self.subTest(entry=entry), self.assertRaisesRegex(
+                ValueError, "received_at is assigned by INTEVIA"
+            ):
+                application_shape(entry, replace(command, received_at=T0))
+
+
+class _Provider:
+    """A test-only authority provider for the application fixtures."""
+
+    def evaluate_organism_authority(self, request):
+        fields = asdict(request)
+        if isinstance(request, S015OwnApplicantAuthorityRequest):
+            return S015OwnApplicantAuthorityResponse(
+                **fields,
+                authority_reference="h100:test:applicant",
+            )
+        return S015PostFoundingAuthorityResponse(
+            **fields,
+            authority_reference="h100:test:coordinator",
+        )
+
+
+@skipUnless(connection.vendor == "postgresql", "H100 intake witnesses require PostgreSQL")
+class BoundRequestDatabaseTests(TransactionTestCase):
+    """Exercise production admissions and executor verification on PostgreSQL."""
+
+    def setUp(self):
+        self.tag = f"h100-bound-{fresh()}"
+        self.route = prepare_route(tag=self.tag)
+        birth(self.route)
+        self.organism_uuid = self.route.organism.organism_id
+        self.received_before = database_now()
+        with transaction.atomic(), connection.cursor() as cursor:
+            applicant_pk = seed_identity(cursor, f"h100-applicant-{self.tag}")
+        self.applicant = Identity.objects.select_related("credential").get(pk=applicant_pk)
+        self._activate_applicant()
+        self.service = OrganismApplicationService(
+            authority=S015Authority(provider=_Provider()),
+            clock=database_now,
+        )
+
+    def _activate_applicant(self):
+        at = route_test_now(self.route)
+        provision = IdentityTransition.objects.create(
+            identity=self.applicant,
+            action=IdentityTransition.Action.PROVISION,
+            prior_state=None,
+            resulting_state="pending",
+            authority_reference="h100:test:provision",
+            technical_executor="H100_TEST",
+            evidence_reference="h100:test:history",
+            reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
+            correlation_id=uuid4(),
+            occurred_at=at,
+        )
+        IdentityTransition.objects.create(
+            identity=self.applicant,
+            action=IdentityTransition.Action.ACTIVATE,
+            prior_state="pending",
+            resulting_state="active",
+            authority_reference="h100:test:activate",
+            technical_executor="H100_TEST",
+            evidence_reference="h100:test:history",
+            reason_category=IdentityTransition.ReasonCategory.ACCESS_REVIEW,
+            correlation_id=uuid4(),
+            occurred_at=at,
+            previous_transition=provision,
+        )
+
+    def _submission(self, *, key_suffix="first", answer="Bound request witness"):
+        now = route_test_now(self.route)
+        return SubmitApplicationCommand(
+            credential=self.applicant.credential,
+            living_organism_id=self.organism_uuid,
+            request_reference=f"h100:submit:{key_suffix}:{self.tag}",
+            idempotency_key=f"h100:submit:key:{key_suffix}:{self.tag}",
+            occurred_at=now,
+            effective_at=now,
+            answer=answer,
+        )
+
+    def _capture_submission(self, command):
+        original = self.service._execute_submit_application
+        captured = {}
+
+        def capture(bound_command, bound):
+            captured["bound"] = bound
+            return original(bound_command, bound)
+
+        with patch.object(
+            self.service,
+            "_execute_submit_application",
+            side_effect=capture,
+        ):
+            result = self.service.submit_application(command)
+        return result, captured["bound"]
+
+    def _counts(self):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.relname FROM pg_catalog.pg_class c "
+                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY c.relname"
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+            counts = {}
+            for table in tables:
+                cursor.execute(
+                    f"SELECT count(*) FROM public.{connection.ops.quote_name(table)}"
+                )
+                counts[table] = cursor.fetchone()[0]
+        return counts
+
+    def test_committed_binding_has_matching_v6_row_and_rejects_mismatch(self):
+        command = self._submission()
+        _, bound = self._capture_submission(command)
+        actor = Identity.objects.get(pk=bound.actor_pk)
+        with transaction.atomic():
+            bound.verify(
+                command,
+                actor,
+                IntakeEntry.SUBMIT_APPLICATION,
+                "default",
+            )
+
+        before = self._counts()
+        tampered = replace(
+            bound,
+            target_organism_id=uuid4(),
+            _sentinel=command_intake_module._CONSTRUCTOR_SENTINEL,
+        )
+        with transaction.atomic(), self.assertRaisesRegex(
+            IntakeAdmissionTechnicalFailure, "not the request that was admitted"
+        ):
+            tampered.verify(
+                command,
+                actor,
+                IntakeEntry.SUBMIT_APPLICATION,
+                "default",
+            )
+        self.assertEqual(self._counts(), before)
+        self.assertTrue(
+            CommandIntake.objects.filter(
+                id=bound.intake_id,
+                idempotency_key=command.idempotency_key,
+                received_at=bound.received_at,
+            ).exists()
+        )
+
+    def test_reused_binding_rejects_changed_content_key_reference_and_entry(self):
+        command = self._submission()
+        _, record = self._capture_submission(command)
+        before = self._counts()
+        changed_commands = (
+            replace(command, answer="Changed material answer"),
+            replace(command, idempotency_key=f"changed:{command.idempotency_key}"),
+            replace(command, request_reference=f"changed:{command.request_reference}"),
+        )
+        for changed in changed_commands:
+            with self.subTest(command=changed), self.assertRaises(
+                IntakeAdmissionTechnicalFailure
+            ):
+                self.service._execute_submit_application(changed, record)
+
+        from src.intevia.services.organism_application_service import WithdrawApplicationCommand
+
+        wrong_entry_command = WithdrawApplicationCommand(
+            credential=command.credential,
+            application_uuid=uuid4(),
+            request_reference=command.request_reference,
+            idempotency_key=command.idempotency_key,
+            occurred_at=command.occurred_at,
+            effective_at=command.effective_at,
+        )
+        with self.assertRaises(IntakeAdmissionTechnicalFailure):
+            self.service._execute_withdraw_application(wrong_entry_command, record)
+        self.assertEqual(self._counts(), before)
+
+    def test_actor_mismatch_is_rejected_before_v6_query(self):
+        command = self._submission()
+        _, bound = self._capture_submission(command)
+        actor = Identity.objects.get(pk=bound.actor_pk)
+        actor.identity_id = uuid4()
+        with transaction.atomic(), CaptureQueriesContext(connection) as queries:
+            with self.assertRaises(IntakeAdmissionTechnicalFailure):
+                bound.verify(
+                    command,
+                    actor,
+                    IntakeEntry.SUBMIT_APPLICATION,
+                    "default",
+                )
+        self.assertEqual(len(queries), 0)
+
+    def test_test_binding_gate_applies_at_construction_and_use(self):
+        command = self._submission(key_suffix="test-gate")
+        actor = ActorRef(
+            pk=self.applicant.pk,
+            identity_id=self.applicant.identity_id,
+            access_epoch=self.applicant.access_epoch,
+        )
+        with override_settings(INTEVIA_TEST_CONTEXT=False):
+            with self.assertRaises(IntakeAdmissionTechnicalFailure):
+                BoundRequest.for_test(
+                    IntakeEntry.SUBMIT_APPLICATION,
+                    command,
+                    received_at=database_now(),
+                    actor=actor,
+                )
+        test_bound = BoundRequest.for_test(
+            IntakeEntry.SUBMIT_APPLICATION,
+            command,
+            received_at=database_now(),
+            actor=actor,
+        )
+        with override_settings(INTEVIA_TEST_CONTEXT=False):
+            with self.assertRaises(IntakeAdmissionTechnicalFailure):
+                test_bound.verify_content(command, IntakeEntry.SUBMIT_APPLICATION)
+
+    def test_unexpected_parent_is_rejected_for_each_active_executor(self):
+        actor_ref = ActorRef(
+            pk=self.applicant.pk,
+            identity_id=self.applicant.identity_id,
+            access_epoch=self.applicant.access_epoch,
+        )
+        parent_command = _command_set(self.applicant.credential)[
+            IntakeEntry.SUBMIT_APPLICATION
+        ]
+        parent = BoundRequest.for_test(
+            IntakeEntry.SUBMIT_APPLICATION,
+            parent_command,
+            received_at=database_now(),
+            actor=actor_ref,
+        )
+        commands = _command_set(self.applicant.credential)
+        commands[IntakeEntry.CLAIM_APPLICATION] = replace(
+            commands[IntakeEntry.CLAIM_APPLICATION],
+            credential=self.route.founder.credential,
+        )
+        commands[IntakeEntry.REASSIGN_APPLICATION] = replace(
+            commands[IntakeEntry.REASSIGN_APPLICATION],
+            credential=self.route.founder.credential,
+        )
+        commands[IntakeEntry.DECIDE_APPLICATION] = replace(
+            commands[IntakeEntry.DECIDE_APPLICATION],
+            credential=self.route.founder.credential,
+        )
+        actor_by_entry = {
+            IntakeEntry.SUBMIT_APPLICATION: self.applicant,
+            IntakeEntry.WITHDRAW_APPLICATION: self.applicant,
+            IntakeEntry.CLAIM_APPLICATION: self.route.founder,
+            IntakeEntry.REASSIGN_APPLICATION: self.route.founder,
+            IntakeEntry.DECIDE_APPLICATION: self.route.founder,
+        }
+        executor_by_entry = {
+            IntakeEntry.SUBMIT_APPLICATION: self.service._execute_submit_application,
+            IntakeEntry.WITHDRAW_APPLICATION: self.service._execute_withdraw_application,
+            IntakeEntry.CLAIM_APPLICATION: self.service._execute_claim_application,
+            IntakeEntry.REASSIGN_APPLICATION: self.service._execute_reassign_application,
+            IntakeEntry.DECIDE_APPLICATION: self.service._execute_decide_application,
+        }
+        before = self._counts()
+        for entry in ACTIVE_ENTRIES:
+            command = commands[entry]
+            actor = actor_by_entry[entry]
+            request = BoundRequest.for_test(
+                entry,
+                command,
+                received_at=database_now(),
+                actor=ActorRef(
+                    pk=actor.pk,
+                    identity_id=actor.identity_id,
+                    access_epoch=actor.access_epoch,
+                ),
+            )
+            request = replace(
+                request,
+                parent=parent,
+                _sentinel=command_intake_module._CONSTRUCTOR_SENTINEL,
+            )
+            with self.subTest(entry=entry), self.assertRaises(
+                IntakeAdmissionTechnicalFailure
+            ):
+                executor_by_entry[entry](command, request)
+        self.assertEqual(self._counts(), before)
+
+    def test_public_entry_has_no_bound_request_parameter(self):
+        command = self._submission(key_suffix="extra-argument")
+        with self.assertRaises(TypeError):
+            self.service.submit_application(command, object())

@@ -138,7 +138,6 @@ class S015ApplicationReadTests(TransactionTestCase):
             idempotency_key=f"s3:read:submit:{token}",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
             predecessor_reference=None if predecessor is None else predecessor.application_uuid,
             answer="Test-only applicant answer",
         ))
@@ -158,7 +157,6 @@ class S015ApplicationReadTests(TransactionTestCase):
             idempotency_key=f"s3:read:withdraw:{token}",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
         ))
 
     def _claim(self, application, coordinator=None):
@@ -171,7 +169,6 @@ class S015ApplicationReadTests(TransactionTestCase):
             idempotency_key=f"s3:read:claim:{token}",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
         ))
 
     def _accept(self, application, coordinator=None):
@@ -185,7 +182,6 @@ class S015ApplicationReadTests(TransactionTestCase):
             idempotency_key=f"s3:read:decide:{token}",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
             outcome="ACCEPT",
         ))
 

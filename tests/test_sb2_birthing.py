@@ -24,6 +24,7 @@ from core.models import (
     ApplicationEngagement,
     AuthorityDecision,
     CSAAssignment,
+    CommandIntake,
     ContextualRoleAssignment,
     LOApplicationQuestionVersion,
     LOApplicationSettingsVersion,
@@ -499,7 +500,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
 
     def test_real_route_births_then_another_registered_learner_applies_and_founder_decides(self):
         route = prepare_route()
+        intake_count_before_birth = CommandIntake.objects.count()
         result = birth(route)
+        self.assertEqual(CommandIntake.objects.count(), intake_count_before_birth)
         event = LivingOrganismEvent.objects.get(event_uuid=result.event_uuid)
         self.assertEqual((event.action, event.prior_state, event.resulting_state), ("BIRTHING", "ACTIVE", "ACTIVE"))
         with connection.cursor() as cursor:
@@ -583,7 +586,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:submit:key:{route.tag}",
             occurred_at=submitted_at,
             effective_at=submitted_at,
-            received_at=submitted_at,
             answer="A disposable SB-2 route witness answer.",
         ))
         submission_facts = json.loads(submitted.authority_reference.removeprefix("s015a1:"))
@@ -600,7 +602,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:claim:key:full-route:{route.tag}",
             occurred_at=claim_occurred_at,
             effective_at=claim_occurred_at,
-            received_at=claim_occurred_at,
         )
         application_service.claim_application(claim)
         decision_at = database_now()
@@ -611,7 +612,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:decide:key:full-route:{route.tag}",
             occurred_at=decision_at,
             effective_at=decision_at,
-            received_at=decision_at,
             outcome="ACCEPT",
         )
         try:
@@ -784,10 +784,11 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             clock=database_now,
         )
         consent_at = database_now()
+        consent_key = f"sb2:second-coordinator:consent:key:{route.tag}"
         consent_result = consent_service.record_office_consent(RecordOfficeConsentCommand(
             credential=applicant.credential,
             request_reference=f"sb2:second-coordinator:consent:{route.tag}",
-            idempotency_key=f"sb2:second-coordinator:consent:key:{route.tag}",
+            idempotency_key=consent_key,
             occurred_at=consent_at,
             effective_at=proposal_at,
             received_at=consent_at,
@@ -796,6 +797,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             action="CONSENT",
         ))
         self.assertIsNotNone(consent_result.consent_uuid)
+        self.assertFalse(CommandIntake.objects.filter(idempotency_key=consent_key).exists())
         assign_at = database_now()
         role_service.transition_assignment(TransitionAssignmentCommand(
             credential=route.founder.credential,
@@ -974,6 +976,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             policy_version=TEST_POLICY_VERSION,
             policy_text_sha256=TEST_POLICY_SHA256,
         )
+        before_intake_count = CommandIntake.objects.count()
         with (
             patch(
                 "src.intevia.services.organism_formation_service._lock_actor_membership_context",
@@ -986,6 +989,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(IntegrityError) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
         guard_error = str(refused.exception)
         self.assertIn("SB_BIRTHING_ELECTORATE_EMPTY", guard_error)
         self.assertNotIn("INV_CQ_ROUTE_REQUIRED", guard_error)
@@ -1028,6 +1032,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             policy_version=TEST_POLICY_VERSION,
             policy_text_sha256=TEST_POLICY_SHA256,
         )
+        before_intake_count = CommandIntake.objects.count()
         with (
             patch(
                 "src.intevia.services.organism_formation_service._lock_actor_membership_context",
@@ -1040,6 +1045,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(S015AuthorityDenied) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
         self.assertIs(
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
@@ -1085,6 +1091,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             policy_version=TEST_POLICY_VERSION,
             policy_text_sha256=TEST_POLICY_SHA256,
         )
+        before_intake_count = CommandIntake.objects.count()
         with (
             patch(
                 "src.intevia.services.organism_formation_service._lock_actor_membership_context",
@@ -1097,6 +1104,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(S015AuthorityDenied) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
         request = provider.request
         if request is None:
             self.fail("controlled provider did not capture the qualification request")

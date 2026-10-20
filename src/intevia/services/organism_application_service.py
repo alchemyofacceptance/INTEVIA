@@ -21,13 +21,13 @@ discussion welcome collaborator interfaces.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
-from django.db import IntegrityError, connections, transaction
+from django.db import IntegrityError, connections
 
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
@@ -59,6 +59,10 @@ from src.intevia.services.organism_command_support import (
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from src.intevia.services.organism_role_service import OrganismRoleService
 from src.intevia.services.organism_formation_service import _sbg_readiness_message
+
+if TYPE_CHECKING:
+    from core.models import IntakeEntry
+    from src.intevia.services.command_intake import BoundRequest, IntakeShape
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:APPLICATION_COMMAND:v1\x00"
@@ -291,11 +295,10 @@ class SubmitApplicationCommand:
 
     The carrier does not validate. The command requires request_reference
     and idempotency_key to be canonical strings (at most 128 and 120
-    characters), the identifiers to be UUIDs and the three times to be
-    timezone-aware, and normalises the times to UTC. All fields enter the
-    request's payload fingerprint, credential through the actor's Identity
-    and access epoch. received_at is the authority evaluation time and is
-    stored on the application and its lineage events.
+    characters), the identifiers to be UUIDs and the occurred/effective
+    times to be timezone-aware. INTEVIA assigns received_at; a supplied
+    value is refused. Material inputs enter the request fingerprint, with
+    the credential represented through the actor's Identity and access epoch.
     """
     credential: User
     living_organism_id: UUID
@@ -303,7 +306,7 @@ class SubmitApplicationCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     predecessor_reference: UUID | None = None
     answer: str = ""
 
@@ -376,8 +379,7 @@ class WithdrawApplicationCommand:
     Keys, identifiers and times are validated as for
     SubmitApplicationCommand and enter the payload fingerprint.
 
-    received_at is expected from the receiving surface, not chosen by the
-    applicant; this service does not check where it came from.
+    INTEVIA assigns received_at; a supplied value is refused.
     """
 
     credential: User
@@ -386,7 +388,7 @@ class WithdrawApplicationCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,7 +399,7 @@ class ClaimApplicationCommand:
     and DecideApplicationCommand. credential is the Coordinator's User;
     application_uuid names the application. Keys, identifiers and times are
     validated as for SubmitApplicationCommand and enter the payload
-    fingerprint.
+    fingerprint. INTEVIA assigns received_at; a supplied value is refused.
     """
     credential: User
     application_uuid: UUID
@@ -405,7 +407,7 @@ class ClaimApplicationCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1449,20 +1451,31 @@ class OrganismApplicationService:
                 result_type=ReplayResultType(GatewayEffectCommandResult, self._alias),
             )
 
+    def _validate_shape(self, entry: IntakeEntry, command: object) -> IntakeShape:
+        from src.intevia.services.command_intake import application_shape
+
+        return application_shape(entry, command)
+
     def _coordinator_start(
-        self, command: ClaimApplicationCommand, action: OrganismAction,
-        *, outcome: str | None = None,
+        self,
+        command: ClaimApplicationCommand,
+        action: OrganismAction,
+        *,
+        bound: BoundRequest,
+        expected_entry: IntakeEntry,
+        received_at: datetime,
+        outcome: str | None = None,
     ) -> _CoordinatorContext | ApplicationCommandResult:
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
         application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
         actor = _lock_actor(
             database_alias=self._alias, credential=command.credential,
             unavailable=S015ApplicationAuthorityUnavailable,
         )
+        bound.verify(command, actor, expected_entry, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias, actor_identity_id=actor.identity_id,
             action=action, idempotency_key=idempotency_key,
@@ -1623,12 +1636,37 @@ class OrganismApplicationService:
         )
 
     def submit_application(self, command: SubmitApplicationCommand) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.SUBMIT_APPLICATION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("SUBMIT_APPLICATION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_submit_application(command, bound)
+
+    def _execute_submit_application(
+        self,
+        command: SubmitApplicationCommand,
+        bound: BoundRequest,
+    ) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
             effective_at = _validate_timestamp(command.effective_at, "effective_at")
-            received_at = _validate_timestamp(command.received_at, "received_at")
+            received_at = _validate_timestamp(bound.received_at, "received_at")
             organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
             predecessor_uuid = None if command.predecessor_reference is None else _canonical_uuid(
                 command.predecessor_reference, "predecessor_reference",
@@ -1637,6 +1675,7 @@ class OrganismApplicationService:
                 database_alias=self._alias, credential=command.credential,
                 unavailable=S015ApplicationAuthorityUnavailable,
             )
+            bound.verify(command, actor, IntakeEntry.SUBMIT_APPLICATION, self._alias)
             acquire_organism_command_mutex(
                 database_alias=self._alias, actor_identity_id=actor.identity_id,
                 action=OrganismAction.SUBMIT_APPLICATION, idempotency_key=idempotency_key,
@@ -1774,17 +1813,43 @@ class OrganismApplicationService:
             )
 
     def withdraw_application(self, command: WithdrawApplicationCommand) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.WITHDRAW_APPLICATION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("WITHDRAW_APPLICATION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_withdraw_application(command, bound)
+
+    def _execute_withdraw_application(
+        self,
+        command: WithdrawApplicationCommand,
+        bound: BoundRequest,
+    ) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
             effective_at = _validate_timestamp(command.effective_at, "effective_at")
-            received_at = _validate_timestamp(command.received_at, "received_at")
+            received_at = _validate_timestamp(bound.received_at, "received_at")
             application_uuid = _canonical_uuid(command.application_uuid, "application_uuid")
             actor = _lock_actor(
                 database_alias=self._alias, credential=command.credential,
                 unavailable=S015ApplicationAuthorityUnavailable,
             )
+            bound.verify(command, actor, IntakeEntry.WITHDRAW_APPLICATION, self._alias)
             acquire_organism_command_mutex(
                 database_alias=self._alias, actor_identity_id=actor.identity_id,
                 action=OrganismAction.WITHDRAW_APPLICATION, idempotency_key=idempotency_key,
@@ -1851,8 +1916,39 @@ class OrganismApplicationService:
             )
 
     def claim_application(self, command: ClaimApplicationCommand) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.CLAIM_APPLICATION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("CLAIM_APPLICATION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_claim_application(command, bound)
+
+    def _execute_claim_application(
+        self,
+        command: ClaimApplicationCommand,
+        bound: BoundRequest,
+    ) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
-            context = self._coordinator_start(command, OrganismAction.CLAIM_APPLICATION)
+            context = self._coordinator_start(
+                command,
+                OrganismAction.CLAIM_APPLICATION,
+                bound=bound,
+                expected_entry=IntakeEntry.CLAIM_APPLICATION,
+                received_at=_validate_timestamp(bound.received_at, "received_at"),
+            )
             if isinstance(context, ApplicationCommandResult):
                 return context
             self._open_for_coordinator(context)
@@ -1893,8 +1989,39 @@ class OrganismApplicationService:
             )
 
     def reassign_application(self, command: ReassignApplicationCommand) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.REASSIGN_APPLICATION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("REASSIGN_APPLICATION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_reassign_application(command, bound)
+
+    def _execute_reassign_application(
+        self,
+        command: ReassignApplicationCommand,
+        bound: BoundRequest,
+    ) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
-            context = self._coordinator_start(command, OrganismAction.REASSIGN_APPLICATION)
+            context = self._coordinator_start(
+                command,
+                OrganismAction.REASSIGN_APPLICATION,
+                bound=bound,
+                expected_entry=IntakeEntry.REASSIGN_APPLICATION,
+                received_at=_validate_timestamp(bound.received_at, "received_at"),
+            )
             if isinstance(context, ApplicationCommandResult):
                 return context
             self._open_for_coordinator(context)
@@ -1947,11 +2074,43 @@ class OrganismApplicationService:
             )
 
     def decide_application(self, command: DecideApplicationCommand) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.DECIDE_APPLICATION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("DECIDE_APPLICATION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_decide_application(command, bound)
+
+    def _execute_decide_application(
+        self,
+        command: DecideApplicationCommand,
+        bound: BoundRequest,
+    ) -> ApplicationCommandResult:
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
             outcome = _canonical_key(command.outcome, "outcome", 7)
             if outcome not in {"ACCEPT", "DECLINE"}:
                 raise ValueError("outcome must be ACCEPT or DECLINE")
-            context = self._coordinator_start(command, OrganismAction.DECIDE_APPLICATION, outcome=outcome)
+            context = self._coordinator_start(
+                command,
+                OrganismAction.DECIDE_APPLICATION,
+                bound=bound,
+                expected_entry=IntakeEntry.DECIDE_APPLICATION,
+                received_at=_validate_timestamp(bound.received_at, "received_at"),
+                outcome=outcome,
+            )
             if isinstance(context, ApplicationCommandResult):
                 return context
             self._open_for_coordinator(context)

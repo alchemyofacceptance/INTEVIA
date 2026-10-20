@@ -30,6 +30,7 @@ from core.models import (
     Application,
     ApplicationEngagement,
     AuthorityDecision,
+    CommandIntake,
     CSAAssignment,
     CSAAssignmentEnd,
     ContextualRoleAssignment,
@@ -44,6 +45,7 @@ from core.models import (
     OrganismCommandReceipt,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.command_intake import ActorRef, BoundRequest, ENTRY_ACTIONS, IntakeEntry
 from src.intevia.services.organism_application_authority import (
     _assignment_term_in_effect,
     ProductionApplicationAuthorityProvider,
@@ -394,9 +396,53 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:submit:key:{suffix}:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             answer="TEST FIXTURE: application answer",
         ))
+
+    def _execute_application_for_test(
+        self,
+        service: OrganismApplicationService,
+        entry: IntakeEntry,
+        command: ClaimApplicationCommand | DecideApplicationCommand,
+        actor: Identity,
+        received_at: datetime,
+    ) -> ApplicationCommandResult:
+        bound = BoundRequest.for_test(
+            entry,
+            command,
+            received_at=received_at,
+            actor=ActorRef(
+                pk=actor.pk,
+                identity_id=actor.identity_id,
+                access_epoch=actor.access_epoch,
+            ),
+        )
+        intake_count = CommandIntake.objects.filter(
+            actor_id=actor.pk,
+            entry=entry.value,
+            action=ENTRY_ACTIONS[entry],
+            idempotency_key=command.idempotency_key,
+        ).count()
+        try:
+            if entry is IntakeEntry.CLAIM_APPLICATION:
+                if type(command) is not ClaimApplicationCommand:
+                    raise TypeError("claim test executor requires ClaimApplicationCommand")
+                return service._execute_claim_application(command, bound)
+            if entry is IntakeEntry.DECIDE_APPLICATION:
+                if type(command) is not DecideApplicationCommand:
+                    raise TypeError("decision test executor requires DecideApplicationCommand")
+                return service._execute_decide_application(command, bound)
+            raise ValueError("unsupported test-only application entry")
+        finally:
+            self.assertEqual(
+                CommandIntake.objects.filter(
+                    actor_id=actor.pk,
+                    entry=entry.value,
+                    action=ENTRY_ACTIONS[entry],
+                    idempotency_key=command.idempotency_key,
+                ).count(),
+                intake_count,
+            )
 
     def _own_request(self, actor, action, target, *, application_pk=None, suffix="direct"):
         self._capture_database_now()
@@ -645,7 +691,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             for table in before
             if after[table] != before[table]
         }
-        self.assertEqual(changed, {"core_authoritydecision": 1})
+        self.assertEqual(changed, {"core_authoritydecision": 1, "core_commandintake": 1})
         self.assertEqual(denied.exception.disclosed_refusal_code, S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN)
         record = AuthorityDecision.objects.get(
             decision_reference=denied.exception.authority_decision_reference,
@@ -774,7 +820,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:no-configuration-submit:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
                 answer="TEST FIXTURE: no-configuration application",
             ))
         self.assertEqual(
@@ -844,7 +889,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:decided-withdrawal-claim:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         self._capture_database_now()
         service.decide_application(DecideApplicationCommand(
@@ -854,7 +898,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:decided-withdrawal-decision:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             outcome="DECLINE",
         ))
         with self.assertRaises(S015AuthorityDenied) as denied:
@@ -866,7 +909,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:decided-withdrawal:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.C_TERMINAL_ROW_STANDS)
 
@@ -1352,7 +1394,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:applicant-claim:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
         self.assertEqual(AuthorityDecision.objects.count(), decisions_before)
         self.assertFalse(AuthorityDecision.objects.filter(request_reference=request_reference).exists())
@@ -1644,7 +1685,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:claim-before-reassign:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         )
         claim_result = service.claim_application(claim_command)
         claim_decision = AuthorityDecision.objects.get(
@@ -1668,7 +1708,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:not-assignee:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
                 outcome="DECLINE",
             ))
         self.assertEqual(not_assignee.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_ASSIGNEE)
@@ -1681,7 +1720,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:reassign:key:{self.tag}",
             occurred_at=self.now,
             effective_at=later,
-            received_at=self.now,
         )
         reassigned = service.reassign_application(reassign_command)
         self.assertEqual(reassigned.action, OrganismAction.REASSIGN_APPLICATION)
@@ -1747,7 +1785,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:former-assignee:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=later + timedelta(minutes=1),
-                received_at=self.now,
                 outcome="DECLINE",
             ))
         self.assertEqual(former_assignee.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_ASSIGNEE)
@@ -1759,7 +1796,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:decide-after-reassign:key:{self.tag}",
             occurred_at=self.now,
             effective_at=later + timedelta(minutes=2),
-            received_at=self.now,
             outcome="DECLINE",
         )
         decided = service.decide_application(decide_command)
@@ -1804,6 +1840,12 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(len(provider.requests), decide_provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), decide_decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), decide_receipts)
+        decide_intake = CommandIntake.objects.get(
+            actor_id=second_coordinator.pk,
+            entry=IntakeEntry.DECIDE_APPLICATION.value,
+            action=ENTRY_ACTIONS[IntakeEntry.DECIDE_APPLICATION],
+            idempotency_key=decide_command.idempotency_key,
+        )
 
         def acquire_register_lock(cursor):
             cursor.execute(
@@ -1815,7 +1857,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             self,
             acquire_register_lock,
             lambda _holder_pid, _start_worker, run_bounded: run_bounded(
-                lambda: service.decide_application(decide_command),
+                lambda: self._execute_application_for_test(
+                    service,
+                    IntakeEntry.DECIDE_APPLICATION,
+                    decide_command,
+                    second_coordinator,
+                    decide_intake.received_at,
+                ),
             ),
         )
         self.assertEqual(locked_replay, decided)
@@ -1835,6 +1883,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         departure_provider_calls = len(provider.requests)
         departure_decisions = AuthorityDecision.objects.count()
         departure_receipts = OrganismCommandReceipt.objects.count()
+        departure_rows = self._public_row_counts()
         departed_replay = service.decide_application(decide_command)
         self.assertEqual(departed_replay.application_uuid, decided.application_uuid)
         self.assertEqual(departed_replay.action, decided.action)
@@ -1852,6 +1901,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         self.assertEqual(len(provider.requests), departure_provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), departure_decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), departure_receipts)
+        self.assertEqual(self._public_row_counts(), departure_rows)
 
     def test_w_d1d_and_w_d1f_historical_reference_forms_coexist_without_rewriting(self):
         """W-D1d/W-D1f: R2, interim R3 and D1 records pass the installed guards side by side."""
@@ -1890,7 +1940,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:reference-forms-claim:key:{version}:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
             first_assignment = CSAAssignment.objects.get(application=application)
 
@@ -1903,7 +1952,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:reference-forms-reassign:key:{version}:{self.tag}",
                 occurred_at=self.now,
                 effective_at=reassign_at,
-                received_at=self.now,
             )
             reassigned = service.reassign_application(reassign_command)
             ending = CSAAssignmentEnd.objects.get(assignment=first_assignment)
@@ -1948,7 +1996,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:reference-forms-decide:key:{version}:{self.tag}",
                 occurred_at=self.now,
                 effective_at=reassign_at + timedelta(minutes=1),
-                received_at=self.now,
                 outcome="DECLINE",
             )
             decided = service.decide_application(decide_command)
@@ -2490,7 +2537,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:mismatched-engagement-claim:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         first_assignment = CSAAssignment.objects.get(application=application)
         self._capture_database_now()
@@ -2504,7 +2550,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:mismatched-engagement-prior-reassign:key:{self.tag}",
             occurred_at=self.now,
             effective_at=future_reassign_at,
-            received_at=self.now,
         ))
         ending = CSAAssignmentEnd.objects.get(assignment=first_assignment)
         self.assertEqual(
@@ -2563,7 +2608,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:mismatched-engagement-reassign:key:{self.tag}",
             occurred_at=self.now,
             effective_at=provider_effective_at,
-            received_at=self.now,
         )
         with self.assertRaises(S015ApplicationRefused):
             service.reassign_application(command)
@@ -2584,7 +2628,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:nonmember-claim:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         )
         provider_calls = len(provider.requests)
         decisions = AuthorityDecision.objects.count()
@@ -2600,7 +2643,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             self,
             acquire_register_lock,
             lambda _holder_pid, _start_worker, run_bounded: run_bounded(
-                lambda: service.claim_application(claim_command),
+                lambda: self._execute_application_for_test(
+                    service,
+                    IntakeEntry.CLAIM_APPLICATION,
+                    claim_command,
+                    self.applicant,
+                    self.now,
+                ),
             ),
         )
         self.assertIsInstance(refusal, S015ApplicationAuthorityUnavailable)
@@ -2626,7 +2675,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:nonmember-withdrawal:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         )
         provider_calls = len(provider.requests)
 
@@ -2696,7 +2744,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:reassign-refused:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
         self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
 
@@ -2733,7 +2780,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:claim:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         claim_record = AuthorityDecision.objects.get(decision_reference=claim.authority_decision_reference)
         self.assertEqual(claim_record.outcome, "QUALIFIED")
@@ -2752,7 +2798,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:decide:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             outcome="DECLINE",
         )
         decision = service.decide_application(decide_command)
@@ -2800,7 +2845,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:legacy-claim:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         claim = CSAAssignment.objects.get(application=application)
         engagement = ApplicationEngagement.objects.get(application=application, engagement_ordinal=1)
@@ -2814,7 +2858,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=idempotency_key,
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             outcome="DECLINE",
         )
         fingerprint = _command_payload(
@@ -2861,7 +2904,13 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             ).receipt_payload(),
         )
         stored_reference = receipt.result_payload["authority_reference"]
-        replay = service.decide_application(command)
+        replay = self._execute_application_for_test(
+            service,
+            IntakeEntry.DECIDE_APPLICATION,
+            command,
+            coordinator,
+            self.now,
+        )
         self.assertEqual(replay.authority_reference, WithheldField("authority_reference", "SUBJECT"))
         receipt.refresh_from_db()
         self.assertEqual(receipt.result_payload["authority_reference"].encode("utf-8"), stored_reference.encode("utf-8"))
@@ -2880,7 +2929,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:withdraw:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         record = AuthorityDecision.objects.get(decision_reference=withdrawal.authority_decision_reference)
         self.assertEqual(record.outcome, "QUALIFIED")

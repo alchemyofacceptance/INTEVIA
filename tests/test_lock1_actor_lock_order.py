@@ -17,6 +17,7 @@ from django.test.utils import CaptureQueriesContext
 
 from core.models import (
     AuthorityDecision,
+    CommandIntake,
     Identity,
     IdentityTransition,
     LivingOrganism,
@@ -169,7 +170,6 @@ def _submit_application_command(route, applicant, suffix: str) -> SubmitApplicat
         idempotency_key=f"lock1:submit:key:{suffix}:{route.tag}",
         occurred_at=now,
         effective_at=now,
-        received_at=now,
         answer="PKT-LOCK-1 disposable witness submission",
     )
 
@@ -1292,6 +1292,7 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             governance_route.route,
             f"seat-requester-{uuid4().hex}",
         )
+        request_key = f"lock1:seat-request:key:{tag}"
         request_result = governance_route.service.request_governance_seat(
             RequestGovernanceSeatCommand(
                 credential=requester.credential,
@@ -1300,10 +1301,11 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                 seat_rule_uuid=governance_route.rule_uuid,
                 seat_id="secondary",
                 request_reference=f"lock1:seat-request:{tag}",
-                idempotency_key=f"lock1:seat-request:key:{tag}",
+                idempotency_key=request_key,
                 effective_at=database_now(),
             )
         )
+        self.assertFalse(CommandIntake.objects.filter(idempotency_key=request_key).exists())
         entitlement_service = OrganismEntitlementService(
             authority=governance_route.route.birthing_service._authority,
             clock=database_now,
@@ -1314,6 +1316,9 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             "seat-decision-existing",
         )
         entitlement_service.activate_beta(existing_grant)
+        self.assertFalse(
+            CommandIntake.objects.filter(idempotency_key=existing_grant.idempotency_key).exists()
+        )
         second_command = _election_command(
             governance_route.route,
             requester,

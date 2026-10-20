@@ -15,9 +15,10 @@ from django.test import TransactionTestCase
 from core.forms import LOApplicationQuestionDraftForm, LOApplicationSettingsDraftForm
 from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement, AuthorityDecision,
+    CommandIntake,
     ApplicationLineage, ApplicationLineageEvent, ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent, Identity, IdentityTransition,
-    LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
+    IntakeEntry, LivingOrganism, LivingOrganismEvent, OrganismCommandReceipt, OrganismMembership,
     OrganismMembershipTransition, LOFoundingContentVersion,
     LOApplicationQuestionVersion, LOApplicationSettingsVersion, LOGovernanceConfigurationVersion,
 )
@@ -29,6 +30,7 @@ from src.intevia.services.organism_application_service import (
     _effective_gateway_version, _validate_gateway_answer,
     default_application_question, gateway_version_status,
 )
+from src.intevia.services.command_intake import ActorRef, BoundRequest, ENTRY_ACTIONS
 from src.intevia.services.organism_authority import (
     S015Authority, S015OwnApplicantAuthorityRequest, S015OwnApplicantAuthorityResponse,
     S015PostFoundingAuthorityResponse,
@@ -293,13 +295,40 @@ class ApplicationGatewayTests(TransactionTestCase):
         )
         return applicant
 
-    def submit(self, applicant, answer="A test-only applicant answer"):
+    def _submit_command(self, applicant, answer="A test-only applicant answer"):
         token = fresh()
-        return self.service.submit_application(SubmitApplicationCommand(
+        return SubmitApplicationCommand(
             credential=applicant.credential, living_organism_id=self.organism.organism_id,
             request_reference=f"s3:submit:{token}", idempotency_key=f"s3:submit:{token}",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW, answer=answer,
-        ))
+            occurred_at=NOW, effective_at=NOW, answer=answer,
+        )
+
+    def submit(self, applicant, answer="A test-only applicant answer"):
+        return self.service.submit_application(self._submit_command(applicant, answer))
+
+    def _submit_for_test(
+        self,
+        applicant,
+        *,
+        answer="A test-only applicant answer",
+        command=None,
+        received_at=None,
+    ):
+        if received_at is None:
+            received_at = NOW
+        command = self._submit_command(applicant, answer) if command is None else command
+        actor = ActorRef(
+            pk=applicant.pk,
+            identity_id=applicant.identity_id,
+            access_epoch=applicant.access_epoch,
+        )
+        bound = BoundRequest.for_test(
+            IntakeEntry.SUBMIT_APPLICATION,
+            command,
+            received_at=received_at,
+            actor=actor,
+        )
+        return self.service._execute_submit_application(command, bound)
 
     def _automatic_collaborators(self):
         with transaction.atomic(), connection.cursor() as cursor:
@@ -426,7 +455,7 @@ class ApplicationGatewayTests(TransactionTestCase):
 
         paused = self._start_worker(workers, paused_call)
         self.assertTrue(provider.entered.wait(timeout=10))
-        submission = self._start_worker(workers, lambda: self.submit(applicant))
+        submission = self._start_worker(workers, lambda: self._submit_for_test(applicant))
         with connection.cursor() as cursor:
             wait_until_locked(
                 cursor, submission.pid(), paused.pid(), relations={"core_livingorganism"},
@@ -467,10 +496,11 @@ class ApplicationGatewayTests(TransactionTestCase):
         )
 
         proposal_at = self._database_now()
+        proposal_key = f"gateway:office2:propose:key:{self.tag}"
         proposal = role_service.propose_assignment(ProposeAssignmentCommand(
             credential=other.credential,
             request_reference=f"gateway:office2:propose:{self.tag}",
-            idempotency_key=f"gateway:office2:propose:key:{self.tag}",
+            idempotency_key=proposal_key,
             occurred_at=NOW,
             effective_at=NOW,
             received_at=proposal_at,
@@ -479,11 +509,13 @@ class ApplicationGatewayTests(TransactionTestCase):
             effective_until_state="NONE",
             effective_until=None,
         ))
+        self.assertFalse(CommandIntake.objects.filter(idempotency_key=proposal_key).exists())
         assignment_at = self._database_now()
+        assignment_key = f"gateway:office2:assign:key:{self.tag}"
         role_service.transition_assignment(TransitionAssignmentCommand(
             credential=self.actor.credential,
             request_reference=f"gateway:office2:assign:{self.tag}",
-            idempotency_key=f"gateway:office2:assign:key:{self.tag}",
+            idempotency_key=assignment_key,
             occurred_at=NOW,
             effective_at=NOW,
             received_at=assignment_at,
@@ -493,6 +525,7 @@ class ApplicationGatewayTests(TransactionTestCase):
             effective_until_state="NONE",
             effective_until=None,
         ))
+        self.assertFalse(CommandIntake.objects.filter(idempotency_key=assignment_key).exists())
         return other
 
     def _database_now(self):
@@ -589,7 +622,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                     workers, lambda: self.effect(closure, OrganismAction.EFFECT_APPLICATION_SETTINGS),
                 )
                 close_snapshot = wait_until_locked(cursor, close.pid(), holder_pid)
-                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit = self._start_worker(workers, lambda: self._submit_for_test(applicant))
                 submit_snapshot = wait_for_blocker_set(cursor, submit.pid(), {holder_pid, close.pid()})
 
                 class _RollbackProbe(Exception):
@@ -629,7 +662,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", [pair_key])
-                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit = self._start_worker(workers, lambda: self._submit_for_test(applicant))
                 submit_snapshot = wait_until_locked(cursor, submit.pid(), holder_pid, locktype="advisory")
                 close = self._start_worker(
                     workers, lambda: self.effect(closure, OrganismAction.EFFECT_APPLICATION_SETTINGS),
@@ -667,7 +700,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                 close_snapshot = wait_until_locked(
                     cursor, close.pid(), holder_pid, relations={"core_loapplicationsettingsversion"},
                 )
-                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit = self._start_worker(workers, lambda: self._submit_for_test(applicant))
                 submit_snapshot = wait_until_locked(
                     cursor, submit.pid(), close.pid(), relations=ORGANISM_LOCK_RELATIONS,
                 )
@@ -693,7 +726,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", [pair_key])
-                submit = self._start_worker(workers, lambda: self.submit(applicant))
+                submit = self._start_worker(workers, lambda: self._submit_for_test(applicant))
                 submit_snapshot = wait_until_locked(cursor, submit.pid(), holder_pid, locktype="advisory")
                 change = self._start_worker(
                     workers, lambda: self.effect(changed, OrganismAction.EFFECT_APPLICATION_SETTINGS),
@@ -1105,11 +1138,12 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.automatic_gateway()
         care, _ = self.automatic_service()
         applicant = self.applicant()
+        intake_count = CommandIntake.objects.count()
         with self.assertRaises(Rollback):
             with transaction.atomic():
                 # Test-only incomplete automatic act; the outer transaction is always rolled back.
                 self.service._automatic_accept = lambda *args: None
-                result = self.submit(applicant)
+                result = self._submit_for_test(applicant)
                 application = Application.objects.get(application_uuid=result.application_uuid)
                 rule = f"application-settings-version:{application.settings_version.version_uuid}"
                 ApplicationEngagement.objects.create(
@@ -1135,6 +1169,7 @@ class ApplicationGatewayTests(TransactionTestCase):
                                  "s015d1:" + "a" * 64, care.pk, care.pk, NOW, NOW, NOW],
                             )
                 raise Rollback()
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
 
     def test_name_dependency_default_draft_and_unselected_settings(self):
         no_name_organism = LivingOrganism.objects.get(pk=self.no_name_ids["lo"])
@@ -1308,13 +1343,19 @@ class ApplicationGatewayTests(TransactionTestCase):
             idempotency_key="s3:r4:care-held:submit",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
             answer="TEST FIXTURE: replay with CARE identity held",
         )
         fresh_result = self.service.submit_application(command)
+        intake_received_at = CommandIntake.objects.get(
+            actor_id=applicant.pk,
+            entry=IntakeEntry.SUBMIT_APPLICATION.value,
+            action=OrganismAction.SUBMIT_APPLICATION.value,
+            idempotency_key=command.idempotency_key,
+        ).received_at
         provider_calls = len(self.provider.requests)
         decisions = ApplicationDecision.objects.count()
         receipts = OrganismCommandReceipt.objects.count()
+        intakes = CommandIntake.objects.count()
 
         def hold_care_identity(cursor):
             cursor.execute(
@@ -1326,13 +1367,18 @@ class ApplicationGatewayTests(TransactionTestCase):
             self,
             hold_care_identity,
             lambda _holder_pid, _start_worker, run_bounded: run_bounded(
-                lambda: self.service.submit_application(command),
+                lambda: self._submit_for_test(
+                    applicant,
+                    command=command,
+                    received_at=intake_received_at,
+                ),
             ),
         )
         self.assertEqual(replay, fresh_result)
         self.assertEqual(len(self.provider.requests), provider_calls)
         self.assertEqual(ApplicationDecision.objects.count(), decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
+        self.assertEqual(CommandIntake.objects.count(), intakes)
 
     def test_nonmember_gateway_effect_refuses_without_waiting_on_register_lock(self):
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
@@ -1701,43 +1747,88 @@ class ApplicationGatewayTests(TransactionTestCase):
                 ))
 
     def test_four_closed_states_and_version_evidence_survives_a_change(self):
-        class Rollback(Exception):
-            pass
+        def assert_closed_with_intake(service, command):
+            before = CommandIntake.objects.count()
+            with self.assertRaisesMessage(
+                S015ApplicationRefused, "S3FU gateway closed",
+            ):
+                service.submit_application(command)
+            self.assertEqual(CommandIntake.objects.count(), before + 1)
+            intake = CommandIntake.objects.get(
+                entry=IntakeEntry.SUBMIT_APPLICATION.value,
+                action=ENTRY_ACTIONS[IntakeEntry.SUBMIT_APPLICATION],
+                idempotency_key=command.idempotency_key,
+            )
+            self.assertEqual(intake.request_reference, command.request_reference)
 
         applicant = self.applicant()
-        with self.assertRaisesMessage(S015ApplicationRefused, "S3FU gateway closed"):
-            self.submit(applicant)
-        for mode in ("no_settings", "no_question", "closed_setting"):
-            with self.subTest(mode=mode), self.assertRaises(Rollback):
-                with transaction.atomic():
-                    if mode != "no_settings":
-                        settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
-                            "applications_open": mode != "closed_setting", "automatic_acceptance": False,
-                            "processing_responsibility": "LO",
-                        })
-                        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
-                    if mode != "no_question":
-                        question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {
-                            "question_text": "TEST FIXTURE: Why do you want to join?",
-                            "answer_format": "LONG_ANSWER",
-                            "options": None,
-                        })
-                        self.effect(question, OrganismAction.EFFECT_APPLICATION_QUESTION)
-                    with self.assertRaisesMessage(S015ApplicationRefused, "S3FU gateway closed"):
-                        self.submit(applicant)
-                    raise Rollback()
-        # FIFTH INTERFACE EXCEPTION (HG-authorized): the labelled controlled LO tests absent
-        # settings/question and closed states that real Birthing requires; it changes no real-LO rule.
-        settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
-            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
-        })
-        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        assert_closed_with_intake(self.service, self._submit_command(applicant))
+
+        intake_count = CommandIntake.objects.count()
         question = self.draft(OrganismAction.EFFECT_APPLICATION_QUESTION, {
             "question_text": "TEST FIXTURE: Why do you want to join?",
             "answer_format": "LONG_ANSWER",
             "options": None,
         })
         self.effect(question, OrganismAction.EFFECT_APPLICATION_QUESTION)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
+        assert_closed_with_intake(self.service, self._submit_command(applicant))
+
+        intake_count = CommandIntake.objects.count()
+        closed_settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": False, "automatic_acceptance": False,
+            "processing_responsibility": "LO",
+        })
+        self.effect(closed_settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
+        assert_closed_with_intake(self.service, self._submit_command(applicant))
+
+        with transaction.atomic(), connection.cursor() as cursor:
+            no_question_ids = found_nonroot(
+                cursor,
+                tag=f"gateway-no-question-{self.tag}",
+            )
+            cursor.execute("SELECT clock_timestamp()")
+            no_question_setup_at = cursor.fetchone()[0]
+            seed_test_gateway(
+                cursor,
+                no_question_ids,
+                at=no_question_setup_at,
+                include_governance_configuration=True,
+                include_settings=True,
+                include_question=False,
+            )
+        no_question_organism = LivingOrganism.objects.get(pk=no_question_ids["lo"])
+        no_question_provider = _FixtureBirthingCoordinatorProvider(
+            TestFixtureBirthingFactSource(no_question_organism.organism_id)
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            no_question_now = cursor.fetchone()[0]
+        no_question_service = OrganismApplicationService(
+            authority=S015Authority(provider=no_question_provider),
+            clock=lambda: no_question_now,
+        )
+        no_question_command = SubmitApplicationCommand(
+            credential=applicant.credential,
+            living_organism_id=no_question_organism.organism_id,
+            request_reference=f"s3:submit:no-question:{self.tag}",
+            idempotency_key=f"s3:submit:no-question:key:{self.tag}",
+            occurred_at=no_question_now,
+            effective_at=no_question_now,
+            answer="A test-only applicant answer",
+        )
+        assert_closed_with_intake(no_question_service, no_question_command)
+
+        self.assertFalse(Application.objects.filter(applicant=applicant).exists())
+        intake_count = CommandIntake.objects.count()
+        # FIFTH INTERFACE EXCEPTION (HG-authorized): the labelled controlled LO tests absent
+        # settings/question and closed states that real Birthing requires; it changes no real-LO rule.
+        settings = self.draft(OrganismAction.EFFECT_APPLICATION_SETTINGS, {
+            "applications_open": True, "automatic_acceptance": False, "processing_responsibility": "LO",
+        })
+        self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
         gateway = {
             "core_loapplicationsettingsversion": settings.pk,
             "core_loapplicationquestionversion": question.pk,
@@ -1754,8 +1845,9 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.effect(settings, OrganismAction.EFFECT_APPLICATION_SETTINGS)
         application.refresh_from_db()
         self.assertEqual(application.settings_version_id, gateway["core_loapplicationsettingsversion"])
-        with self.assertRaisesMessage(S015ApplicationRefused, "S3FU gateway closed"):
-            self.submit(self.applicant())
+        assert_closed_with_intake(
+            self.service, self._submit_command(self.applicant()),
+        )
 
     def test_answer_formats_at_service_boundary(self):
         cases = (
@@ -1940,10 +2032,11 @@ class ApplicationGatewayTests(TransactionTestCase):
             clock=lambda: NOW, database_alias="default",
         )
         token = fresh()
+        membership_key = f"loi-w2:{token}:idempotency"
         paused_call = lambda: service.open_membership(OpenMembershipCommand(
             credential=self.actor.credential,
             request_reference=f"loi-w2:{token}:request",
-            idempotency_key=f"loi-w2:{token}:idempotency",
+            idempotency_key=membership_key,
             occurred_at=NOW,
             effective_at=NOW,
             received_at=NOW,
@@ -1959,6 +2052,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.assertEqual(paused_result, "ok")
         self.assertEqual(submission_result, "ok")
         self._assert_no_deadlock(paused_result, submission_result)
+        self.assertFalse(CommandIntake.objects.filter(idempotency_key=membership_key).exists())
         membership = OrganismMembership.objects.get(identity=target, living_organism=self.organism)
         self.assertEqual(membership.state, "PROPOSED")
         transitions = OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")

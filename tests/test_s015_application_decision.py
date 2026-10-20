@@ -22,11 +22,12 @@ from core.models import (
     Application, ApplicationDecision, ApplicationDecisionEffect, ApplicationEngagement,
     ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal,
     CSAAssignment, CSAAssignmentEnd, ContextualRoleAssignment, Identity, IdentityTransition,
-    OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
+    CommandIntake, OrganismCommandReceipt, OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.command_intake import ActorRef, BoundRequest, ENTRY_ACTIONS, IntakeEntry
 from src.intevia.services.organism_application_service import (
-    _COMMAND_DOMAIN, ClaimApplicationCommand, DecideApplicationCommand, OrganismApplicationService,
+    _COMMAND_DOMAIN, ApplicationCommandResult, ClaimApplicationCommand, DecideApplicationCommand, OrganismApplicationService,
     ReassignApplicationCommand, S015ApplicationAuthorityUnavailable,
     S015ApplicationNotFound, S015ApplicationRefused,
     SubmitApplicationCommand, WithdrawApplicationCommand, _append_application_event,
@@ -237,11 +238,56 @@ class ApplicationDecisionTests(TransactionTestCase):
             clock=clock or database_now,
         )
 
+    def _execute_for_test(
+        self,
+        service: OrganismApplicationService,
+        entry: IntakeEntry,
+        command: WithdrawApplicationCommand | DecideApplicationCommand,
+        actor: Identity,
+        received_at: datetime,
+    ) -> ApplicationCommandResult:
+        bound = BoundRequest.for_test(
+            entry,
+            command,
+            received_at=received_at,
+            actor=ActorRef(
+                pk=actor.pk,
+                identity_id=actor.identity_id,
+                access_epoch=actor.access_epoch,
+            ),
+        )
+        intake_count = CommandIntake.objects.filter(
+            actor_id=actor.pk,
+            entry=entry.value,
+            action=ENTRY_ACTIONS[entry],
+            idempotency_key=command.idempotency_key,
+        ).count()
+        if entry is IntakeEntry.WITHDRAW_APPLICATION:
+            if type(command) is not WithdrawApplicationCommand:
+                raise TypeError("withdraw test executor requires WithdrawApplicationCommand")
+            result = service._execute_withdraw_application(command, bound)
+        elif entry is IntakeEntry.DECIDE_APPLICATION:
+            if type(command) is not DecideApplicationCommand:
+                raise TypeError("decision test executor requires DecideApplicationCommand")
+            result = service._execute_decide_application(command, bound)
+        else:
+            raise ValueError("unsupported test-only application entry")
+        self.assertEqual(
+            CommandIntake.objects.filter(
+                actor_id=actor.pk,
+                entry=entry.value,
+                action=ENTRY_ACTIONS[entry],
+                idempotency_key=command.idempotency_key,
+            ).count(),
+            intake_count,
+        )
+        return result
+
     def submit(self):
         return self.service().submit_application(SubmitApplicationCommand(
             credential=self.applicant.credential, living_organism_id=self.organism_uuid,
             request_reference=f"s3:submit:{self.tag}", idempotency_key=f"s3:submit:key:{self.tag}",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
             answer="Test-only applicant answer",
         ))
 
@@ -254,7 +300,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             credential=(actor or self.coordinator).credential, application_uuid=application.application_uuid,
             request_reference=f"s3:{kind}:{suffix}:{self.tag}",
             idempotency_key=f"s3:{kind}:key:{suffix}:{self.tag}",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         )
         if kind == "decide":
             return DecideApplicationCommand(**fields, outcome=outcome)
@@ -517,7 +563,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.service().withdraw_application(WithdrawApplicationCommand(
             credential=self.applicant.credential, application_uuid=application.application_uuid,
             request_reference="s3:withdraw:claim", idempotency_key="s3:withdraw:claim",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         ))
         with self.assertRaises(S015ApplicationRefused):
             self.service().claim_application(self.command(application))
@@ -692,7 +738,7 @@ class ApplicationDecisionTests(TransactionTestCase):
                     evidence_reference=f"application-decision:{decision.decision_uuid}",
                     request_reference=f"s3:guard:{self.tag}", idempotency_key=f"s3:guard:{self.tag}",
                     payload_fingerprint="0" * 64, occurred_at=event_time,
-                    effective_at=effective_at, received_at=event_time,
+                    effective_at=effective_at, received_at=database_now(),
                 )
 
         with self.assertRaisesMessage(IntegrityError, "S3FU LO capacity refused: no founding record"):
@@ -761,7 +807,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.service().withdraw_application(WithdrawApplicationCommand(
             credential=self.applicant.credential, application_uuid=application.application_uuid,
             request_reference="s3:withdraw:decision", idempotency_key="s3:withdraw:decision",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         ))
         with self.assertRaises(S015ApplicationRefused):
             self.service().decide_application(self.command(application, kind="decide"))
@@ -1072,7 +1118,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.service().withdraw_application(WithdrawApplicationCommand(
             credential=self.applicant.credential, application_uuid=application.application_uuid,
             request_reference="s3:status:withdraw", idempotency_key="s3:status:withdraw",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         ))
         future = database_now() + timedelta(days=1)
         self.assertEqual(self.service().application_status(application, future, future), "WITHDRAWN")
@@ -1082,7 +1128,7 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.service().withdraw_application(WithdrawApplicationCommand(
             credential=self.applicant.credential, application_uuid=previous.application_uuid,
             request_reference="s3:n1:withdraw", idempotency_key="s3:n1:withdraw",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         ))
         service = OrganismApplicationService(
             authority=S015Authority(provider=_Provider()), clock=lambda: NOW,
@@ -1091,7 +1137,7 @@ class ApplicationDecisionTests(TransactionTestCase):
             credential=self.applicant.credential, living_organism_id=self.organism_uuid,
             predecessor_reference=previous.application_uuid,
             request_reference="s3:n1:reapply", idempotency_key="s3:n1:reapply",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
             answer="Test-only applicant answer",
         ))
         self.assertEqual(
@@ -1179,7 +1225,12 @@ class ApplicationDecisionTests(TransactionTestCase):
         method = getattr(self.service(provider), f"{kind}_application")
         unknown = self.command(application, kind=kind)
         with self.assertRaises(S015ApplicationNotFound):
-            method(replace(unknown, application_uuid=uuid4()))
+            method(replace(
+                unknown,
+                application_uuid=uuid4(),
+                request_reference=f"{unknown.request_reference}:unknown",
+                idempotency_key=f"{unknown.idempotency_key}:unknown",
+            ))
         self.assertFalse(provider.requests)
         with self.assertRaises(S015AuthorityDenied):
             method(unknown)
@@ -1214,37 +1265,101 @@ class ApplicationDecisionTests(TransactionTestCase):
         self._workers = []
         self.addCleanup(cleanup_workers, self._workers)
 
-    def _withdraw_for_race(self, application):
+    def _race_received_at(self, application):
+        predecessors = list(ApplicationLineageEvent.objects.filter(
+            application_lineage__application=application,
+        ).order_by("sequence"))
+        self.assertTrue(predecessors)
+        engagements = list(ApplicationEngagement.objects.filter(
+            application=application,
+        ))
+        self.assertTrue(engagements)
+        # These five fixtures have no membership before the ACCEPT attempt.
+        self.assertFalse(OrganismMembership.objects.filter(
+            identity=self.applicant,
+            living_organism_id=self.ids["lo"],
+        ).exists())
+        received_at = max(
+            [database_now(), application.received_at, application.recorded_at]
+            + [p.received_at for p in predecessors]
+            + [p.recorded_at for p in predecessors]
+            + [e.recorded_at for e in engagements]
+        )
+        proposed = (NOW, NOW, received_at)
+        self.assertGreaterEqual(proposed, (
+            application.effective_at,
+            application.occurred_at,
+            application.received_at,
+        ))
+        for predecessor in predecessors:
+            with self.subTest(predecessor_sequence=predecessor.sequence):
+                self.assertEqual(
+                    (predecessor.effective_at, predecessor.occurred_at),
+                    (NOW, NOW),
+                )
+                self.assertGreaterEqual(proposed, (
+                    predecessor.effective_at,
+                    predecessor.occurred_at,
+                    predecessor.received_at,
+                ))
+        return received_at
+
+    def _withdraw_for_race(self, application, received_at):
         token = fresh()
         command = WithdrawApplicationCommand(
             credential=self.applicant.credential, application_uuid=application.application_uuid,
             request_reference=f"race:withdraw:{token}", idempotency_key=f"race:withdraw:{token}",
-            occurred_at=NOW, effective_at=NOW, received_at=NOW,
+            occurred_at=NOW, effective_at=NOW,
         )
-        self.service(_Provider()).withdraw_application(command)
+        self._execute_for_test(
+            self.service(_Provider()),
+            IntakeEntry.WITHDRAW_APPLICATION,
+            command,
+            self.applicant,
+            received_at,
+        )
 
     def test_dw1_withdraw_first_then_decide_waits_on_organism_lock(self):
         """DW1 observes withdrawal-first serialization: the decision waits on the organism lock, then refuses the withdrawn application."""
         application = self.claimed()
+        received_at = self._race_received_at(application)
+        intake_rows_before = list(
+            CommandIntake.objects.order_by("pk").values()
+        )
         self._register_workers()
         holder_pid = backend_pid(connection)
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism_uuid])
-                withdrawal = self._start_observed_worker(lambda: self._withdraw_for_race(application))
+                withdrawal = self._start_observed_worker(
+                    lambda: self._withdraw_for_race(application, received_at)
+                )
                 withdrawal_snapshot = wait_until_locked(
                     cursor, withdrawal.pid(), holder_pid, relations=ORGANISM_LOCK_RELATIONS,
                 )
-                decision = self._start_observed_worker(lambda: self.service(_Provider()).decide_application(
-                    self.command(application, kind="decide", suffix="dw1"),
-                ))
+                decision_command = self.command(application, kind="decide", suffix="dw1")
+                decision = self._start_observed_worker(
+                    lambda: self._execute_for_test(
+                        self.service(_Provider()),
+                        IntakeEntry.DECIDE_APPLICATION,
+                        decision_command,
+                        self.coordinator,
+                        received_at,
+                    )
+                )
                 decision_snapshot = wait_until_locked(
                     cursor, decision.pid(), withdrawal.pid(), relations=ORGANISM_LOCK_RELATIONS,
                 )
         finally:
             self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
-        self.assertEqual(self._join_observed_worker(withdrawal), "ok")
-        refused = self._join_observed_worker(decision)
+        withdrawal_result = self._join_observed_worker(withdrawal)
+        decision_result = self._join_observed_worker(decision)
+        self.assertEqual(
+            list(CommandIntake.objects.order_by("pk").values()),
+            intake_rows_before,
+        )
+        self.assertEqual(withdrawal_result, "ok")
+        refused = decision_result
         self.assertIsInstance(refused, S015ApplicationRefused, f"decision wait: {decision_snapshot!r}")
         self.assertEqual(str(refused), "application already withdrawn", f"withdrawal wait: {withdrawal_snapshot!r}")
         self.assertEqual(ApplicationWithdrawal.objects.filter(application=application).count(), 1)
@@ -1253,25 +1368,44 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_dw2_decide_first_then_withdraw_waits_on_organism_lock(self):
         """DW2 observes decision-first serialization: withdrawal waits on the organism lock, then refuses the decided application."""
         application = self.claimed()
+        received_at = self._race_received_at(application)
+        intake_rows_before = list(
+            CommandIntake.objects.order_by("pk").values()
+        )
         self._register_workers()
         holder_pid = backend_pid(connection)
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("SELECT public.s015_lock_organisms(ARRAY[%s]::uuid[])", [self.organism_uuid])
-                decision = self._start_observed_worker(lambda: self.service(_Provider()).decide_application(
-                    self.command(application, kind="decide", suffix="dw2"),
-                ))
+                decision_command = self.command(application, kind="decide", suffix="dw2")
+                decision = self._start_observed_worker(
+                    lambda: self._execute_for_test(
+                        self.service(_Provider()),
+                        IntakeEntry.DECIDE_APPLICATION,
+                        decision_command,
+                        self.coordinator,
+                        received_at,
+                    )
+                )
                 decision_snapshot = wait_until_locked(
                     cursor, decision.pid(), holder_pid, relations=ORGANISM_LOCK_RELATIONS,
                 )
-                withdrawal = self._start_observed_worker(lambda: self._withdraw_for_race(application))
+                withdrawal = self._start_observed_worker(
+                    lambda: self._withdraw_for_race(application, received_at)
+                )
                 withdrawal_snapshot = wait_until_locked(
                     cursor, withdrawal.pid(), decision.pid(), relations=ORGANISM_LOCK_RELATIONS,
                 )
         finally:
             self.assertFalse(connection.in_atomic_block, "holder transaction must be released")
-        self.assertEqual(self._join_observed_worker(decision), "ok")
-        refused = self._join_observed_worker(withdrawal)
+        decision_result = self._join_observed_worker(decision)
+        withdrawal_result = self._join_observed_worker(withdrawal)
+        self.assertEqual(
+            list(CommandIntake.objects.order_by("pk").values()),
+            intake_rows_before,
+        )
+        self.assertEqual(decision_result, "ok")
+        refused = withdrawal_result
         self.assertIsInstance(refused, S015ApplicationRefused, f"withdrawal wait: {withdrawal_snapshot!r}")
         self.assertEqual(str(refused), "application already decided", f"decision wait: {decision_snapshot!r}")
         self.assertEqual(ApplicationDecision.objects.filter(application=application).count(), 1)
@@ -1344,6 +1478,10 @@ class ApplicationDecisionTests(TransactionTestCase):
         self.assertEqual(ApplicationDecision.objects.count() + ApplicationWithdrawal.objects.count(), 1)
 
     def _race(self, application, first, second):
+        received_at = self._race_received_at(application)
+        intake_rows_before = list(
+            CommandIntake.objects.order_by("pk").values()
+        )
         barrier = Barrier(2)
         results = Queue()
 
@@ -1354,13 +1492,24 @@ class ApplicationDecisionTests(TransactionTestCase):
                     command = WithdrawApplicationCommand(
                         credential=self.applicant.credential, application_uuid=application.application_uuid,
                         request_reference=f"race:withdraw:{suffix}", idempotency_key=f"race:withdraw:{suffix}",
-                        occurred_at=NOW, effective_at=NOW, received_at=NOW,
+                        occurred_at=NOW, effective_at=NOW,
                     )
-                    self.service(_Provider()).withdraw_application(command)
+                    self._execute_for_test(
+                        self.service(_Provider()),
+                        IntakeEntry.WITHDRAW_APPLICATION,
+                        command,
+                        self.applicant,
+                        received_at,
+                    )
                 else:
-                    self.service(_Provider()).decide_application(self.command(
-                        application, kind="decide", suffix=suffix,
-                    ))
+                    command = self.command(application, kind="decide", suffix=suffix)
+                    self._execute_for_test(
+                        self.service(_Provider()),
+                        IntakeEntry.DECIDE_APPLICATION,
+                        command,
+                        self.coordinator,
+                        received_at,
+                    )
                 results.put("ok")
             except Exception as exc:
                 results.put(exc)
@@ -1374,9 +1523,17 @@ class ApplicationDecisionTests(TransactionTestCase):
             worker_handle.thread.join(timeout=30)
             self.assertFalse(worker_handle.thread.is_alive())
         outcomes = [results.get_nowait(), results.get_nowait()]
+        self.assertEqual(
+            list(CommandIntake.objects.order_by("pk").values()),
+            intake_rows_before,
+        )
         self.assertEqual(outcomes.count("ok"), 1, outcomes)
-        self.assertIsInstance(next(outcome for outcome in outcomes if outcome != "ok"),
-                              (IntegrityError, S015ApplicationRefused))
+        loser = next(outcome for outcome in outcomes if outcome != "ok")
+        self.assertIsInstance(loser, (IntegrityError, S015ApplicationRefused))
+        for error in (loser, loser.__cause__, loser.__context__):
+            if error is not None:
+                self.assertNotIn("out_of_order_application_act", str(error))
+                self.assertNotIn("out_of_order_admission", str(error))
 
     def test_g2_ending_witness_on_both_schemas(self):
         """0025 admission of an ended assignee is the defect witness, not desired behaviour."""
