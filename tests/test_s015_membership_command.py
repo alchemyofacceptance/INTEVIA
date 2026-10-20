@@ -19,6 +19,7 @@ from tests.s015_0021_support import create_test_identity, register_test_learner
 
 from core.models import (
     AuthorityDecision,
+    CommandIntake,
     ContextualRoleAssignment,
     Identity,
     IdentityTransition,
@@ -298,7 +299,6 @@ class S015MembershipCommandTests(TransactionTestCase):
             idempotency_key=f"{tag}:propose-key:{fresh()}",
             occurred_at=proposed_at,
             effective_at=proposed_at,
-            received_at=proposal_received_at,
             membership_uuid=membership.membership_uuid,
             role_definition_uuid=role.role_uuid,
             effective_until_state=effective_until_state,
@@ -312,7 +312,6 @@ class S015MembershipCommandTests(TransactionTestCase):
             idempotency_key=f"{tag}:assign-key:{fresh()}",
             occurred_at=assigned_at,
             effective_at=assigned_at,
-            received_at=assignment_received_at,
             assignment_uuid=proposal.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
@@ -416,33 +415,29 @@ class S015MembershipCommandTests(TransactionTestCase):
             for locktype, mode in locks
         ))
 
-    def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None, received_at=None):
+    def _open_command(self, *, actor, organism_id, target_identity_id, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None):
         occurred_at = NOW if occurred_at is None else occurred_at
         effective_at = NOW if effective_at is None else effective_at
-        received_at = NOW if received_at is None else received_at
         return OpenMembershipCommand(
             credential=actor.credential,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
             effective_at=effective_at,
-            received_at=received_at,
             living_organism_id=organism_id,
             member_identity_id=target_identity_id,
             reason_class=reason_class,
         )
 
-    def _transition_command(self, *, actor, membership_uuid, resulting_state, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None, received_at=None):
+    def _transition_command(self, *, actor, membership_uuid, resulting_state, request_reference, idempotency_key, reason_class, occurred_at=None, effective_at=None):
         occurred_at = NOW if occurred_at is None else occurred_at
         effective_at = NOW if effective_at is None else effective_at
-        received_at = NOW if received_at is None else received_at
         return TransitionMembershipCommand(
             credential=actor.credential,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
             effective_at=effective_at,
-            received_at=received_at,
             membership_uuid=membership_uuid,
             resulting_state=resulting_state,
             reason_class=reason_class,
@@ -462,6 +457,17 @@ class S015MembershipCommandTests(TransactionTestCase):
             )
         )
         membership = _membership_for_result(open_result)
+        opening_intake = CommandIntake.objects.get(
+            actor=actor,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            idempotency_key=f"idem:{organism_label}:open",
+        )
+        append_received_at = self._database_now()
+        self.assertGreaterEqual(append_received_at, opening_intake.received_at)
+        self.assertLessEqual(
+            (NOW, NOW, opening_intake.received_at),
+            (NOW, NOW, append_received_at),
+        )
         with transaction.atomic(), connection.cursor() as cur:
             cur.execute(
                 "SELECT id, sequence FROM core_organismmembershiptransition "
@@ -483,7 +489,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 pred_id=predecessor_id,
                 eff=NOW,
                 occ=NOW,
-                rec=NOW,
+                rec=append_received_at,
                 extra={"reason_class": reason_transition},
             )
             refresh(cur, "core_organismmembership", membership.pk, NOW)
@@ -587,6 +593,17 @@ class S015MembershipCommandTests(TransactionTestCase):
             )
         )
         membership = _membership_for_result(open_result)
+        opening_intake = CommandIntake.objects.get(
+            actor=actor,
+            action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+            idempotency_key="idem:leave-proposed:open",
+        )
+        append_received_at = self._database_now()
+        self.assertGreaterEqual(append_received_at, opening_intake.received_at)
+        self.assertLessEqual(
+            (NOW, NOW, opening_intake.received_at),
+            (NOW, NOW, append_received_at),
+        )
         with connection.cursor() as cur:
             cur.execute(
                 "SELECT id, sequence FROM core_organismmembershiptransition "
@@ -614,7 +631,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                     pred_id=predecessor_id,
                     eff=NOW,
                     occ=NOW,
-                    rec=NOW,
+                    rec=append_received_at,
                     extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
                 )
         membership.refresh_from_db()
@@ -638,7 +655,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 pred_id=predecessor_id,
                 eff=NOW,
                 occ=NOW,
-                rec=NOW,
+                rec=append_received_at,
                 extra={"reason_class": "TEST_ONLY_REASON_LEAVE"},
             )
             refresh(cur, "core_organismmembership", membership.pk, NOW)
@@ -696,11 +713,11 @@ class S015MembershipCommandTests(TransactionTestCase):
                     request_reference=f"request:production-leave:{state.lower()}",
                     idempotency_key=f"idem:production-leave:{state.lower()}",
                     reason_class="TEST_ONLY_REASON_LEAVE",
-                    received_at=self._database_now(),
                 )
                 calls_before = len(provider.requests)
                 decisions_before = AuthorityDecision.objects.count()
                 receipts_before = OrganismCommandReceipt.objects.count()
+                intakes_before = CommandIntake.objects.count()
                 try:
                     result = service.transition_membership(command)
                 except S015AuthorityDenied as caught:
@@ -723,9 +740,17 @@ class S015MembershipCommandTests(TransactionTestCase):
                     decision_reference=result.authority_decision_reference,
                 )
                 self.assertEqual(decision.outcome, "QUALIFIED")
+                intake = CommandIntake.objects.get(
+                    actor=member,
+                    action=OrganismAction.TRANSITION_MEMBERSHIP.value,
+                    idempotency_key=command.idempotency_key,
+                )
+                self.assertEqual(transition.received_at, intake.received_at)
+                self.assertEqual(decision.evaluated_at, intake.received_at)
                 self.assertEqual(len(provider.requests), calls_before + 1)
                 self.assertEqual(AuthorityDecision.objects.count(), decisions_before + 1)
                 self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before + 1)
+                self.assertEqual(CommandIntake.objects.count(), intakes_before + 1)
 
                 replay = service.transition_membership(command)
                 self.assertEqual(replay, result)
@@ -738,7 +763,22 @@ class S015MembershipCommandTests(TransactionTestCase):
                 self.assertEqual(len(provider.requests), calls_before + 1)
                 self.assertEqual(AuthorityDecision.objects.count(), decisions_before + 1)
                 self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before + 1)
+                self.assertEqual(CommandIntake.objects.count(), intakes_before + 1)
 
+                from src.intevia.services.command_intake import (
+                    IntakeEntry,
+                    _resolve_actor,
+                    admit_request,
+                    intake_shape,
+                )
+
+                replay_bound = admit_request(
+                    "default",
+                    IntakeEntry.TRANSITION_MEMBERSHIP,
+                    _resolve_actor("default", member.credential),
+                    intake_shape(IntakeEntry.TRANSITION_MEMBERSHIP, command),
+                )
+                self.assertEqual(replay_bound.received_at, intake.received_at)
                 if state == "ACTIVE":
                     def acquire_register_lock(cursor):
                         cursor.execute(
@@ -750,13 +790,17 @@ class S015MembershipCommandTests(TransactionTestCase):
                         self,
                         acquire_register_lock,
                         lambda _pid, _start_worker, run_bounded: run_bounded(
-                            lambda: service.transition_membership(command),
-                        ),
-                    )
+                                lambda: service._execute_transition_membership(
+                                    command,
+                                    replay_bound,
+                                ),
+                            ),
+                        )
                     self.assertEqual(locked_replay, result)
                     self.assertEqual(len(provider.requests), calls_before + 1)
                     self.assertEqual(AuthorityDecision.objects.count(), decisions_before + 1)
                     self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before + 1)
+                    self.assertEqual(CommandIntake.objects.count(), intakes_before + 1)
 
     def test_production_provider_limits_other_membership_transitions(self):
         ids, actor, target = self._setup_organism("production-membership-limits")
@@ -811,7 +855,6 @@ class S015MembershipCommandTests(TransactionTestCase):
                     request_reference="request:production-membership-limits:office-holder",
                     idempotency_key="idem:production-membership-limits:office-holder",
                     reason_class="TEST_ONLY_REASON_LEAVE",
-                    received_at=self._database_now(),
                 )
             )
         self.assertEqual(
@@ -1177,6 +1220,7 @@ class S015MembershipCommandTests(TransactionTestCase):
             result_payload=malformed_payload,
         )
         tables = (
+            "core_commandintake",
             "core_organismmembership",
             "core_organismmembershiptransition",
             "core_organismcommandreceipt",
@@ -1259,7 +1303,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         from src.intevia.services import organism_membership_service as membership_module
 
         membership_uuid = uuid4()
-        actor = SimpleNamespace(pk=1, identity_id=uuid4())
+        actor = SimpleNamespace(pk=1, identity_id=uuid4(), access_epoch=0)
         role_assignments = Mock()
         role_assignments.filter.return_value = role_assignments
         role_assignments.exists.return_value = False
@@ -1280,6 +1324,14 @@ class S015MembershipCommandTests(TransactionTestCase):
             request_reference="request:rc1-headless-membership:end",
             idempotency_key="idem:rc1-headless-membership:end",
             reason_class="TEST_ONLY_REASON_HEADLESS",
+        )
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.TRANSITION_MEMBERSHIP,
+            command,
+            received_at=NOW,
+            actor=ActorRef(pk=actor.pk, identity_id=actor.identity_id, access_epoch=0),
         )
         service = self._service(_ExactProvider())
         tables = (
@@ -1319,7 +1371,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 patch.object(service, "_attempt_replay", return_value=None),
                 patch.object(service, "_evaluate_authority", return_value=None),
             ):
-                service._execute_transition(command, {})
+                service._execute_transition(command, {}, bound=bound)
         transition_query.assert_not_called()
         self.assertEqual(membership_queryset.get.call_count, 2)
         self.assertEqual(_snapshot_tables(*tables), before)
@@ -1389,6 +1441,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         ids, actor, target = self._setup_organism("replay")
         service = self._service(_ExactProvider())
         tables = (
+            "core_commandintake",
             "core_organismmembership",
             "core_organismmembershiptransition",
             "core_organismcommandreceipt",
@@ -1408,7 +1461,8 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(len(after_first[tables[0]]), len(before[tables[0]]) + 1)
         self.assertEqual(len(after_first[tables[1]]), len(before[tables[1]]) + 1)
         self.assertEqual(len(after_first[tables[2]]), len(before[tables[2]]) + 1)
-        self.assertEqual(after_first[tables[3]], before[tables[3]])
+        self.assertEqual(len(after_first[tables[3]]), len(before[tables[3]]) + 1)
+        self.assertEqual(after_first[tables[4]], before[tables[4]])
         membership = _membership_for_result(first)
         transition = OrganismMembershipTransition.objects.get(
             membership=membership, sequence=1,
@@ -1463,6 +1517,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         ids, actor, target = self._setup_organism("replay-mismatch")
         service = self._service(_ExactProvider())
         tables = (
+            "core_commandintake",
             "core_organismmembership",
             "core_organismmembershiptransition",
             "core_organismcommandreceipt",
@@ -1483,7 +1538,8 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(len(after_first[tables[0]]), len(before[tables[0]]) + 1)
         self.assertEqual(len(after_first[tables[1]]), len(before[tables[1]]) + 1)
         self.assertEqual(len(after_first[tables[2]]), len(before[tables[2]]) + 1)
-        self.assertEqual(after_first[tables[3]], before[tables[3]])
+        self.assertEqual(len(after_first[tables[3]]), len(before[tables[3]]) + 1)
+        self.assertEqual(after_first[tables[4]], before[tables[4]])
         membership = _membership_for_result(first)
         transition = OrganismMembershipTransition.objects.get(
             membership=membership, sequence=1,
@@ -1654,7 +1710,6 @@ class S015MembershipCommandTests(TransactionTestCase):
                 idempotency_key="idem:reason:missing",
                 occurred_at=NOW,
                 effective_at=NOW,
-                received_at=NOW,
                 living_organism_id=ids["organism_uuid"],
                 member_identity_id=target.identity_id,
             )
@@ -1688,7 +1743,6 @@ class S015MembershipCommandTests(TransactionTestCase):
                 reason_class="TEST_ONLY_REASON_RETROSPECTIVE",
                 occurred_at=NOW - timedelta(hours=1),
                 effective_at=NOW - timedelta(hours=1),
-                received_at=NOW,
             )
         )
         membership.refresh_from_db()
@@ -1713,6 +1767,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                                                at=NOW - timedelta(hours=2))
         transition_count = OrganismMembershipTransition.objects.count()
         receipt_count = OrganismCommandReceipt.objects.count()
+        intake_count = CommandIntake.objects.count()
 
         with self.assertRaisesRegex(S015OperationNotYetImplemented, "IL-3"):
             service.transition_membership(
@@ -1725,7 +1780,6 @@ class S015MembershipCommandTests(TransactionTestCase):
                     reason_class="TEST_ONLY_REASON_OUT_OF_ORDER",
                     occurred_at=NOW - timedelta(hours=3),
                     effective_at=NOW - timedelta(hours=3),
-                    received_at=NOW,
                 )
             )
 
@@ -1733,6 +1787,9 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(membership.state, "ACTIVE")
         self.assertEqual(OrganismMembershipTransition.objects.count(), transition_count)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count)
+        # IL-3 refuses after admission: exactly +1 intake (D3).
+        self.assertEqual(CommandIntake.objects.count(), intake_count + 1)
+        self.assertEqual(CommandIntake.objects.filter(idempotency_key="idem:out-of-order:end").count(), 1)
 
     def test_atomicity_required_on_mutex_helper(self):
         with self.assertRaises(S015CommandAtomicityRequired):
@@ -1747,6 +1804,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         ids, actor, target = self._setup_organism("atomic-failure")
         service = self._service(_ExactProvider())
         tables = (
+            "core_commandintake",
             "core_organismmembership",
             "core_organismmembershiptransition",
             "core_organismcommandreceipt",
@@ -1754,58 +1812,93 @@ class S015MembershipCommandTests(TransactionTestCase):
         )
         before = _snapshot_tables(*tables)
         future = FAR_FUTURE
+        command = self._open_command(
+            actor=actor,
+            organism_id=ids["organism_uuid"],
+            target_identity_id=target.identity_id,
+            request_reference="request:atomic-failure:open",
+            idempotency_key="idem:atomic-failure:open",
+            reason_class="TEST_ONLY_REASON_ATOMICITY",
+            effective_at=NOW,
+        )
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.OPEN_MEMBERSHIP,
+            command,
+            received_at=future,
+            actor=ActorRef(
+                pk=actor.pk,
+                identity_id=actor.identity_id,
+                access_epoch=actor.access_epoch,
+            ),
+        )
         with self.assertRaises(IntegrityError):
-            service.open_membership(
-                self._open_command(
-                    actor=actor,
-                    organism_id=ids["organism_uuid"],
-                    target_identity_id=target.identity_id,
-                    request_reference="request:atomic-failure:open",
-                    idempotency_key="idem:atomic-failure:open",
-                    reason_class="TEST_ONLY_REASON_ATOMICITY",
-                    effective_at=NOW,
-                    received_at=future,
-                )
-            )
+            service._execute_open_membership(command, bound)
         self.assertEqual(_snapshot_tables(*tables), before)
 
     def test_concurrent_same_request_replays_once(self):
         ids, actor, target = self._setup_organism("concurrency")
         tables = (
+            "core_commandintake",
             "core_organismmembership",
             "core_organismmembershiptransition",
             "core_organismcommandreceipt",
             "core_authoritydecision",
         )
         before = _snapshot_tables(*tables)
-        command_kwargs = dict(
+        command = self._open_command(
+            actor=actor,
             organism_id=ids["organism_uuid"],
             target_identity_id=target.identity_id,
             request_reference="request:concurrency:open",
             idempotency_key="idem:concurrency:open",
             reason_class="TEST_ONLY_REASON_CONCURRENCY",
         )
+        from src.intevia.services.command_intake import (
+            IntakeEntry,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        admission_started = self._database_now()
+        actor_ref = _resolve_actor("default", actor.credential)
+        first_bound = admit_request(
+            "default",
+            IntakeEntry.OPEN_MEMBERSHIP,
+            actor_ref,
+            intake_shape(IntakeEntry.OPEN_MEMBERSHIP, command),
+        )
+        second_bound = admit_request(
+            "default",
+            IntakeEntry.OPEN_MEMBERSHIP,
+            actor_ref,
+            intake_shape(IntakeEntry.OPEN_MEMBERSHIP, command),
+        )
+        admission_finished = self._database_now()
+        self.assertGreaterEqual(first_bound.received_at, admission_started)
+        self.assertLessEqual(first_bound.received_at, admission_finished)
+        self.assertEqual(first_bound.received_at, second_bound.received_at)
         gate = Barrier(2)
         results: Queue[tuple[str, object]] = Queue()
 
-        def worker():
+        def worker(bound):
             try:
                 with transaction.atomic():
                     _set_local_concurrency_timeouts()
                     worker_actor = Identity.objects.get(pk=actor.pk)
                     service = self._service(_ExactProvider())
                     gate.wait(timeout=10)
-                    result = service.open_membership(
-                        self._open_command(actor=worker_actor, **command_kwargs)
-                    )
+                    result = service._execute_open_membership(command, bound)
                 results.put(("ok", result))
             except Exception as exc:  # pragma: no cover - thread assertion channel
                 results.put(("err", exc))
 
         workers = []
         self.addCleanup(cleanup_workers, workers)
-        workers.append(start_worker(worker))
-        workers.append(start_worker(worker))
+        workers.append(start_worker(lambda: worker(first_bound)))
+        workers.append(start_worker(lambda: worker(second_bound)))
         for worker_handle in workers:
             worker_handle.thread.join(timeout=30)
             self.assertFalse(worker_handle.thread.is_alive())
@@ -1817,14 +1910,17 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(len(after[tables[0]]), len(before[tables[0]]) + 1)
         self.assertEqual(len(after[tables[1]]), len(before[tables[1]]) + 1)
         self.assertEqual(len(after[tables[2]]), len(before[tables[2]]) + 1)
-        self.assertEqual(after[tables[3]], before[tables[3]])
+        self.assertEqual(len(after[tables[3]]), len(before[tables[3]]) + 1)
+        self.assertEqual(after[tables[4]], before[tables[4]])
         membership = _membership_for_result(collected[0][1])
         transition = OrganismMembershipTransition.objects.get(
             membership=membership, sequence=1,
         )
         receipt = OrganismCommandReceipt.objects.get(idempotency_key="idem:concurrency:open")
+        intake = CommandIntake.objects.get(idempotency_key="idem:concurrency:open")
         self.assertEqual(transition.membership_id, membership.pk)
         self.assertEqual(receipt.actor_id, actor.pk)
+        self.assertEqual(intake.received_at, first_bound.received_at)
         self.assertFalse(AuthorityDecision.objects.filter(
             decision_reference=transition.authority_decision_reference,
         ).exists())
@@ -1864,6 +1960,35 @@ class S015MembershipCommandTests(TransactionTestCase):
             )
             self.assertEqual(cursor.fetchone()[0], 1)
 
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        command = self._transition_command(
+            actor=actor,
+            membership_uuid=membership.membership_uuid,
+            resulting_state="ENDED",
+            request_reference="request:loi-x1:departure",
+            idempotency_key="idem:loi-x1:departure",
+            reason_class="TEST_ONLY_REASON_LOI_X1",
+            occurred_at=NOW,
+            effective_at=NOW,
+        )
+        head = OrganismMembershipTransition.objects.get(pk=membership.head_transition_id)
+        received_at = self._database_now()
+        self.assertLessEqual(
+            (head.effective_at, head.occurred_at, head.received_at),
+            (command.effective_at, command.occurred_at, received_at),
+        )
+        bound = BoundRequest.for_test(
+            IntakeEntry.TRANSITION_MEMBERSHIP,
+            command,
+            received_at=received_at,
+            actor=ActorRef(
+                pk=actor.pk,
+                identity_id=actor.identity_id,
+                access_epoch=actor.access_epoch,
+            ),
+        )
+
         entered = threading.Event()
         release = threading.Event()
 
@@ -1887,16 +2012,7 @@ class S015MembershipCommandTests(TransactionTestCase):
                 _set_local_concurrency_timeouts()
                 worker_actor = Identity.objects.get(pk=actor.pk)
                 service = self._service(_PausingProvider())
-                service.transition_membership(
-                    self._transition_command(
-                        actor=worker_actor,
-                        membership_uuid=membership.membership_uuid,
-                        resulting_state="ENDED",
-                        request_reference="request:loi-x1:departure",
-                        idempotency_key="idem:loi-x1:departure",
-                        reason_class="TEST_ONLY_REASON_LOI_X1",
-                    )
-                )
+                service._execute_transition_membership(command, bound)
 
         s1 = start_worker(depart)
         workers.append(s1)
@@ -2048,7 +2164,6 @@ class S015MembershipCommandTests(TransactionTestCase):
             idempotency_key=f"idem:{label}:member-proposal",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
             effective_until_state="NONE",
             effective_until=None,
             membership_uuid=nominee_membership.membership_uuid,
@@ -2140,7 +2255,6 @@ class S015MembershipCommandTests(TransactionTestCase):
             request_reference="request:r4s1-w-r4b:leave",
             idempotency_key="idem:r4s1-w-r4b:leave",
             reason_class="TEST_ONLY_REASON_LEAVE",
-            received_at=self._database_now(),
         )
         observations = []
 

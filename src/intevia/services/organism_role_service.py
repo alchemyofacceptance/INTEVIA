@@ -51,8 +51,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
@@ -105,6 +106,9 @@ from src.intevia.services.organism_authority import (
     S015AuthorityDenied,
     S015AuthorityRefusalCode,
 )
+
+if TYPE_CHECKING:
+    from src.intevia.services.command_intake import BoundRequest
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:ORGANISM_ROLE_COMMAND:v1\x00"
@@ -194,16 +198,16 @@ class ProposeAssignmentCommand:
     """Inputs to propose_assignment.
 
     The actor's credential; the request reference and idempotency key; the
-    occurred, effective and received times; the membership and role
-    definition UUIDs; and the proposed term (effective_until_state, with
-    effective_until when FIXED).
+    occurred and effective times; the membership and role definition UUIDs;
+    and the proposed term (effective_until_state, with effective_until when
+    FIXED). INTEVIA assigns received_at; a supplied value is refused.
     """
     credential: User
     request_reference: str
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     membership_uuid: UUID
     role_definition_uuid: UUID
     effective_until_state: str
@@ -215,16 +219,17 @@ class TransitionAssignmentCommand:
     """Inputs to transition_assignment.
 
     The actor's credential; the request reference and idempotency key; the
-    occurred, effective and received times; the assignment UUID; the event
-    action and requested resulting state; and the term, which ASSIGN must
-    supply and END and REASSIGN must leave unset (both default to None).
+    occurred and effective times; the assignment UUID; the event action and
+    requested resulting state; and the term, which ASSIGN must supply and END
+    and REASSIGN must leave unset (both default to None). The intake boundary
+    INTEVIA assigns received_at; a supplied value is refused.
     """
     credential: User
     request_reference: str
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     assignment_uuid: UUID
     action: str
     resulting_state: str
@@ -912,8 +917,31 @@ class OrganismRoleService(_OrganismCommandService):
         result. A matching completed request is reconstructed from its receipt
         and served through the replay viewer rules.
         """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.PROPOSE_ASSIGNMENT
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("PROPOSE_ASSIGNMENT is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_propose_assignment(command, bound)
+
+    def _execute_propose_assignment(
+        self, command: ProposeAssignmentCommand, bound: BoundRequest,
+    ) -> AssignmentCommandResult:
+        """Execute an admitted proposal inside the service's authority transaction."""
         with authority_atomic(self._alias):
-            return self._execute_propose(command)
+            return self._execute_propose(command, bound=bound)
 
     def transition_assignment(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
         """Appoint or end an office assignment within authority_atomic.
@@ -925,8 +953,31 @@ class OrganismRoleService(_OrganismCommandService):
         A matching completed request is reconstructed from its receipt and
         served through the replay viewer rules.
         """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.TRANSITION_ASSIGNMENT
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("TRANSITION_ASSIGNMENT is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_transition_assignment(command, bound)
+
+    def _execute_transition_assignment(
+        self, command: TransitionAssignmentCommand, bound: BoundRequest,
+    ) -> AssignmentCommandResult:
+        """Execute an admitted assignment transition inside authority_atomic."""
         with authority_atomic(self._alias):
-            return self._execute_transition(command)
+            return self._execute_transition(command, bound=bound)
 
     def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime) -> bool:
         """Apply assignment_in_effect using this service's database alias.
@@ -989,7 +1040,9 @@ class OrganismRoleService(_OrganismCommandService):
         ).select_related("membership", "role_definition").order_by("id")
         return list(assignments)
 
-    def _execute_propose(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
+    def _execute_propose(
+        self, command: ProposeAssignmentCommand, *, bound: BoundRequest,
+    ) -> AssignmentCommandResult:
         """Execute an office proposal within the caller's authority_atomic block.
 
         Validates the request reference, idempotency key, timestamps, UUIDs and
@@ -1028,7 +1081,7 @@ class OrganismRoleService(_OrganismCommandService):
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(bound.received_at, "received_at")
         membership_uuid = _canonical_uuid(command.membership_uuid, "membership_uuid")
         role_definition_uuid = _canonical_uuid(command.role_definition_uuid, "role_definition_uuid")
         effective_until_state, effective_until = _validate_term(
@@ -1042,6 +1095,9 @@ class OrganismRoleService(_OrganismCommandService):
             credential=command.credential,
             unavailable=S015AssignmentAuthorityUnavailable,
         )
+        from src.intevia.services.command_intake import IntakeEntry
+
+        bound.verify(command, actor, IntakeEntry.PROPOSE_ASSIGNMENT, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
@@ -1233,7 +1289,9 @@ class OrganismRoleService(_OrganismCommandService):
             result=result,
         )
 
-    def _execute_transition(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
+    def _execute_transition(
+        self, command: TransitionAssignmentCommand, *, bound: BoundRequest,
+    ) -> AssignmentCommandResult:
         """Execute an office transition within the caller's authority_atomic block.
 
         Validates the request reference, idempotency key, timestamps, assignment
@@ -1290,7 +1348,7 @@ class OrganismRoleService(_OrganismCommandService):
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(bound.received_at, "received_at")
         assignment_uuid = _canonical_uuid(command.assignment_uuid, "assignment_uuid")
         event_action = _validate_event_action(command.action)
         target_state = _validate_resulting_state(command.resulting_state)
@@ -1317,6 +1375,9 @@ class OrganismRoleService(_OrganismCommandService):
             credential=command.credential,
             unavailable=S015AssignmentAuthorityUnavailable,
         )
+        from src.intevia.services.command_intake import IntakeEntry
+
+        bound.verify(command, actor, IntakeEntry.TRANSITION_ASSIGNMENT, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,

@@ -154,7 +154,6 @@ def _open_membership_command(route, actor, target, suffix: str) -> OpenMembershi
         idempotency_key=f"lock1:open:key:{suffix}:{route.tag}",
         occurred_at=now,
         effective_at=now,
-        received_at=now,
         living_organism_id=route.organism.organism_id,
         member_identity_id=target.identity_id,
         reason_class="TEST_ONLY_REASON_OPEN",
@@ -257,7 +256,6 @@ def _add_authorized_coordinator(route, tag: str) -> Identity:
             idempotency_key=f"lock1:{tag}:propose:key",
             occurred_at=membership_at,
             effective_at=membership_at,
-            received_at=proposal_at,
             membership_uuid=membership_uuid,
             role_definition_uuid=role.role_uuid,
             effective_until_state="NONE",
@@ -271,7 +269,6 @@ def _add_authorized_coordinator(route, tag: str) -> Identity:
             idempotency_key=f"lock1:{tag}:assign:key",
             occurred_at=membership_at,
             effective_at=membership_at,
-            received_at=database_now(),
             assignment_uuid=proposal.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
@@ -1094,6 +1091,7 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             action=OrganismAction.SUBMIT_APPLICATION,
             idempotency_key=submit_command.idempotency_key,
         )
+        intake_before = CommandIntake.objects.count()
         monitor_pid = backend_pid(connection)
         submit_worker = open_worker = None
         workers = []
@@ -1150,6 +1148,12 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         self.assertTrue(open_finished_before_release)
         self.assertEqual(open_result, "ok")
         self.assertEqual(submit_result, "ok")
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 2)
+        for command in (open_command, submit_command):
+            self.assertEqual(
+                CommandIntake.objects.filter(idempotency_key=command.idempotency_key).count(),
+                1,
+            )
         self.assertNotEqual(_sqlstate(open_result), "40P01")
         self.assertNotEqual(_sqlstate(submit_result), "40P01")
         self._assert_workers_closed(workers)
@@ -1190,6 +1194,7 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                 basis="BETA_OPT_IN",
             ).count(),
         )
+        intake_before = CommandIntake.objects.count()
         monitor_pid = backend_pid(connection)
         first_worker = second_worker = None
         workers = []
@@ -1269,6 +1274,13 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         self.assertEqual(after[0], before[0])
         self.assertEqual(after[1] - before[1], 0)
         self.assertEqual(after[2] - before[2], 0)
+        # Both refusals follow admission, so each command keeps exactly its intake row.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 2)
+        for command in (first_command, second_command):
+            self.assertEqual(
+                CommandIntake.objects.filter(idempotency_key=command.idempotency_key).count(),
+                1,
+            )
         self._assert_workers_closed(workers)
 
     def test_w_lock_3_seat_decision_does_not_lock_requesters_identity(self):
@@ -1655,6 +1667,18 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             clock=database_now,
         )
         command = _open_membership_command(route, route.founder, target, "t5")
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.OPEN_MEMBERSHIP,
+            command,
+            received_at=database_now(),
+            actor=ActorRef(
+                pk=route.founder.pk,
+                identity_id=route.founder.identity_id,
+                access_epoch=route.founder.access_epoch,
+            ),
+        )
 
         class _SyntheticPostgresError(Exception):
             sqlstate = "40P01"
@@ -1672,7 +1696,7 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                 side_effect=raise_operational_error,
             ):
                 with self.assertRaises(OperationalError) as raised:
-                    service.open_membership(command)
+                    service._execute_open_membership(command, bound)
             self.assertNotIsInstance(raised.exception, S015CommandContended)
             self.assertEqual(
                 getattr(raised.exception.__cause__, "sqlstate", None),

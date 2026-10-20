@@ -1,4 +1,4 @@
-"""H100 C2a bound-request projection and execution witnesses."""
+"""H100 C2a/C2b bound-request projection and execution witnesses."""
 
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
@@ -31,6 +31,11 @@ from src.intevia.services.command_intake import (
     IntakeAdmissionTechnicalFailure,
     IntakeEntry,
     application_shape,
+    intake_shape,
+)
+from src.intevia.services.organism_membership_service import (
+    OpenMembershipCommand,
+    TransitionMembershipCommand,
 )
 from src.intevia.services.organism_application_service import (
     ClaimApplicationCommand,
@@ -39,6 +44,13 @@ from src.intevia.services.organism_application_service import (
     ReassignApplicationCommand,
     SubmitApplicationCommand,
     WithdrawApplicationCommand,
+)
+from src.intevia.services.organism_office_consent_service import (
+    RecordOfficeConsentCommand,
+)
+from src.intevia.services.organism_role_service import (
+    ProposeAssignmentCommand,
+    TransitionAssignmentCommand,
 )
 from src.intevia.services.organism_authority import (
     S015Authority,
@@ -134,6 +146,11 @@ class ApplicationShapeTests(SimpleTestCase):
                     IntakeEntry.CLAIM_APPLICATION,
                     IntakeEntry.REASSIGN_APPLICATION,
                     IntakeEntry.DECIDE_APPLICATION,
+                    IntakeEntry.OPEN_MEMBERSHIP,
+                    IntakeEntry.TRANSITION_MEMBERSHIP,
+                    IntakeEntry.PROPOSE_ASSIGNMENT,
+                    IntakeEntry.TRANSITION_ASSIGNMENT,
+                    IntakeEntry.RECORD_OFFICE_CONSENT,
                 }
             ),
         )
@@ -269,6 +286,212 @@ class ApplicationShapeTests(SimpleTestCase):
                 ValueError, "received_at is assigned by INTEVIA"
             ):
                 application_shape(entry, replace(command, received_at=T0))
+
+
+class MembershipRoleConsentShapeTests(SimpleTestCase):
+    """Check the five new command projections without database access."""
+
+    def setUp(self):
+        self.credential = User(username="h100-membership-role-projection")
+        self.actor = _test_actor()
+        self.commands = {
+            IntakeEntry.OPEN_MEMBERSHIP: OpenMembershipCommand(
+                credential=self.credential,
+                request_reference="h100:membership-open:reference",
+                idempotency_key="h100:membership-open:key",
+                occurred_at=T0,
+                effective_at=T0,
+                living_organism_id=uuid4(),
+                member_identity_id=uuid4(),
+                reason_class="TEST_ONLY_REASON",
+            ),
+            IntakeEntry.TRANSITION_MEMBERSHIP: TransitionMembershipCommand(
+                credential=self.credential,
+                request_reference="h100:membership-transition:reference",
+                idempotency_key="h100:membership-transition:key",
+                occurred_at=T0,
+                effective_at=T0,
+                membership_uuid=uuid4(),
+                resulting_state="ENDED",
+                reason_class="TEST_ONLY_REASON",
+            ),
+            IntakeEntry.PROPOSE_ASSIGNMENT: ProposeAssignmentCommand(
+                credential=self.credential,
+                request_reference="h100:assignment-propose:reference",
+                idempotency_key="h100:assignment-propose:key",
+                occurred_at=T0,
+                effective_at=T0,
+                membership_uuid=uuid4(),
+                role_definition_uuid=uuid4(),
+                effective_until_state="NONE",
+                effective_until=None,
+            ),
+            IntakeEntry.TRANSITION_ASSIGNMENT: TransitionAssignmentCommand(
+                credential=self.credential,
+                request_reference="h100:assignment-transition:reference",
+                idempotency_key="h100:assignment-transition:key",
+                occurred_at=T0,
+                effective_at=T0,
+                assignment_uuid=uuid4(),
+                action="END",
+                resulting_state="ENDED",
+            ),
+            IntakeEntry.RECORD_OFFICE_CONSENT: RecordOfficeConsentCommand(
+                credential=self.credential,
+                request_reference="h100:consent:reference",
+                idempotency_key="h100:consent:key",
+                occurred_at=T0,
+                effective_at=T0,
+                assignment_uuid=uuid4(),
+                proposal_event_uuid=uuid4(),
+                action="CONSENT",
+            ),
+        }
+
+    def test_each_projection_matches_the_commissioned_shape(self):
+        expected = {
+            IntakeEntry.OPEN_MEMBERSHIP: (
+                {"living_organism_id": self.commands[IntakeEntry.OPEN_MEMBERSHIP].living_organism_id,
+                 "member_identity_id": self.commands[IntakeEntry.OPEN_MEMBERSHIP].member_identity_id},
+                {"occurred_at": T0, "effective_at": T0, "reason_class": "TEST_ONLY_REASON"},
+            ),
+            IntakeEntry.TRANSITION_MEMBERSHIP: (
+                {"membership_uuid": self.commands[IntakeEntry.TRANSITION_MEMBERSHIP].membership_uuid},
+                {"occurred_at": T0, "effective_at": T0, "resulting_state": "ENDED",
+                 "reason_class": "TEST_ONLY_REASON"},
+            ),
+            IntakeEntry.PROPOSE_ASSIGNMENT: (
+                {"membership_uuid": self.commands[IntakeEntry.PROPOSE_ASSIGNMENT].membership_uuid,
+                 "role_definition_uuid": self.commands[IntakeEntry.PROPOSE_ASSIGNMENT].role_definition_uuid},
+                {"occurred_at": T0, "effective_at": T0, "effective_until_state": "NONE",
+                 "effective_until": None},
+            ),
+            IntakeEntry.TRANSITION_ASSIGNMENT: (
+                {"assignment_uuid": self.commands[IntakeEntry.TRANSITION_ASSIGNMENT].assignment_uuid},
+                {"occurred_at": T0, "effective_at": T0, "action": "END",
+                 "resulting_state": "ENDED", "effective_until_state": None,
+                 "effective_until": None},
+            ),
+            IntakeEntry.RECORD_OFFICE_CONSENT: (
+                {"assignment_uuid": self.commands[IntakeEntry.RECORD_OFFICE_CONSENT].assignment_uuid,
+                 "proposal_event_uuid": self.commands[IntakeEntry.RECORD_OFFICE_CONSENT].proposal_event_uuid},
+                {"occurred_at": T0, "effective_at": T0, "action": "CONSENT"},
+            ),
+        }
+        for entry, command in self.commands.items():
+            shape = intake_shape(entry, command)
+            with self.subTest(entry=entry):
+                self.assertEqual(shape.idempotency_key, command.idempotency_key)
+                self.assertEqual(shape.request_reference, command.request_reference)
+                self.assertEqual(shape.target, expected[entry][0])
+                self.assertEqual(shape.command, expected[entry][1])
+                self.assertEqual(shape.omitted, ())
+                self.assertIsNone(shape.target_organism_id)
+                self.assertIsNone(command.received_at)
+
+    def test_material_inputs_change_the_fingerprint(self):
+        replacements = {
+            IntakeEntry.OPEN_MEMBERSHIP: {
+                "living_organism_id": uuid4(),
+                "member_identity_id": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "reason_class": "TEST_ONLY_REASON_CHANGED",
+                "request_reference": "h100:membership-open:reference-2",
+                "idempotency_key": "h100:membership-open:key-2",
+            },
+            IntakeEntry.TRANSITION_MEMBERSHIP: {
+                "membership_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "resulting_state": "PROBATIONARY",
+                "reason_class": "TEST_ONLY_REASON_CHANGED",
+                "request_reference": "h100:membership-transition:reference-2",
+                "idempotency_key": "h100:membership-transition:key-2",
+            },
+            IntakeEntry.PROPOSE_ASSIGNMENT: {
+                "membership_uuid": uuid4(),
+                "role_definition_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "effective_until_state": "NOT_ESTABLISHED",
+                "request_reference": "h100:assignment-propose:reference-2",
+                "idempotency_key": "h100:assignment-propose:key-2",
+            },
+            IntakeEntry.TRANSITION_ASSIGNMENT: {
+                "assignment_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "action": "REASSIGN",
+                "resulting_state": "ACTIVE",
+                "request_reference": "h100:assignment-transition:reference-2",
+                "idempotency_key": "h100:assignment-transition:key-2",
+            },
+            IntakeEntry.RECORD_OFFICE_CONSENT: {
+                "assignment_uuid": uuid4(),
+                "proposal_event_uuid": uuid4(),
+                "occurred_at": T0 + timedelta(seconds=1),
+                "effective_at": T0 + timedelta(seconds=1),
+                "action": "DECLINE",
+                "request_reference": "h100:consent:reference-2",
+                "idempotency_key": "h100:consent:key-2",
+            },
+        }
+        for entry, fields in replacements.items():
+            command = self.commands[entry]
+            fingerprint = _fingerprint(entry, command, self.actor)
+            for field, value in fields.items():
+                with self.subTest(entry=entry, field=field):
+                    self.assertNotEqual(
+                        fingerprint,
+                        _fingerprint(entry, replace(command, **{field: value}), self.actor),
+                    )
+        for entry in (IntakeEntry.PROPOSE_ASSIGNMENT, IntakeEntry.TRANSITION_ASSIGNMENT):
+            command = self.commands[entry]
+            fixed_values = {
+                "effective_until_state": "FIXED",
+                "effective_until": T0 + timedelta(days=1),
+            }
+            if entry is IntakeEntry.TRANSITION_ASSIGNMENT:
+                fixed_values.update(action="ASSIGN", resulting_state="ACTIVE")
+            fixed = replace(
+                command,
+                **fixed_values,
+            )
+            self.assertNotEqual(
+                _fingerprint(entry, fixed, self.actor),
+                _fingerprint(
+                    entry,
+                    replace(fixed, effective_until=T0 + timedelta(days=2)),
+                    self.actor,
+                ),
+            )
+            if entry is IntakeEntry.TRANSITION_ASSIGNMENT:
+                non_fixed = replace(
+                    fixed,
+                    effective_until_state="NONE",
+                    effective_until=None,
+                )
+                changed_state = replace(
+                    non_fixed,
+                    effective_until_state="NOT_ESTABLISHED",
+                )
+                self.assertNotEqual(
+                    _fingerprint(entry, non_fixed, self.actor),
+                    _fingerprint(entry, changed_state, self.actor),
+                )
+
+    def test_exact_types_and_client_receive_times_are_refused(self):
+        for entry, command in self.commands.items():
+            with self.subTest(entry=entry):
+                with self.assertRaises(ValueError):
+                    intake_shape(entry, replace(command, received_at=T0))
+                wrong = next(
+                    other for other_entry, other in self.commands.items()
+                    if other_entry is not entry
+                )
+                with self.assertRaises(TypeError):
+                    intake_shape(entry, wrong)
 
 
 class _Provider:
@@ -526,7 +749,7 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.DECIDE_APPLICATION: self.service._execute_decide_application,
         }
         before = self._counts()
-        for entry in ACTIVE_ENTRIES:
+        for entry in executor_by_entry:
             command = commands[entry]
             actor = actor_by_entry[entry]
             request = BoundRequest.for_test(

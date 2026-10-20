@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.contrib.auth.models import User
@@ -40,6 +41,9 @@ from src.intevia.services.organism_command_support import (
     canonical_timestamp,
 )
 
+if TYPE_CHECKING:
+    from src.intevia.services.command_intake import BoundRequest
+
 
 _ACTION = OrganismAction.RECORD_OFFICE_CONSENT
 _COMMAND_DOMAIN = b"INTEVIA:S015:OFFICE_CONSENT_COMMAND:v1\x00"
@@ -68,7 +72,7 @@ class RecordOfficeConsentCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     assignment_uuid: UUID
     proposal_event_uuid: UUID
     action: str
@@ -112,17 +116,40 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
     def record_office_consent(
         self, command: RecordOfficeConsentCommand,
     ) -> OfficeConsentCommandResult:
-        if type(command) is not RecordOfficeConsentCommand:
-            raise TypeError("command must be a RecordOfficeConsentCommand")
-        with authority_atomic(self._alias):
-            return self._execute(command)
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
 
-    def _execute(self, command: RecordOfficeConsentCommand) -> OfficeConsentCommandResult:
+        entry = IntakeEntry.RECORD_OFFICE_CONSENT
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("RECORD_OFFICE_CONSENT is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_record_office_consent(command, bound)
+
+    def _execute_record_office_consent(
+        self, command: RecordOfficeConsentCommand, bound: BoundRequest,
+    ) -> OfficeConsentCommandResult:
+        """Execute an admitted consent record within authority_atomic."""
+        with authority_atomic(self._alias):
+            return self._execute(command, bound=bound)
+
+    def _execute(
+        self, command: RecordOfficeConsentCommand, *, bound: BoundRequest,
+    ) -> OfficeConsentCommandResult:
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(bound.received_at, "received_at")
         assignment_uuid = _canonical_uuid(command.assignment_uuid, "assignment_uuid")
         proposal_event_uuid = _canonical_uuid(command.proposal_event_uuid, "proposal_event_uuid")
         if type(command.action) is not str or command.action not in _ACTIONS:
@@ -133,6 +160,9 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
             credential=command.credential,
             unavailable=S015OfficeConsentAuthorityUnavailable,
         )
+        from src.intevia.services.command_intake import IntakeEntry
+
+        bound.verify(command, actor, IntakeEntry.RECORD_OFFICE_CONSENT, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,

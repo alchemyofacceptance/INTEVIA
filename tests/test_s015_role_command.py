@@ -29,6 +29,7 @@ from django.test import SimpleTestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
 from core.models import (
+    CommandIntake,
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
     Identity,
@@ -1082,7 +1083,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:production-provider-proposal",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
             )
         )
 
@@ -1109,7 +1109,7 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(event.authority_decision_reference, decision.decision_reference)
 
     def test_production_provider_records_nominee_consent_and_replays(self):
-        from core.models import AuthorityDecision
+        from core.models import AuthorityDecision, CommandIntake
         from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
         from src.intevia.services.organism_office_consent_service import (
             OfficeAppointmentConsentService,
@@ -1133,7 +1133,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:production-office-consent:propose",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
             )
         )
         proposal_event = _event_for_result(proposal)
@@ -1159,7 +1158,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:production-office-consent:consent",
             occurred_at=consent_at,
             effective_at=consent_at,
-            received_at=consent_at,
             assignment_uuid=proposal.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="CONSENT",
@@ -1172,17 +1170,27 @@ class S015RoleCommandTests(TransactionTestCase):
         calls_before = len(provider.requests)
         decisions_before = AuthorityDecision.objects.count()
         receipts_before = OrganismCommandReceipt.objects.count()
+        intakes_before = CommandIntake.objects.count()
         result = consent_service.record_office_consent(consent_command)
         self.assertEqual(len(provider.requests), calls_before + 1)
         self.assertEqual(AuthorityDecision.objects.count(), decisions_before + 1)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before + 1)
+        self.assertEqual(CommandIntake.objects.count(), intakes_before + 1)
         replay = consent_service.record_office_consent(consent_command)
         self.assertEqual(len(provider.requests), calls_before + 1)
         self.assertEqual(AuthorityDecision.objects.count(), decisions_before + 1)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before + 1)
+        self.assertEqual(CommandIntake.objects.count(), intakes_before + 1)
         consent = OfficeAppointmentConsent.objects.get(consent_uuid=result.consent_uuid)
         decision = AuthorityDecision.objects.get(decision_reference=result.authority_decision_reference)
+        intake = CommandIntake.objects.get(
+            actor=nominee,
+            action=OrganismAction.RECORD_OFFICE_CONSENT.value,
+            idempotency_key=consent_command.idempotency_key,
+        )
         self.assertEqual(replay, result)
+        self.assertEqual(decision.evaluated_at, intake.received_at)
+        self.assertEqual(consent.received_at, intake.received_at)
         self.assertEqual(consent.actor_id, nominee.pk)
         self.assertEqual(consent.enterer_id, nominee.pk)
         self.assertEqual(consent.actor_access_epoch, nominee.access_epoch)
@@ -1209,6 +1217,20 @@ class S015RoleCommandTests(TransactionTestCase):
             ).count(),
             1,
         )
+        from src.intevia.services.command_intake import (
+            IntakeEntry,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        replay_bound = admit_request(
+            "default",
+            IntakeEntry.RECORD_OFFICE_CONSENT,
+            _resolve_actor("default", nominee.credential),
+            intake_shape(IntakeEntry.RECORD_OFFICE_CONSENT, consent_command),
+        )
+        self.assertEqual(replay_bound.received_at, intake.received_at)
 
         def acquire_register_lock(cursor):
             cursor.execute(
@@ -1217,7 +1239,12 @@ class S015RoleCommandTests(TransactionTestCase):
             )
 
         def observe_replay(_holder_pid, _start_worker, run_bounded):
-            replay_result = run_bounded(lambda: consent_service.record_office_consent(consent_command))
+            replay_result = run_bounded(
+                lambda: consent_service._execute_record_office_consent(
+                    consent_command,
+                    replay_bound,
+                )
+            )
             self.assertEqual(replay_result, result)
             if os.environ.get("INTEVIA_SELFTEST_FORCE_CONCURRENCY_FAILURE") == "1":
                 self.fail("forced concurrency cleanup self-test failure")
@@ -1257,7 +1284,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:lost-office-replay:propose",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
         ))
         proposal_event = _event_for_result(proposal)
         consent_service = OfficeAppointmentConsentService(
@@ -1272,7 +1298,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:lost-office-replay:consent",
             occurred_at=consent_at,
             effective_at=proposal_at,
-            received_at=consent_at,
             assignment_uuid=proposal.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="CONSENT",
@@ -1289,7 +1314,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:lost-office-replay:assign",
             occurred_at=assign_at,
             effective_at=proposal_at,
-            received_at=assign_at,
         )
         fresh_result = service.transition_assignment(assign_command)
         event = _event_for_result(fresh_result)
@@ -1355,7 +1379,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:lost-office-replay:end",
             occurred_at=end_at,
             effective_at=end_at,
-            received_at=end_at,
         ))
 
         membership = OrganismMembership.objects.get(
@@ -1378,7 +1401,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:lost-office-replay:leave",
             occurred_at=leave_at,
             effective_at=leave_at,
-            received_at=leave_at,
             membership_uuid=membership.membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -1432,7 +1454,28 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:transition",
                 occurred_at=transition_at,
                 effective_at=NOW,
-                received_at=transition_at,
+            )
+            from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+            head = ContextualRoleAssignmentStateEvent.objects.filter(
+                assignment__assignment_uuid=assigned.assignment_uuid,
+            ).order_by("-sequence").first()
+            if head is None:
+                self.fail("the assignment has no predecessor event")
+            received_at = self._database_now()
+            self.assertLessEqual(
+                (head.effective_at, head.occurred_at, head.received_at),
+                (command.effective_at, command.occurred_at, received_at),
+            )
+            bound = BoundRequest.for_test(
+                IntakeEntry.TRANSITION_ASSIGNMENT,
+                command,
+                received_at=received_at,
+                actor=ActorRef(
+                    pk=founder.pk,
+                    identity_id=founder.identity_id,
+                    access_epoch=founder.access_epoch,
+                ),
             )
             observations = []
 
@@ -1511,7 +1554,7 @@ class S015RoleCommandTests(TransactionTestCase):
             with transaction.atomic():
                 with CaptureQueriesContext(connection) as captured:
                     with connection.execute_wrapper(capture_observations):
-                        service.transition_assignment(command)
+                        service._execute_transition_assignment(command, bound)
                     matching_queries = [
                         query["sql"]
                         for query in captured.captured_queries
@@ -1566,7 +1609,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:closed-replay-nonmember:propose",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
         ))
         self._record_test_consent(
             provider=provider,
@@ -1585,7 +1627,6 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until_state="NONE",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
         )
         fresh_result = service.transition_assignment(assign_command)
         service.transition_assignment(self._transition_command(
@@ -1597,7 +1638,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:closed-replay-nonmember:end-founder-office",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
         ))
         membership_service = OrganismMembershipService(
             authority=S015Authority(provider=provider, database_alias="default"),
@@ -1610,7 +1650,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:closed-replay-nonmember:leave",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
             membership_uuid=ids["founder_membership_uuid"],
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -1638,7 +1677,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:closed-replay-nonmember:fresh",
                 occurred_at=NOW,
                 effective_at=NOW,
-                received_at=self._database_now(),
             ))
         self.assertEqual(
             closed_refusal.exception.refusal_code,
@@ -1673,7 +1711,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key=f"idem:{label}:propose",
                     occurred_at=proposal_at,
                     effective_at=proposal_at,
-                    received_at=proposal_at,
                 )
             )
             proposal_event = _event_for_result(proposal)
@@ -1697,7 +1734,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:consent",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
                 assignment_uuid=proposal.assignment_uuid,
                 proposal_event_uuid=proposal_event.event_uuid,
                 action=action,
@@ -1711,7 +1747,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:leave",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
                 membership_uuid=membership_uuid,
                 resulting_state="ENDED",
                 reason_class="TEST_ONLY_REASON_LEAVE",
@@ -1836,10 +1871,19 @@ class S015RoleCommandTests(TransactionTestCase):
                 departure_handle.ready.wait(timeout=5),
                 "self-departure worker did not report its backend",
             )
-            self.assertTrue(
-                departure_query_started.wait(timeout=5),
-                f"self-departure did not reach its core_identity FOR UPDATE: {departure_handle.outcome!r}",
-            )
+            if not departure_query_started.wait(timeout=5):
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT wait_event_type, wait_event, query, pg_blocking_pids(pid) "
+                        "FROM pg_stat_activity WHERE pid = %s",
+                        [departure_handle.pid],
+                    )
+                    stalled_activity = cursor.fetchone()
+                self.fail(
+                    "self-departure did not reach its actor lock (FOR NO KEY UPDATE) within 5 s: "
+                    f"outcome={departure_handle.outcome!r} act_pid={act_handle.pid} "
+                    f"departure_pid={departure_handle.pid} activity={stalled_activity!r}"
+                )
 
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -1870,6 +1914,17 @@ class S015RoleCommandTests(TransactionTestCase):
                 act_identity_queries[0][1],
                 departure_identity_queries[0][1],
                 "act and departure did not lock the same actor identity",
+            )
+            departure_intake_keys = list(
+                CommandIntake.objects.filter(
+                    actor__credential=member.credential,
+                    entry="TRANSITION_MEMBERSHIP",
+                ).values_list("idempotency_key", flat=True)
+            )
+            self.assertEqual(
+                departure_intake_keys,
+                ["idem:w-t2-s-act-first:leave"],
+                "the waiting self-departure's intake row is not committed exactly once",
             )
             self.assertTrue(
                 act_handle.thread.is_alive(),
@@ -1978,7 +2033,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:nonmember-proposal-register-lock:leave",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
             membership_uuid=nonmember_membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -1992,8 +2046,20 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:nonmember-proposal-register-lock:propose",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
         )
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.PROPOSE_ASSIGNMENT,
+            command,
+            received_at=self._database_now(),
+            actor=ActorRef(
+                pk=nonmember.pk,
+                identity_id=nonmember.identity_id,
+                access_epoch=nonmember.access_epoch,
+            ),
+        )
+        intake_count = CommandIntake.objects.count()
 
         def acquire_register_lock(cursor):
             cursor.execute(
@@ -2005,11 +2071,12 @@ class S015RoleCommandTests(TransactionTestCase):
             self,
             acquire_register_lock,
             lambda _holder_pid, _start_worker, run_bounded: run_bounded(
-                lambda: role_service.propose_assignment(command),
+                lambda: role_service._execute_propose_assignment(command, bound),
             ),
         )
         self.assertIsInstance(refusal, S015AssignmentAuthorityUnavailable)
         self.assertEqual(str(refusal), "actor active membership is required")
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
 
     def test_nonmember_assignment_refuses_without_waiting_on_register_lock(self):
         from core.models import AuthorityDecision
@@ -2038,7 +2105,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:nonmember-assignment-register-lock:propose",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
         ))
         membership_service = OrganismMembershipService(
             authority=S015Authority(provider=provider, database_alias="default"),
@@ -2051,7 +2117,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:nonmember-assignment-register-lock:leave",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
             membership_uuid=nonmember_membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -2066,11 +2131,23 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until_state="NONE",
             occurred_at=NOW,
             effective_at=NOW,
+        )
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.TRANSITION_ASSIGNMENT,
+            command,
             received_at=self._database_now(),
+            actor=ActorRef(
+                pk=nonmember.pk,
+                identity_id=nonmember.identity_id,
+                access_epoch=nonmember.access_epoch,
+            ),
         )
         provider_calls = len(provider.requests)
         decisions = AuthorityDecision.objects.count()
         receipts = OrganismCommandReceipt.objects.count()
+        intake_count = CommandIntake.objects.count()
 
         def acquire_register_lock(cursor):
             cursor.execute(
@@ -2082,7 +2159,7 @@ class S015RoleCommandTests(TransactionTestCase):
             self,
             acquire_register_lock,
             lambda _holder_pid, _start_worker, run_bounded: run_bounded(
-                lambda: role_service.transition_assignment(command),
+                lambda: role_service._execute_transition_assignment(command, bound),
             ),
         )
         self.assertIsInstance(refusal, S015AssignmentAuthorityUnavailable)
@@ -2090,6 +2167,7 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(len(provider.requests), provider_calls)
         self.assertEqual(AuthorityDecision.objects.count(), decisions)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipts)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
 
     def test_production_assign_names_current_nominee_consent(self):
         import json
@@ -2115,7 +2193,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:production-consented-assign:propose",
                 occurred_at=proposal_at,
                 effective_at=proposal_at,
-                received_at=proposal_at,
             )
         )
         proposal_event = _event_for_result(proposal_result)
@@ -2134,7 +2211,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:production-consented-assign:outsider-consent",
                 occurred_at=consent_at,
                 effective_at=proposal_at,
-                received_at=consent_at,
                 assignment_uuid=proposal_result.assignment_uuid,
                 proposal_event_uuid=proposal_event.event_uuid,
                 action="CONSENT",
@@ -2146,7 +2222,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:production-consented-assign:consent",
             occurred_at=consent_at,
             effective_at=proposal_at,
-            received_at=consent_at,
             assignment_uuid=proposal_result.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="CONSENT",
@@ -2169,7 +2244,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:production-consented-assign:assign",
                 occurred_at=assign_at,
                 effective_at=assign_at,
-                received_at=assign_at,
             )
         )
         decision = AuthorityDecision.objects.get(
@@ -2223,7 +2297,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:self-proposal-consent:propose",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
         ))
         self.assertEqual(proposal.resulting_state, "PROPOSED")
         self.assertIsInstance(proposal.event_uuid, UUID)
@@ -2239,7 +2312,6 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until_state="NONE",
             occurred_at=assign_at,
             effective_at=proposal_at,
-            received_at=assign_at,
         ))
         decision = AuthorityDecision.objects.get(
             decision_reference=assigned.authority_decision_reference,
@@ -2264,7 +2336,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:self-proposal-consent:late-withdrawal",
                 occurred_at=database_now(),
                 effective_at=proposal_at,
-                received_at=database_now(),
                 assignment_uuid=proposal.assignment_uuid,
                 proposal_event_uuid=proposal_event.event_uuid,
                 action="WITHDRAW",
@@ -2297,7 +2368,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:self-proposal-withdrawal:propose",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
         ))
         proposal_event = _event_for_result(proposal)
         role_service = self._service(provider)
@@ -2318,7 +2388,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:self-proposal-withdrawal:withdraw",
             occurred_at=withdrawal_at,
             effective_at=proposal_at,
-            received_at=withdrawal_at,
             assignment_uuid=proposal.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="WITHDRAW",
@@ -2335,7 +2404,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 effective_until_state="NONE",
                 occurred_at=assign_at,
                 effective_at=proposal_at,
-                received_at=assign_at,
             ))
         self.assertIs(
             assignment_refusal.exception.refusal_code,
@@ -2371,9 +2439,14 @@ class S015RoleCommandTests(TransactionTestCase):
             label="consent-append-only",
         )
         consent = OfficeAppointmentConsent.objects.get(assignment=_assignment_for_result(proposal))
+        intake = CommandIntake.objects.get(
+            actor=nominee,
+            idempotency_key="idem:consent-append-only:consent",
+        )
         self.assertLessEqual(consent.effective_at, consent.occurred_at)
-        self.assertLessEqual(consent.occurred_at, consent.received_at)
-        self.assertLessEqual(consent.received_at, consent.recorded_at)
+        self.assertEqual(consent.received_at, intake.received_at)
+        self.assertLessEqual(consent.occurred_at, intake.received_at)
+        self.assertLessEqual(intake.received_at, consent.recorded_at)
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
@@ -2419,7 +2492,6 @@ class S015RoleCommandTests(TransactionTestCase):
                         idempotency_key=f"idem:{label}:propose",
                         occurred_at=proposal_at,
                         effective_at=proposal_at,
-                        received_at=proposal_at,
                     )
                 )
                 proposal_event = _event_for_result(proposal)
@@ -2445,7 +2517,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key=f"idem:{label}:{terminal_action.lower()}",
                     occurred_at=terminal_at,
                     effective_at=proposal_at,
-                    received_at=terminal_at,
                     assignment_uuid=proposal.assignment_uuid,
                     proposal_event_uuid=proposal_event.event_uuid,
                     action=terminal_action,
@@ -2460,7 +2531,6 @@ class S015RoleCommandTests(TransactionTestCase):
                         idempotency_key=f"idem:{label}:late-consent",
                         occurred_at=later,
                         effective_at=proposal_at,
-                        received_at=later,
                         assignment_uuid=proposal.assignment_uuid,
                         proposal_event_uuid=proposal_event.event_uuid,
                         action="CONSENT",
@@ -2481,7 +2551,6 @@ class S015RoleCommandTests(TransactionTestCase):
                             idempotency_key=f"idem:{label}:assign",
                             occurred_at=later,
                             effective_at=proposal_at,
-                            received_at=later,
                         )
                     )
                 self.assertIs(
@@ -2650,30 +2719,27 @@ class S015RoleCommandTests(TransactionTestCase):
             ("s2b_10_membership_proposed_end", "s2b_guard_membership_proposed_end_actor"),
         )
 
-    def _propose_command(self, *, actor, membership_uuid, role_definition_uuid, request_reference, idempotency_key, effective_until_state="NONE", effective_until=None, occurred_at=None, effective_at=None, received_at=None):
+    def _propose_command(self, *, actor, membership_uuid, role_definition_uuid, request_reference, idempotency_key, effective_until_state="NONE", effective_until=None, occurred_at=None, effective_at=None):
         occurred_at = NOW if occurred_at is None else occurred_at
         effective_at = NOW if effective_at is None else effective_at
-        received_at = NOW if received_at is None else received_at
         return ProposeAssignmentCommand(
             credential=actor.credential,
             request_reference=request_reference,
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
             effective_at=effective_at,
-            received_at=received_at,
             membership_uuid=membership_uuid,
             role_definition_uuid=role_definition_uuid,
             effective_until_state=effective_until_state,
             effective_until=effective_until,
         )
 
-    def _transition_command(self, *, actor, assignment_uuid, action, resulting_state, request_reference, idempotency_key, effective_until_state=None, effective_until=None, occurred_at=None, effective_at=None, received_at=None):
-        if occurred_at is None or received_at is None:
+    def _transition_command(self, *, actor, assignment_uuid, action, resulting_state, request_reference, idempotency_key, effective_until_state=None, effective_until=None, occurred_at=None, effective_at=None):
+        if occurred_at is None:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT clock_timestamp()")
                 current_time = cursor.fetchone()[0]
             occurred_at = current_time if occurred_at is None else occurred_at
-            received_at = current_time if received_at is None else received_at
         effective_at = NOW if effective_at is None else effective_at
         return TransitionAssignmentCommand(
             credential=actor.credential,
@@ -2681,7 +2747,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
             effective_at=effective_at,
-            received_at=received_at,
             assignment_uuid=assignment_uuid,
             action=action,
             resulting_state=resulting_state,
@@ -2715,7 +2780,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key=f"idem:{label}:consent",
             occurred_at=at,
             effective_at=effective_at,
-            received_at=at,
             assignment_uuid=assignment_uuid,
             proposal_event_uuid=proposal.event_uuid,
             action="CONSENT",
@@ -2748,7 +2812,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 effective_until=effective_until,
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
             )
         )
         proposal_event = _event_for_result(propose_result)
@@ -2770,7 +2833,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key=f"idem:{label}:consent",
             occurred_at=consent_at,
             effective_at=at,
-            received_at=consent_at,
             assignment_uuid=propose_result.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="CONSENT",
@@ -2791,7 +2853,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 effective_until=effective_until,
                 occurred_at=assign_at,
                 effective_at=at,
-                received_at=assign_at,
             )
         )
         return ids, founder, member, service, propose_result, assign_result
@@ -3008,7 +3069,6 @@ class S015RoleCommandTests(TransactionTestCase):
             effective_until_state="FIXED",
             effective_until=until,
             occurred_at=assign_at,
-            received_at=assign_at,
         )
         assign_result = service.transition_assignment(assign_command)
         self.assertEqual(assign_result.suspension_tolls_term, _subject_marker("suspension_tolls_term"))
@@ -3035,6 +3095,13 @@ class S015RoleCommandTests(TransactionTestCase):
         # the identical appointing decision under the same key replays the first result
         same = service.transition_assignment(assign_command)
         self.assertEqual(same, assign_result)
+        from core.models import CommandIntake
+
+        bound_before = CommandIntake.objects.filter(
+            actor=founder,
+            action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+            idempotency_key="idem:tolling:assign",
+        ).values().get()
         # a changed term under the same key mismatches
         with self.assertRaises(S015CommandReplayMismatch):
             service.transition_assignment(
@@ -3049,9 +3116,16 @@ class S015RoleCommandTests(TransactionTestCase):
                     effective_until=until + timedelta(days=1),
                     occurred_at=assign_command.occurred_at,
                     effective_at=assign_command.effective_at,
-                    received_at=assign_command.received_at,
                 )
             )
+        self.assertEqual(
+            CommandIntake.objects.filter(
+                actor=founder,
+                action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+                idempotency_key="idem:tolling:assign",
+            ).values().get(),
+            bound_before,
+        )
 
     # R4 — END by an authorised decision; history intact.
     def test_end_by_authorised_decision_keeps_history(self):
@@ -3541,6 +3615,7 @@ class S015RoleCommandTests(TransactionTestCase):
         out_of_order_at = self.route_times.founding_effective_at + timedelta(microseconds=1)
         self.assertLess(out_of_order_at, NOW)
         before = self._counts()
+        intake_count = CommandIntake.objects.count()
         with self.assertRaisesRegex(S015OperationNotYetImplemented, "IL-3"):
             service.transition_assignment(
                 self._transition_command(
@@ -3552,12 +3627,14 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key="idem:out-of-order:end",
                     occurred_at=out_of_order_at,
                     effective_at=out_of_order_at,
-                    received_at=self._database_now(),
                 )
             )
         assignment = _assignment_for_result(assign_result)
         self.assertEqual(assignment.state, "ACTIVE")
         self.assertEqual(self._counts(), before)
+        # IL-3 refuses after admission: exactly +1 intake (D3).
+        self.assertEqual(CommandIntake.objects.count(), intake_count + 1)
+        self.assertEqual(CommandIntake.objects.filter(idempotency_key="idem:out-of-order:end").count(), 1)
 
     # R10a — another actor's END and REASSIGN of the original appointment are refused before Birthing.
     def test_pe04_refuses_other_actors_ending_or_reassigning_original_appointment_before_birth(self):
@@ -3968,7 +4045,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:coordinator-recovery:propose",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
         ))
         ended_at = database_now()
         self._service(_ExactProvider()).transition_assignment(self._transition_command(
@@ -3980,7 +4056,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key="idem:coordinator-recovery:end",
             occurred_at=ended_at,
             effective_at=ended_at,
-            received_at=ended_at,
         ))
 
         with self.assertRaises(S015AuthorityDenied) as proposal_refusal:
@@ -3993,7 +4068,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:coordinator-recovery:self-propose",
                 occurred_at=proposal_at,
                 effective_at=proposal_at,
-                received_at=proposal_at,
             ))
         self.assertEqual(
             proposal_refusal.exception.refusal_code,
@@ -4016,7 +4090,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 effective_until_state="NONE",
                 occurred_at=assign_at,
                 effective_at=assign_at,
-                received_at=assign_at,
             ))
         self.assertEqual(
             assignment_refusal.exception.refusal_code,
@@ -4410,20 +4483,37 @@ class S015RoleCommandTests(TransactionTestCase):
         ids, founder = self._setup_organism("atomic-failure")
         _, member, member_membership_uuid = self._add_active_member(ids, "atomic-failure")
         service = self._service(_ExactProvider())
-        before = self._counts()
+        tables = (
+            "core_commandintake",
+            "core_contextualroleassignment",
+            "core_contextualroleassignmentstateevent",
+            "core_authoritydecision",
+            "core_organismcommandreceipt",
+        )
+        before = _snapshot_tables(*tables)
+        command = self._propose_command(
+            actor=founder,
+            membership_uuid=member_membership_uuid,
+            role_definition_uuid=ids["coordinator_role_uuid"],
+            request_reference="request:atomic-failure:propose",
+            idempotency_key="idem:atomic-failure:propose",
+            effective_at=NOW,
+        )
+        from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
+
+        bound = BoundRequest.for_test(
+            IntakeEntry.PROPOSE_ASSIGNMENT,
+            command,
+            received_at=FAR_FUTURE,
+            actor=ActorRef(
+                pk=founder.pk,
+                identity_id=founder.identity_id,
+                access_epoch=founder.access_epoch,
+            ),
+        )
         with self.assertRaises(IntegrityError):
-            service.propose_assignment(
-                self._propose_command(
-                    actor=founder,
-                    membership_uuid=member_membership_uuid,
-                    role_definition_uuid=ids["coordinator_role_uuid"],
-                    request_reference="request:atomic-failure:propose",
-                    idempotency_key="idem:atomic-failure:propose",
-                    effective_at=NOW,
-                    received_at=FAR_FUTURE,
-                )
-            )
-        self.assertEqual(self._counts(), before)
+            service._execute_propose_assignment(command, bound)
+        self.assertEqual(_snapshot_tables(*tables), before)
 
     def test_concurrent_same_request_replays_once(self):
         from core.models import AuthorityDecision
@@ -4520,7 +4610,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key=f"idem:{label}:propose",
                     occurred_at=proposal_at,
                     effective_at=proposal_at,
-                    received_at=proposal_at,
                 )
             )
             proposal_event = ContextualRoleAssignmentStateEvent.objects.get(
@@ -4555,7 +4644,6 @@ class S015RoleCommandTests(TransactionTestCase):
                         effective_until_state="NONE",
                         occurred_at=received_at,
                         effective_at=proposal_at,
-                        received_at=received_at,
                     )
                     return self._service(active_provider).transition_assignment(command)
                 consent_service = OfficeAppointmentConsentService(
@@ -4569,7 +4657,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key=f"idem:{label}:withdraw",
                     occurred_at=received_at,
                     effective_at=proposal_at,
-                    received_at=received_at,
                     assignment_uuid=proposal_result.assignment_uuid,
                     proposal_event_uuid=proposal_event.event_uuid,
                     action="WITHDRAW",
@@ -4779,7 +4866,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key=f"idem:{label}:propose",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
         ))
         proposal_event = _event_for_result(proposal)
         if not self_proposal:
@@ -4810,7 +4896,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:withdraw",
                 occurred_at=received_at,
                 effective_at=proposal_at,
-                received_at=received_at,
                 assignment_uuid=proposal.assignment_uuid,
                 proposal_event_uuid=proposal_event.event_uuid,
                 action="WITHDRAW",
@@ -4829,7 +4914,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:assign",
                 occurred_at=received_at,
                 effective_at=received_at,
-                received_at=received_at,
             ))
 
         before = _r4s1_rows()
@@ -4901,7 +4985,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:later-assign",
                 occurred_at=self._database_now(),
                 effective_at=proposal_at,
-                received_at=self._database_now(),
             ))
         self.assertIs(
             later_assignment_refusal.exception.refusal_code,
@@ -4923,7 +5006,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     idempotency_key=f"idem:{label}:later-consent",
                     occurred_at=self._database_now(),
                     effective_at=proposal_at,
-                    received_at=self._database_now(),
                     assignment_uuid=proposal.assignment_uuid,
                     proposal_event_uuid=proposal_event.event_uuid,
                     action="CONSENT",
@@ -4943,7 +5025,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key=f"idem:{label}:fresh-propose",
                 occurred_at=fresh_at,
                 effective_at=fresh_at,
-                received_at=fresh_at,
             ))
             fresh_event = _event_for_result(fresh_proposal)
             self.assertNotEqual(fresh_proposal.assignment_uuid, proposal.assignment_uuid)
@@ -5206,7 +5287,6 @@ class S015RoleCommandTests(TransactionTestCase):
             idempotency_key=f"idem:{label}:leave",
             occurred_at=at,
             effective_at=at,
-            received_at=at,
             membership_uuid=membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -5229,7 +5309,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 role_definition_uuid=ids["coordinator_role_uuid"],
                 request_reference=f"request:{label}:propose",
                 idempotency_key=f"idem:{label}:propose",
-                received_at=self._database_now(),
             )
         )
         self._record_test_consent(
@@ -5479,7 +5558,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:r4s1-c2-order2:assign",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
             )
             return assign_service.transition_assignment(assign_command)
 
@@ -5673,7 +5751,6 @@ class S015RoleCommandTests(TransactionTestCase):
             role_definition_uuid=ids["coordinator_role_uuid"],
             request_reference=f"request:{label}:propose",
             idempotency_key=f"idem:{label}:propose",
-            received_at=self._database_now(),
         )
         departure = self._r4s1_departure_operation(
             nominee,
@@ -5793,7 +5870,6 @@ class S015RoleCommandTests(TransactionTestCase):
             role_definition_uuid=ids["coordinator_role_uuid"],
             request_reference=f"request:{label}:propose",
             idempotency_key=f"idem:{label}:propose",
-            received_at=self._database_now(),
         )
         before = _r4s1_rows()
         result = self._run_r4s1_pair(
@@ -5829,7 +5905,6 @@ class S015RoleCommandTests(TransactionTestCase):
             role_definition_uuid=ids["coordinator_role_uuid"],
             request_reference=f"request:{label}:propose",
             idempotency_key=f"idem:{label}:propose",
-            received_at=self._database_now(),
         )
         end_service = self._service(
             ProductionApplicationAuthorityProvider(database_alias="default"),
@@ -5906,7 +5981,6 @@ class S015RoleCommandTests(TransactionTestCase):
                 idempotency_key="idem:r4s1-propose-regressions:requester-leave",
                 occurred_at=at,
                 effective_at=at,
-                received_at=at,
                 membership_uuid=requester_membership_uuid,
                 resulting_state="ENDED",
                 reason_class="TEST_ONLY_REASON_LEAVE",
@@ -5960,7 +6034,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     role_definition_uuid=role_uuid,
                     request_reference=f"request:r4s1-propose-regressions:{suffix}",
                     idempotency_key=f"idem:r4s1-propose-regressions:{suffix}",
-                    received_at=self._database_now(),
                 )
             )
 
@@ -5993,7 +6066,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     role_definition_uuid=ids["coordinator_role_uuid"],
                     request_reference="request:r4s1-propose-regressions:inactive",
                     idempotency_key="idem:r4s1-propose-regressions:inactive",
-                    received_at=self._database_now(),
                 )
             ),
         )
@@ -6006,7 +6078,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     role_definition_uuid=circle_role_uuid,
                     request_reference="request:r4s1-propose-regressions:scope",
                     idempotency_key="idem:r4s1-propose-regressions:scope",
-                    received_at=self._database_now(),
                 )
             ),
         )
@@ -6019,7 +6090,6 @@ class S015RoleCommandTests(TransactionTestCase):
                     role_definition_uuid=noncoordinator_role_uuid,
                     request_reference="request:r4s1-propose-regressions:code",
                     idempotency_key="idem:r4s1-propose-regressions:code",
-                    received_at=self._database_now(),
                 )
             ),
         )

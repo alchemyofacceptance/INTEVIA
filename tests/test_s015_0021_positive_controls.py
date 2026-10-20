@@ -378,40 +378,90 @@ class LockOrder(_S015PositiveBase):
             with self.subTest(table=event_table):
                 ids = self.commits(lambda cur: add_remaining_aggregates(cur, found_nonroot(cur), fresh()))
                 def append_and_check(cur):
-                    if event_table == "core_contextualroleassignmentstateevent":
-                        from core.models import ContextualRoleAssignment, Identity
-                        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
-                        from src.intevia.services.organism_authority import S015Authority
-                        from src.intevia.services.organism_role_service import OrganismRoleService, TransitionAssignmentCommand
-
-                        assignment = ContextualRoleAssignment.objects.get(pk=ids["assignments"]["COORDINATOR"])
-                        actor = Identity.objects.select_related("credential").get(pk=ids["identity"])
-                        with connection.cursor() as clock_cursor:
-                            clock_cursor.execute("SELECT clock_timestamp()")
-                            command_time = clock_cursor.fetchone()[0]
-                        service = OrganismRoleService(
-                            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
-                            clock=lambda: command_time,
-                        )
-                        service.transition_assignment(TransitionAssignmentCommand(
-                            credential=actor.credential,
-                            request_reference=f"lock-control:{fresh()}:request",
-                            idempotency_key=f"lock-control:{fresh()}:idempotency",
-                            occurred_at=command_time,
-                            effective_at=command_time,
-                            received_at=command_time,
-                            assignment_uuid=assignment.assignment_uuid,
-                            action="END",
-                            resulting_state="ENDED",
-                        ))
-                    else:
-                        append_second_event(cur, ids, event_table, fresh())
+                    append_second_event(cur, ids, event_table, fresh())
                     cur.execute(
                         "SELECT count(*) FROM public.s015_transaction_register "
                         "WHERE xid = pg_current_xact_id() AND kind = 'ORGANISM_LOCK'",
                     )
                     self.assertEqual(cur.fetchone()[0], 1)
-                self.commits(append_and_check)
+                if event_table == "core_contextualroleassignmentstateevent":
+                    from core.models import ContextualRoleAssignment, ContextualRoleAssignmentStateEvent, Identity
+                    from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+                    from src.intevia.services.organism_authority import S015Authority
+                    from src.intevia.services.organism_role_service import (
+                        OrganismRoleService,
+                        TransitionAssignmentCommand,
+                    )
+
+                    assignment = ContextualRoleAssignment.objects.get(
+                        pk=ids["assignments"]["COORDINATOR"],
+                    )
+                    actor = Identity.objects.select_related("credential").get(
+                        pk=ids["identity"],
+                    )
+                    command_time = database_now()
+                    predecessor = (
+                        ContextualRoleAssignmentStateEvent.objects.filter(
+                            assignment=assignment,
+                        ).order_by("-sequence").first()
+                    )
+                    if predecessor is None:
+                        self.fail("the prepared assignment has no predecessor event")
+                    key = f"lock-control:{fresh()}:idempotency"
+                    service = OrganismRoleService(
+                        authority=S015Authority(
+                            provider=ProductionApplicationAuthorityProvider(),
+                        ),
+                        clock=lambda: command_time,
+                    )
+                    service.transition_assignment(TransitionAssignmentCommand(
+                        credential=actor.credential,
+                        request_reference=f"lock-control:{fresh()}:request",
+                        idempotency_key=key,
+                        occurred_at=command_time,
+                        effective_at=command_time,
+                        assignment_uuid=assignment.assignment_uuid,
+                        action="END",
+                        resulting_state="ENDED",
+                    ))
+                    observation_finished = database_now()
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT xmin::text, received_at "
+                            "FROM public.core_contextualroleassignmentstateevent "
+                            "WHERE idempotency_key = %s",
+                            [key],
+                        )
+                        event_row = cursor.fetchone()
+                        if event_row is None:
+                            self.fail("the public assignment transition wrote no event")
+                        event_xmin, event_received_at = event_row
+                        cursor.execute(
+                            "SELECT count(*) FROM public.s015_transaction_register "
+                            "WHERE organism_uuid = %s AND kind = 'ORGANISM_LOCK' "
+                            "AND pg_xact_status(xid) = 'committed' AND xid::xid = %s::xid",
+                            [str(assignment.membership.living_organism.organism_id), event_xmin],
+                        )
+                        self.assertEqual(cursor.fetchone()[0], 1)
+                        cursor.execute(
+                            "SELECT xmin::text, received_at FROM public.core_commandintake "
+                            "WHERE idempotency_key = %s",
+                            [key],
+                        )
+                        intake_row = cursor.fetchone()
+                        if intake_row is None:
+                            self.fail("the public assignment transition wrote no intake")
+                        intake_xmin, intake_received_at = intake_row
+                    self.assertGreaterEqual(intake_received_at, command_time)
+                    self.assertLessEqual(intake_received_at, observation_finished)
+                    self.assertEqual(event_received_at, intake_received_at)
+                    self.assertLessEqual(
+                        (predecessor.effective_at, predecessor.occurred_at, predecessor.received_at),
+                        (command_time, command_time, intake_received_at),
+                    )
+                    self.assertNotEqual(intake_xmin, event_xmin)
+                else:
+                    self.commits(append_and_check)
 
         ids = self.commits(lambda cur: found_nonroot(cur))
         def insert_requirement_and_check(cur):

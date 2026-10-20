@@ -625,7 +625,7 @@ def _lock_actor_membership_context(
     try:
         membership = (
             OrganismMembership.objects.using(database_alias)
-            .select_for_update()
+            .select_for_update(of=("self",))
             .get(identity__identity_id=actor_identity_id, living_organism__organism_id=living_organism_id)
         )
     except OrganismMembership.DoesNotExist as exc:

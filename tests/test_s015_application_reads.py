@@ -246,7 +246,6 @@ class S015ApplicationReadTests(TransactionTestCase):
             idempotency_key=f"read-office-end:key:{self.tag}:{fresh()}",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=database_now(),
             assignment_uuid=office.assignment_uuid,
             action="END",
             resulting_state="ENDED",

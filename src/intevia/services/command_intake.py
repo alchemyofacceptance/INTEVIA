@@ -108,7 +108,7 @@ class BoundRequest:
             raise IntakeAdmissionTechnicalFailure(
                 "test-only bound requests require INTEVIA_TEST_CONTEXT"
             )
-        shape = application_shape(entry, command)
+        shape = intake_shape(entry, command)
         action = _action_for(entry, shape.action)
         fingerprint = intake_fingerprint(
             entry=entry,
@@ -142,7 +142,7 @@ class BoundRequest:
         try:
             if type(entry) is not IntakeEntry or self.entry != entry:
                 raise _request_binding_mismatch()
-            shape = application_shape(entry, command)
+            shape = intake_shape(entry, command)
             action = _action_for(entry, shape.action)
             fingerprint = intake_fingerprint(
                 entry=entry,
@@ -183,11 +183,7 @@ class BoundRequest:
         if bound.actor_identity_id != actor.identity_id or bound.actor_pk != actor.pk:
             raise _request_binding_mismatch()
         if bound.actor_access_epoch != actor.access_epoch:
-            from src.intevia.services.organism_application_service import (
-                S015ApplicationAuthorityUnavailable,
-            )
-
-            raise S015ApplicationAuthorityUnavailable(
+            raise _authority_unavailable(entry)(
                 "actor access epoch changed after intake; nothing was done"
             )
         if bound.intake_id is not None:
@@ -353,6 +349,11 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.CLAIM_APPLICATION,
         IntakeEntry.REASSIGN_APPLICATION,
         IntakeEntry.DECIDE_APPLICATION,
+        IntakeEntry.OPEN_MEMBERSHIP,
+        IntakeEntry.TRANSITION_MEMBERSHIP,
+        IntakeEntry.PROPOSE_ASSIGNMENT,
+        IntakeEntry.TRANSITION_ASSIGNMENT,
+        IntakeEntry.RECORD_OFFICE_CONSENT,
     }
 )
 
@@ -840,6 +841,224 @@ def application_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     return APPLICATION_SHAPES[entry](command)
 
 
+def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    from src.intevia.services.organism_membership_service import (
+        OpenMembershipCommand,
+        TransitionMembershipCommand,
+        _canonical_reason,
+        _validate_member_state,
+    )
+
+    if entry is IntakeEntry.OPEN_MEMBERSHIP and type(command) is OpenMembershipCommand:
+        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        reason_class = _canonical_reason(command.reason_class)
+        occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
+        effective_at = _validate_timestamp(command.effective_at, "effective_at")
+        if command.received_at is not None:
+            raise ValueError("received_at is assigned by INTEVIA")
+        target = {
+            "living_organism_id": _canonical_uuid(
+                command.living_organism_id, "living_organism_id"
+            ),
+            "member_identity_id": _canonical_uuid(
+                command.member_identity_id, "member_identity_id"
+            ),
+        }
+        payload = {
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "reason_class": reason_class,
+        }
+    elif entry is IntakeEntry.TRANSITION_MEMBERSHIP and type(command) is TransitionMembershipCommand:
+        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        reason_class = _canonical_reason(command.reason_class)
+        occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
+        effective_at = _validate_timestamp(command.effective_at, "effective_at")
+        if command.received_at is not None:
+            raise ValueError("received_at is assigned by INTEVIA")
+        target = {
+            "membership_uuid": _canonical_uuid(command.membership_uuid, "membership_uuid")
+        }
+        payload = {
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "resulting_state": _validate_member_state(command.resulting_state),
+            "reason_class": reason_class,
+        }
+    else:
+        raise TypeError(f"{entry.value} requires its exact membership command type")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target=target,
+        command=payload,
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _assignment_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    from src.intevia.services.organism_role_service import (
+        ProposeAssignmentCommand,
+        S015AssignmentTermRefused,
+        TransitionAssignmentCommand,
+        _validate_event_action,
+        _validate_resulting_state,
+        _validate_term,
+    )
+
+    if entry is IntakeEntry.PROPOSE_ASSIGNMENT and type(command) is ProposeAssignmentCommand:
+        request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+            command.request_reference,
+            command.idempotency_key,
+            command.occurred_at,
+            command.effective_at,
+            command.received_at,
+        )
+        target = {
+            "membership_uuid": _canonical_uuid(command.membership_uuid, "membership_uuid"),
+            "role_definition_uuid": _canonical_uuid(
+                command.role_definition_uuid, "role_definition_uuid"
+            ),
+        }
+        term_state, term = _validate_term(
+            effective_until_state=command.effective_until_state,
+            effective_until=command.effective_until,
+            effective_at=effective_at,
+        )
+        payload = {
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "effective_until_state": term_state,
+            "effective_until": term,
+        }
+    elif entry is IntakeEntry.TRANSITION_ASSIGNMENT and type(command) is TransitionAssignmentCommand:
+        request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+            command.request_reference,
+            command.idempotency_key,
+            command.occurred_at,
+            command.effective_at,
+            command.received_at,
+        )
+        assignment_uuid = _canonical_uuid(command.assignment_uuid, "assignment_uuid")
+        action = _validate_event_action(command.action)
+        resulting_state = _validate_resulting_state(command.resulting_state)
+        if action == "ASSIGN":
+            if command.effective_until_state is None:
+                raise S015AssignmentTermRefused(
+                    "ASSIGN requires effective_until_state (the appointing decision supplies the term)"
+                )
+            term_state, term = _validate_term(
+                effective_until_state=command.effective_until_state,
+                effective_until=command.effective_until,
+                effective_at=effective_at,
+            )
+        else:
+            if command.effective_until_state is not None or command.effective_until is not None:
+                raise S015AssignmentTermRefused(
+                    f"only ASSIGN establishes a term; effective_until fields are refused on {action}"
+                )
+            term_state, term = None, None
+        target = {
+            "assignment_uuid": assignment_uuid
+        }
+        payload = {
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "action": action,
+            "resulting_state": resulting_state,
+            "effective_until_state": term_state,
+            "effective_until": term,
+        }
+    else:
+        raise TypeError(f"{entry.value} requires its exact assignment command type")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target=target,
+        command=payload,
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _office_consent_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_office_consent_service import (
+        RecordOfficeConsentCommand,
+        _ACTIONS,
+    )
+
+    if type(command) is not RecordOfficeConsentCommand:
+        raise TypeError("command must be a RecordOfficeConsentCommand")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    if type(command.action) is not str or command.action not in _ACTIONS:
+        raise ValueError("action must be CONSENT, DECLINE, or WITHDRAW")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={
+            "assignment_uuid": _canonical_uuid(command.assignment_uuid, "assignment_uuid"),
+            "proposal_event_uuid": _canonical_uuid(
+                command.proposal_event_uuid, "proposal_event_uuid"
+            ),
+        },
+        command={
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "action": command.action,
+        },
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    """Return the pure command projection for an active intake entry."""
+    if type(entry) is not IntakeEntry:
+        raise ValueError("entry must be an IntakeEntry")
+    if entry in APPLICATION_SHAPES:
+        return application_shape(entry, command)
+    if entry in {IntakeEntry.OPEN_MEMBERSHIP, IntakeEntry.TRANSITION_MEMBERSHIP}:
+        return _membership_shape(entry, command)
+    if entry in {IntakeEntry.PROPOSE_ASSIGNMENT, IntakeEntry.TRANSITION_ASSIGNMENT}:
+        return _assignment_shape(entry, command)
+    if entry is IntakeEntry.RECORD_OFFICE_CONSENT:
+        return _office_consent_shape(command)
+    raise ValueError("entry has no active intake shape")
+
+
+def _authority_unavailable(entry: IntakeEntry):
+    if entry in {IntakeEntry.OPEN_MEMBERSHIP, IntakeEntry.TRANSITION_MEMBERSHIP}:
+        from src.intevia.services.organism_membership_service import (
+            S015MembershipAuthorityUnavailable,
+        )
+
+        return S015MembershipAuthorityUnavailable
+    if entry in {IntakeEntry.PROPOSE_ASSIGNMENT, IntakeEntry.TRANSITION_ASSIGNMENT}:
+        from src.intevia.services.organism_role_service import S015AssignmentAuthorityUnavailable
+
+        return S015AssignmentAuthorityUnavailable
+    if entry is IntakeEntry.RECORD_OFFICE_CONSENT:
+        from src.intevia.services.organism_office_consent_service import (
+            S015OfficeConsentAuthorityUnavailable,
+        )
+
+        return S015OfficeConsentAuthorityUnavailable
+    from src.intevia.services.organism_application_service import (
+        S015ApplicationAuthorityUnavailable,
+    )
+
+    return S015ApplicationAuthorityUnavailable
+
+
 def _bound_from_row(
     row,
     *,
@@ -1131,6 +1350,7 @@ __all__ = [
     "accounts_for",
     "admit_request",
     "intake_fingerprint",
+    "intake_shape",
     "run_activation_step",
     "slots",
 ]

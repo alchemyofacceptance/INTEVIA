@@ -26,6 +26,7 @@ from core.models import (
     CircleParticipation,
     CircleParticipationEnd,
     CircleStateEvent,
+    CommandIntake,
     GovernedRule,
     Identity,
     LOBirthingSnapshot,
@@ -3676,7 +3677,6 @@ class SBGGovernancePostBirthingSeatingTests(
                 idempotency_key="sbg:g4b:r3-inactive:leave-key",
                 occurred_at=leave_at,
                 effective_at=leave_at,
-                received_at=leave_at,
                 membership_uuid=inactive_membership.membership_uuid,
                 resulting_state="ENDED",
                 reason_class="TEST_ONLY_REASON_LEAVE",
@@ -4172,7 +4172,6 @@ class SBGGovernanceDepartureCascadeTests(
             idempotency_key=f"sbg:g5:departure:key:{tag}",
             occurred_at=effective_at,
             effective_at=effective_at,
-            received_at=effective_at,
             membership_uuid=membership.membership_uuid,
             resulting_state="ENDED",
             reason_class="TEST_ONLY_REASON_LEAVE",
@@ -4230,14 +4229,16 @@ class SBGGovernanceDepartureCascadeTests(
         membership = self._membership_for(route, applicant)
         leave_at = database_now()
         before = self._whole_departure_state(route, membership)
-
-        result = self._membership_service().transition_membership(
-            self._departure_command(route, membership, "ending", leave_at)
-        )
+        command = self._departure_command(route, membership, "ending", leave_at)
+        result = self._membership_service().transition_membership(command)
 
         membership.refresh_from_db()
         transition = OrganismMembershipTransition.objects.get(
             pk=membership.head_transition_id,
+        )
+        intake = CommandIntake.objects.get(
+            actor_id=applicant.pk,
+            idempotency_key=command.idempotency_key,
         )
         ending = CircleParticipationEnd.objects.get(participation=participation)
         self.assertEqual(result.resulting_state, "ENDED")
@@ -4264,7 +4265,8 @@ class SBGGovernanceDepartureCascadeTests(
         self.assertEqual(ending.composed_from_event_uuid, transition.event_uuid)
         self.assertEqual(ending.effective_at, transition.effective_at)
         self.assertEqual(ending.occurred_at, transition.effective_at)
-        self.assertEqual(ending.received_at, transition.received_at)
+        self.assertEqual(transition.received_at, intake.received_at)
+        self.assertEqual(ending.received_at, intake.received_at)
         self.assertEqual(transition.authority_decision_reference, result.authority_decision_reference)
         self.assertEqual(decision.participation_uuid, participation.participation_uuid)
         expected_route = before["route"].copy()

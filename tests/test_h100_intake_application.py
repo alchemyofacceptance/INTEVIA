@@ -157,8 +157,8 @@ class IntakeAdmissionStateTests(TransactionTestCase):
         }
         return methods[entry](command)
 
-    def test_every_active_entry_refuses_atomic_and_manual_modes_without_sql(self):
-        self.assertEqual(len(ACTIVE_ENTRIES), 5)
+    def test_application_entries_refuse_atomic_and_manual_modes_without_sql(self):
+        self.assertEqual(len(ACTIVE_ENTRIES), 10)
         for entry, command in self.commands.items():
             with self.subTest(entry=entry):
                 with transaction.atomic():
@@ -481,7 +481,16 @@ class ApplicationIntakeFlowTests(TransactionTestCase):
         )
         self.assertEqual(
             {row.entry for row in intakes},
-            {entry.value for entry in ACTIVE_ENTRIES},
+            {
+                entry.value
+                for entry in (
+                    IntakeEntry.SUBMIT_APPLICATION,
+                    IntakeEntry.WITHDRAW_APPLICATION,
+                    IntakeEntry.CLAIM_APPLICATION,
+                    IntakeEntry.REASSIGN_APPLICATION,
+                    IntakeEntry.DECIDE_APPLICATION,
+                )
+            },
         )
         by_key = {row.idempotency_key: row for row in intakes}
         claim_intake = by_key[claim.idempotency_key]
@@ -533,7 +542,19 @@ class ApplicationIntakeFlowTests(TransactionTestCase):
                     decision.evaluated_at,
                     by_key[decision.idempotency_key].received_at,
                 )
-        self.assertEqual(run_activation_step("default", ACTIVE_ENTRIES), [])
+        self.assertEqual(
+            run_activation_step(
+                "default",
+                (
+                    IntakeEntry.SUBMIT_APPLICATION,
+                    IntakeEntry.WITHDRAW_APPLICATION,
+                    IntakeEntry.CLAIM_APPLICATION,
+                    IntakeEntry.REASSIGN_APPLICATION,
+                    IntakeEntry.DECIDE_APPLICATION,
+                ),
+            ),
+            [],
+        )
 
     def test_rollback_keeps_intake_time_and_retry_completes_once(self):
         command = self._submit(self.applicant, "rollback")

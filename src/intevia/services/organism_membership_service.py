@@ -37,6 +37,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import User
@@ -87,6 +88,9 @@ from src.intevia.services.organism_command_support import (
     command_mutex_key,
     contention_translated,
 )
+
+if TYPE_CHECKING:
+    from src.intevia.services.command_intake import BoundRequest
 
 
 _COMMAND_DOMAIN = b"INTEVIA:S015:ORGANISM_MEMBERSHIP_COMMAND:v1\x00"
@@ -178,15 +182,15 @@ class OpenMembershipCommand:
     """Inputs to open_membership.
 
     The actor's credential; the request reference and idempotency key; the
-    occurred, effective and received times; the LO and member Identity
-    UUIDs; and the reason class.
+    occurred and effective times; the LO and member Identity UUIDs; and the
+    reason class. INTEVIA assigns received_at; a supplied value is refused.
     """
     credential: User
     request_reference: str
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     living_organism_id: UUID
     member_identity_id: UUID
     reason_class: str
@@ -197,15 +201,16 @@ class TransitionMembershipCommand:
     """Inputs to transition_membership.
 
     The actor's credential; the request reference and idempotency key; the
-    occurred, effective and received times; the membership UUID; the
-    requested resulting state; and the reason class.
+    occurred and effective times; the membership UUID; the requested resulting
+    state; and the reason class. INTEVIA assigns received_at; a supplied value
+    is refused.
     """
     credential: User
     request_reference: str
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     membership_uuid: UUID
     resulting_state: str
     reason_class: str
@@ -910,7 +915,6 @@ class OrganismMembershipService(_OrganismCommandService):
         )
 
     def open_membership(self, command: OpenMembershipCommand) -> MembershipCommandResult:
-        # Keep T-LOCK-1 translation outside atomic so it follows rollback (15 Oct commission, §1).
         """Open a PROPOSED membership; runs _execute_open in transaction.atomic.
 
         Uses this service's database alias. The transaction runs inside
@@ -920,11 +924,37 @@ class OrganismMembershipService(_OrganismCommandService):
         other exception raised by _execute_open, propagate unchanged; no
         IntegrityError is mapped to an authored refusal.
         """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.OPEN_MEMBERSHIP
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("OPEN_MEMBERSHIP is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_open_membership(command, bound)
+
+    def _execute_open_membership(
+        self, command: OpenMembershipCommand, bound: BoundRequest,
+    ) -> MembershipCommandResult:
+        """Execute an admitted opening using the existing contention and transaction form."""
+        # Keep T-LOCK-1 translation outside atomic so it follows rollback (15 Oct commission, §1).
         with contention_translated(self._alias):
             with transaction.atomic(using=self._alias):
-                return self._execute_open(command)
+                return self._execute_open(command, bound=bound)
 
-    def _execute_open(self, command: OpenMembershipCommand) -> MembershipCommandResult:
+    def _execute_open(
+        self, command: OpenMembershipCommand, *, bound: BoundRequest,
+    ) -> MembershipCommandResult:
         """Open a membership in PROPOSED; called by open_membership.
 
         Runs inside the caller's transaction.atomic block, in this order:
@@ -980,7 +1010,7 @@ class OrganismMembershipService(_OrganismCommandService):
         reason_class = _canonical_reason(command.reason_class)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(bound.received_at, "received_at")
         living_organism_id = _canonical_uuid(command.living_organism_id, "living_organism_id")
         member_identity_id = _canonical_uuid(command.member_identity_id, "member_identity_id")
 
@@ -989,6 +1019,9 @@ class OrganismMembershipService(_OrganismCommandService):
             credential=command.credential,
             unavailable=S015MembershipAuthorityUnavailable,
         )
+        from src.intevia.services.command_intake import IntakeEntry
+
+        bound.verify(command, actor, IntakeEntry.OPEN_MEMBERSHIP, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,
@@ -1204,10 +1237,35 @@ class OrganismMembershipService(_OrganismCommandService):
         returns None. This handler does not catch a deferred constraint failure
         raised later when a caller's enclosing transaction commits.
         """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.TRANSITION_MEMBERSHIP
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("TRANSITION_MEMBERSHIP is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_transition_membership(command, bound)
+
+    def _execute_transition_membership(
+        self, command: TransitionMembershipCommand, bound: BoundRequest,
+    ) -> MembershipCommandResult:
+        """Execute an admitted transition using the existing refusal translation."""
         departure_context: dict[str, str] = {}
         try:
             with authority_atomic(self._alias):
-                return self._execute_transition(command, departure_context)
+                return self._execute_transition(
+                    command, departure_context, bound=bound
+                )
         except IntegrityError as exc:
             message_primary = getattr(
                 getattr(exc.__cause__, "diag", None),
@@ -1432,6 +1490,8 @@ class OrganismMembershipService(_OrganismCommandService):
         self,
         command: TransitionMembershipCommand,
         departure_context: dict[str, str],
+        *,
+        bound: BoundRequest,
     ) -> MembershipCommandResult:
         """Carry out one membership transition; called by transition_membership.
 
@@ -1485,7 +1545,7 @@ class OrganismMembershipService(_OrganismCommandService):
         reason_class = _canonical_reason(command.reason_class)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(bound.received_at, "received_at")
         membership_uuid = _canonical_uuid(command.membership_uuid, "membership_uuid")
         target_state = _validate_member_state(command.resulting_state)
 
@@ -1494,6 +1554,9 @@ class OrganismMembershipService(_OrganismCommandService):
             credential=command.credential,
             unavailable=S015MembershipAuthorityUnavailable,
         )
+        from src.intevia.services.command_intake import IntakeEntry
+
+        bound.verify(command, actor, IntakeEntry.TRANSITION_MEMBERSHIP, self._alias)
         acquire_organism_command_mutex(
             database_alias=self._alias,
             actor_identity_id=actor.identity_id,

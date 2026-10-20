@@ -254,6 +254,38 @@ def _controlled_membership_context(route):
     return membership, role_references
 
 
+def _assert_single_intake(test, entry, command):
+    """Assert exactly one intake row for the command, with its entry, action and intake-projection fingerprint (CH-17)."""
+    from core.models import CommandIntake, Identity
+    from src.intevia.services import command_intake as command_intake_module
+
+    actor = Identity.objects.get(credential=command.credential)
+    action = command_intake_module.ENTRY_ACTIONS[entry]
+    rows = CommandIntake.objects.filter(
+        actor=actor,
+        action=action,
+        idempotency_key=command.idempotency_key,
+    )
+    test.assertEqual(rows.count(), 1)
+    intake = rows.get()
+    test.assertEqual(intake.entry, entry.value)
+    shape = command_intake_module.intake_shape(entry, command)
+    test.assertEqual(
+        intake.request_fingerprint,
+        command_intake_module.intake_fingerprint(
+            entry=entry,
+            action=action,
+            actor_identity_id=actor.identity_id,
+            actor_access_epoch=actor.access_epoch,
+            request_reference=shape.request_reference,
+            idempotency_key=shape.idempotency_key,
+            target=shape.target,
+            command=shape.command,
+            omitted=shape.omitted,
+        ),
+    )
+
+
 class _ControlledBirthingProvider:
     def __init__(self, refusal_code: S015AuthorityRefusalCode | None = None):
         self.refusal_code = refusal_code
@@ -769,7 +801,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:second-coordinator:propose:key:{route.tag}",
             occurred_at=proposal_at,
             effective_at=proposal_at,
-            received_at=proposal_at,
             membership_uuid=applicant_membership.membership_uuid,
             role_definition_uuid=coordinator_role.role_uuid,
             effective_until_state="NONE",
@@ -785,19 +816,21 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
         consent_at = database_now()
         consent_key = f"sb2:second-coordinator:consent:key:{route.tag}"
-        consent_result = consent_service.record_office_consent(RecordOfficeConsentCommand(
+        consent_command = RecordOfficeConsentCommand(
             credential=applicant.credential,
             request_reference=f"sb2:second-coordinator:consent:{route.tag}",
             idempotency_key=consent_key,
             occurred_at=consent_at,
             effective_at=proposal_at,
-            received_at=consent_at,
             assignment_uuid=proposal_result.assignment_uuid,
             proposal_event_uuid=proposal_event.event_uuid,
             action="CONSENT",
-        ))
+        )
+        consent_result = consent_service.record_office_consent(consent_command)
         self.assertIsNotNone(consent_result.consent_uuid)
-        self.assertFalse(CommandIntake.objects.filter(idempotency_key=consent_key).exists())
+        from core.models import IntakeEntry
+
+        _assert_single_intake(self, IntakeEntry.RECORD_OFFICE_CONSENT, consent_command)
         assign_at = database_now()
         role_service.transition_assignment(TransitionAssignmentCommand(
             credential=route.founder.credential,
@@ -805,7 +838,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:second-coordinator:assign:key:{route.tag}",
             occurred_at=assign_at,
             effective_at=assign_at,
-            received_at=assign_at,
             assignment_uuid=proposal_result.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
@@ -829,7 +861,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:second-coordinator:end-founder:key:{route.tag}",
             occurred_at=end_at,
             effective_at=end_at,
-            received_at=end_at,
             assignment_uuid=founding_assignment.assignment_uuid,
             action="END",
             resulting_state="ENDED",
@@ -866,7 +897,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:founder-reappointment:propose:key:{route.tag}",
             occurred_at=reappointment_proposal_at,
             effective_at=reappointment_proposal_at,
-            received_at=reappointment_proposal_at,
             membership_uuid=founder_membership.membership_uuid,
             role_definition_uuid=coordinator_role.role_uuid,
             effective_until_state="NONE",
@@ -883,7 +913,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:founder-reappointment:consent:key:{route.tag}",
             occurred_at=reappointment_consent_at,
             effective_at=reappointment_proposal_at,
-            received_at=reappointment_consent_at,
             assignment_uuid=reappointment_proposal.assignment_uuid,
             proposal_event_uuid=reappointment_proposal_event.event_uuid,
             action="CONSENT",
@@ -895,7 +924,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:founder-reappointment:assign:key:{route.tag}",
             occurred_at=reappointment_assign_at,
             effective_at=reappointment_assign_at,
-            received_at=reappointment_assign_at,
             assignment_uuid=reappointment_proposal.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
@@ -918,7 +946,6 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             idempotency_key=f"sb2:founder-reappointment:end:key:{route.tag}",
             occurred_at=reappointment_end_at,
             effective_at=reappointment_end_at,
-            received_at=reappointment_end_at,
             assignment_uuid=founder_reappointment.assignment_uuid,
             action="END",
             resulting_state="ENDED",

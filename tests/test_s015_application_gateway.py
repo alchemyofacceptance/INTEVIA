@@ -97,6 +97,38 @@ def refresh(cur, table, aggregate_id, state_at=None):
 POSTGRES = skipUnless(connection.vendor == "postgresql", "S3 gateway requires PostgreSQL")
 
 
+def _assert_single_intake(test, entry, command):
+    """Assert exactly one intake row for the command, with its entry, action and intake-projection fingerprint (CH-17)."""
+    from core.models import CommandIntake, Identity
+    from src.intevia.services import command_intake as command_intake_module
+
+    actor = Identity.objects.get(credential=command.credential)
+    action = command_intake_module.ENTRY_ACTIONS[entry]
+    rows = CommandIntake.objects.filter(
+        actor=actor,
+        action=action,
+        idempotency_key=command.idempotency_key,
+    )
+    test.assertEqual(rows.count(), 1)
+    intake = rows.get()
+    test.assertEqual(intake.entry, entry.value)
+    shape = command_intake_module.intake_shape(entry, command)
+    test.assertEqual(
+        intake.request_fingerprint,
+        command_intake_module.intake_fingerprint(
+            entry=entry,
+            action=action,
+            actor_identity_id=actor.identity_id,
+            actor_access_epoch=actor.access_epoch,
+            request_reference=shape.request_reference,
+            idempotency_key=shape.idempotency_key,
+            target=shape.target,
+            command=shape.command,
+            omitted=shape.omitted,
+        ),
+    )
+
+
 class _CoordinatorProvider:
     """TEST-ONLY permissive provider for service and lock witnesses."""
 
@@ -453,8 +485,20 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.addCleanup(cleanup_workers, workers)
         self.addCleanup(provider.release.set)
 
-        paused = self._start_worker(workers, paused_call)
-        self.assertTrue(provider.entered.wait(timeout=10))
+        def public_paused_call():
+            # The 2b entries are public and refuse an enclosing transaction (IW-00), so the paused command runs on
+            # its own connection with no atomic block; the same bounds are set at session level.
+            with connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '5s'")
+                cursor.execute("SET statement_timeout = '10s'")
+            return paused_call()
+
+        paused = start_worker(public_paused_call)
+        workers.append(paused)
+        entered = provider.entered.wait(timeout=10)
+        if not entered:
+            outcome = "still running" if paused.thread.is_alive() else repr(paused.result(timeout=1))
+            self.fail(f"the paused command did not reach the provider: {outcome}")
         submission = self._start_worker(workers, lambda: self._submit_for_test(applicant))
         with connection.cursor() as cursor:
             wait_until_locked(
@@ -497,35 +541,35 @@ class ApplicationGatewayTests(TransactionTestCase):
 
         proposal_at = self._database_now()
         proposal_key = f"gateway:office2:propose:key:{self.tag}"
-        proposal = role_service.propose_assignment(ProposeAssignmentCommand(
+        proposal_command = ProposeAssignmentCommand(
             credential=other.credential,
             request_reference=f"gateway:office2:propose:{self.tag}",
             idempotency_key=proposal_key,
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=proposal_at,
             membership_uuid=UUID(str(member_uuid)),
             role_definition_uuid=role.role_uuid,
             effective_until_state="NONE",
             effective_until=None,
-        ))
-        self.assertFalse(CommandIntake.objects.filter(idempotency_key=proposal_key).exists())
+        )
+        proposal = role_service.propose_assignment(proposal_command)
+        _assert_single_intake(self, IntakeEntry.PROPOSE_ASSIGNMENT, proposal_command)
         assignment_at = self._database_now()
         assignment_key = f"gateway:office2:assign:key:{self.tag}"
-        role_service.transition_assignment(TransitionAssignmentCommand(
+        assignment_command = TransitionAssignmentCommand(
             credential=self.actor.credential,
             request_reference=f"gateway:office2:assign:{self.tag}",
             idempotency_key=assignment_key,
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=assignment_at,
             assignment_uuid=proposal.assignment_uuid,
             action="ASSIGN",
             resulting_state="ACTIVE",
             effective_until_state="NONE",
             effective_until=None,
-        ))
-        self.assertFalse(CommandIntake.objects.filter(idempotency_key=assignment_key).exists())
+        )
+        role_service.transition_assignment(assignment_command)
+        _assert_single_intake(self, IntakeEntry.TRANSITION_ASSIGNMENT, assignment_command)
         return other
 
     def _database_now(self):
@@ -1298,7 +1342,6 @@ class ApplicationGatewayTests(TransactionTestCase):
             idempotency_key="s3:effect:receipt-replay:end-office",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
             assignment_uuid=office.assignment_uuid,
             action="END",
             resulting_state="ENDED",
@@ -1994,7 +2037,6 @@ class ApplicationGatewayTests(TransactionTestCase):
             idempotency_key=f"loi-w1:{token}:idempotency",
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=self._database_now(),
             assignment_uuid=office.assignment_uuid,
             action="END",
             resulting_state="ENDED",
@@ -2033,17 +2075,17 @@ class ApplicationGatewayTests(TransactionTestCase):
         )
         token = fresh()
         membership_key = f"loi-w2:{token}:idempotency"
-        paused_call = lambda: service.open_membership(OpenMembershipCommand(
+        open_command = OpenMembershipCommand(
             credential=self.actor.credential,
             request_reference=f"loi-w2:{token}:request",
             idempotency_key=membership_key,
             occurred_at=NOW,
             effective_at=NOW,
-            received_at=NOW,
             living_organism_id=self.organism.organism_id,
             member_identity_id=target.identity_id,
             reason_class="TEST_ONLY_REASON_OPEN",
-        ))
+        )
+        paused_call = lambda: service.open_membership(open_command)
 
         paused_result, submission_result, _ = self._race_paused_command_against_submission(
             paused_call, provider, applicant,
@@ -2052,7 +2094,7 @@ class ApplicationGatewayTests(TransactionTestCase):
         self.assertEqual(paused_result, "ok")
         self.assertEqual(submission_result, "ok")
         self._assert_no_deadlock(paused_result, submission_result)
-        self.assertFalse(CommandIntake.objects.filter(idempotency_key=membership_key).exists())
+        _assert_single_intake(self, IntakeEntry.OPEN_MEMBERSHIP, open_command)
         membership = OrganismMembership.objects.get(identity=target, living_organism=self.organism)
         self.assertEqual(membership.state, "PROPOSED")
         transitions = OrganismMembershipTransition.objects.filter(membership=membership).order_by("sequence")
