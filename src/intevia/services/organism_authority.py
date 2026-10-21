@@ -4,10 +4,11 @@ S015Authority.qualify validates an authority request inside the caller's
 atomic block. It handles its own preflight refusals or consults an
 injected S015AuthorityProvider; the production provider is in
 organism_application_authority.py. It checks the result's exact type
-and equality of echoed request fields, derives an s015d1 reference from
-the result's canonical bytes, and records an AuthorityDecision for
-selected actions. A valid result produces a QualifiedS015AuthorityDecision
-or S015AuthorityDenied; malformed requests or results and provider
+and that each echoed request field compares equal and renders to the
+same canonical JSON, derives an s015d1 reference from the result's
+canonical bytes, and records an AuthorityDecision for selected actions.
+A valid result produces a QualifiedS015AuthorityDecision or
+S015AuthorityDenied; malformed requests or results and provider
 failures raise the corresponding authority errors.
 
 The module also holds the request, response and refusal carriers,
@@ -71,10 +72,11 @@ class S015AuthorityMalformed(S015AuthorityError):
 
     Raised in this module for a request that fails validation, a database
     alias that does not match the authority's, a call outside an atomic
-    block, a provider result of the wrong type, not synchronous or not
-    echoing the request, an invalid refusal code or authority reference, an
-    unrecognised structured authority fact, a provider_version that is not
-    a str, and a decision reference that already records different bytes.
+    block, a provider result of the wrong type, not synchronous, not
+    echoing the request or not canonical, an invalid refusal code or
+    authority reference, an unrecognised structured authority fact, a
+    provider_version that is not a str, and a decision reference that
+    already records different bytes.
     """
     pass
 
@@ -218,7 +220,8 @@ class S015PreFoundingAuthorityRequest:
     request was bound to; action and command_subtype select the
     qualification planes (the subtype must begin with the action's value);
     target_fingerprint is a 64-character lowercase hex digest, equal to
-    authority_target_fingerprint(target) when target is given;
+    authority_target_fingerprint(target) when target is given; a request
+    whose result qualify records must carry a non-empty target;
     request_reference and idempotency_key are canonical strings of at most
     128 and 120 characters; evaluated_at is the time authority is judged
     at, timezone-aware; effective_at, when given, is timezone-aware.
@@ -393,7 +396,8 @@ class S015PreFoundingAuthorityRefusal:
 
     Echoes every field of the request and adds refusal_code (the code
     decided), disclosed_refusal_code (the code a caller may show; when None
-    qualify discloses refusal_code) and an optional authority_reference.
+    qualify discloses refusal_code) and an optional authority_reference, a
+    canonical string of at most 255 characters when given.
     """
     database_alias: str
     actor_pk: int
@@ -419,7 +423,8 @@ class S015PostFoundingAuthorityRefusal:
 
     Echoes every field of the request and adds refusal_code,
     disclosed_refusal_code (refusal_code is disclosed when it is None) and
-    an optional authority_reference.
+    an optional authority_reference, a canonical string of at most 255
+    characters when given.
     """
     database_alias: str
     actor_pk: int
@@ -451,7 +456,8 @@ class S015OwnApplicantAuthorityRefusal:
 
     Echoes every field of the request and adds refusal_code,
     disclosed_refusal_code (refusal_code is disclosed when it is None) and
-    an optional authority_reference.
+    an optional authority_reference, a canonical string of at most 255
+    characters when given.
     """
     database_alias: str
     actor_pk: int
@@ -505,7 +511,8 @@ class S015AuthorityProvider(Protocol):
         qualify calls it inside the caller's atomic block. The result must be
         returned synchronously and have exactly the request type's corresponding
         response or refusal type; subclasses are refused. Every echoed field
-        must compare equal to the corresponding request field. Otherwise
+        must compare equal to the corresponding request field and render to
+        the same canonical JSON, and every field must be canonical. Otherwise
         qualify raises S015AuthorityMalformed. An Exception raised by the
         provider call becomes S015AuthorityUnavailable, chained from it.
         """
@@ -707,24 +714,80 @@ def _canonical_reference(value: object, name: str, maximum: int) -> str:
     return canonical
 
 
+def _decision_reference(result: S015AuthorityResult) -> str:
+    """Return the s015d1 decision reference of a provider result.
+
+    The reference is "s015d1:" followed by the SHA-256 hex digest of the
+    decision domain and the canonical JSON bytes of asdict(result). When
+    those bytes cannot be derived, raise
+    S015AuthorityMalformed("authority result is not canonical"), chained
+    from the TypeError, ValueError or UnicodeError. qualify uses it for
+    refusals and responses after their echoed fields have been checked,
+    so only a result-only field can fail here.
+    """
+    try:
+        payload_bytes = canonical_json_bytes(asdict(result))
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise S015AuthorityMalformed("authority result is not canonical") from exc
+    return "s015d1:" + hashlib.sha256(_DECISION_DOMAIN + payload_bytes).hexdigest()
+
+
+def _validate_echo(result: S015AuthorityResult, request: S015AuthorityRequest) -> None:
+    """Check that result echoes every field of request; return None.
+
+    First, every field of the request's type must compare equal between
+    result and request; any difference raises
+    S015AuthorityMalformed("authority response echo mismatch"). Then each
+    pair must render to the same canonical JSON bytes, so a value that
+    compares equal but renders differently (a bool for an int) raises the
+    same error, while a plain string for an Enum member or the same
+    instant in another timezone passes. A request value that
+    canonical_json_bytes cannot render raises
+    S015AuthorityMalformed("authority request is malformed"), and a result
+    value that it cannot render raises
+    S015AuthorityMalformed("authority response echo is not canonical"),
+    each chained from the TypeError, ValueError or UnicodeError. qualify
+    calls this after the result's type check, for responses and refusals
+    alike.
+    """
+    echoed = tuple(asdict(request))
+    if any(getattr(result, field) != getattr(request, field) for field in echoed):
+        raise S015AuthorityMalformed("authority response echo mismatch")
+    for field in echoed:
+        try:
+            request_rendering = canonical_json_bytes(getattr(request, field))
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise S015AuthorityMalformed("authority request is malformed") from exc
+        try:
+            result_rendering = canonical_json_bytes(getattr(result, field))
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise S015AuthorityMalformed("authority response echo is not canonical") from exc
+        if result_rendering != request_rendering:
+            raise S015AuthorityMalformed("authority response echo mismatch")
+
+
 def _validate_request(request: S015AuthorityRequest) -> None:
     """Validate an authority request's shape and canonical fields; return None.
 
     Checks, in order: the request has exactly one of the three request
     types; database_alias is a non-empty str; actor_pk is a positive int,
     actor_identity_id a UUID and actor_access_epoch a non-negative int;
-    action is an OrganismAction; command_subtype has qualification planes
-    and begins with the action's value; target_fingerprint is 64 lowercase
-    hex characters; request_reference and idempotency_key are canonical
-    and within their 128- and 120-character bounds; evaluated_at and any
-    effective_at are timezone-aware; a supplied target is a dict whose
-    fingerprint matches; and a supplied living_organism_id is a UUID.
+    action is an OrganismAction; command_subtype is a str that has
+    qualification planes and begins with the action's value;
+    target_fingerprint is a str of 64 lowercase hex characters;
+    request_reference and idempotency_key are canonical and within their
+    128- and 120-character bounds; evaluated_at and any effective_at are
+    timezone-aware; a supplied target is a dict whose fingerprint matches;
+    and a supplied living_organism_id is a UUID.
 
     A pre-founding request for FOUND_LIVING_ORGANISM must carry effective_at,
-    target and living_organism_id. Post-founding and own-applicant fields
-    are checked as their carriers describe. This helper reads no database
-    state and does not establish whether the chosen request class matches
-    the organism's existence or the actor's standing.
+    target and living_organism_id. A request whose result
+    _should_record_application_decision selects must carry a non-empty
+    target. Post-founding and own-applicant fields are checked as their
+    carriers describe, outcome being a str when given.
+    This helper reads no database state and does not establish whether the
+    chosen request class matches the organism's existence or the actor's
+    standing.
 
     Explicit validation refusals raise S015AuthorityMalformed. Called
     validators and operations can also raise TypeError or ValueError,
@@ -748,9 +811,13 @@ def _validate_request(request: S015AuthorityRequest) -> None:
         raise S015AuthorityMalformed("actor_access_epoch is invalid")
     if type(request.action) is not OrganismAction:
         raise S015AuthorityMalformed("action is invalid")
+    if type(request.command_subtype) is not str:
+        raise S015AuthorityMalformed("command_subtype is invalid")
     qualification_planes(request.command_subtype)
     if not request.command_subtype.startswith(request.action.value):
         raise S015AuthorityMalformed("command subtype does not match action")
+    if type(request.target_fingerprint) is not str:
+        raise S015AuthorityMalformed("target_fingerprint is invalid")
     if re.fullmatch(r"[0-9a-f]{64}", request.target_fingerprint or "") is None:
         raise S015AuthorityMalformed("target_fingerprint is invalid")
     _canonical_reference(request.request_reference, "request_reference", 128)
@@ -775,6 +842,8 @@ def _validate_request(request: S015AuthorityRequest) -> None:
         )
     ):
         raise S015AuthorityMalformed("founding request requires effective_at, target, and living_organism_id")
+    if not request.target and _should_record_application_decision(request):
+        raise S015AuthorityMalformed("recorded request requires a non-empty plain target")
     if type(request) is S015PostFoundingAuthorityRequest:
         _canonical_reference(
             request.active_membership_head_reference,
@@ -789,6 +858,8 @@ def _validate_request(request: S015AuthorityRequest) -> None:
             value = getattr(request, field_name)
             if value is not None and type(value) is not UUID:
                 raise S015AuthorityMalformed(f"{field_name} is invalid")
+        if request.outcome is not None and type(request.outcome) is not str:
+            raise S015AuthorityMalformed("outcome is invalid")
         if request.outcome is not None and request.outcome not in {"ACCEPT", "DECLINE"}:
             raise S015AuthorityMalformed("outcome is invalid")
         if request.version_kind is not None:
@@ -858,7 +929,8 @@ def _should_record_application_decision(request: S015AuthorityRequest) -> bool:
 
     This predicate applies to both qualified and refused results. False
     suppresses AuthorityDecision recording by qualify; it does not grant
-    authority or bypass request and result validation.
+    authority or bypass request and result validation. _validate_request
+    also consults it: a selected request must carry a non-empty target.
     """
     return request.action in _APPLICATION_ACTIONS and (
         request.action is not OrganismAction.TRANSITION_MEMBERSHIP or request.target is not None
@@ -931,7 +1003,8 @@ def _facts_read(
     keys are skipped in their applicable branches. The k, t and x keys add
     no fact except that k on a contextual-role proposal names its nomination
     policy. Consent references have specialised handling before the ordinary
-    key mapping.
+    key mapping. A REQUEST_GOVERNANCE_SEAT reference must carry kind
+    GOVERNANCE_SEAT_REQUEST unless it is a refusal carrying x.
 
     For ordinary mapped keys, a '-' value is omitted, None remains a null
     reference, and other values become strings. An integer engagement on
@@ -992,7 +1065,7 @@ def _facts_read(
         governance_founding_seating or governance_constitutional_seating
     ):
         raise S015AuthorityMalformed("governance seating route fact is invalid")
-    if governance_seat_request and content.get("kind") != "GOVERNANCE_SEAT_REQUEST":
+    if governance_seat_request and "x" not in content and content.get("kind") != "GOVERNANCE_SEAT_REQUEST":
         raise S015AuthorityMalformed("governance seat request fact is invalid")
     phase_advance_reference = (
         request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
@@ -1291,10 +1364,12 @@ def _record_application_decision(
 
     A new row carries the response bytes and JSON, request kind, action,
     subtype, actor and any applicant credential, target bytes and JSON
-    ({} for no target), target fingerprint, effective_at (falling back to
-    evaluated_at), evaluated_at, authority reference, facts, outcome,
-    refusal code value or None, provider metadata and request identifiers.
-    recorded_at is supplied as None for the database to assign.
+    ({} for no target, a case _validate_request refuses for every
+    request qualify records), target fingerprint, effective_at (falling
+    back to evaluated_at), evaluated_at, authority reference, facts,
+    outcome, refusal code value or None, provider metadata and request
+    identifiers. recorded_at is supplied as None for the database to
+    assign.
 
     Migration 0034's insert guard checks that the supplied byte fields
     decode to their accompanying JSON, and that the target fingerprint and
@@ -1380,10 +1455,11 @@ class S015Authority:
     def qualify(self, request: S015AuthorityRequest) -> QualifiedS015AuthorityDecision:
         """Judge a request's authority; return the qualified decision or raise.
 
-        Validate the request first, translating TypeError, ValueError and
-        UnicodeError from validation to S015AuthorityMalformed. The database
-        alias must match this authority's and the connection must already be
-        inside an atomic block; this check does not require an outermost block.
+        Validate the request first, translating TypeError, ValueError,
+        UnicodeError, OverflowError and RecursionError from validation to
+        S015AuthorityMalformed. The database alias must match this
+        authority's and the connection must already be inside an atomic
+        block; this check does not require an outermost block.
 
         Preflight bypasses the provider for a pre-founding FOUND_LIVING_ORGANISM
         request with no founding principal (FOUNDING_PRINCIPAL_ABSENT), or an
@@ -1397,12 +1473,17 @@ class S015Authority:
         Otherwise call the provider, translating an Exception it raises to
         S015AuthorityUnavailable with the original exception chained. Reject
         awaitable results as malformed, closing coroutine results. Require the
-        exact corresponding response or refusal type and compare every echoed
-        request field for equality; a mismatch raises S015AuthorityMalformed.
+        exact corresponding response or refusal type and check every echoed
+        request field for equality and for the same canonical JSON; a
+        mismatch, or a field that cannot be rendered canonically, raises
+        S015AuthorityMalformed.
 
-        For a refusal, require the exact S015AuthorityRefusalCode type, derive
-        the s015d1 reference from its canonical bytes, then record a REFUSED
-        decision when selected by _should_record_application_decision. Resolve
+        For a refusal, require the exact S015AuthorityRefusalCode type and,
+        when authority_reference is given, a canonical one of at most 255
+        characters; derive the s015d1 reference from its canonical bytes,
+        raising S015AuthorityMalformed for a result that is not canonical;
+        then record a REFUSED decision when selected by
+        _should_record_application_decision. Resolve
         the disclosed code using disclosed_refusal_code or refusal_code, so
         false-valued disclosures fall back to the refusal code. Only then check
         that the resolved code has exactly S015AuthorityRefusalCode type;
@@ -1422,7 +1503,8 @@ class S015Authority:
 
         For a qualification, require a canonical authority_reference of at
         most 255 characters, derive the s015d1 reference from the response's
-        canonical bytes, record a QUALIFIED decision when selected, and return
+        canonical bytes, raising S015AuthorityMalformed for a response that is
+        not canonical, record a QUALIFIED decision when selected, and return
         QualifiedS015AuthorityDecision. A decision reference alone does not
         prove that a decision row was recorded or committed.
 
@@ -1432,7 +1514,7 @@ class S015Authority:
         """
         try:
             _validate_request(request)
-        except (TypeError, ValueError, UnicodeError) as exc:
+        except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
             if isinstance(exc, S015AuthorityMalformed):
                 raise
             raise S015AuthorityMalformed("authority request is malformed") from exc
@@ -1493,16 +1575,13 @@ class S015Authority:
         response_type, refusal_type = _response_types(request)
         if type(result) not in {response_type, refusal_type}:
             raise S015AuthorityMalformed("authority response type is invalid")
-        echoed = tuple(asdict(request))
-        if any(getattr(result, field) != getattr(request, field) for field in echoed):
-            raise S015AuthorityMalformed("authority response echo mismatch")
+        _validate_echo(result, request)
         if type(result) is refusal_type:
             if type(result.refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("refusal code is invalid")
-            decision_payload = asdict(result)
-            decision_reference = "s015d1:" + hashlib.sha256(
-                _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
-            ).hexdigest()
+            if result.authority_reference is not None:
+                _canonical_reference(result.authority_reference, "authority_reference", 255)
+            decision_reference = _decision_reference(result)
             if _should_record_application_decision(request):
                 _record_application_decision(
                     provider=self.provider,
@@ -1537,10 +1616,7 @@ class S015Authority:
         authority_reference = _canonical_reference(
             result.authority_reference, "authority_reference", 255
         )
-        decision_payload = asdict(result)
-        decision_reference = "s015d1:" + hashlib.sha256(
-            _DECISION_DOMAIN + canonical_json_bytes(decision_payload)
-        ).hexdigest()
+        decision_reference = _decision_reference(result)
         if _should_record_application_decision(request):
             _record_application_decision(
                 provider=self.provider,
