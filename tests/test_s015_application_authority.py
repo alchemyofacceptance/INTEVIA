@@ -18,12 +18,14 @@ import hashlib
 import importlib
 import json
 import os
+import unittest
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from unittest import skipUnless
 from uuid import uuid4
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db.utils import ConnectionDoesNotExist
 from django.test import TransactionTestCase
 
 from core.models import (
@@ -229,6 +231,42 @@ def refresh(cur, table, aggregate_id, state_at=None):
     return _support_refresh(
         cur, table, aggregate_id, NOW if state_at is None else state_at
     )
+
+
+class ProductionGovernedRegistrationFactSourceAliasTests(unittest.TestCase):
+    """U-TIDY-1 GF-7: the registration fact source reads through its database alias.
+
+    The test settings configure only "default", so the alias witness uses an
+    unconfigured alias: Django raises ConnectionDoesNotExist for it as soon as
+    the query is evaluated, which can only happen if the source routes its
+    query through the alias it was given. A source that ignored its alias
+    would read "default" and return None for an unknown identity instead.
+    No database connection is opened by any test in this class.
+    """
+
+    def test_no_argument_construction_keeps_the_default_alias(self):
+        self.assertEqual(ProductionGovernedRegistrationFactSource().database_alias, "default")
+        provider = ProductionApplicationAuthorityProvider()
+        self.assertEqual(provider.registration_source.database_alias, "default")
+
+    def test_provider_passes_its_alias_to_the_registration_source(self):
+        provider = ProductionApplicationAuthorityProvider(database_alias="u-tidy-1-alias")
+        self.assertEqual(provider.registration_source.database_alias, "u-tidy-1-alias")
+        self.assertEqual(provider.birthing_source.database_alias, "u-tidy-1-alias")
+
+    def test_invalid_alias_is_refused_at_construction(self):
+        for alias in ("", None, b"default"):
+            with self.subTest(alias=alias):
+                with self.assertRaises(ValueError) as refused:
+                    ProductionGovernedRegistrationFactSource(database_alias=alias)
+                self.assertEqual(str(refused.exception), "database_alias is required")
+
+    def test_reference_at_reads_the_supplied_alias(self):
+        source = ProductionGovernedRegistrationFactSource(database_alias="u-tidy-1-unconfigured")
+        at = datetime(2026, 10, 21, tzinfo=timezone.utc)
+        with self.assertRaises(ConnectionDoesNotExist) as unreachable:
+            source.reference_at(uuid4(), at, at)
+        self.assertIn("u-tidy-1-unconfigured", str(unreachable.exception))
 
 
 @POSTGRES_ONLY

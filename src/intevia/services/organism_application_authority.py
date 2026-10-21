@@ -123,7 +123,17 @@ class ProductionBirthingFactSource:
 
 
 class ProductionGovernedRegistrationFactSource:
-    """S3-IL-REG: only a registration record proves the governed origin event."""
+    """S3-IL-REG: only a registration record proves the governed origin event.
+
+    Reads through database_alias, "default" unless one is supplied, validated
+    as ProductionBirthingFactSource validates its own (U-TIDY-1, register row
+    GF-7). Construction without arguments keeps reading the default database.
+    """
+
+    def __init__(self, *, database_alias: str = "default") -> None:
+        if type(database_alias) is not str or not database_alias:
+            raise ValueError("database_alias is required")
+        self.database_alias = database_alias
 
     def reference_at(
         self,
@@ -131,7 +141,7 @@ class ProductionGovernedRegistrationFactSource:
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> str | None:
-        registration = LearnerRegistration.objects.filter(
+        registration = LearnerRegistration.objects.using(self.database_alias).filter(
             identity__identity_id=identity_id,
             effective_at__lte=effective_at,
             received_at__lte=evaluated_at,
@@ -306,7 +316,9 @@ class ProductionApplicationAuthorityProvider:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
         self.birthing_source = birthing_source or ProductionBirthingFactSource(database_alias=database_alias)
-        self.registration_source = registration_source or ProductionGovernedRegistrationFactSource()
+        self.registration_source = registration_source or ProductionGovernedRegistrationFactSource(
+            database_alias=database_alias,
+        )
         self.nomination_entitlement_source = (
             nomination_entitlement_source or ProductionCoordinatorNominationEntitlementFactSource()
         )
@@ -490,8 +502,7 @@ class ProductionApplicationAuthorityProvider:
                     "request_uuid", "applicant_identity_uuid",
                 }
                 constitutional_target_keys = founding_target_keys | {
-                    "constitutional_route", "request_uuid", "applicant_identity_uuid",
-                    "deciding_party", "outcome",
+                    "constitutional_route", "deciding_party", "outcome",
                 }
                 target_route = request.target.get("route")
                 if (
@@ -739,20 +750,6 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
                 S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
             )
-        try:
-            registration_uuid = UUID(registration_reference.removeprefix("learner-registration:"))
-        except (TypeError, ValueError):
-            return self._refuse(
-                request,
-                S015AuthorityRefusalCode.E_NOT_REGISTERED,
-                S015AuthorityRefusalCode.E_NOT_REGISTERED,
-            )
-        if registration_reference != f"learner-registration:{registration_uuid}":
-            return self._refuse(
-                request,
-                S015AuthorityRefusalCode.E_NOT_REGISTERED,
-                S015AuthorityRefusalCode.E_NOT_REGISTERED,
-            )
 
         acceptance_uuid = founding_acceptance_uuid(request.living_organism_id)
         authority_reference = self._encode_facts(request, {
@@ -935,7 +932,7 @@ class ProductionApplicationAuthorityProvider:
             "m": "-" if proposer_head is None else str(proposer_head.event_uuid),
             "n": "-" if nominee_head is None else str(nominee_head.event_uuid),
             "t": proposal_route,
-                "k": policy,
+            "k": policy,
             "i": entitlement_reference,
         }
         if office_head is not None:
@@ -943,7 +940,7 @@ class ProductionApplicationAuthorityProvider:
         if configuration is not None and configuration.coordinator_nomination_policy is not None:
             facts["c"] = str(configuration.version_uuid)
         else:
-                facts["d"] = "C"
+            facts["d"] = "C"
         return self._qualified(request, facts)
 
     def _qualify_role_transition(
@@ -1015,7 +1012,6 @@ class ProductionApplicationAuthorityProvider:
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
 
         holder_act = actor_membership.pk == nominee.pk
-        route = "OFFICE_HOLDER" if holder_act else "EFFECTIVE_COORDINATOR"
         if event_action != "END" or not holder_act:
             office = self._effective_coordinator_office(request, actor_membership)
             if office is None:
@@ -1525,7 +1521,6 @@ class ProductionApplicationAuthorityProvider:
                 OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
                 OrganismAction.CREATE_DORMANT_CIRCLE,
                 OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
-                OrganismAction.REQUEST_GOVERNANCE_SEAT,
             }
             and lo_state in {"DORMANT", "CLOSED"}
         ):
@@ -2016,9 +2011,10 @@ class ProductionApplicationAuthorityProvider:
            enterer is the parent's actor), with consent_reference equal to
            the derived request reference and received_at = evaluated_at.
 
-        The row's recorded_at is not compared: it is later than evaluated_at
-        by construction (stage 1's insert statement runs after the parent's
-        intake), and 1-3 establish that the row is this request's own first
+        The row's recorded_at is not compared. It is in practice later than
+        evaluated_at, because stage 1 inserts the row after the parent's
+        intake; the witnesses assert that premise, but nothing here relies on
+        it, since 1-3 establish that the row is this request's own first
         stage and nothing else. A request that fails any step keeps the
         ordinary read's answer, False.
 
@@ -2746,13 +2742,6 @@ class ProductionApplicationAuthorityProvider:
             "require_cq_to_change_lo_settings",
             "require_cq_to_change_application_question",
         ))
-
-    @staticmethod
-    def _row_uuid(reference: str) -> str:
-        try:
-            return str(UUID(reference))
-        except (TypeError, ValueError):
-            return reference
 
     @staticmethod
     def _encode_facts(

@@ -2172,6 +2172,55 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ).exists()
         )
 
+    def test_w_tidy_g3_2_founding_decision_on_another_persons_request_is_refused(self):
+        route = prepare_governance_route(seat_founder=False)
+        applicant = add_active_elector(route.route, "tidy-g3-2-applicant")
+        request_result = self._request(route, applicant, "tidy-g3-2-request")
+        before = governance_route_state(route)
+        # The refusal must come before the authority is asked, so qualify is
+        # guarded for the decision call only; setup used the real provider.
+        with patch.object(
+            route.service._authority,
+            "qualify",
+            side_effect=AssertionError("qualify was called before the applicant check"),
+        ) as qualify:
+            with self.assertRaises(SBGGovernanceRefused) as refused:
+                route.service.decide_governance_seat(DecideGovernanceSeatCommand(
+                    credential=route.founder.credential,
+                    living_organism_uuid=route.organism.organism_id,
+                    request_reference="sbg:tidy-g3-2:decision",
+                    idempotency_key="sbg:tidy-g3-2:decision:key",
+                    outcome="ACCEPT",
+                    request_uuid=request_result.request_uuid,
+                    effective_at=route_test_now(route.route),
+                ))
+        qualify.assert_not_called()
+        self.assertIs(
+            refused.exception.refusal_code,
+            S015AuthorityRefusalCode.E_NOT_APPLICANT,
+        )
+        # The public wrapper appends a sentence about the request after this
+        # paragraph. That sentence is register row G3-3's, and is not checked
+        # here: it says "Your own request", which is wrong when the request is
+        # someone else's, as in this case.
+        authored = (
+            "Nobody was seated and nothing changed. Before the LO is born, a person is seated only on "
+            "their own request, through the founding route, and this request was made by someone else. "
+            "Once the LO is born, the LO Coordinators can decide it, where the arrangement lets them "
+            "appoint to that seat."
+        )
+        self.assertTrue(
+            str(refused.exception).startswith(authored),
+            str(refused.exception),
+        )
+        self.assertEqual(refused.exception.request_uuid, request_result.request_uuid)
+        self.assertEqual(governance_route_state(route), before)
+        self.assertFalse(
+            CircleAdmissionDecision.objects.filter(
+                request__request_uuid=request_result.request_uuid,
+            ).exists()
+        )
+
     def test_w_f5_phase_and_birthing_readiness_by_provider_and_guard(self):
         missing_circle = prepare_route(
             governance_enabled=True,

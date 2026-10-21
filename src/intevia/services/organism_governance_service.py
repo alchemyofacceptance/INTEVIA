@@ -92,6 +92,12 @@ _AUTHORED_REFUSALS = {
         "No Circle was created and nothing changed. This LO already has its GOVERNANCE Circle, and "
         "an LO has exactly one. Use the existing Circle; switching GOVERNANCE back on uses the same one."
     ),
+    S015AuthorityRefusalCode.E_NOT_APPLICANT: (
+        "Nobody was seated and nothing changed. Before the LO is born, a person is seated only on "
+        "their own request, through the founding route, and this request was made by someone else. "
+        "Once the LO is born, the LO Coordinators can decide it, where the arrangement lets them "
+        "appoint to that seat."
+    ),
 }
 _ADOPTION_GUARD_REFUSAL_CODES = frozenset({
     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
@@ -149,7 +155,8 @@ def _authored_refusal_message(
     the corresponding explanation.
 
     After the explicit branches, look up the code in _AUTHORED_REFUSALS,
-    which currently supplies SBG_SECOND_GOVERNANCE_CIRCLE.
+    which currently supplies SBG_SECOND_GOVERNANCE_CIRCLE and E_NOT_APPLICANT
+    (the founding decision on another person's seat request).
 
     SB-G build commission v1.0, section 10.2, requires refusal explanations
     to state what happened and that nothing changed, why, what can be done,
@@ -1374,10 +1381,10 @@ class OrganismGovernanceService:
         recorded by received_at; otherwise selects CIRCLE_FOUNDING.
 
         For CIRCLE_FOUNDING before Birthing, requires the applicant's identity
-        to match the actor, then calls _validate_seating, including its occupancy
-        checks for either outcome. The identity-mismatch branch currently calls
-        _refuse with DENIED, for which no authored message exists, and therefore
-        raises RuntimeError.
+        to match the actor, refusing a mismatch as SBGGovernanceRefused with
+        E_NOT_APPLICANT and its authored message before anything is written,
+        then calls _validate_seating, including its occupancy checks for
+        either outcome.
 
         For GOVERNANCE_CONSTITUTIONAL after Birthing, calls
         _validate_constitutional_seating with governance required to be enabled
@@ -1794,7 +1801,7 @@ class OrganismGovernanceService:
             if route == "CIRCLE_FOUNDING" and not has_birthing:
                 if applicant_membership.identity_id != actor.pk:
                     self._refuse(
-                        S015AuthorityRefusalCode.DENIED,
+                        S015AuthorityRefusalCode.E_NOT_APPLICANT,
                         None,
                         act="Nobody was seated",
                     )
@@ -3325,8 +3332,6 @@ class OrganismGovernanceService:
                 "composing_rule_reference": None,
                 "composer_state": "NA_TRANSPORT",
                 "composer_identity_id": None,
-                "effective_until": None,
-                "effective_until_state": "NONE",
                 "effective_until": None,
                 "effective_until_state": "NONE",
                 "authority_basis_id": organism.founding_authority_basis_id,
