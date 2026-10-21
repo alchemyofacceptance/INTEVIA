@@ -548,7 +548,6 @@ class _ExactProvider:
                 "g": str(assignment.role_definition.role_uuid),
                 "k": request.target["event_action"],
                 "p": str(proposal.event_uuid),
-                "t": "NOMINEE_OWN_ACT",
                 "u": str(assignment.membership.membership_uuid),
             }
         elif (

@@ -45,6 +45,21 @@ from core.models import (
     IdentityTransition,
 )
 from core.organism_contract import OrganismAction, qualification_planes
+from core.organism_authority_facts import (
+    CONSENT_U_RELATIONS,
+    FOUNDING_KEYS,
+    FactKind,
+    FactsSelectionError,
+    POLICY_LITERALS,
+    REFERENCE_SENTINEL,
+    S015_AUTHORITY_FACTS,
+    S015_AUTHORITY_REFERENCE_MAX_LENGTH,
+    S015_AUTHORITY_REFERENCE_PREFIX,
+    S015_AUTHORITY_REFUSAL_KEY,
+    founding_value_form,
+    propose_role_reference,
+    select_shape,
+)
 
 
 _TARGET_DOMAIN = b"INTEVIA:S015:ORGANISM_AUTHORITY_TARGET:v1\x00"
@@ -931,6 +946,11 @@ def _should_record_application_decision(request: S015AuthorityRequest) -> bool:
     suppresses AuthorityDecision recording by qualify; it does not grant
     authority or bypass request and result validation. _validate_request
     also consults it: a selected request must carry a non-empty target.
+
+    _APPLICATION_ACTIONS is kept as a literal. The facts vocabulary,
+    core.organism_authority_facts.S015_AUTHORITY_FACTS, declares a row for
+    exactly these actions; tests/test_s015_authority_facts_schema.py holds
+    both to the same frozen set.
     """
     return request.action in _APPLICATION_ACTIONS and (
         request.action is not OrganismAction.TRANSITION_MEMBERSHIP or request.target is not None
@@ -948,13 +968,17 @@ def _refusal_result(
     The result has the request type's refusal type, echoes every request
     field, carries refusal_code and disclosed_refusal_code as given, and has
     authority_reference "s015a1:" followed by the canonical JSON
-    {"x": <refusal code value>}.
+    {"x": <refusal code value>}: the x-only refusal shape every action's
+    vocabulary admits, built here by construction and not validated
+    against the table. Raises nothing of its own.
     """
     refusal_type = _response_types(request)[1]
     fields = asdict(request)
     fields["refusal_code"] = refusal_code
     fields["disclosed_refusal_code"] = disclosed_refusal_code
-    fields["authority_reference"] = "s015a1:" + canonical_json_bytes({"x": refusal_code.value}).decode("utf-8")
+    fields["authority_reference"] = S015_AUTHORITY_REFERENCE_PREFIX + canonical_json_bytes(
+        {S015_AUTHORITY_REFUSAL_KEY: refusal_code.value},
+    ).decode("utf-8")
     return refusal_type(**fields)
 
 
@@ -996,28 +1020,44 @@ def _facts_read(
 
     For None or an unstructured authority reference, those are the only
     facts, except EFFECT_ENTITLEMENT_ELECTION requires a structured s015a1
-    reference. Structured references must parse as JSON objects. Keys are
-    mapped to relations according to the action, with specialised mappings
-    and additions for governance, consent, contextual roles, phase changes,
-    founding, Birthing and entitlement elections. Recognised descriptive
-    keys are skipped in their applicable branches. The k, t and x keys add
-    no fact except that k on a contextual-role proposal names its nomination
-    policy. Consent references have specialised handling before the ordinary
-    key mapping. A REQUEST_GOVERNANCE_SEAT reference must carry kind
-    GOVERNANCE_SEAT_REQUEST unless it is a refusal carrying x.
+    reference. A structured reference must parse as a JSON object. Its keys
+    are read against the declared vocabulary of the request's action,
+    core.organism_authority_facts.S015_AUTHORITY_FACTS (version
+    S015_AUTHORITY_FACTS_SCHEMA): a reference carrying x is a refusal and
+    selects the action's refusal shape for the request's form; any other
+    reference must match exactly one qualified entry of that form by its
+    discriminator keys, whose values are descriptive and add no fact. The
+    key set is then checked: an exact shape must carry exactly the declared
+    keys, and every shape refuses a key it does not declare. Outside the
+    exact shapes no key is required of a reference here; the producer side
+    requires keys.
 
-    For ordinary mapped keys, a '-' value is omitted, None remains a null
-    reference, and other values become strings. An integer engagement on
-    DECIDE_APPLICATION or REASSIGN_APPLICATION becomes
-    '<application_uuid>:<number>'. Required reference prefixes are added
-    only when absent. A v key outside the four mapped effect actions
-    currently produces an empty relation; this helper does not reject it.
+    Facts are appended in this order: the identity and organism facts; for a
+    FOUNDING reference, the founding block (platform terms version from
+    rule, learner registration from registration, platform terms acceptance
+    from terms, then the founding principal when one is supplied), each
+    value in its exact prefixed form; for a PROPOSE whose k is in
+    POLICY_LITERALS, the role definition named by the request target's
+    role_definition_uuid; then one fact per remaining key
+    in the reference's own key order. A REF, REF_OR_NULL or ENGAGEMENT
+    value "-" adds no fact, a None value is a null reference only where the
+    key is declared REF_OR_NULL, an int ENGAGEMENT becomes
+    '<application_uuid>:<ordinal>' from the request target, a CONSENT_U
+    value names its relation by its c: or e: prefix, and a declared
+    reference prefix is added to a non-null reference only when absent.
+    TEXT and LITERAL keys, including x, add no fact.
 
-    Invalid structured JSON, unknown keys, invalid governance seat or
-    seating facts, checked entitlement-election shape violations, malformed
-    consent or prior-consent references, and an integer engagement without
-    an application target raise S015AuthorityMalformed. The function reads
-    no database state.
+    Invalid structured JSON, a non-object, an undeclared action, an
+    unresolved or ambiguous discriminator set, an unknown key, a shape
+    violation, a null value, a mistyped value of a key whose declared kind
+    this parser validates (REF, REF_OR_NULL, ENGAGEMENT, POLICY_K,
+    CONSENT_U, CONSENT_W and the founding kinds; a TEXT or LITERAL value is
+    skipped unread, and a policy letter outside its literal set is read as
+    given, since strict literal enforcement is the producer's), a founding
+    value without its exact form, a PROPOSE target without a role
+    definition, a malformed consent or prior-consent reference, and an
+    integer engagement without an application target raise
+    S015AuthorityMalformed. The function reads no database state.
     """
     effective_at = getattr(request, "effective_at", None) or request.evaluated_at
     eligible_at = {
@@ -1036,312 +1076,101 @@ def _facts_read(
             "reference": str(living_organism_id),
             "eligible_at": eligible_at,
         })
-    if authority_reference is None or not authority_reference.startswith("s015a1:"):
+    if authority_reference is None or not authority_reference.startswith(S015_AUTHORITY_REFERENCE_PREFIX):
         if request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION:
             raise S015AuthorityMalformed("structured authority reference is invalid")
         return facts
     try:
-        content = json.loads(authority_reference[len("s015a1:"):])
+        content = json.loads(authority_reference[len(S015_AUTHORITY_REFERENCE_PREFIX):])
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise S015AuthorityMalformed("structured authority reference is invalid") from exc
     if type(content) is not dict:
         raise S015AuthorityMalformed("structured authority reference must be an object")
-    governance_adoption = request.action is OrganismAction.ADOPT_GOVERNING_INSTRUMENT
-    governance_circle_creation = request.action is OrganismAction.CREATE_DORMANT_CIRCLE
-    governance_seat_request = (
-        request.action is OrganismAction.REQUEST_GOVERNANCE_SEAT
-    )
-    governance_seating = (
-        request.action is OrganismAction.ADMIT_CIRCLE_PARTICIPANT
-        and content.get("kind") == "GOVERNANCE"
-    )
-    governance_founding_seating = (
-        governance_seating and content.get("route") == "CIRCLE_FOUNDING"
-    )
-    governance_constitutional_seating = (
-        governance_seating and content.get("route") == "GOVERNANCE_CONSTITUTIONAL"
-    )
-    if governance_seating and not (
-        governance_founding_seating or governance_constitutional_seating
-    ):
-        raise S015AuthorityMalformed("governance seating route fact is invalid")
-    if governance_seat_request and "x" not in content and content.get("kind") != "GOVERNANCE_SEAT_REQUEST":
-        raise S015AuthorityMalformed("governance seat request fact is invalid")
-    phase_advance_reference = (
-        request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
-        and content.get("kind") == "PHASE_ADVANCE"
-    )
-    birthing_reference = (
-        request.action is OrganismAction.TRANSITION_LIVING_ORGANISM
-        and content.get("kind") == "BIRTHING"
-    )
-    election_target = getattr(request, "target", None)
-    election_snapshot_target = (
-        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
-        and type(election_target) is dict
-        and set(election_target) == {"action", "organism_uuid", "snapshot_uuid"}
-        and election_target.get("action") == request.action.value
-        and election_target.get("organism_uuid")
-        == getattr(request, "living_organism_id", None)
-        and type(election_target.get("snapshot_uuid")) is str
-        and getattr(request, "version_uuid", None) is not None
-        and getattr(request, "version_kind", None) == "EFFECT"
-    )
-    entitlement_election_reference = (
-        election_snapshot_target
-        and content.get("kind") == "BIRTHING"
-    )
-    entitlement_election_gateway_reference = (
-        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
-        and type(election_target) is dict
-        and set(election_target) == {"action", "organism_uuid", "version_uuid"}
-        and election_target.get("action") == request.action.value
-        and election_target.get("organism_uuid")
-        == getattr(request, "living_organism_id", None)
-        and type(election_target.get("version_uuid")) is UUID
-        and election_target.get("version_uuid")
-        == getattr(request, "version_uuid", None)
-        and getattr(request, "version_kind", None) == "EFFECT"
-    )
-    if (
-        request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
-        and not entitlement_election_reference
-        and not entitlement_election_gateway_reference
-        and "x" not in content
-    ):
-        raise S015AuthorityMalformed(
-            "structured authority reference has an unknown fact key"
-        )
-    if entitlement_election_reference and (
-        content.get("kind") != "BIRTHING"
-        or set(content) != {"kind", "c", "s", "q", "o", "n"}
-    ):
-        raise S015AuthorityMalformed(
-            "structured authority reference has an unknown fact key"
-        )
-    if entitlement_election_gateway_reference and set(content) not in (
-        {"c", "m", "o", "s", "t", "v"},
-        {"x"},
-    ):
-        raise S015AuthorityMalformed(
-            "structured authority reference has an unknown fact key"
-        )
-    if request.action is OrganismAction.FOUND_LIVING_ORGANISM and content.get("kind") == "FOUNDING":
-        rule_reference = content.get("rule")
-        if type(rule_reference) is str and rule_reference.startswith("platform-terms-version:"):
-            version_reference = rule_reference[len("platform-terms-version:"):].removesuffix("#founding")
-            facts.append({
-                "relation": "core_platformtermsversion",
-                "reference": version_reference,
-                "eligible_at": eligible_at,
-            })
-        registration_reference = content.get("registration")
-        if type(registration_reference) is str:
-            facts.append({
-                "relation": "learner-registration",
-                "reference": registration_reference,
-                "eligible_at": eligible_at,
-            })
-        acceptance_reference = content.get("terms")
-        if type(acceptance_reference) is str:
-            facts.append({
-                "relation": "core_platformtermsacceptance",
-                "reference": acceptance_reference.removeprefix("platform-terms-acceptance:"),
-                "eligible_at": eligible_at,
-            })
+    vocabulary = S015_AUTHORITY_FACTS.get(request.action)
+    if vocabulary is None:
+        raise S015AuthorityMalformed("no authority facts vocabulary is declared for this action")
+    try:
+        shape = select_shape(vocabulary, request, content)
+    except FactsSelectionError as exc:
+        raise S015AuthorityMalformed(str(exc)) from exc
+    present = frozenset(content)
+    if shape.exact_set is not None and present != shape.exact_set:
+        raise S015AuthorityMalformed("structured authority reference has an unknown fact key")
+    admissible = frozenset(shape.keys) | shape.discriminator_keys | {S015_AUTHORITY_REFUSAL_KEY}
+    if present - admissible:
+        raise S015AuthorityMalformed("structured authority reference has an unknown fact key")
+    handled: set[str] = set(shape.discriminator_keys) | {S015_AUTHORITY_REFUSAL_KEY}
+    if shape.founding_block:
+        for key in ("rule", "registration", "terms"):
+            if key in content:
+                spec = shape.keys[key]
+                reference = founding_value_form(spec.kind, content[key])
+                if reference is None:
+                    raise S015AuthorityMalformed("structured authority reference has an invalid fact value")
+                facts.append({"relation": spec.relation, "reference": reference, "eligible_at": eligible_at})
         if founding_principal is not None:
             facts.append({
                 "relation": "core_authorityprincipal",
                 "reference": str(founding_principal.principal_uuid),
                 "eligible_at": eligible_at,
             })
-    if (
-        request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE
-        and (request.target or {}).get("event_action") == "PROPOSE"
-        and content.get("k") in {"A", "B", "C"}
-        and "g" not in content
-    ):
-        role_uuid = (request.target or {}).get("role_definition_uuid")
-        if role_uuid is not None:
-            facts.append({
-                "relation": "core_organismroledefinition",
-                "reference": str(role_uuid),
-                "eligible_at": eligible_at,
-            })
-
-    prefix = {
-        "b": ("s3_il_birthing_fact_source", None),
-        "c": ("core_logovernanceconfigurationversion", "governance-configuration-version:"),
-        "d": ("s2b_coordinator_nomination_policy_default", None),
-        "g": ("core_organismroledefinition", None),
-        "i": ("s2b_coordinator_nomination_entitlement", None),
-        "m": ("core_organismmembershiptransition", None),
-        "n": ("core_organismmembershiptransition", None),
-        "o": ("core_contextualroleassignmentstateevent", None),
-        "p": ("core_application", None),
-        "e": ("core_applicationengagement", None),
-        "q": ("core_loapplicationquestionversion", "application-question-version:"),
-        "r": ("core_identitytransition", "identity-transition:"),
-        "s": ("core_loapplicationsettingsversion", "application-settings-version:"),
-        "v": (_version_relation(request.action), _version_reference_prefix(request.action)),
-        "a": (_assignment_or_application_relation(request.action), None),
-    }
-    if governance_adoption:
-        prefix["g"] = ("core_governedrule", None)
-    if governance_circle_creation:
-        prefix["c"] = ("core_circle", None)
-    if governance_seat_request:
-        prefix.update({
-            "c": ("core_circle", None),
-            "r": ("core_governedrule", None),
+        handled |= FOUNDING_KEYS
+    if shape.propose_role and type(content.get("k")) is str and content.get("k") in POLICY_LITERALS:
+        role_reference = propose_role_reference(request)
+        if role_reference is None:
+            raise S015AuthorityMalformed("structured authority reference has an invalid fact value")
+        facts.append({
+            "relation": "core_organismroledefinition",
+            "reference": role_reference,
+            "eligible_at": eligible_at,
         })
-    if governance_founding_seating or governance_constitutional_seating:
-        prefix.update({
-            "c": ("core_circle", None),
-            "r": ("core_governedrule", None),
-            "q": ("core_circlejoinrequest", None),
-        })
-    if request.action is OrganismAction.RECORD_OFFICE_CONSENT:
-        prefix.update({
-            "a": ("core_contextualroleassignment", None),
-            "g": ("core_organismroledefinition", None),
-            "p": ("core_contextualroleassignmentstateevent", None),
-            "u": ("core_organismmembership", None),
-        })
-    elif request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
-        prefix.update({
-            "a": ("core_contextualroleassignment", None),
-            "g": ("core_organismroledefinition", None),
-            "p": ("core_contextualroleassignmentstateevent", None),
-        })
-    if phase_advance_reference or birthing_reference or entitlement_election_reference:
-        prefix["o"] = ("core_contextualroleassignment", None)
-    if birthing_reference or entitlement_election_reference:
-        prefix["n"] = ("core_lobirthingsnapshot", None)
     for key, value in content.items():
-        if (governance_adoption or governance_circle_creation) and key in {"kind", "source"}:
+        if key in handled:
             continue
-        if governance_seat_request and key in {"kind", "s"}:
+        spec = shape.keys[key]
+        kind = spec.kind
+        if kind in {FactKind.TEXT, FactKind.LITERAL}:
             continue
-        if governance_founding_seating and key in {"kind", "route", "s"}:
-            continue
-        if governance_constitutional_seating and key in {
-            "kind", "route", "constitutional_route", "s",
-        }:
-            continue
-        if phase_advance_reference and key in {"kind", "f", "p"}:
-            continue
-        if (birthing_reference or entitlement_election_reference) and key == "kind":
-            continue
-        if request.action is OrganismAction.FOUND_LIVING_ORGANISM and key in {
-            "kind", "rule", "registration", "terms",
-        }:
-            continue
-        if key == "k" and request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE and (
-            request.target or {}
-        ).get("event_action") == "PROPOSE":
+        if kind is FactKind.CONSENT_U:
+            if type(value) is not str or value[:2] not in CONSENT_U_RELATIONS:
+                raise S015AuthorityMalformed("structured consent reference is invalid")
             facts.append({
-                "relation": "s2b_coordinator_nomination_policy",
-                "reference": str(value),
+                "relation": CONSENT_U_RELATIONS[value[:2]],
+                "reference": value[2:],
                 "eligible_at": eligible_at,
             })
             continue
-        if key in {"k", "t", "x"}:
-            continue
-        if key == "u" and request.action is OrganismAction.TRANSITION_CONTEXTUAL_ROLE:
-            if type(value) is not str:
-                raise S015AuthorityMalformed("structured consent reference is invalid")
-            if value.startswith("c:"):
-                facts.append({
-                    "relation": "core_officeappointmentconsent",
-                    "reference": value[2:],
-                    "eligible_at": eligible_at,
-                })
-                continue
-            if value.startswith("e:"):
-                facts.append({
-                    "relation": "core_contextualroleassignmentstateevent",
-                    "reference": value[2:],
-                    "eligible_at": eligible_at,
-                })
-                continue
-            raise S015AuthorityMalformed("structured consent reference is invalid")
-        if key == "w" and request.action is OrganismAction.RECORD_OFFICE_CONSENT:
+        if kind is FactKind.CONSENT_W:
             if type(value) is not str:
                 raise S015AuthorityMalformed("prior consent reference is invalid")
-            facts.append({
-                "relation": "core_officeappointmentconsent",
-                "reference": value,
-                "eligible_at": eligible_at,
-            })
+            facts.append({"relation": spec.relation, "reference": value, "eligible_at": eligible_at})
             continue
-        if key not in prefix:
-            raise S015AuthorityMalformed("structured authority reference has an unknown fact key")
-        if value == "-":
+        if kind is FactKind.POLICY_K:
+            if type(value) is not str:
+                raise S015AuthorityMalformed("structured authority reference has an invalid fact value")
+            facts.append({"relation": spec.relation, "reference": value, "eligible_at": eligible_at})
             continue
-        relation, reference_prefix = prefix[key]
-        if (
-            key == "e"
-            and type(value) is int
-            and request.action in {
-                OrganismAction.DECIDE_APPLICATION,
-                OrganismAction.REASSIGN_APPLICATION,
-            }
-        ):
+        if value == REFERENCE_SENTINEL:
+            continue
+        if value is None:
+            if kind is not FactKind.REF_OR_NULL:
+                raise S015AuthorityMalformed("structured authority reference has a null fact value")
+            facts.append({"relation": spec.relation, "reference": None, "eligible_at": eligible_at})
+            continue
+        if kind is FactKind.ENGAGEMENT and type(value) is int:
             target = request.target
             application_uuid = target.get("application_uuid") if type(target) is dict else None
             if application_uuid is None:
                 raise S015AuthorityMalformed("application engagement reference has no application target")
             reference = f"{application_uuid}:{value}"
+        elif type(value) is str:
+            reference = value
         else:
-            reference = None if value is None else str(value)
-        if reference is not None and reference_prefix is not None and not reference.startswith(reference_prefix):
-            reference = reference_prefix + reference
-        facts.append({"relation": relation, "reference": reference, "eligible_at": eligible_at})
+            raise S015AuthorityMalformed("structured authority reference has an invalid fact value")
+        if spec.prefix is not None and not reference.startswith(spec.prefix):
+            reference = spec.prefix + reference
+        facts.append({"relation": spec.relation, "reference": reference, "eligible_at": eligible_at})
     return facts
-
-
-def _version_relation(action: OrganismAction) -> str:
-    """Return the version table an effect action's "v" fact refers to.
-
-    EFFECT_APPLICATION_SETTINGS and EFFECT_ENTITLEMENT_ELECTION map to the
-    application settings versions, EFFECT_APPLICATION_QUESTION to the
-    question versions and EFFECT_GOVERNANCE_CONFIGURATION to the governance
-    configuration versions. Any other action gives "".
-    """
-    return {
-        OrganismAction.EFFECT_APPLICATION_SETTINGS: "core_loapplicationsettingsversion",
-        OrganismAction.EFFECT_ENTITLEMENT_ELECTION: "core_loapplicationsettingsversion",
-        OrganismAction.EFFECT_APPLICATION_QUESTION: "core_loapplicationquestionversion",
-        OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "core_logovernanceconfigurationversion",
-    }.get(action, "")
-
-
-def _version_reference_prefix(action: OrganismAction) -> str:
-    """Return the reference prefix _facts_read adds to an effect action's
-    "v" fact, for the same actions as _version_relation; "" for any other
-    action.
-    """
-    return {
-        OrganismAction.EFFECT_APPLICATION_SETTINGS: "application-settings-version:",
-        OrganismAction.EFFECT_ENTITLEMENT_ELECTION: "application-settings-version:",
-        OrganismAction.EFFECT_APPLICATION_QUESTION: "application-question-version:",
-        OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION: "governance-configuration-version:",
-    }.get(action, "")
-
-
-def _assignment_or_application_relation(action: OrganismAction) -> str:
-    """Return the table an "a" fact refers to by default: the CSA
-    assignment for CLAIM_APPLICATION, REASSIGN_APPLICATION and
-    DECIDE_APPLICATION, the application otherwise. _facts_read replaces it
-    with the contextual role assignment for RECORD_OFFICE_CONSENT and
-    TRANSITION_CONTEXTUAL_ROLE.
-    """
-    return "core_csaassignment" if action in {
-        OrganismAction.CLAIM_APPLICATION,
-        OrganismAction.REASSIGN_APPLICATION,
-        OrganismAction.DECIDE_APPLICATION,
-    } else "core_application"
 
 
 def _record_application_decision(
@@ -1358,9 +1187,11 @@ def _record_application_decision(
 
     Before the database lookup, canonicalise the response and target,
     derive their JSON, build the reported facts, and resolve the provider's
-    identity and version as described by S015AuthorityProvider. Invalid
-    canonical data or facts propagate their errors; an invalid provider
-    version raises S015AuthorityMalformed.
+    identity and version as described by S015AuthorityProvider. The facts
+    are read by _facts_read against the declared vocabulary
+    (core.organism_authority_facts); invalid canonical data propagates its
+    error, an invalid reference and an invalid provider version raise
+    S015AuthorityMalformed.
 
     A new row carries the response bytes and JSON, request kind, action,
     subtype, actor and any applicant credential, target bytes and JSON
@@ -1580,7 +1411,7 @@ class S015Authority:
             if type(result.refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("refusal code is invalid")
             if result.authority_reference is not None:
-                _canonical_reference(result.authority_reference, "authority_reference", 255)
+                _canonical_reference(result.authority_reference, "authority_reference", S015_AUTHORITY_REFERENCE_MAX_LENGTH)
             decision_reference = _decision_reference(result)
             if _should_record_application_decision(request):
                 _record_application_decision(
@@ -1614,7 +1445,7 @@ class S015Authority:
                 authority_decision_reference=decision_reference,
             )
         authority_reference = _canonical_reference(
-            result.authority_reference, "authority_reference", 255
+            result.authority_reference, "authority_reference", S015_AUTHORITY_REFERENCE_MAX_LENGTH
         )
         decision_reference = _decision_reference(result)
         if _should_record_application_decision(request):

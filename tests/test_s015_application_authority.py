@@ -163,13 +163,9 @@ class _HistoricalReferenceAuthorityProvider:
             application__application_uuid=request.target["application_uuid"],
             engagement_ordinal=facts["e"],
         )
-        configuration = LOGovernanceConfigurationVersion.objects.get(
-            version_uuid=facts["c"],
-        )
         facts.update({
             "a": str(claim.pk),
             "e": str(engagement.pk),
-            "t": "CQ_INACTIVE" if configuration.cq_active is not True else "SOLE_COORDINATOR",
         })
         return replace(
             result,
@@ -200,7 +196,6 @@ class _HistoricalOfficeAuthorityProvider:
                 assignment_uuid=assignment_uuid,
             ).pk
             facts["a"] = str(assignment_id)
-            facts["e"] = str(assignment_id)
             result = replace(
                 result,
                 authority_reference="s015a1:" + canonical_json_bytes(facts).decode("utf-8"),
@@ -2110,10 +2105,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 facts["a"].isdecimal(),
                 msg=f"{action} stored authority_reference={decision.authority_reference!r}; facts.a={facts['a']!r}",
             )
-            self.assertTrue(
-                facts["e"].isdecimal(),
-                msg=f"{action} stored authority_reference={decision.authority_reference!r}; facts.e={facts['e']!r}",
-            )
             self.assertEqual(
                 decision.outcome,
                 "QUALIFIED",
@@ -2219,13 +2210,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             msg=(
                 f"stored authority_reference={qualified.authority_reference!r}; "
                 f"facts.a={mismatch_facts['a']!r}"
-            ),
-        )
-        self.assertTrue(
-            mismatch_facts["e"].isdecimal(),
-            msg=(
-                f"stored authority_reference={qualified.authority_reference!r}; "
-                f"facts.e={mismatch_facts['e']!r}"
             ),
         )
         self.assertFalse(
@@ -2460,7 +2444,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             def evaluate_organism_authority(self, request):
                 return ProductionApplicationAuthorityProvider._qualified(
                     request,
-                    {"x": "x" * 255},
+                    {"a": "a" * 220, "c": "-", "e": 1, "m": "-", "o": "-", "s": "-"},
                 )
 
         class GenuineDeniedProvider:
@@ -2757,7 +2741,7 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             "core_identity",
             "core_livingorganism",
             "s3_il_birthing_fact_source",
-            "core_identitytransition",
+            "learner-registration",
             "core_loapplicationsettingsversion",
             "core_loapplicationquestionversion",
             "core_logovernanceconfigurationversion",
@@ -2925,6 +2909,50 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
         record = AuthorityDecision.objects.get(decision_reference=withdrawal.authority_decision_reference)
         self.assertEqual(record.outcome, "QUALIFIED")
         self.assertEqual(record.action, OrganismAction.WITHDRAW_APPLICATION.value)
+
+    def test_production_provider_qualifies_a_resubmission_after_withdrawal(self):
+        service = self._service(
+            registration_source=ProductionGovernedRegistrationFactSource(),
+        )
+        first = self._submit(service, "predecessor-first")
+        first_application = Application.objects.get(application_uuid=first.application_uuid)
+        self._capture_database_now()
+        service.withdraw_application(WithdrawApplicationCommand(
+            credential=self.applicant.credential,
+            application_uuid=first_application.application_uuid,
+            request_reference=f"aa-r1:predecessor-withdraw:{self.tag}",
+            idempotency_key=f"aa-r1:predecessor-withdraw:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+        ))
+        self._capture_database_now()
+        resubmission = service.submit_application(SubmitApplicationCommand(
+            credential=self.applicant.credential,
+            living_organism_id=self.organism_uuid,
+            request_reference=f"aa-r1:predecessor-resubmit:{self.tag}",
+            idempotency_key=f"aa-r1:predecessor-resubmit:key:{self.tag}",
+            occurred_at=self.now,
+            effective_at=self.now,
+            predecessor_reference=first_application.application_uuid,
+            answer="TEST FIXTURE: resubmission answer",
+        ))
+        second = Application.objects.get(application_uuid=resubmission.application_uuid)
+        self.assertEqual(second.predecessor_reference_id, first_application.pk)
+        record = AuthorityDecision.objects.get(decision_reference=resubmission.authority_decision_reference)
+        self.assertEqual((record.outcome, record.refusal_code), ("QUALIFIED", None))
+        self.assertEqual(second.authority_decision_reference, record.decision_reference)
+        self.assertEqual(record.action, OrganismAction.SUBMIT_APPLICATION.value)
+        self.assertEqual(record.authority_reference, second.authority_reference)
+        self.assertEqual(len(record.authority_reference), 245)
+        facts = json.loads(record.authority_reference[len("s015a1:"):])
+        self.assertEqual(set(facts), {"b", "c", "q", "r", "s"})
+        self.assertEqual(
+            record.decision_payload["predecessor_reference"],
+            str(first_application.application_uuid),
+        )
+        fact_pairs = {(fact["relation"], fact["reference"]) for fact in record.facts_read}
+        self.assertIn(("learner-registration", f"learner-registration:{facts['r']}"), fact_pairs)
+        self.assertNotIn("core_application", {relation for relation, _ in fact_pairs})
 
     def test_installed_authority_decision_guard_catalogue(self):
         emit_guard_catalogue(connection, "POST-MIGRATION")

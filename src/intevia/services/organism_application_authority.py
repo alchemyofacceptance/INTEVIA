@@ -34,6 +34,14 @@ from core.models import (
     OfficeAppointmentConsent,
     PlatformTermsVersion,
 )
+from core.organism_authority_facts import (
+    S015AuthorityFactsUndeclared,
+    S015_AUTHORITY_FACTS_SCHEMA,
+    S015_AUTHORITY_REFERENCE_MAX_LENGTH,
+    S015_AUTHORITY_REFERENCE_PREFIX,
+    S015_AUTHORITY_REFUSAL_KEY,
+    validate_authority_facts,
+)
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
     S015AuthorityRefusalCode,
@@ -616,6 +624,18 @@ class ProductionApplicationAuthorityProvider:
         self,
         request: S015PreFoundingAuthorityRequest,
     ) -> S015AuthorityResult:
+        """Qualify a FOUND_LIVING_ORGANISM request, or refuse it.
+
+        The target must carry exactly the founding keys with the request's
+        own founder and organism identities and no instruments; the rule
+        must name a platform terms version in force in its exact
+        "platform-terms-version:<uuid>#founding" form; the registration
+        source must prove the founder's registration in its exact
+        "learner-registration:<uuid>" form; and the identity must be active
+        at the request's coordinates. A qualified result carries the
+        FOUNDING reference (kind, rule, registration, terms) encoded through
+        _encode_facts, or the size refusal if it would exceed the cap.
+        """
         target = request.target
         expected_keys = {
             "action",
@@ -729,12 +749,14 @@ class ProductionApplicationAuthorityProvider:
             )
 
         acceptance_uuid = founding_acceptance_uuid(request.living_organism_id)
-        authority_reference = "s015a1:" + canonical_json_bytes({
+        authority_reference = self._encode_facts(request, {
             "kind": "FOUNDING",
             "rule": rule_reference,
             "registration": registration_reference,
             "terms": f"platform-terms-acceptance:{acceptance_uuid}",
-        }).decode("utf-8")
+        }, refusal_code=None)
+        if len(authority_reference) > S015_AUTHORITY_REFERENCE_MAX_LENGTH:
+            return self._refusal_for_size(request)
         return S015PreFoundingAuthorityResponse(
             **asdict(request),
             authority_reference=authority_reference,
@@ -1232,6 +1254,20 @@ class ProductionApplicationAuthorityProvider:
         *,
         facts: dict[str, object] | None = None,
     ) -> S015AuthorityResult:
+        """Build the refusal of a request with the given code.
+
+        disclosed, when None, is the code itself for the codes an applicant
+        or an outsider may learn and for DENIED, and otherwise the code for
+        a current member or DENIED for anyone else. facts are the auxiliary
+        facts reported beside x; they must not carry x and must be declared
+        by the action's refusal shape for the request's form
+        (core.organism_authority_facts), or S015AuthorityFactsUndeclared is
+        raised. The reference is "s015a1:" plus the canonical JSON of
+        {"x": code} with the facts; a reference over the 255-character cap
+        keeps its code and drops the auxiliary facts, so a governed refusal
+        code is never replaced by the size refusal. Returns the request
+        type's refusal carrier.
+        """
         if disclosed is None:
             if code in {
                 S015AuthorityRefusalCode.C_GATEWAY_NOT_OPEN,
@@ -1252,10 +1288,20 @@ class ProductionApplicationAuthorityProvider:
         fields = asdict(request)
         fields["refusal_code"] = code
         fields["disclosed_refusal_code"] = disclosed
-        authority_facts = {"x": code.value}
+        if facts and S015_AUTHORITY_REFUSAL_KEY in facts:
+            raise S015AuthorityFactsUndeclared(
+                f"{S015_AUTHORITY_FACTS_SCHEMA}: {request.action.value} refusal facts must not carry "
+                f"{S015_AUTHORITY_REFUSAL_KEY!r}"
+            )
+        authority_facts: dict[str, object] = {S015_AUTHORITY_REFUSAL_KEY: code.value}
         if facts:
             authority_facts.update(facts)
-        fields["authority_reference"] = "s015a1:" + canonical_json_bytes(authority_facts).decode("utf-8")
+        authority_reference = self._encode_facts(request, authority_facts, refusal_code=code.value)
+        if len(authority_reference) > S015_AUTHORITY_REFERENCE_MAX_LENGTH:
+            authority_reference = self._encode_facts(
+                request, {S015_AUTHORITY_REFUSAL_KEY: code.value}, refusal_code=code.value,
+            )
+        fields["authority_reference"] = authority_reference
         if type(request) is S015PreFoundingAuthorityRequest:
             return S015PreFoundingAuthorityRefusal(**fields)
         if type(request) is S015OwnApplicantAuthorityRequest:
@@ -1409,8 +1455,6 @@ class ProductionApplicationAuthorityProvider:
             "r": str(registration_uuid),
             "s": str(settings.version_uuid),
         }
-        if request.predecessor_reference is not None:
-            facts["p"] = str(request.predecessor_reference)
         return self._qualified(request, facts)
 
     def _withdraw(
@@ -1835,8 +1879,6 @@ class ProductionApplicationAuthorityProvider:
             "o": str(office.assignment_uuid),
             "n": snapshot_uuid,
         }
-        if len("s015a1:") + len(canonical_json_bytes(facts)) > 255:
-            return self._refuse(request, S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE)
         return self._qualified(request, facts)
 
     def _qualify_governance_adoption(
@@ -2588,9 +2630,42 @@ class ProductionApplicationAuthorityProvider:
             return reference
 
     @staticmethod
+    def _encode_facts(
+        request: S015AuthorityRequest,
+        facts: dict[str, object],
+        *,
+        refusal_code: str | None,
+    ) -> str:
+        """Validate facts against the declared vocabulary and encode them.
+
+        refusal_code None means a qualified output: it must match the
+        action's one entry for the request's form by its discriminators,
+        carry every required key and no undeclared key, no x, and lawful
+        values. A code means a refusal output: its x must equal the code
+        and its other keys must be declared by the form's refusal shape
+        (core.organism_authority_facts.validate_authority_facts). A defect
+        raises S015AuthorityFactsUndeclared, a ValueError, inside the
+        provider; S015Authority.qualify reports it as
+        S015AuthorityUnavailable with the cause attached and writes no
+        decision row. Returns "s015a1:" plus the canonical JSON of facts;
+        it never checks the length, which each caller does.
+        """
+        validate_authority_facts(request, facts, refusal_code=refusal_code)
+        return S015_AUTHORITY_REFERENCE_PREFIX + canonical_json_bytes(facts).decode("utf-8")
+
+    @staticmethod
     def _qualified(request: S015AuthorityRequest, facts: dict[str, object]) -> S015AuthorityResult:
-        authority_reference = "s015a1:" + canonical_json_bytes(facts).decode("utf-8")
-        if len(authority_reference) > 255:
+        """Build the qualified response carrying facts as its structured
+        reference, or the size refusal when the encoded reference exceeds
+        the 255-character cap. Undeclared facts raise
+        S015AuthorityFactsUndeclared from _encode_facts before any size
+        check. Returns the own-applicant or post-founding response carrier
+        by the request type.
+        """
+        authority_reference = ProductionApplicationAuthorityProvider._encode_facts(
+            request, facts, refusal_code=None,
+        )
+        if len(authority_reference) > S015_AUTHORITY_REFERENCE_MAX_LENGTH:
             return ProductionApplicationAuthorityProvider._refusal_for_size(request)
         fields = asdict(request)
         fields["authority_reference"] = authority_reference
@@ -2600,12 +2675,22 @@ class ProductionApplicationAuthorityProvider:
 
     @staticmethod
     def _refusal_for_size(request: S015AuthorityRequest) -> S015AuthorityResult:
+        """Build the C_REFERENCE_UNREPRESENTABLE refusal, disclosed as
+        DENIED, for a lawful qualified output whose reference would exceed
+        the cap. Its reference is {"x": "C_REFERENCE_UNREPRESENTABLE"},
+        42 characters, encoded without a size check so it cannot recurse.
+        Returns the pre-founding, own-applicant or post-founding refusal
+        carrier by the request type.
+        """
+        code = S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE
         fields = asdict(request)
-        fields["refusal_code"] = S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE
+        fields["refusal_code"] = code
         fields["disclosed_refusal_code"] = S015AuthorityRefusalCode.DENIED
-        fields["authority_reference"] = "s015a1:" + canonical_json_bytes({
-            "x": S015AuthorityRefusalCode.C_REFERENCE_UNREPRESENTABLE.value,
-        }).decode("utf-8")
+        fields["authority_reference"] = ProductionApplicationAuthorityProvider._encode_facts(
+            request, {S015_AUTHORITY_REFUSAL_KEY: code.value}, refusal_code=code.value,
+        )
+        if type(request) is S015PreFoundingAuthorityRequest:
+            return S015PreFoundingAuthorityRefusal(**fields)
         if type(request) is S015OwnApplicantAuthorityRequest:
             return S015OwnApplicantAuthorityRefusal(**fields)
         return S015PostFoundingAuthorityRefusal(**fields)
