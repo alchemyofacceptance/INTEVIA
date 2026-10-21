@@ -4,9 +4,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from django.db import connections
+from django.db.models import QuerySet
 
 from core.models import (
     Application,
@@ -62,6 +63,11 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_formation_authority import founding_acceptance_uuid
 
+# The derived admission-stage key prefix of a compound governance seating: the
+# literal organism_governance_service._compound_stage_identifiers prefixes to the
+# digest for ADMIT_CIRCLE_PARTICIPANT. tests/test_a1_same_request_rule.py holds
+# the two equal.
+_COMPOUND_ADMISSION_KEY_PREFIX = "sbg:admit:"
 
 class BirthingFactSource(Protocol):
     def reference_at(
@@ -1943,7 +1949,23 @@ class ProductionApplicationAuthorityProvider:
         organism: LivingOrganism,
         target: dict[str, object],
     ) -> bool:
-        return CircleJoinRequest.objects.using(self.database_alias).filter(
+        """Report whether the seat request the target names is a fact at the
+        request's time coordinates.
+
+        The ordinary read admits a CircleJoinRequest of this organism, circle,
+        applicant, seat rule and seat, initiated by the applicant, effective
+        no later than effective_at and received and recorded no later than
+        evaluated_at: the same time cut every other authority fact observes.
+
+        One row is read under a different cut. A compound governance seating
+        runs its two stages at the parent intake's single time T, and its
+        stage 1 inserts the seat request with received_at = T and a
+        database-assigned recorded_at that is later than T. The same-request
+        rule (_same_request_stage_row) admits exactly that row, by proving it
+        is this request's own first-stage write; no other row escapes the
+        recorded_at cut, and no refusal code changes.
+        """
+        candidates = CircleJoinRequest.objects.using(self.database_alias).filter(
             request_uuid=target["request_uuid"],
             circle__parent_organism=organism,
             circle__circle_uuid=target["circle_uuid"],
@@ -1953,7 +1975,110 @@ class ProductionApplicationAuthorityProvider:
             initiated_by="APPLICANT",
             effective_at__lte=request.effective_at,
             received_at__lte=request.evaluated_at,
-            recorded_at__lte=request.evaluated_at,
+        )
+        if candidates.filter(recorded_at__lte=request.evaluated_at).exists():
+            return True
+        return self._same_request_stage_row(request, organism, target, candidates)
+
+    def _same_request_stage_row(
+        self,
+        request: S015PostFoundingAuthorityRequest,
+        organism: LivingOrganism,
+        target: dict[str, object],
+        candidates: QuerySet[CircleJoinRequest],
+    ) -> bool:
+        """The same-request rule: admit the seat request this compound
+        seating's own stage 1 wrote at the same time T, whatever its
+        recorded_at.
+
+        The request's own fields (idempotency key, request reference,
+        actor, evaluated_at, the target's request_uuid) are each compared
+        with durable rows or with values derived by the production rule;
+        nothing is admitted on the request's say-so. True only when all of
+        these hold:
+
+        0. pre-filter: the request's idempotency key carries the derived
+           admission-stage prefix (_COMPOUND_ADMISSION_KEY_PREFIX, the
+           literal _compound_stage_identifiers uses); implied by 1, it spares
+           every other request the statement below;
+        1. parent association: among the command-intake rows binding this
+           actor (actor_id and actor_identity_id), a compound seating entry,
+           the admission action, this organism as target and received_at =
+           evaluated_at, exactly one has an interaction key whose derived
+           admission key and reference equal the request's idempotency key
+           and request reference;
+        2. identity of the request: the target's request_uuid equals the
+           stage-1 identity derived from that parent, uuid5(organism_uuid,
+           "REQUEST_GOVERNANCE_SEAT:" + derived request key), the value
+           stage 1 computes;
+        3. the row: a candidate (the ordinary filters without the recorded_at
+           cut) with that identity exists, entered by this actor (stage 1's
+           enterer is the parent's actor), with consent_reference equal to
+           the derived request reference and received_at = evaluated_at.
+
+        The row's recorded_at is not compared: it is later than evaluated_at
+        by construction (stage 1's insert statement runs after the parent's
+        intake), and 1-3 establish that the row is this request's own first
+        stage and nothing else. A request that fails any step keeps the
+        ordinary read's answer, False.
+
+        The two imports are local, as command_intake.slots() imports the
+        derivation: organism_governance_service imports this module at
+        module level.
+        """
+        if not request.idempotency_key.startswith(_COMPOUND_ADMISSION_KEY_PREFIX):
+            return False
+        from src.intevia.services.command_intake import COMPOUND_ENTRIES
+        from src.intevia.services.organism_governance_service import (
+            _compound_stage_identifiers,
+        )
+
+        entry_values = tuple(entry.value for entry in COMPOUND_ENTRIES)
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT idempotency_key"
+                "  FROM public.core_commandintake"
+                " WHERE actor_id = %s"
+                "   AND actor_identity_id = %s"
+                "   AND entry IN (" + ", ".join(["%s"] * len(entry_values)) + ")"
+                "   AND action = %s"
+                "   AND target_organism_id = %s"
+                "   AND received_at = %s"
+                " ORDER BY id",
+                [
+                    request.actor_pk,
+                    request.actor_identity_id,
+                    *entry_values,
+                    OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value,
+                    organism.organism_id,
+                    request.evaluated_at,
+                ],
+            )
+            interaction_keys = [row[0] for row in cursor.fetchall()]
+        parents: list[tuple[str, str]] = []
+        for interaction_key in interaction_keys:
+            request_key, request_reference, admission_key, admission_reference = (
+                _compound_stage_identifiers(organism.organism_id, interaction_key)
+            )
+            if (
+                admission_key == request.idempotency_key
+                and admission_reference == request.request_reference
+            ):
+                parents.append((request_key, request_reference))
+        if len(parents) != 1:
+            return False
+        request_key, request_reference = parents[0]
+        stage_request_uuid = uuid5(
+            organism.organism_id,
+            f"{OrganismAction.REQUEST_GOVERNANCE_SEAT.value}:{request_key}",
+        )
+        if target["request_uuid"] != str(stage_request_uuid):
+            return False
+        return candidates.filter(
+            request_uuid=stage_request_uuid,
+            enterer_identity_id=request.actor_pk,
+            consent_reference=request_reference,
+            received_at=request.evaluated_at,
         ).exists()
 
     def _qualify_governance_seat_request(
