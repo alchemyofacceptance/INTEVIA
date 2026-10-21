@@ -38,12 +38,14 @@ from core.models import (
     CircleStateEvent,
     GovernedRule,
     Identity,
+    IntakeEntry,
     LivingOrganism,
     LivingOrganismEvent,
     OrganismMembership,
     OrganismCommandReceipt,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.command_intake import BoundRequest, ChildEntry
 from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
     _effective_version,
@@ -617,6 +619,110 @@ def _compound_stage_identifiers(
     return values[0], values[1], values[2], values[3]
 
 
+@dataclass(frozen=True, slots=True)
+class _CompoundRecipe:
+    """Describe one private compound seating route and its result conversion."""
+
+    expected_entry: IntakeEntry
+    stage1: Callable[
+        [SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand, str, str],
+        RequestGovernanceSeatCommand,
+    ]
+    stage2_outcome: Callable[
+        [SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand],
+        str,
+    ]
+    stage2_route: str
+    post_check: Callable[[GovernanceSeatDecisionResult], None] | None
+    result_from: Callable[
+        [GovernanceSeatDecisionResult],
+        GovernanceSeatingResult | GovernanceSeatDecisionResult,
+    ]
+
+
+def _build_compound_request(
+    command: SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand,
+    request_reference: str,
+    idempotency_key: str,
+) -> RequestGovernanceSeatCommand:
+    """Build the common request stage from a compound command."""
+    return RequestGovernanceSeatCommand(
+        credential=command.credential,
+        living_organism_uuid=command.living_organism_uuid,
+        circle_uuid=command.circle_uuid,
+        seat_rule_uuid=command.seat_rule_uuid,
+        seat_id=command.seat_id,
+        request_reference=request_reference,
+        idempotency_key=idempotency_key,
+        effective_at=command.effective_at,
+    )
+
+
+def _compound_decision_outcome(
+    command: SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand,
+) -> str:
+    """Return the adopted outcome for the self-decision compound recipe."""
+    if type(command) is not DecideGovernanceSeatCommand:
+        raise TypeError("compound decision recipe requires DecideGovernanceSeatCommand")
+    return command.outcome
+
+
+def _founding_decision_outcome(
+    command: SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand,
+) -> str:
+    """Return ACCEPT for the founding-seating compound recipe."""
+    del command
+    return "ACCEPT"
+
+
+def _founding_participation_check(result: GovernanceSeatDecisionResult) -> None:
+    """Require the founding acceptance to return its participation identity."""
+    if result.participation_uuid is None:
+        raise RuntimeError("founding acceptance returned no participation")
+
+
+def _founding_seating_result(
+    result: GovernanceSeatDecisionResult,
+) -> GovernanceSeatingResult:
+    """Convert the decision result to the founding route's established result type."""
+    if result.participation_uuid is None:
+        raise RuntimeError("founding acceptance returned no participation")
+    return GovernanceSeatingResult(
+        living_organism_uuid=result.living_organism_uuid,
+        request_uuid=result.request_uuid,
+        decision_uuid=result.decision_uuid,
+        participation_uuid=result.participation_uuid,
+        lineage_reference=result.lineage_reference,
+        authority_reference=result.authority_reference,
+        authority_decision_reference=result.authority_decision_reference,
+    )
+
+
+def _identity_decision_result(
+    result: GovernanceSeatDecisionResult,
+) -> GovernanceSeatDecisionResult:
+    """Keep the decision result type for the compound decision recipe."""
+    return result
+
+
+_RECIPE_DECIDE_COMPOUND = _CompoundRecipe(
+    expected_entry=IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+    stage1=_build_compound_request,
+    stage2_outcome=_compound_decision_outcome,
+    stage2_route="GOVERNANCE_CONSTITUTIONAL",
+    post_check=None,
+    result_from=_identity_decision_result,
+)
+_RECIPE_SEAT_FOUNDING = _CompoundRecipe(
+    expected_entry=IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
+    stage1=_build_compound_request,
+    stage2_outcome=_founding_decision_outcome,
+    stage2_route="CIRCLE_FOUNDING",
+    post_check=_founding_participation_check,
+    result_from=_founding_seating_result,
+)
+
+
 class SBGGovernanceUnavailable(Exception):
     """Signal that required governance context is unavailable.
 
@@ -879,6 +985,38 @@ class OrganismGovernanceService:
         )
         if effective_at > received_at:
             raise ValueError("effective_at must not be later than received_at")
+        return self._request_governance_seat_at(
+            command,
+            organism_uuid=organism_uuid,
+            circle_uuid=circle_uuid,
+            rule_uuid=rule_uuid,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            received_at=received_at,
+            effective_at=effective_at,
+            verify_after_actor_lock=None,
+        )
+
+    def _request_governance_seat_at(
+        self,
+        command: RequestGovernanceSeatCommand,
+        *,
+        organism_uuid: UUID,
+        circle_uuid: UUID,
+        rule_uuid: UUID,
+        request_reference: str,
+        idempotency_key: str,
+        received_at: datetime,
+        effective_at: datetime,
+        verify_after_actor_lock: Callable[[Identity], None] | None,
+    ) -> GovernanceSeatRequestResult:
+        """Run the shared request-stage body at an explicit time.
+
+        The public clock route passes no verifier; its existing route remains
+        unchanged until PKT-CLK-3. Bound stage executors supply a verifier and
+        their governed receive time without consulting the clock.
+        """
+
         action = OrganismAction.REQUEST_GOVERNANCE_SEAT
         request_uuid = uuid5(organism_uuid, f"{action.value}:{idempotency_key}")
         payload = {
@@ -901,6 +1039,8 @@ class OrganismGovernanceService:
                 credential=command.credential,
                 unavailable=SBGGovernanceUnavailable,
             )
+            if verify_after_actor_lock is not None:
+                verify_after_actor_lock(actor)
             acquire_organism_command_mutex(
                 database_alias=self._alias,
                 actor_identity_id=actor.identity_id,
@@ -1042,12 +1182,79 @@ class OrganismGovernanceService:
             )
             return result
 
-    def _request_open_sentence(self, seat_id: str) -> str:
+    def _execute_request_governance_seat(
+        self,
+        command: RequestGovernanceSeatCommand,
+        bound: BoundRequest,
+    ) -> GovernanceSeatRequestResult:
+        """Execute a verified request stage at its bound receive time.
+
+        This private executor serves REQUEST_GOVERNANCE_SEAT and REQUEST_STAGE;
+        the public clock route remains unchanged until PKT-CLK-3.
+        """
+        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+        circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
+        rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
+        if type(command.seat_id) is not str or _SEAT_ID.fullmatch(command.seat_id) is None:
+            raise ValueError("seat_id is invalid")
+        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        received_at = bound.received_at
+        effective_at = (
+            received_at if command.effective_at is None
+            else _timestamp(command.effective_at, "effective_at")
+        )
+        if effective_at > received_at:
+            raise ValueError("effective_at must not be later than received_at")
+        try:
+            return self._request_governance_seat_at(
+                command,
+                organism_uuid=organism_uuid,
+                circle_uuid=circle_uuid,
+                rule_uuid=rule_uuid,
+                request_reference=request_reference,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                effective_at=effective_at,
+                verify_after_actor_lock=lambda actor: bound.verify(
+                    command,
+                    actor,
+                    frozenset(
+                        {
+                            IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+                            ChildEntry.REQUEST_STAGE,
+                        }
+                    ),
+                    self._alias,
+                ),
+            )
+        except IntegrityError as exc:
+            refusal = _controlled_integrity_refusal(
+                exc,
+                _REQUEST_GUARD_REFUSAL_CODES,
+                detail=command.seat_id,
+                act=f"Your own request for seat {command.seat_id} was not recorded",
+            )
+            if refusal is None:
+                raise
+            raise refusal from exc
+
+    def _request_open_sentence(
+        self,
+        seat_id: str,
+        *,
+        stage_context: ChildEntry | None = None,
+    ) -> str:
         """Return the sentence saying the caller's request for seat_id is recorded
         and remains open.
 
         The sentence is fixed text; this method does not check the request's status.
+        The optional stage context identifies the chunk-3 hand-off and does not
+        alter the public route's wording. Any stage context other than
+        ADMIT_STAGE raises ValueError.
         """
+        if stage_context is not None and stage_context is not ChildEntry.ADMIT_STAGE:
+            raise ValueError("open-request sentence requires the admission stage")
         return f"Your own request for seat {seat_id} is recorded and remains open."
 
     def _request_open_context(self, request_uuid: UUID) -> tuple[str, str] | None:
@@ -1278,6 +1485,202 @@ class OrganismGovernanceService:
         )
         if effective_at > received_at:
             raise ValueError("effective_at must not be later than received_at")
+        return self._decide_governance_seat_at(
+            command,
+            organism_uuid=organism_uuid,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            request_uuid=request_uuid,
+            received_at=received_at,
+            effective_at=effective_at,
+            verify_after_actor_lock=None,
+        )
+
+    def _execute_decide_governance_seat(
+        self,
+        command: DecideGovernanceSeatCommand,
+        bound: BoundRequest,
+    ) -> GovernanceSeatDecisionResult:
+        """Execute a verified decision stage at its bound receive time.
+
+        This private executor serves DECIDE_GOVERNANCE_SEAT and ADMIT_STAGE;
+        the public clock route remains unchanged until PKT-CLK-3.
+        """
+        if command.request_uuid is None:
+            raise ValueError("an existing request is required for the decision stage")
+        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        if type(command.outcome) is not str or command.outcome not in {"ACCEPT", "DECLINE"}:
+            raise ValueError("outcome must be ACCEPT or DECLINE")
+        if command.route not in {None, "CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL"}:
+            raise ValueError("route is invalid")
+        request_uuid = _canonical_uuid(command.request_uuid, "request_uuid")
+        if (
+            command.circle_uuid is not None
+            or command.seat_rule_uuid is not None
+            or command.seat_id is not None
+        ):
+            raise ValueError("an existing request supplies its own circle and seat")
+        received_at = bound.received_at
+        effective_at = (
+            received_at if command.effective_at is None
+            else _timestamp(command.effective_at, "effective_at")
+        )
+        if effective_at > received_at:
+            raise ValueError("effective_at must not be later than received_at")
+        return self._decide_governance_seat_at(
+            command,
+            organism_uuid=organism_uuid,
+            request_reference=request_reference,
+            idempotency_key=idempotency_key,
+            request_uuid=request_uuid,
+            received_at=received_at,
+            effective_at=effective_at,
+            verify_after_actor_lock=lambda actor: bound.verify(
+                command,
+                actor,
+                frozenset(
+                    {
+                        IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                        ChildEntry.ADMIT_STAGE,
+                    }
+                ),
+                self._alias,
+            ),
+        )
+
+    def _orchestrate_compound_seating(
+        self,
+        command: SeatFoundingGovernanceCircleCommand | DecideGovernanceSeatCommand,
+        bound: BoundRequest,
+        recipe: _CompoundRecipe,
+    ) -> GovernanceSeatingResult | GovernanceSeatDecisionResult:
+        """Execute two verified stages without enclosing their transactions.
+
+        The parent is verified once, and each child is independently verified
+        by its stage executor. The public clock routes remain unchanged until
+        PKT-CLK-3 redirects them.
+        """
+        from src.intevia.services.command_intake import _require_not_in_atomic_block
+
+        _require_not_in_atomic_block(self._alias)
+        parent = bound.verify_content(command, recipe.expected_entry)
+        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+        interaction_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+        request_key, request_reference, admission_key, admission_reference = (
+            _compound_stage_identifiers(organism_uuid, interaction_key)
+        )
+        request_command = recipe.stage1(command, request_reference, request_key)
+        request_bound = parent.child(
+            ChildEntry.REQUEST_STAGE,
+            command=request_command,
+        )
+        request_result = self._execute_request_governance_seat(
+            request_command,
+            request_bound,
+        )
+        decision_command = DecideGovernanceSeatCommand(
+            credential=command.credential,
+            living_organism_uuid=organism_uuid,
+            request_reference=admission_reference,
+            idempotency_key=admission_key,
+            outcome=recipe.stage2_outcome(command),
+            route=recipe.stage2_route,
+            request_uuid=request_result.request_uuid,
+            effective_at=command.effective_at,
+        )
+        stage_context = ChildEntry.ADMIT_STAGE
+        decision_bound = parent.child(
+            stage_context,
+            command=decision_command,
+        )
+        try:
+            decision_result = self._execute_decide_governance_seat(
+                decision_command,
+                decision_bound,
+            )
+        except SBGGovernanceUnavailable as exc:
+            open_request = self._request_open_sentence(
+                command.seat_id,
+                stage_context=stage_context,
+            )
+            raised = SBGGovernanceUnavailable(f"{exc} {open_request}")
+            setattr(raised, "request_uuid", request_result.request_uuid)
+            setattr(raised, "stage_context", stage_context)
+            raise raised from exc
+        except SBGGovernanceRefused as exc:
+            open_request = self._request_open_sentence(
+                command.seat_id,
+                stage_context=stage_context,
+            )
+            raised = SBGGovernanceRefused(
+                exc.refusal_code,
+                f"{exc} {open_request}",
+                request_uuid=request_result.request_uuid,
+            )
+            setattr(raised, "stage_context", stage_context)
+            raise raised from exc
+        except S015AuthorityDenied as exc:
+            open_request = self._request_open_sentence(
+                command.seat_id,
+                stage_context=stage_context,
+            )
+            raised = S015AuthorityDenied(
+                f"{exc} {open_request}",
+                refusal_code=exc.refusal_code,
+                disclosed_refusal_code=exc.disclosed_refusal_code,
+                authority_decision_reference=exc.authority_decision_reference,
+                request_uuid=request_result.request_uuid,
+            )
+            setattr(raised, "stage_context", stage_context)
+            raise raised from exc
+        except IntegrityError as exc:
+            refusal = _controlled_integrity_refusal(
+                exc,
+                _ADMISSION_GUARD_REFUSAL_CODES,
+                detail=command.seat_id,
+                act="Nobody was seated",
+            )
+            if refusal is None:
+                setattr(exc, "stage_context", stage_context)
+                raise
+            open_request = self._request_open_sentence(
+                command.seat_id,
+                stage_context=stage_context,
+            )
+            raised = SBGGovernanceRefused(
+                refusal.refusal_code,
+                f"{refusal} {open_request}",
+                request_uuid=request_result.request_uuid,
+            )
+            setattr(raised, "stage_context", stage_context)
+            raise raised from exc
+        except Exception as exc:
+            setattr(exc, "stage_context", stage_context)
+            raise
+        if recipe.post_check is not None:
+            recipe.post_check(decision_result)
+        return recipe.result_from(decision_result)
+
+    def _decide_governance_seat_at(
+        self,
+        command: DecideGovernanceSeatCommand,
+        *,
+        organism_uuid: UUID,
+        request_reference: str,
+        idempotency_key: str,
+        request_uuid: UUID,
+        received_at: datetime,
+        effective_at: datetime,
+        verify_after_actor_lock: Callable[[Identity], None] | None,
+    ) -> GovernanceSeatDecisionResult:
+        """Run the shared decision-stage body at an explicit time.
+
+        The public clock route supplies no verifier and retains its existing
+        compound branch. Bound stage executors supply the verified request time;
+        replay viewers still use their independent present-time clock read.
+        """
         action = OrganismAction.ADMIT_CIRCLE_PARTICIPANT
         fingerprint = hashlib.sha256(canonical_json_bytes({
             "action": action.value,
@@ -1295,6 +1698,8 @@ class OrganismGovernanceService:
                 credential=command.credential,
                 unavailable=SBGGovernanceUnavailable,
             )
+            if verify_after_actor_lock is not None:
+                verify_after_actor_lock(actor)
             acquire_organism_command_mutex(
                 database_alias=self._alias,
                 actor_identity_id=actor.identity_id,

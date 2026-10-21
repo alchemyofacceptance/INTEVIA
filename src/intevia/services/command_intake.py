@@ -56,6 +56,41 @@ class ChildEntry(str, Enum):
     ADMIT_STAGE = "ADMIT_STAGE"
 
 
+_CHILD_PUBLIC_ENTRIES = {
+    ChildEntry.REQUEST_STAGE: IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+    ChildEntry.ADMIT_STAGE: IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+}
+_CHILD_ACTIONS = {
+    ChildEntry.REQUEST_STAGE: OrganismAction.REQUEST_GOVERNANCE_SEAT.value,
+    ChildEntry.ADMIT_STAGE: OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value,
+}
+_COMPOUND_CHILDREN = frozenset(
+    (parent, child)
+    for parent in COMPOUND_ENTRIES
+    for child in (ChildEntry.REQUEST_STAGE, ChildEntry.ADMIT_STAGE)
+)
+
+
+def _entry_is_served(
+    expected: IntakeEntry | frozenset[IntakeEntry | ChildEntry],
+    actual: IntakeEntry | ChildEntry,
+) -> bool:
+    """Check an exact legacy entry or membership in an executor's served set."""
+    if type(expected) is IntakeEntry:
+        return type(actual) is IntakeEntry and actual is expected
+    return type(expected) is frozenset and actual in expected
+
+
+def _require_verified_compound_parent(bound: BoundRequest) -> None:
+    """Require a content-verified parent and an allowed compound-stage pair."""
+    if (
+        bound.parent is None
+        or not bound.parent.content_verified
+        or (bound.parent.entry, bound.entry) not in _COMPOUND_CHILDREN
+    ):
+        raise _request_binding_mismatch()
+
+
 @dataclass(frozen=True, slots=True)
 class ActorRef:
     pk: int
@@ -139,14 +174,28 @@ class BoundRequest:
             _sentinel=_CONSTRUCTOR_SENTINEL,
         )
 
-    def verify_content(self, command: object, entry: IntakeEntry) -> BoundRequest:
+    def verify_content(
+        self,
+        command: object,
+        entry: IntakeEntry | frozenset[IntakeEntry | ChildEntry],
+    ) -> BoundRequest:
+        """Verify command content and return an immutable content-verified copy."""
         try:
-            if type(entry) is not IntakeEntry or self.entry != entry:
+            if not _entry_is_served(entry, self.entry):
                 raise _request_binding_mismatch()
-            shape = intake_shape(entry, command)
-            action = _action_for(entry, shape.action)
+            if isinstance(self.entry, ChildEntry):
+                _require_verified_compound_parent(self)
+                shape_entry = _CHILD_PUBLIC_ENTRIES.get(self.entry)
+                if shape_entry is None:
+                    raise _request_binding_mismatch()
+            else:
+                if self.parent is not None:
+                    raise _request_binding_mismatch()
+                shape_entry = self.entry
+            shape = intake_shape(shape_entry, command)
+            action = _action_for(shape_entry, shape.action)
             fingerprint = intake_fingerprint(
-                entry=entry,
+                entry=self.entry,
                 action=action,
                 actor_identity_id=self.actor_identity_id,
                 actor_access_epoch=self.actor_access_epoch,
@@ -177,14 +226,15 @@ class BoundRequest:
         self,
         command: object,
         actor: Identity,
-        entry: IntakeEntry,
+        entry: IntakeEntry | frozenset[IntakeEntry | ChildEntry],
         alias: str,
     ) -> None:
+        """Verify actor, epoch and the committed parent row after content checks."""
         bound = self.verify_content(command, entry)
         if bound.actor_identity_id != actor.identity_id or bound.actor_pk != actor.pk:
             raise _request_binding_mismatch()
         if bound.actor_access_epoch != actor.access_epoch:
-            raise _authority_unavailable(entry)(
+            raise _authority_unavailable(bound.entry)(
                 "actor access epoch changed after intake; nothing was done"
             )
         if bound.intake_id is not None:
@@ -200,22 +250,88 @@ class BoundRequest:
                     [bound.intake_id],
                 )
                 row = cursor.fetchone()
+            row_binding = bound.parent if bound.parent is not None else bound
             expected = (
-                bound.actor_pk,
-                bound.actor_identity_id,
-                bound.actor_access_epoch,
-                entry.value,
-                bound.action,
-                bound.idempotency_key,
-                bound.request_reference,
-                bound.request_fingerprint,
-                bound.received_at,
-                bound.target_organism_id,
+                row_binding.actor_pk,
+                row_binding.actor_identity_id,
+                row_binding.actor_access_epoch,
+                row_binding.entry.value,
+                row_binding.action,
+                row_binding.idempotency_key,
+                row_binding.request_reference,
+                row_binding.request_fingerprint,
+                row_binding.received_at,
+                row_binding.target_organism_id,
             )
             if row != expected:
                 raise _request_binding_mismatch()
-        if bound.parent is not None:
+
+    def child(self, child_entry: ChildEntry, *, command: object) -> BoundRequest:
+        """Derive one governance stage as a child of this compound request.
+
+        Requires this request to be content-verified, the pair (entry,
+        child_entry) to be in the compound allow-list and a target organism.
+        Checks the stage command's key and reference against
+        _compound_stage_identifiers and its action against the stage, then
+        fingerprints the child under its ChildEntry. The returned child is not
+        itself content-verified: its stage executor verifies it.
+        """
+        if type(child_entry) is not ChildEntry or not self.content_verified:
             raise _request_binding_mismatch()
+        if (self.entry, child_entry) not in _COMPOUND_CHILDREN:
+            raise _request_binding_mismatch()
+        if self.target_organism_id is None:
+            raise _request_binding_mismatch()
+        shape_entry = _CHILD_PUBLIC_ENTRIES[child_entry]
+        shape = intake_shape(shape_entry, command)
+        from src.intevia.services.organism_governance_service import (
+            _compound_stage_identifiers,
+        )
+
+        identifiers = _compound_stage_identifiers(
+            self.target_organism_id,
+            self.idempotency_key,
+        )
+        expected_key, expected_reference = (
+            identifiers[0:2]
+            if child_entry is ChildEntry.REQUEST_STAGE
+            else identifiers[2:4]
+        )
+        if (
+            shape.idempotency_key != expected_key
+            or shape.request_reference != expected_reference
+        ):
+            raise _request_binding_mismatch()
+        action = _action_for(shape_entry, shape.action)
+        if action != _CHILD_ACTIONS[child_entry]:
+            raise _request_binding_mismatch()
+        fingerprint = intake_fingerprint(
+            entry=child_entry,
+            action=action,
+            actor_identity_id=self.actor_identity_id,
+            actor_access_epoch=self.actor_access_epoch,
+            request_reference=shape.request_reference,
+            idempotency_key=shape.idempotency_key,
+            target=shape.target,
+            command=shape.command,
+            omitted=shape.omitted,
+        )
+        return BoundRequest(
+            entry=child_entry,
+            action=action,
+            idempotency_key=shape.idempotency_key,
+            request_reference=shape.request_reference,
+            request_fingerprint=fingerprint,
+            actor_pk=self.actor_pk,
+            actor_identity_id=self.actor_identity_id,
+            actor_access_epoch=self.actor_access_epoch,
+            received_at=self.received_at,
+            intake_id=self.intake_id,
+            target_organism_id=self.target_organism_id,
+            first=False,
+            parent=self,
+            _sentinel=_CONSTRUCTOR_SENTINEL,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,7 +497,7 @@ def _canonical_value(value: object) -> object:
 
 def intake_fingerprint(
     *,
-    entry: IntakeEntry,
+    entry: IntakeEntry | ChildEntry,
     action: str,
     actor_identity_id: UUID,
     actor_access_epoch: int,
@@ -1021,10 +1137,167 @@ def _office_consent_shape(command: object) -> IntakeShape:
     )
 
 
+def _governance_request_shape(command: object) -> IntakeShape:
+    """Project a governance request from its submitted identifiers and values."""
+    from src.intevia.services.organism_governance_service import (
+        RequestGovernanceSeatCommand,
+        _SEAT_ID,
+    )
+
+    if type(command) is not RequestGovernanceSeatCommand:
+        raise TypeError("governance request entry requires RequestGovernanceSeatCommand")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
+    rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
+    if type(command.seat_id) is not str or _SEAT_ID.fullmatch(command.seat_id) is None:
+        raise ValueError("seat_id is invalid")
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={
+            "living_organism_uuid": organism_uuid,
+            "circle_uuid": circle_uuid,
+            "seat_rule_uuid": rule_uuid,
+            "seat_id": command.seat_id,
+        },
+        command={"effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _governance_decision_shape(
+    entry: IntakeEntry,
+    command: object,
+) -> IntakeShape:
+    """Project either the standalone decision or its compound parent form."""
+    from src.intevia.services.organism_governance_service import (
+        DecideGovernanceSeatCommand,
+        _SEAT_ID,
+    )
+
+    if type(command) is not DecideGovernanceSeatCommand:
+        raise TypeError("governance decision entry requires DecideGovernanceSeatCommand")
+    compound = entry is IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND
+    if compound != (command.request_uuid is None):
+        raise ValueError("request_uuid does not match the governance decision entry")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    if type(command.outcome) is not str or command.outcome not in {"ACCEPT", "DECLINE"}:
+        raise ValueError("outcome must be ACCEPT or DECLINE")
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    if compound:
+        if (
+            command.circle_uuid is None
+            or command.seat_rule_uuid is None
+            or type(command.seat_id) is not str
+            or _SEAT_ID.fullmatch(command.seat_id) is None
+        ):
+            raise ValueError("self-appointment requires a circle and seat")
+        circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
+        rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
+        target = {
+            "living_organism_uuid": organism_uuid,
+            "circle_uuid": circle_uuid,
+            "seat_rule_uuid": rule_uuid,
+            "seat_id": command.seat_id,
+        }
+        target_organism_id = organism_uuid
+    else:
+        if (
+            command.circle_uuid is not None
+            or command.seat_rule_uuid is not None
+            or command.seat_id is not None
+        ):
+            raise ValueError("an existing request supplies its own circle and seat")
+        request_uuid = _canonical_uuid(command.request_uuid, "request_uuid")
+        target = {
+            "living_organism_uuid": organism_uuid,
+            "request_uuid": request_uuid,
+        }
+        target_organism_id = None
+        if command.route not in {None, "CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL"}:
+            raise ValueError("route is invalid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target=target,
+        command={
+            "outcome": command.outcome,
+            "route": command.route,
+            "effective_at": effective_at,
+        },
+        omitted=(),
+        target_organism_id=target_organism_id,
+    )
+
+
+def _founding_seating_shape(command: object) -> IntakeShape:
+    """Project a compound founding-seating command without performing reads."""
+    from src.intevia.services.organism_governance_service import (
+        SeatFoundingGovernanceCircleCommand,
+        _SEAT_ID,
+    )
+
+    if type(command) is not SeatFoundingGovernanceCircleCommand:
+        raise TypeError(
+            "founding seating entry requires SeatFoundingGovernanceCircleCommand"
+        )
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
+    rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
+    if type(command.seat_id) is not str or _SEAT_ID.fullmatch(command.seat_id) is None:
+        raise ValueError("seat_id is invalid")
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={
+            "living_organism_uuid": organism_uuid,
+            "circle_uuid": circle_uuid,
+            "seat_rule_uuid": rule_uuid,
+            "seat_id": command.seat_id,
+        },
+        command={"effective_at": effective_at},
+        omitted=(),
+        target_organism_id=organism_uuid,
+    )
+
+
 def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
-    """Return the pure command projection for an active intake entry."""
+    """Return the pure command projection used by verification and test binding.
+
+    These governance shapes support direct stage executors only; the public
+    governance route remains unchanged until PKT-CLK-3 redirects it.
+    """
     if type(entry) is not IntakeEntry:
         raise ValueError("entry must be an IntakeEntry")
+    if entry is IntakeEntry.REQUEST_GOVERNANCE_SEAT:
+        return _governance_request_shape(command)
+    if entry is IntakeEntry.DECIDE_GOVERNANCE_SEAT:
+        return _governance_decision_shape(entry, command)
+    if entry is IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND:
+        return _governance_decision_shape(entry, command)
+    if entry is IntakeEntry.SEAT_GOVERNANCE_CIRCLE:
+        return _founding_seating_shape(command)
     if entry in APPLICATION_SHAPES:
         return application_shape(entry, command)
     if entry in {IntakeEntry.OPEN_MEMBERSHIP, IntakeEntry.TRANSITION_MEMBERSHIP}:
@@ -1036,7 +1309,21 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     raise ValueError("entry has no active intake shape")
 
 
-def _authority_unavailable(entry: IntakeEntry):
+def _authority_unavailable(entry: IntakeEntry | ChildEntry):
+    """Return the authority-epoch refusal class for the served entry family."""
+    if entry in {
+        IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+        IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+        IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+        IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
+        ChildEntry.REQUEST_STAGE,
+        ChildEntry.ADMIT_STAGE,
+    }:
+        from src.intevia.services.organism_governance_service import (
+            SBGGovernanceUnavailable,
+        )
+
+        return SBGGovernanceUnavailable
     if entry in {IntakeEntry.OPEN_MEMBERSHIP, IntakeEntry.TRANSITION_MEMBERSHIP}:
         from src.intevia.services.organism_membership_service import (
             S015MembershipAuthorityUnavailable,
