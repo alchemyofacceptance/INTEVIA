@@ -452,6 +452,10 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("organismentitlementevent", "enterer_identity"),
     }
 
+    H100_ADDITIONS = {
+        ("commandintake", "actor"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -485,12 +489,14 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             self.P1_ADDITIONS,
             self.SBG_ADDITIONS,
             self.SE_ADDITIONS,
+            self.H100_ADDITIONS,
         )
         self.assertEqual(len(self.S015_POST_0019_ADDITIONS), 37)
         self.assertEqual(len(self.SB1_ADDITIONS), 2)
         self.assertEqual(len(self.P1_ADDITIONS), 1)
         self.assertEqual(len(self.SBG_ADDITIONS), 12)
         self.assertEqual(len(self.SE_ADDITIONS), 5)
+        self.assertEqual(len(self.H100_ADDITIONS), 1)
         self.assertEqual(
             len(
                 self.BASE_IDENTITY_FKS
@@ -503,8 +509,9 @@ class IdentityFKCatalogueTests(TransactionTestCase):
                 | self.P1_ADDITIONS
                 | self.SBG_ADDITIONS
                 | self.SE_ADDITIONS
+                | self.H100_ADDITIONS
             ),
-            113,
+            114,
         )
         for index, left in enumerate(declared_sets):
             for right in declared_sets[index + 1:]:
@@ -542,9 +549,10 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             | self.P1_ADDITIONS
             | self.SBG_ADDITIONS
             | self.SE_ADDITIONS
+            | self.H100_ADDITIONS
         )
         self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 113)
+        self.assertEqual(len(live_fks), 114)
 
     def test_se_catalogue_slice_is_five_disjoint_durable_attributions(self):
         self.assertEqual(len(self.SE_ADDITIONS), 5)
