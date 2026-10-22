@@ -451,6 +451,8 @@ class GovernanceActResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str | int]:
+        """Return the receipt form: UUIDs as strings, the other fields as they
+        are."""
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "record_uuid": str(self.record_uuid),
@@ -463,6 +465,8 @@ class GovernanceActResult:
 
     @classmethod
     def replay_field_audiences(cls, result: GovernanceActResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class; raise
+        TypeError otherwise."""
         if type(result) is not cls:
             raise TypeError("governance replay result has the wrong type")
         return {}
@@ -492,6 +496,7 @@ class GovernanceSeatingResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str]:
+        """Return these fields as a dictionary, UUIDs as strings."""
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "request_uuid": str(self.request_uuid),
@@ -504,6 +509,8 @@ class GovernanceSeatingResult:
 
     @classmethod
     def replay_field_audiences(cls, result: GovernanceSeatingResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class; raise
+        TypeError otherwise."""
         if type(result) is not cls:
             raise TypeError("governance seating replay result has the wrong type")
         return {}
@@ -522,6 +529,8 @@ class GovernanceSeatRequestResult:
     lineage_reference: str
 
     def receipt_payload(self) -> dict[str, str]:
+        """Return the LO and request UUIDs as strings and the lineage
+        reference."""
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "request_uuid": str(self.request_uuid),
@@ -530,6 +539,8 @@ class GovernanceSeatRequestResult:
 
     @classmethod
     def replay_field_audiences(cls, result: GovernanceSeatRequestResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class; raise
+        TypeError otherwise."""
         if type(result) is not cls:
             raise TypeError("governance seat request replay result has the wrong type")
         return {}
@@ -554,6 +565,8 @@ class GovernanceSeatDecisionResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str | None]:
+        """Return the receipt form: UUIDs as strings, a missing participation
+        as None, and the references as they are."""
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "request_uuid": str(self.request_uuid),
@@ -568,6 +581,8 @@ class GovernanceSeatDecisionResult:
 
     @classmethod
     def replay_field_audiences(cls, result: GovernanceSeatDecisionResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class; raise
+        TypeError otherwise."""
         if type(result) is not cls:
             raise TypeError("governance seat decision replay result has the wrong type")
         return {}
@@ -587,6 +602,8 @@ class SBGGovernanceRefused(Exception):
         *,
         request_uuid: UUID | None = None,
     ) -> None:
+        """Set the message, refusal_code and request_uuid (None unless
+        given)."""
         super().__init__(message)
         self.refusal_code = refusal_code
         self.request_uuid = request_uuid
@@ -763,6 +780,14 @@ class OrganismGovernanceService:
         authority: S015Authority | None = None,
         database_alias: str = "default",
     ) -> None:
+        """Check and keep the clock, authority and database alias.
+
+        clock must be callable, else TypeError; database_alias a non-empty
+        str, else ValueError. With no authority, build an S015Authority over
+        ProductionApplicationAuthorityProvider on database_alias. A supplied
+        or built authority must be an S015Authority on the same alias, else
+        TypeError.
+        """
         if not callable(clock):
             raise TypeError("clock must be callable")
         if type(database_alias) is not str or not database_alias:

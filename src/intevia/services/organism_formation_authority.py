@@ -1,3 +1,10 @@
+"""The founding request's pure builders.
+
+Builds the S015 pre-founding authority request for
+FOUND_LIVING_ORGANISM and the platform-terms acceptance UUID of a
+proposed LO. Used by organism_formation_service. Reads and writes
+nothing.
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,6 +18,12 @@ from src.intevia.services.organism_authority import (
 
 
 def founding_acceptance_uuid(proposed_organism_uuid: UUID) -> UUID:
+    """Return the platform-terms acceptance UUID for a proposed LO.
+
+    uuid5 in the URL namespace of
+    "urn:intevia:platform-terms-acceptance:<proposed_organism_uuid>", so
+    one proposed LO always gives the same acceptance UUID.
+    """
     return uuid5(
         NAMESPACE_URL,
         f"urn:intevia:platform-terms-acceptance:{proposed_organism_uuid}",
@@ -30,6 +43,18 @@ def founding_authority_request(
     effective_at: datetime,
     received_at: datetime,
 ) -> S015PreFoundingAuthorityRequest:
+    """Return the S015PreFoundingAuthorityRequest for founding a proposed
+    LO.
+
+    The target names the action, the founder's identity UUID, the proposed
+    LO UUID, the founding rule reference
+    "platform-terms-version:<uuid>#founding" (None when no terms version
+    is given) and an empty instrument list; target_fingerprint is
+    authority_target_fingerprint(target). command_subtype is the action's
+    value, evaluated_at is received_at and living_organism_id is the
+    proposed UUID. It only builds the request: it reads nothing, writes
+    nothing and does not qualify it.
+    """
     rule_reference = (
         None
         if accepted_terms_version_uuid is None

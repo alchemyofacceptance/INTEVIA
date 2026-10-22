@@ -152,6 +152,7 @@ class S015MembershipRefused(S015MembershipCommandError):
     member's participations began (SBG_DEPARTURE_PRECEDES_PARTICIPATION).
     """
     def __init__(self, message: str, *, refusal_code: S015AuthorityRefusalCode) -> None:
+        """Set the message and refusal_code."""
         super().__init__(message)
         self.refusal_code = refusal_code
 
@@ -169,6 +170,8 @@ class S015OperationNotYetImplemented(S015MembershipCommandError):
     <owning_slice>)".
     """
     def __init__(self, operation: str, limit_id: str, owning_slice: str):
+        """Compose the message from operation, limit_id and owning_slice, and
+        keep each as an attribute."""
         super().__init__(
             f"{operation} is supported by the design but not yet built ({limit_id}, {owning_slice})"
         )

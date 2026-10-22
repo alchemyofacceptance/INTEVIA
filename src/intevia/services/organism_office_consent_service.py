@@ -54,19 +54,44 @@ _ACTIONS = frozenset({"CONSENT", "DECLINE", "WITHDRAW"})
 
 
 class S015OfficeConsentCommandError(Exception):
+    """Base class for this module's office-consent command errors."""
     pass
 
 
 class S015OfficeConsentAuthorityUnavailable(S015OfficeConsentCommandError):
+    """An authority prerequisite for office consent is unavailable.
+
+    Raised by _lock_actor when the Identity is absent, not ACTIVE,
+    or has an inactive credential; by bound.verify when the actor's
+    access epoch changed after intake; and by
+    _lock_actor_membership_context when no ACTIVE membership with a
+    head transition is available in the nomination's LO.
+
+    Initial intake actor-resolution failures instead raise
+    ValueError, before these execution checks.
+    """
     pass
 
 
 class S015OfficeConsentNotFound(S015OfficeConsentCommandError):
+    """The named office nomination or its proposal event does not exist.
+
+    Raised by _execute when no assignment has the command's
+    assignment_uuid, or when that assignment has no sequence-1 PROPOSE
+    event with the command's proposal_event_uuid.
+    """
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class RecordOfficeConsentCommand:
+    """Inputs to record_office_consent.
+
+    The actor's credential; the request reference and idempotency key; the
+    occurred and effective times; the nomination's assignment UUID and its
+    proposal event UUID; and the action, CONSENT, DECLINE or WITHDRAW.
+    INTEVIA assigns received_at at admission; a supplied value is refused.
+    """
     credential: User
     request_reference: str
     idempotency_key: str
@@ -80,6 +105,18 @@ class RecordOfficeConsentCommand:
 
 @dataclass(frozen=True, slots=True)
 class OfficeConsentCommandResult:
+    """Result of a recorded office consent.
+
+    Carries the assignment, proposal event and consent UUIDs, the
+    action, ordinal, recorded_at read back from the database,
+    lineage reference, and authority and authority-decision
+    references.
+
+    The result declares no audience-specific field restrictions. The
+    shared service passes both new and replayed results through
+    serve_replay; that helper owns the serving and withholding
+    rules.
+    """
     assignment_uuid: UUID
     proposal_event_uuid: UUID
     consent_uuid: UUID
@@ -91,6 +128,9 @@ class OfficeConsentCommandResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, object]:
+        """Return the receipt form: UUIDs as strings, recorded_at as a
+        canonical timestamp, and the other fields as they are. The shared
+        service stores it before serve_replay applies any withholding."""
         return {
             "action": self.action,
             "assignment_uuid": str(self.assignment_uuid),
@@ -105,10 +145,23 @@ class OfficeConsentCommandResult:
 
     @classmethod
     def replay_field_audiences(cls, result: "OfficeConsentCommandResult") -> dict[str, str]:
+        """Return an empty mapping: no field is restricted to an audience.
+        Unlike the governance results, this does not check the result's
+        type."""
         return {}
 
 
 class OfficeAppointmentConsentService(_OrganismCommandService):
+    """The command service for a nominee's consent to a Coordinator
+    nomination (RECORD_OFFICE_CONSENT).
+
+    Declares, for the shared _OrganismCommandService, the action
+    RECORD_OFFICE_CONSENT, S015OfficeConsentNotFound as its not-found
+    exception and S015OfficeConsentAuthorityUnavailable as its unavailable
+    exception, and rebuilds replayed results from receipt payloads. It
+    writes OfficeAppointmentConsent rows and receipts; it does not change
+    the nominated assignment's state.
+    """
     _action = _ACTION
     _not_found = S015OfficeConsentNotFound
     _authority_unavailable = S015OfficeConsentAuthorityUnavailable
@@ -116,6 +169,28 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
     def record_office_consent(
         self, command: RecordOfficeConsentCommand,
     ) -> OfficeConsentCommandResult:
+        """Admit an office-consent request, then execute it.
+
+        First require PostgreSQL, the default writer alias, no open
+        atomic block, autocommit and no pending rollback, in that order.
+        A non-PostgreSQL writer raises S015CommandMutexUnavailable; a
+        non-default alias raises IntakeAdmissionTechnicalFailure;
+        unsupported transaction state raises
+        S015CommandAtomicityRequired. An inactive RECORD_OFFICE_CONSENT
+        entry raises IntakeAdmissionTechnicalFailure.
+
+        intake_shape requires this command type, canonical keys, aware
+        timestamps, UUID fields and a CONSENT, DECLINE or WITHDRAW
+        action. It rejects a supplied received_at. Shape errors raise
+        TypeError or ValueError. Resolve the actor by credential, with
+        ValueError if it cannot identify an Identity, then call
+        admit_request.
+
+        Admission commits or recovers a binding with its original
+        received_at before _execute_record_office_consent runs in its
+        own authority_atomic scope. Admission and execution exceptions
+        propagate; a later command failure does not undo that binding.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -145,6 +220,46 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
     def _execute(
         self, command: RecordOfficeConsentCommand, *, bound: BoundRequest,
     ) -> OfficeConsentCommandResult:
+        """Record CONSENT, DECLINE or WITHDRAW on an office nomination.
+
+        Called inside authority_atomic for an admitted request. In
+        order:
+        - validate canonical keys, UUIDs and aware times, taking
+          received_at from the bound request; an invalid action raises
+          ValueError;
+        - lock the actor's Identity and credential, verify the binding
+          and actor epoch, then take the actor/action/idempotency-key
+          mutex;
+        - read the assignment and its named sequence-1 PROPOSE event,
+          without row locks; missing records raise
+          S015OfficeConsentNotFound before authority qualification;
+        - form the target and command fingerprints, then serve a
+          matching completed receipt if present. A receipt-reference or
+          fingerprint mismatch raises S015CommandReplayMismatch;
+        - for fresh work, lock the LO and the actor's ACTIVE membership
+          context, including its active role heads;
+        - qualify through S015Authority with effective_at from the
+          command and evaluated_at equal to the bound received_at. The
+          provider checks nominee identity and the permitted consent
+          transition;
+        - lock the nomination, re-read the proposal, then insert the
+          next consent ordinal for the assignment, with the actor as
+          PARTY in STANDING capacity and as enterer.
+
+        Read the consent back and derive its s015l1 lineage reference
+        from _LINEAGE_DOMAIN and the canonical fields, including
+        recorded_at. _finalise stores the receipt, rebuilds the result
+        and serves it. The assignment's state is not changed. The
+        injected clock supplies replay-viewer time, not this command's
+        received_at.
+
+        Completed replay returns before the LO/membership locks and
+        fresh authority qualification; decoding and serving errors
+        propagate. A caught S015AuthorityDenied is raised after
+        successful atomic exit. Other failures follow the shared
+        transaction and contention rules. The earlier committed intake
+        binding is outside this block.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -321,6 +436,19 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         )
 
     def _replay_result(self, payload: object) -> OfficeConsentCommandResult:
+        """Rebuild an office-consent result from a receipt payload.
+
+        Require a dict of exactly that type, else raise
+        S015CommandReplayMismatch. Construct the three UUIDs and parse
+        recorded_at with datetime.fromisoformat. Missing fields and
+        TypeError or ValueError from construction become
+        S015CommandReplayMismatch; other exceptions propagate.
+
+        Take action, ordinal and references as stored, without
+        validating their types or values. This decoder does not require
+        canonical timestamp spelling or a timezone, or verify the
+        recorded consent.
+        """
         if type(payload) is not dict:
             raise S015CommandReplayMismatch("consent receipt payload is malformed")
         try:
