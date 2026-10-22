@@ -13,6 +13,7 @@ from django.test.utils import CaptureQueriesContext
 
 from core.models import (
     AuthorityDecision,
+    CommandIntake,
     GovernedRule,
     LivingOrganismEvent,
     LOApplicationSettingsVersion,
@@ -183,7 +184,18 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
     reset_sequences = True
 
     def test_w_se_k3_2_f_valid_rows_survive_forward_and_reverse_refuses_data(self):
-        route = prepare_route(tag=f"k3-migration-valid-{uuid4().hex}")
+        # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
+        # event. A route with no gateway effect (FOUND and one phase advance, neither an admitted
+        # entry) leaves no core_commandintake row, so the migration to 0047 passes 0049's reverse,
+        # which refuses while intake rows exist (the table refuses DELETE and TRUNCATE).
+        route = prepare_route(
+            tag=f"k3-migration-valid-{uuid4().hex}",
+            governance_enabled=None,
+            include_settings=False,
+            include_question=False,
+            to_birthing_phase=False,
+        )
+        self.assertFalse(CommandIntake.objects.exists())
         before = _records_state()
         original_trigger_count = _trigger_count()
         observed = []
@@ -248,7 +260,18 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
         _assert_guard_present(self)
 
     def test_w_se_k3_2_g_existing_obstruction_refuses_without_partial_install(self):
-        route = prepare_route(tag=f"k3-migration-obstructed-{uuid4().hex}")
+        # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
+        # event. A route with no gateway effect (FOUND and one phase advance, neither an admitted
+        # entry) leaves no core_commandintake row, so the migration to 0047 passes 0049's reverse,
+        # which refuses while intake rows exist (the table refuses DELETE and TRUNCATE).
+        route = prepare_route(
+            tag=f"k3-migration-obstructed-{uuid4().hex}",
+            governance_enabled=None,
+            include_settings=False,
+            include_question=False,
+            to_birthing_phase=False,
+        )
+        self.assertFalse(CommandIntake.objects.exists())
         before = _records_state()
         original_trigger_count = _trigger_count()
 

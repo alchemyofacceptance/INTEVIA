@@ -471,6 +471,8 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.PROPOSE_ASSIGNMENT,
         IntakeEntry.TRANSITION_ASSIGNMENT,
         IntakeEntry.RECORD_OFFICE_CONSENT,
+        IntakeEntry.SAVE_GATEWAY_DRAFT,
+        IntakeEntry.EFFECT_GATEWAY_VERSION,
     }
 )
 
@@ -958,6 +960,113 @@ def application_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     return APPLICATION_SHAPES[entry](command)
 
 
+def _gateway_draft_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import (
+        GatewayDraftCommand,
+        S015ApplicationRefused,
+        _VERSION_KINDS,
+    )
+
+    if type(command) is not GatewayDraftCommand:
+        raise TypeError("gateway draft entry requires GatewayDraftCommand")
+    if command.action not in _VERSION_KINDS:
+        raise ValueError("unknown gateway relation")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
+    allowed_fields = {
+        _VERSION_KINDS[OrganismAction.EFFECT_APPLICATION_SETTINGS][0]: {
+            "applications_open",
+            "automatic_acceptance",
+            "processing_responsibility",
+        },
+        _VERSION_KINDS[OrganismAction.EFFECT_APPLICATION_QUESTION][0]: {
+            "question_text",
+            "answer_format",
+            "options",
+        },
+        _VERSION_KINDS[OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION][0]: {
+            "cq_active",
+            "inherit_portal_cq_settings",
+            "require_cq_to_change_lo_settings",
+            "require_cq_to_change_application_question",
+            "governance_enabled",
+            "coordinator_nomination_policy",
+            "role_suspension_enabled",
+            "suspension_tolls_term",
+        },
+    }[_VERSION_KINDS[command.action][0]]
+    if not isinstance(command.fields, dict) or not command.fields.keys() <= allowed_fields:
+        raise S015ApplicationRefused("invalid gateway draft fields")
+    if command.version_uuid is not None and not isinstance(command.version_uuid, UUID):
+        raise TypeError("version_uuid must be a UUID")
+    version_uuid = (
+        None
+        if command.version_uuid is None
+        else _canonical_uuid(command.version_uuid, "version_uuid")
+    )
+    try:
+        canonical_json_bytes(
+            _canonical_value(
+                {
+                    "occurred_at": occurred_at,
+                    "effective_at": effective_at,
+                    "fields": command.fields,
+                }
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise S015ApplicationRefused("invalid gateway draft fields") from exc
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"living_organism_id": organism_uuid, "version_uuid": version_uuid},
+        command={
+            "occurred_at": occurred_at,
+            "effective_at": effective_at,
+            "fields": command.fields,
+        },
+        omitted=(),
+        target_organism_id=None,
+        action=_action_for(IntakeEntry.SAVE_GATEWAY_DRAFT, command.action.value),
+    )
+
+
+def _effect_gateway_version_shape(command: object) -> IntakeShape:
+    from src.intevia.services.organism_application_service import (
+        EffectGatewayVersionCommand,
+        _VERSION_KINDS,
+    )
+
+    if type(command) is not EffectGatewayVersionCommand:
+        raise TypeError("gateway effect entry requires EffectGatewayVersionCommand")
+    if command.action not in _VERSION_KINDS:
+        raise ValueError("unknown gateway relation")
+    request_reference, idempotency_key, occurred_at, effective_at = _application_keys_and_times(
+        command.request_reference,
+        command.idempotency_key,
+        command.occurred_at,
+        command.effective_at,
+        command.received_at,
+    )
+    organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
+    version_uuid = _canonical_uuid(command.version_uuid, "version_uuid")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"living_organism_id": organism_uuid, "version_uuid": version_uuid},
+        command={"occurred_at": occurred_at, "effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+        action=_action_for(IntakeEntry.EFFECT_GATEWAY_VERSION, command.action.value),
+    )
+
+
 def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     from src.intevia.services.organism_membership_service import (
         OpenMembershipCommand,
@@ -1283,13 +1392,13 @@ def _founding_seating_shape(command: object) -> IntakeShape:
 
 
 def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
-    """Return the pure command projection used by verification and test binding.
-
-    These governance shapes support direct stage executors only; the public
-    governance route remains unchanged until PKT-CLK-3 redirects it.
-    """
+    """Return the pure command projection used by verification and test binding."""
     if type(entry) is not IntakeEntry:
         raise ValueError("entry must be an IntakeEntry")
+    if entry is IntakeEntry.SAVE_GATEWAY_DRAFT:
+        return _gateway_draft_shape(command)
+    if entry is IntakeEntry.EFFECT_GATEWAY_VERSION:
+        return _effect_gateway_version_shape(command)
     if entry is IntakeEntry.REQUEST_GOVERNANCE_SEAT:
         return _governance_request_shape(command)
     if entry is IntakeEntry.DECIDE_GOVERNANCE_SEAT:

@@ -158,7 +158,9 @@ class IntakeAdmissionStateTests(TransactionTestCase):
         return methods[entry](command)
 
     def test_application_entries_refuse_atomic_and_manual_modes_without_sql(self):
-        self.assertEqual(len(ACTIVE_ENTRIES), 10)
+        # H100 chunk 4 (C4 §F3 row 6, CH-17): scoped to this module's five application entries; the
+        # global set (the twelve) is asserted once in tests/test_h100_intake_gateway.py.
+        self.assertTrue(frozenset(self.commands) <= ACTIVE_ENTRIES)
         for entry, command in self.commands.items():
             with self.subTest(entry=entry):
                 with transaction.atomic():

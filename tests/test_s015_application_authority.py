@@ -1005,7 +1005,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:closed-settings-draft:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             fields={
                 "applications_open": False,
                 "automatic_acceptance": False,
@@ -1022,7 +1021,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r1:closed-settings-effect:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         with self.assertRaises(S015AuthorityDenied) as denied:
             self._submit(service, "closed-gateway")
@@ -1064,7 +1062,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:h6-draft:key:{index}:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
                 fields=fields,
             ))
             self.assertEqual(OrganismCommandReceipt.objects.count(), receipts_before_draft)
@@ -1080,7 +1077,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r1:h6-effect:key:{index}:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             )
             event = service.effect_gateway_version(effect_command)
             self.assertEqual(event.action, action.value)
@@ -1109,7 +1105,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                     idempotency_key=f"aa-r1:h6-refused-effect:key:{index}:{self.tag}",
                     occurred_at=self.now,
                     effective_at=self.now,
-                    received_at=self.now,
                 ))
             self.assertEqual(denied.exception.refusal_code, S015AuthorityRefusalCode.DENIED)
 
@@ -1132,7 +1127,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r2:policy-draft:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
             fields=fields,
         ))
         with self.assertRaises(S015AuthorityDenied) as denied:
@@ -1146,7 +1140,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r2:policy-effect-denied:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
         self.assertEqual(
             denied.exception.refusal_code,
@@ -1175,7 +1168,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
             idempotency_key=f"aa-r2:policy-effect-entitled:key:{self.tag}",
             occurred_at=self.now,
             effective_at=self.now,
-            received_at=self.now,
         ))
         self.assertEqual(effected.action, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION.value)
 
@@ -1236,7 +1228,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r2:{suffix}:draft:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
                 fields={
                     "cq_active": False,
                     "inherit_portal_cq_settings": False,
@@ -1255,7 +1246,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r2:{suffix}:effect:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
             return draft
 
@@ -1345,7 +1335,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r2:{suffix}:draft:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
                 fields={
                     "cq_active": False,
                     "inherit_portal_cq_settings": False,
@@ -1364,7 +1353,6 @@ class ProductionApplicationAuthorityTests(TransactionTestCase):
                 idempotency_key=f"aa-r2:{suffix}:effect:key:{self.tag}",
                 occurred_at=self.now,
                 effective_at=self.now,
-                received_at=self.now,
             ))
 
         def proposal_result(nominee_membership_row, suffix):

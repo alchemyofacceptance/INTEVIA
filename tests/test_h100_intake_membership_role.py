@@ -161,8 +161,10 @@ class MembershipRoleIntakeBoundaryTests(TransactionTestCase):
         }
 
     def test_activation_adds_membership_and_role_groups_and_consent(self):
-        self.assertEqual(
-            ACTIVE_ENTRIES,
+        # H100 chunk 4 (C4 §F3 row 6, CH-17): scoped to the entries this module drives and the five
+        # application entries; the global set (the twelve) is asserted once in
+        # tests/test_h100_intake_gateway.py.
+        self.assertTrue(
             frozenset(
                 {
                     IntakeEntry.SUBMIT_APPLICATION,
@@ -172,7 +174,8 @@ class MembershipRoleIntakeBoundaryTests(TransactionTestCase):
                     IntakeEntry.DECIDE_APPLICATION,
                     *self.commands,
                 }
-            ),
+            )
+            <= ACTIVE_ENTRIES
         )
         self.assertEqual(
             ACTIVATION_GROUPS["G4"],

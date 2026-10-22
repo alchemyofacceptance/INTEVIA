@@ -11,8 +11,11 @@ effect_gateway_version lock the actor before looking up a receipt by
 actor, action and idempotency key. A receipt must also match the request
 reference and payload fingerprint before its result is served as a
 replay. These paths qualify fresh requests through S015Authority before
-their governed writes. save_gateway_draft also qualifies authority but
-does not look up or write a command receipt; it returns the saved version.
+their governed writes. save_gateway_draft also qualifies authority and
+writes no command receipt. A first creation or edit returns the saved
+version; a retry of a completed draft request returns a
+GatewayDraftResult, located or unresolved, found through its authority
+decision.
 
 Also defines command and result carriers, receipt decoders, gateway and
 Coordinator helpers, exceptions, and the LO name, CARE executor and
@@ -323,10 +326,7 @@ class GatewayDraftCommand:
     version_uuid None creates a version; otherwise it selects an existing
     version of the LO, which must still be a draft.
 
-    The carrier does not validate. The command validates the request keys,
-    living_organism_id and times as for SubmitApplicationCommand, but does
-    not explicitly type-check draft version_uuid. A new version records
-    the three times; an edit leaves those times unchanged.
+    INTEVIA assigns received_at; a supplied value is refused.
 
     Edits apply the supplied fields. When editing a governance configuration
     whose governance_enabled is None and that key is omitted, the service
@@ -335,7 +335,10 @@ class GatewayDraftCommand:
     fallback for an omitted choice. New question drafts fill omitted
     question_text or answer_format through default_application_question.
 
-    Returns the saved version; no command receipt is recorded for a draft.
+    A first creation or edit returns the saved version. A retry of a
+    completed request returns a GatewayDraftResult, located (its
+    version_uuid served through serve_replay) or unresolved. No command
+    receipt is recorded for a draft.
     """
     credential: User
     living_organism_id: UUID
@@ -344,7 +347,7 @@ class GatewayDraftCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
     fields: dict[str, object]
     version_uuid: UUID | None = None
 
@@ -358,7 +361,8 @@ class EffectGatewayVersionCommand:
     GatewayDraftCommand; version_uuid names the draft version of that LO.
     Keys, identifiers and times are validated as for
     SubmitApplicationCommand and enter the payload fingerprint; effective_at
-    is the effect's effective time.
+    is the effect's effective time. INTEVIA assigns received_at; a supplied
+    value is refused.
     """
     credential: User
     living_organism_id: UUID
@@ -368,7 +372,7 @@ class EffectGatewayVersionCommand:
     idempotency_key: str
     occurred_at: datetime
     effective_at: datetime
-    received_at: datetime
+    received_at: datetime | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,6 +534,22 @@ class GatewayEffectCommandResult:
         event_sequence are visible only to the PROCESSING audience.
         """
         return {"event_uuid": "PROCESSING", "event_sequence": "PROCESSING"}
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayDraftResult:
+    """Result of locating a completed draft request or reporting it unresolved."""
+
+    living_organism_uuid: UUID
+    version_uuid: UUID | WithheldField | None
+    action: OrganismAction
+    effective_at: datetime
+    received_at: datetime
+    located: bool
+
+    @classmethod
+    def replay_field_audiences(cls, result: "GatewayDraftResult") -> dict[str, str]:
+        return {"version_uuid": "PROCESSING"}
 
 
 def _gateway_result_from_receipt(payload: object) -> GatewayEffectCommandResult:
@@ -1130,7 +1150,15 @@ class OrganismApplicationService:
         ), decision)
         return decision, decision_fingerprint, decision_reference, rule, automatic_key, automatic_request
 
-    def _gateway_start(self, command, *, create_head: bool):
+    def _gateway_start(
+        self,
+        command,
+        *,
+        create_head: bool,
+        bound: BoundRequest,
+        expected_entry: IntakeEntry,
+        received_at: datetime,
+    ):
         action = command.action
         if action not in _VERSION_KINDS:
             raise ValueError("unknown gateway relation")
@@ -1138,10 +1166,11 @@ class OrganismApplicationService:
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
-        received_at = _validate_timestamp(command.received_at, "received_at")
+        received_at = _validate_timestamp(received_at, "received_at")
         organism_uuid = _canonical_uuid(command.living_organism_id, "living_organism_id")
         actor = _lock_actor(database_alias=self._alias, credential=command.credential,
                             unavailable=S015ApplicationAuthorityUnavailable)
+        bound.verify(command, actor, expected_entry, self._alias)
         acquire_organism_command_mutex(database_alias=self._alias, actor_identity_id=actor.identity_id,
                                        action=action, idempotency_key=idempotency_key)
         organism = LivingOrganism.objects.using(self._alias).get(organism_id=organism_uuid)
@@ -1186,6 +1215,72 @@ class OrganismApplicationService:
         gateway = LOApplicationGateway.objects.using(self._alias).select_for_update().filter(
             living_organism=organism,
         ).first()
+        if create_head:
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, target->>'version_uuid'
+                      FROM core_authoritydecision
+                     WHERE actor_id = %s
+                       AND action = %s
+                       AND idempotency_key = %s
+                       AND request_reference = %s
+                       AND outcome = 'QUALIFIED'
+                       AND evaluated_at = %s
+                       AND target->>'organism_uuid' = %s
+                       AND (target->>'version_uuid') IS NOT DISTINCT FROM %s
+                       AND decision_payload->>'version_kind' = 'DRAFT'
+                    """,
+                    [
+                        actor.pk,
+                        action.value,
+                        idempotency_key,
+                        request_reference,
+                        received_at,
+                        str(organism_uuid),
+                        None if command.version_uuid is None else str(command.version_uuid),
+                    ],
+                )
+                completed_decision = cursor.fetchone()
+            if completed_decision is not None:
+                if command.version_uuid is None:
+                    model, _ = _VERSION_KINDS[action]
+                    candidates = list(
+                        model.objects.using(self._alias)
+                        .filter(
+                            living_organism_id=organism.pk,
+                            actor_id=actor.pk,
+                            received_at=received_at,
+                            occurred_at=occurred_at,
+                            effective_at=effective_at,
+                        )
+                        .values_list("version_uuid", flat=True)
+                    )
+                    if len(candidates) != 1:
+                        return GatewayDraftResult(
+                            living_organism_uuid=organism_uuid,
+                            version_uuid=None,
+                            action=action,
+                            effective_at=effective_at,
+                            received_at=received_at,
+                            located=False,
+                        )
+                    version_uuid = candidates[0]
+                else:
+                    version_uuid = UUID(completed_decision[1])
+                result = GatewayDraftResult(
+                    living_organism_uuid=organism_uuid,
+                    version_uuid=version_uuid,
+                    action=action,
+                    effective_at=effective_at,
+                    received_at=received_at,
+                    located=True,
+                )
+                return serve_replay(
+                    result,
+                    viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
+                    result_type=ReplayResultType(GatewayDraftResult, self._alias),
+                )
         if create_head:
             fingerprint = _command_payload(
                 domain=_COMMAND_DOMAIN, schema="s015-gateway-v1", action=action,
@@ -1236,9 +1331,39 @@ class OrganismApplicationService:
                 idempotency_key, occurred_at, effective_at, received_at, gateway_at)
 
     def save_gateway_draft(self, command: GatewayDraftCommand):
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.SAVE_GATEWAY_DRAFT
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("SAVE_GATEWAY_DRAFT is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_save_gateway_draft(command, bound)
+
+    def _execute_save_gateway_draft(self, command: GatewayDraftCommand, bound: BoundRequest):
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
+            start = self._gateway_start(
+                command,
+                create_head=True,
+                bound=bound,
+                expected_entry=IntakeEntry.SAVE_GATEWAY_DRAFT,
+                received_at=bound.received_at,
+            )
+            if isinstance(start, GatewayDraftResult):
+                return start
             (actor, organism, _, _, _, _, occurred_at, effective_at, received_at,
-             gateway_at) = self._gateway_start(command, create_head=True)
+             gateway_at) = start
             model, _ = _VERSION_KINDS[command.action]
             allowed = {
                 LOApplicationSettingsVersion: {"applications_open", "automatic_acceptance", "processing_responsibility"},
@@ -1295,8 +1420,27 @@ class OrganismApplicationService:
             return version
 
     def effect_gateway_version(self, command: EffectGatewayVersionCommand):
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+        )
+
+        entry = IntakeEntry.EFFECT_GATEWAY_VERSION
+        _require_admission_state(self._alias)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("EFFECT_GATEWAY_VERSION is not active")
+        shape = self._validate_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_effect_gateway_version(command, bound)
+
+    def _execute_effect_gateway_version(self, command: EffectGatewayVersionCommand, bound: BoundRequest):
         try:
-            return self._effect_gateway_version(command)
+            return self._effect_gateway_version(command, bound=bound)
         except S015AuthorityDenied as exc:
             if (
                 command.action is not OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
@@ -1310,7 +1454,7 @@ class OrganismApplicationService:
                 database_alias=self._alias,
                 organism=organism,
                 effective_at=command.effective_at,
-                recorded_at=command.received_at,
+                recorded_at=bound.received_at,
                 code=exc.refusal_code,
             )
             raise S015ApplicationRefused(
@@ -1341,7 +1485,7 @@ class OrganismApplicationService:
                 database_alias=self._alias,
                 organism=organism,
                 effective_at=command.effective_at,
-                recorded_at=command.received_at,
+                recorded_at=bound.received_at,
                 code=refusal_code,
             )
             raise S015ApplicationRefused(
@@ -1349,9 +1493,17 @@ class OrganismApplicationService:
                 refusal_code=refusal_code,
             ) from exc
 
-    def _effect_gateway_version(self, command: EffectGatewayVersionCommand):
+    def _effect_gateway_version(self, command: EffectGatewayVersionCommand, *, bound: BoundRequest):
+        from src.intevia.services.command_intake import IntakeEntry
+
         with _authority_atomic(self._alias):
-            start = self._gateway_start(command, create_head=False)
+            start = self._gateway_start(
+                command,
+                create_head=False,
+                bound=bound,
+                expected_entry=IntakeEntry.EFFECT_GATEWAY_VERSION,
+                received_at=bound.received_at,
+            )
             if isinstance(start, GatewayEffectCommandResult):
                 return start
             (actor, organism, decision, fingerprint, request_reference, idempotency_key,
@@ -1452,8 +1604,14 @@ class OrganismApplicationService:
             )
 
     def _validate_shape(self, entry: IntakeEntry, command: object) -> IntakeShape:
-        from src.intevia.services.command_intake import application_shape
+        from src.intevia.services.command_intake import (
+            IntakeEntry,
+            application_shape,
+            intake_shape,
+        )
 
+        if entry in {IntakeEntry.SAVE_GATEWAY_DRAFT, IntakeEntry.EFFECT_GATEWAY_VERSION}:
+            return intake_shape(entry, command)
         return application_shape(entry, command)
 
     def _coordinator_start(

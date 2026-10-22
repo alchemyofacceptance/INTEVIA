@@ -354,7 +354,6 @@ def _governance_draft(route, enabled, suffix):
         idempotency_key=f"sb2:governance-draft:key:{suffix}:{route.tag}",
         occurred_at=occurred_at,
         effective_at=occurred_at,
-        received_at=occurred_at,
         fields={
             "cq_active": False,
             "governance_enabled": enabled,
@@ -376,7 +375,6 @@ def _governance_effect_command(route, version_uuid, suffix):
         idempotency_key=f"sb2:governance-effect:key:{suffix}:{route.tag}",
         occurred_at=occurred_at,
         effective_at=occurred_at,
-        received_at=occurred_at,
     )
 
 
@@ -432,13 +430,40 @@ def _join_workers(workers):
 
 
 class GovernanceGuardErrorTranslationTests(unittest.TestCase):
+    """Database-free: the effect wrapper's two refusal-mapping arms (H100 chunk 4, C4 OPEN-4 (a), CH-37).
+
+    Calls the executor with a real command and a test-only bound request, so no
+    admission runs; _effect_gateway_version is patched by name as before. The
+    mapped class and code, and the identity of an unrelated error, are the
+    properties kept. It does not exercise the public admission path (that is
+    tests/test_h100_intake_gateway.py's).
+    """
+
     def test_guard_refusal_uses_database_primary_message_only(self):
+        from datetime import datetime as datetime_class, timezone as datetime_timezone
+
+        from django.contrib.auth.models import User
+
+        from core.models import IntakeEntry
+        from src.intevia.services.command_intake import ActorRef, BoundRequest
+
         code = S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING
-        command = SimpleNamespace(
-            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+        at = datetime_class(2026, 10, 21, 12, tzinfo=datetime_timezone.utc)
+        command = EffectGatewayVersionCommand(
+            credential=User(username="sb2-guard-translation"),
             living_organism_id=uuid4(),
-            effective_at=None,
-            received_at=None,
+            action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            version_uuid=uuid4(),
+            request_reference="sb2:guard-translation",
+            idempotency_key="sb2:guard-translation",
+            occurred_at=at,
+            effective_at=at,
+        )
+        bound = BoundRequest.for_test(
+            IntakeEntry.EFFECT_GATEWAY_VERSION,
+            command,
+            received_at=at,
+            actor=ActorRef(pk=11, identity_id=uuid4(), access_epoch=0),
         )
         service = object.__new__(OrganismApplicationService)
         service._alias = "default"
@@ -463,7 +488,7 @@ class GovernanceGuardErrorTranslationTests(unittest.TestCase):
         ):
             organism_manager.using.return_value.get.return_value = organism
             with self.assertRaises(S015ApplicationRefused) as mapped:
-                service.effect_gateway_version(command)
+                service._execute_effect_gateway_version(command, bound)
 
         self.assertIs(mapped.exception.refusal_code, code)
         self.assertEqual(str(mapped.exception), "authored readiness refusal")
@@ -478,7 +503,7 @@ class GovernanceGuardErrorTranslationTests(unittest.TestCase):
         unrelated_error.__cause__ = unrelated_cause
         with patch.object(service, "_effect_gateway_version", side_effect=unrelated_error):
             with self.assertRaises(IntegrityError) as re_raised:
-                service.effect_gateway_version(command)
+                service._execute_effect_gateway_version(command, bound)
 
         self.assertIs(re_raised.exception, unrelated_error)
 
@@ -525,10 +550,24 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                     action=OrganismAction.EFFECT_APPLICATION_SETTINGS.value,
                 ).order_by("-sequence").first()
                 self.assertIsNotNone(event)
-                self.assertEqual(
-                    len({event.occurred_at, event.effective_at, event.received_at}),
-                    1,
+                # H100 chunk 4 tests v1.3 (CH-34): occurred_at and effective_at are the command's one
+                # database reading; received_at is the database-assigned intake time of the effect
+                # request, never the (skewed) Python clock, so it is bound to the intake row instead.
+                self.assertEqual(event.occurred_at, event.effective_at)
+                intake = CommandIntake.objects.get(
+                    actor_id=route.founder.pk,
+                    action=OrganismAction.EFFECT_APPLICATION_SETTINGS.value,
+                    idempotency_key=(
+                        f"sb2:effect:key:{OrganismAction.EFFECT_APPLICATION_SETTINGS.value}:"
+                        f"clock-skew-{offset_ms}:{route.tag}"
+                    ),
                 )
+                self.assertEqual(event.received_at, intake.received_at)
+                self.assertLessEqual(event.effective_at, event.received_at)
+                # v1.4 (HG 22 Oct): the lower bound; with effective_at <= received_at this catches
+                # both skew directions again. observed_database_time comes from this module's own
+                # database_now binding (imported at module load), which the patch above does not touch.
+                self.assertLessEqual(observed_database_time, event.effective_at)
 
     def test_real_route_births_then_another_registered_learner_applies_and_founder_decides(self):
         route = prepare_route()
@@ -1704,7 +1743,17 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             self.assertEqual(cursor.fetchone()[0], 0)
 
         MigrationExecutor(connection).migrate(list(original_targets))
-        route = prepare_route()
+        # H100 chunk 4 tests v1.4 (R-1): the snapshot needs only an organism. A route with no
+        # gateway effect (FOUND and one phase advance, neither an admitted entry) leaves no
+        # core_commandintake row, so the reverse passes 0049 (whose reverse refuses while intake
+        # rows exist, and the table refuses DELETE and TRUNCATE) and reaches the 0044 guard.
+        route = prepare_route(
+            governance_enabled=None,
+            include_settings=False,
+            include_question=False,
+            to_birthing_phase=False,
+        )
+        self.assertFalse(CommandIntake.objects.exists())
         snapshot_at = database_now()
         LOBirthingSnapshot.objects.create(
             living_organism=route.organism,

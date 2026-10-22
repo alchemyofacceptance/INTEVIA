@@ -103,7 +103,6 @@ def _gateway_draft_command(route, suffix: str) -> GatewayDraftCommand:
         idempotency_key=f"lock1:draft:key:{suffix}:{route.tag}",
         occurred_at=now,
         effective_at=now,
-        received_at=now,
         fields={"answer_format": "LONG_ANSWER"},
     )
 

@@ -1507,7 +1507,6 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             idempotency_key=f"sbg:enabling:draft:key:{tag}:{route.route.tag}",
             occurred_at=occurred_at,
             effective_at=occurred_at,
-            received_at=occurred_at,
             fields={
                 "cq_active": False,
                 "governance_enabled": enabled,
@@ -1529,7 +1528,6 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 idempotency_key=f"sbg:enabling:effect:key:{tag}:{route.route.tag}",
                 occurred_at=occurred_at,
                 effective_at=occurred_at,
-                received_at=occurred_at,
             )
         )
 

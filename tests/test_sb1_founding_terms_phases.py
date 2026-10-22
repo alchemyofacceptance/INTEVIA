@@ -1655,7 +1655,6 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:governance:key:{tag}",
                 occurred_at=governance_at,
                 effective_at=governance_at,
-                received_at=governance_at,
                 fields={
                     "cq_active": False,
                     "governance_enabled": False,
@@ -1679,7 +1678,6 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:governance-effect:key:{tag}",
                 occurred_at=governance_effect_at,
                 effective_at=governance_effect_at,
-                received_at=governance_effect_at,
             )),
         )
         assert_decision_and_receipt(
@@ -1700,7 +1698,6 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:question:key:{tag}",
                 occurred_at=question_at,
                 effective_at=question_at,
-                received_at=question_at,
                 fields={"answer_format": "LONG_ANSWER"},
             )),
         )
@@ -1721,7 +1718,6 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 idempotency_key=f"sb1:journey:question-effect:key:{tag}",
                 occurred_at=question_effect_at,
                 effective_at=question_effect_at,
-                received_at=question_effect_at,
             )),
         )
         assert_decision_and_receipt(

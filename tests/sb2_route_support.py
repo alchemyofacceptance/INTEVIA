@@ -262,7 +262,6 @@ def effect_gateway(
         idempotency_key=f"sb2:draft:key:{action.value}:{tag}",
         occurred_at=draft_at,
         effective_at=draft_at,
-        received_at=draft_at,
         fields=fields,
     ))
     effect_at = database_now()
@@ -275,7 +274,6 @@ def effect_gateway(
         idempotency_key=f"sb2:effect:key:{action.value}:{tag}",
         occurred_at=effect_at,
         effective_at=effect_at,
-        received_at=effect_at,
     ))
 
 
