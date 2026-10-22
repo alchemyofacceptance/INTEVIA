@@ -1,4 +1,26 @@
-"""Production authority qualification for the Round 1 application routes."""
+"""The production authority provider for S015 organism commands.
+
+ProductionApplicationAuthorityProvider can be supplied to S015Authority
+to judge founding, application, membership, role, office, gateway,
+entitlement, phase, Birthing and governance acts. It returns the request
+type's response or refusal carrier, with a structured s015a1 authority
+reference and, for a refusal, the decided and disclosed codes.
+
+Historical reads use effective_at for state and evaluated_at for
+knowledge. Some checks use current rows or a specifically defined
+coordinate or same-request rule; the individual helpers state those
+boundaries. Not every query is a historical read at the request's cuts.
+
+The provider's own queries read facts without explicit command locks
+or decision writes. Calling services supply transaction and locking
+protection; S015Authority validates the result and records decisions
+for the actions it selects. Injected fact sources are responsible for
+their own behaviour.
+
+Birthing, governed-registration and nomination-entitlement sources can
+be supplied. The module also exposes _effective_version for referenced
+gateway versions and fixture_terms_permitted for fixture-terms checks.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -70,24 +92,70 @@ from src.intevia.services.organism_formation_authority import founding_acceptanc
 _COMPOUND_ADMISSION_KEY_PREFIX = "sbg:admit:"
 
 class BirthingFactSource(Protocol):
+    """Where the provider learns whether an LO has been born.
+
+    reference_at returns a reference to the Birthing evidence in effect for
+    the LO at effective_at and known by evaluated_at, or None when there is
+    none. ProductionBirthingFactSource is the production source.
+    """
     def reference_at(
         self, living_organism_id: UUID, effective_at: datetime, evaluated_at: datetime,
-    ) -> str | None: ...
+    ) -> str | None:
+        """Return the Birthing evidence reference for living_organism_id at the
+        two time cuts, or None."""
+        ...
 
 
 class GovernedRegistrationFactSource(Protocol):
+    """Where the provider learns whether an identity holds a governed
+    registration.
+
+    reference_at returns a "learner-registration:" reference for the
+    identity's registration in effect at effective_at and known by
+    evaluated_at, or None. ProductionGovernedRegistrationFactSource is the
+    production source.
+    """
     def reference_at(
         self, identity_id: UUID, effective_at: datetime, evaluated_at: datetime,
-    ) -> str | None: ...
+    ) -> str | None:
+        """Return the registration reference for identity_id at the two time
+        cuts, or None."""
+        ...
 
 
 class CoordinatorNominationEntitlementFactSource(Protocol):
+    """Supply evidence that an LO may use entitlement-dependent Coordinator
+    nomination policies.
+
+    reference_at returns an entitlement reference at effective_at and
+    evaluated_at, or None. The provider uses a non-empty string reference
+    when enabling policies A or B; when evaluating a proposal without one,
+    it falls back from A or B to policy C. This is not the general check
+    of whether a particular person may nominate.
+
+    ProductionCoordinatorNominationEntitlementFactSource always returns None.
+    """
     def reference_at(
         self, living_organism_id: UUID, effective_at: datetime, evaluated_at: datetime,
-    ) -> str | None: ...
+    ) -> str | None:
+        """Return the entitlement reference for living_organism_id at the two
+        time cuts, or None."""
+        ...
 
 
 def fixture_terms_permitted(database_alias: str) -> bool:
+    """Return whether this database name permits fixture platform terms.
+
+    True only when the alias's configured NAME has type exactly str,
+    starts with "test_intevia_living_organism_", and has a suffix beyond
+    that prefix. Any other configured name gives False. This checks the
+    name only; it does not establish that a test runner owns the database
+    or that the deployment is a test environment.
+
+    Founding qualification and the identity service use this predicate
+    when deciding whether fixture terms or the test registration executor
+    may be used.
+    """
     database_name = connections[database_alias].settings_dict.get("NAME")
     return (
         type(database_name) is str
@@ -100,6 +168,8 @@ class ProductionBirthingFactSource:
     """Read the eligible recorded Birthing event at the supplied coordinates."""
 
     def __init__(self, *, database_alias: str = "default") -> None:
+        """Bind the source to database_alias, which must be a non-empty str;
+        otherwise ValueError("database_alias is required")."""
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
@@ -110,6 +180,15 @@ class ProductionBirthingFactSource:
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> str | None:
+        """Return "living-organism-event:<event_uuid>" for the LO's latest
+        eligible BIRTHING event, or None.
+
+        An event is eligible when its effective_at is at or before effective_at
+        and its received_at and recorded_at are at or before evaluated_at. The
+        latest is chosen by effective_at, then occurred_at, received_at,
+        recorded_at, sequence and event_uuid, each descending. The query uses
+        this source's database alias.
+        """
         event_uuid = LivingOrganismEvent.objects.using(self.database_alias).filter(
             living_organism__organism_id=living_organism_id,
             action="BIRTHING",
@@ -131,6 +210,9 @@ class ProductionGovernedRegistrationFactSource:
     """
 
     def __init__(self, *, database_alias: str = "default") -> None:
+        """Bind the source to database_alias, "default" unless supplied, which
+        must be a non-empty str; otherwise ValueError("database_alias is
+        required")."""
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
@@ -141,6 +223,15 @@ class ProductionGovernedRegistrationFactSource:
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> str | None:
+        """Return "learner-registration:<registration_uuid>" for the identity's
+        registration, or None.
+
+        The registration must belong to identity_id, with effective_at at or
+        before effective_at and received_at and recorded_at at or before
+        evaluated_at. An identity has at most one registration (a one-to-one
+        relation), so no ordering is needed. The query uses this source's
+        database alias.
+        """
         registration = LearnerRegistration.objects.using(self.database_alias).filter(
             identity__identity_id=identity_id,
             effective_at__lte=effective_at,
@@ -156,6 +247,10 @@ class ProductionCoordinatorNominationEntitlementFactSource:
     """No subscription-entitlement source is installed in this release."""
 
     def reference_at(self, _living_organism_id: UUID, _effective_at: datetime, _evaluated_at: datetime) -> None:
+        """Return None for every call: this production source supplies no
+        subscription-entitlement evidence for nomination policies A or B.
+        It does not decide eligibility under the fallback policy C.
+        """
         return None
 
 
@@ -205,6 +300,17 @@ def _fold_state(
     effective_at: datetime,
     evaluated_at: datetime,
 ) -> str | None:
+    """Return an anchor's state folded at two time cuts, or None.
+
+    Calls public.s015_fold_effective_state(token, anchor_id, effective_at,
+    evaluated_at) on database_alias. The database folds the anchor's events
+    whose effective_at is at or before effective_at and whose received_at
+    and recorded_at are at or before evaluated_at, in effective, occurred,
+    received, recorded, sequence and event_uuid order, and returns the
+    resulting state of the last one; None when no event is eligible. token
+    names the anchor table (for example "core_organismmembership"). Takes no
+    lock.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             "SELECT public.s015_fold_effective_state(%s, %s, %s, %s)",
@@ -221,6 +327,29 @@ def _effective_version(
     effective_at: datetime,
     evaluated_at: datetime,
 ):
+    """Return the version named by the LO's latest eligible gateway event.
+
+    action selects application settings, the entitlement election,
+    application question or governance configuration; another action
+    raises KeyError. Eligible events belong to this LO and action, have
+    effective_at at or before effective_at, and have received_at and
+    recorded_at at or before evaluated_at. The latest is selected by
+    effective_at, occurred_at, received_at, recorded_at, sequence and
+    event_uuid, all descending.
+
+    The selected event must carry the action's evidence prefix followed
+    by a UUID Python can parse. Return None for a missing event or reference,
+    a different prefix, an invalid UUID suffix, or no matching version.
+    There is no fallback to an earlier event.
+
+    The version must match the UUID and LO. Application settings require
+    both entitlement choice and route to be null; an entitlement election
+    requires both to be non-null. The version row's own timestamps are
+    not filtered here, and its completeness is not checked.
+
+    Reads on database_alias without explicit row locks. Also used by the
+    formation, entitlement and governance services.
+    """
     model, prefix = _VERSION_SPECS[action]
     reference = LivingOrganismEvent.objects.using(database_alias).filter(
         living_organism=organism,
@@ -262,6 +391,17 @@ def _latest_transition(
     effective_at: datetime,
     evaluated_at: datetime,
 ):
+    """Return the anchor's latest transition row at the supplied cuts, or None.
+
+    model is the transition model and anchor_field its anchor foreign key.
+    A row is eligible when its effective_at is at or before effective_at
+    and its recorded_at is at or before evaluated_at. There is no
+    received_at eligibility predicate, unlike _fold_state.
+
+    Select by effective_at, occurred_at, received_at, recorded_at, sequence
+    and event_uuid, all descending. Read on database_alias without
+    explicit row locks.
+    """
     return model.objects.using(database_alias).filter(
         **{anchor_field: anchor_id},
         effective_at__lte=effective_at,
@@ -277,6 +417,18 @@ def _assignment_term_in_effect(
     effective_at: datetime,
     evaluated_at: datetime,
 ) -> bool:
+    """Return whether a role assignment's term is in effect at effective_at.
+
+    Read its latest ASSIGN event whose effective_at is at or before
+    effective_at and whose received_at and recorded_at are at or before
+    evaluated_at. Select by effective_at, occurred_at, received_at,
+    recorded_at, sequence and event_uuid, all descending.
+
+    False when there is no eligible ASSIGN event, or its term is FIXED
+    with a non-null effective_until at or before effective_at; True
+    otherwise. This checks the term only, not the assignment's state.
+    Read on database_alias without explicit row locks.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             """
@@ -301,6 +453,29 @@ def _assignment_term_in_effect(
 
 
 class ProductionApplicationAuthorityProvider:
+    """Judge S015 organism authority using recorded facts and supplied sources.
+
+    S015Authority.qualify calls evaluate_organism_authority inside its
+    caller's atomic block and checks the returned response or refusal
+    carrier. This provider identifies itself as
+    "INTEVIA.S015.ApplicationAuthorityProvider", version "R8.0".
+
+    Its own queries use database_alias. Historical state and knowledge
+    usually use effective_at and evaluated_at, but current identity and
+    head checks, the engagement's settings basis, and the specific
+    same-request and entitlement-candidate rules have different read
+    contracts. These are described by the individual helpers.
+
+    The provider issues reads and does not explicitly acquire command
+    locks or write decisions. Transaction and locking protection belongs
+    to the calling services; S015Authority records selected decisions.
+    Supplied fact sources are not checked here for alias or side effects.
+
+    Qualified responses and refusals carry structured s015a1 facts.
+    Refusals distinguish the decided code from the code disclosed to the
+    actor. Errors from reads, sources or fact validation can propagate to
+    S015Authority.qualify, which translates provider exceptions.
+    """
     provider_identity = "INTEVIA.S015.ApplicationAuthorityProvider"
     provider_version = "R8.0"
 
@@ -312,6 +487,17 @@ class ProductionApplicationAuthorityProvider:
         registration_source: GovernedRegistrationFactSource | None = None,
         nomination_entitlement_source: CoordinatorNominationEntitlementFactSource | None = None,
     ) -> None:
+        """Bind the provider's database alias and three fact sources.
+
+        database_alias defaults to "default" and must have type exactly str
+        and be non-empty; otherwise raise ValueError("database_alias is required").
+
+        Each source is selected by truth value: None or another false-valued
+        source is replaced by its production implementation. Default Birthing
+        and registration sources use the provider's alias; the default
+        nomination-entitlement source always returns None. Supplied truthy
+        sources are retained without interface or database-alias validation.
+        """
         if type(database_alias) is not str or not database_alias:
             raise ValueError("database_alias is required")
         self.database_alias = database_alias
@@ -324,6 +510,45 @@ class ProductionApplicationAuthorityProvider:
         )
 
     def evaluate_organism_authority(self, request: S015AuthorityRequest) -> S015AuthorityResult:
+        """Judge an authority request and return its response or refusal carrier.
+
+        S015Authority.qualify validates the request before calling this method.
+        An exact S015PreFoundingAuthorityRequest goes directly to
+        _evaluate_founding. For the other supported request types, check in order:
+
+        1. An own-applicant request uses SUBMIT_APPLICATION or
+           WITHDRAW_APPLICATION; a post-founding request uses a supported
+           post-founding action. Otherwise return UNRECOGNISED_ACTION.
+        2. command_subtype equals the action value, or is its permitted
+           PHASE_ADVANCE, BIRTHING or GOVERNANCE_CONSTITUTION subtype;
+           otherwise return UNRECOGNISED_ACTION. Later action-specific checks
+           further constrain these combinations.
+        3. For TRANSITION_MEMBERSHIP, a missing target or any resulting_state
+           other than ENDED returns C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED.
+        4. Require effective_at, target and LO identity, matching target action,
+           LO identity and target fingerprint; otherwise UNRECOGNISED_ACTION.
+           Role, office-consent and membership targets use living_organism_id
+           as a string; the other targets use organism_uuid as a UUID.
+        5. An own-applicant target must name the actor as applicant; otherwise
+           E_NOT_APPLICANT, disclosed as DENIED.
+        6. Apply the post-founding action's target checks. Exact key sets apply
+           to the specified phase, Birthing, governance and entitlement forms,
+           not universally. Other branches check their required event action,
+           UUIDs, version identity/kind or application UUID. Failure returns
+           UNRECOGNISED_ACTION.
+        7. Resolve the LO. Absence returns C_GATEWAY_NOT_OPEN for submission
+           and DENIED otherwise. An own-applicant request naming a different
+           LO primary key returns E_NOT_APPLICANT, disclosed as DENIED.
+        8. Except for submission, require the actor's current identity and
+           credential checks through _identity_active; failure returns
+           E_IDENTITY_INACTIVE. Submission checks historical identity in _submit.
+
+        Dispatch to submission, withdrawal, membership departure, role
+        proposal/transition, office consent or _coordinator_act. Refusals are
+        returned, not raised as S015AuthorityDenied here. Reads and delegated
+        checks can raise exceptions; this method does not translate them.
+        It writes no decision and acquires no explicit command locks.
+        """
         if type(request) is S015PreFoundingAuthorityRequest:
             return self._evaluate_founding(request)
         if type(request) is S015OwnApplicantAuthorityRequest:
@@ -770,6 +995,29 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify a member leaving the LO (TRANSITION_MEMBERSHIP to ENDED).
+
+        evaluate_organism_authority has checked the canonical
+        target["membership_uuid"] and the ENDED resulting state. In order:
+        - membership_uuid parses, else UNRECOGNISED_ACTION;
+        - the membership is in this LO and is the actor's own, else DENIED;
+        - it folds ACTIVE or PROBATIONARY at the time cuts, else
+          C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED;
+        - the request's locked heads match it (_locked_heads_match), else
+          DENIED;
+        - it holds no office: an assignment of any role whose row state is
+          ACTIVE, with a head event, refuses
+          C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED, disclosed as itself,
+          with that head event as fact "o";
+        - the LO has capacity (_lo_capacity), else C_LO_NO_CAPACITY, and folds
+          ACTIVE: DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED and any other
+          state C_LO_NO_CAPACITY.
+
+        The office check reads the assignment rows' current state, not a fold
+        at effective_at. Other codes are disclosed by _refuse's rule.
+        Qualified facts: "k" MEMBERSHIP_DEPARTURE and "m" the membership's
+        effective head event (_latest_transition). Reads only.
+        """
         try:
             membership_uuid = UUID(request.target["membership_uuid"])
         except (KeyError, TypeError, ValueError):
@@ -833,6 +1081,49 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify a Coordinator proposal, or delegate a role transition.
+
+        For TRANSITION_CONTEXTUAL_ROLE, ASSIGN, END and REASSIGN delegate to
+        _qualify_role_transition; an event_action other than PROPOSE is
+        UNRECOGNISED_ACTION. For PROPOSE, check in order:
+        - LO capacity, else C_LO_NO_CAPACITY; then its folded state: DORMANT
+          is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and any other non-ACTIVE
+          state is C_LO_NO_CAPACITY;
+        - at least one eligible Coordinator, else
+          C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED;
+        - parseable membership_uuid and role_definition_uuid, else
+          UNRECOGNISED_ACTION;
+        - a nominee membership in this LO folding ACTIVE, and this LO's
+          active LIVING_ORGANISM-scope COORDINATOR definition, else DENIED;
+        - the actor's membership in this LO, matching supplied locked heads
+          and folding ACTIVE, else DENIED.
+
+        Folds, configuration selection and effective heads use the request's
+        effective_at and evaluated_at. Select the configuration's nomination
+        policy, or C if the configuration is absent or its policy is false-
+        valued. A selected value outside A, B and C is DENIED. Read the
+        nomination-entitlement source for every valid selected policy; A or B
+        falls back to C unless its reference has type exactly str and is
+        non-empty. The production source returns None in this release.
+
+        Policy B, and policy C when proposer and nominee differ, require an
+        effective Coordinator office, else E_NOT_EFFECTIVE_COORDINATOR; their
+        route is EFFECTIVE_COORDINATOR. Otherwise use SELF_PROPOSAL for the
+        same membership and MEMBER_NOMINATION for different memberships.
+
+        Facts supplied to _qualified are: "m" and "n", the proposer's and
+        nominee's effective membership heads; "t", the route; "k", the policy
+        actually applied; "i", the entitlement reference as returned; and
+        "o", the effective office head when an office is required. The head
+        encoding has a "-" fallback, although the earlier locked-head check
+        requires the proposer's effective head. Add "c", the configuration
+        UUID, when a configuration exists and its policy is not None, even
+        when A or B fell back to C; otherwise add "d": "C".
+
+        Refusals use _refuse's disclosure rule. The shared fact builders'
+        validation and size rules apply. This method's own queries read
+        without acquiring command locks or writing decisions.
+        """
         event_action = request.target.get("event_action")
         if event_action in {"ASSIGN", "END", "REASSIGN"}:
             return self._qualify_role_transition(request, organism)
@@ -948,6 +1239,49 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify ASSIGN, END or REASSIGN of a Coordinator office.
+
+        Called by _qualify_role_proposal for those three event actions. Folds
+        use request.effective_at and request.evaluated_at. In order, require:
+        - LO capacity, else C_LO_NO_CAPACITY; then ACTIVE folded state:
+          DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another state
+          is C_LO_NO_CAPACITY;
+        - a parseable assignment_uuid, else UNRECOGNISED_ACTION;
+        - an assignment and active LIVING_ORGANISM-scope COORDINATOR
+          definition belonging to this LO, else DENIED;
+        - for ASSIGN, its sequence-1 PROPOSE event resulting in PROPOSED,
+          effective by effective_at and received and recorded by evaluated_at,
+          else DENIED;
+        - the holder's membership folding ACTIVE, and the assignment folding
+          PROPOSED for ASSIGN or ACTIVE for END/REASSIGN, else DENIED;
+        - for ASSIGN, at least one eligible Coordinator, else
+          C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED;
+        - the actor's membership in this LO, matching supplied locked heads
+          and folding ACTIVE, else DENIED;
+        - an effective Coordinator office for the actor, except for a holder
+          ending their own office, else E_NOT_EFFECTIVE_COORDINATOR;
+        - no effective configuration with cq_active True, else C_ROUTE_IS_CQ.
+
+        ASSIGN then checks consent using the proposal actor read from the
+        state-event table. Consent rows must be effective by effective_at
+        and recorded by evaluated_at; latest means highest ordinal, with no
+        separate received_at predicate. For a self-proposal, any WITHDRAW row
+        refuses; otherwise the proposal itself supplies consent. For another
+        proposer, the latest consent row must be CONSENT. Failure is
+        C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN.
+
+        Facts supplied to _qualified are "a" the assignment UUID, "g" the
+        role UUID, "k" the action, and "o" the actor's office's current head
+        when an office was required. ASSIGN adds "p" the proposal UUID and
+        "u": "e:" plus that UUID for self-proposal consent, or "c:" plus the
+        latest consent UUID otherwise. Consent refusals supply these facts
+        without "g" and with "u" naming the latest consent row when one
+        exists; on a self-proposal this need not be the WITHDRAW row itself.
+
+        Refusals use _refuse's disclosure rule; shared fact validation and
+        size rules apply. The method's own queries do not acquire command
+        locks, change the assignment or write a decision.
+        """
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
@@ -1081,6 +1415,47 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify a nominee's CONSENT, DECLINE or WITHDRAW on a Coordinator
+        proposal (RECORD_OFFICE_CONSENT).
+
+        The dispatcher checks the event action and canonical target UUIDs.
+        Folds use request.effective_at and request.evaluated_at. In order:
+        - require LO capacity, else C_LO_NO_CAPACITY; then ACTIVE folded
+          state: DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another
+          state is C_LO_NO_CAPACITY;
+        - parse the assignment, membership and proposal UUIDs, else
+          UNRECOGNISED_ACTION;
+        - refuse DENIED unless the assignment and its active
+          LIVING_ORGANISM-scope COORDINATOR definition belong to this LO,
+          the nominee membership belongs to this LO and holds the assignment,
+          the actor is that nominee, and the membership folds ACTIVE. The
+          named proposal must be the assignment's sequence-1 PROPOSE event
+          resulting in PROPOSED, effective by effective_at and received and
+          recorded by evaluated_at;
+        - refuse DENIED if an ASSIGN event is effective by effective_at and
+          recorded by evaluated_at, supplying the first by sequence as "o".
+          This tests event existence, not the assignment's current state;
+        - require a permitted consent transition, else
+          C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN.
+
+        For the last check, read the proposal actor from the state-event table
+        and prior consent rows for this assignment, proposal and nominee.
+        Those rows are cut on effective_at and recorded_at, not separately
+        on received_at, and latest means highest ordinal. A self-proposal
+        permits only WITHDRAW with no prior row. Otherwise, no prior row
+        permits CONSENT or DECLINE; a latest CONSENT permits WITHDRAW; all
+        other combinations refuse.
+
+        After nominee/proposal validation, supply "a" the assignment UUID,
+        "p" the proposal UUID and, when present, "w" the latest prior consent
+        UUID to later refusals. Qualified facts add "g" the role UUID, "k"
+        the action and "u" the nominee's membership UUID. Refusals use
+        _refuse's disclosure rule; shared fact validation and size rules apply.
+
+        This method does not compare supplied locked heads or fold assignment
+        state. Its own queries acquire no command locks and write no consent
+        row or decision.
+        """
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
@@ -1189,6 +1564,15 @@ class ProductionApplicationAuthorityProvider:
         return self._qualified(request, qualified_facts)
 
     def _identity_active(self, request: S015AuthorityRequest) -> bool:
+        """Return whether the actor's identity is active as the row stands now.
+
+        True when an Identity row matches the request's actor_pk,
+        actor_identity_id and actor_access_epoch, its access_state is ACTIVE
+        and its credential is active, and, when the request carries
+        actor_credential_pk, the row's credential is that one. This is the
+        current row, not a fold at the request's time cuts (compare
+        _identity_active_at). Read without a lock.
+        """
         identity = Identity.objects.using(self.database_alias).filter(
             pk=request.actor_pk,
             identity_id=request.actor_identity_id,
@@ -1202,6 +1586,18 @@ class ProductionApplicationAuthorityProvider:
         return identity.exists()
 
     def _identity_active_at(self, request: S015AuthorityRequest) -> bool:
+        """Return whether the actor matches the identity's historical active state
+        and access epoch at the request's two time cuts.
+
+        First find the current Identity row by actor_pk and actor_identity_id.
+        If actor_credential_pk is supplied, its current credential association
+        must match. Then identity_state_at, with state_at=effective_at and
+        known_at=evaluated_at, must report ACTIVE and actor_access_epoch.
+
+        This does not check credential.is_active or use the Identity row's
+        current access_state or access_epoch in place of the historical fold.
+        Used by founding and submission. Reads without explicit row locks.
+        """
         identity = Identity.objects.using(self.database_alias).filter(
             pk=request.actor_pk,
             identity_id=request.actor_identity_id,
@@ -1229,6 +1625,20 @@ class ProductionApplicationAuthorityProvider:
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> UUID | None:
+        """Return the registration UUID a registration reference names, or None.
+
+        reference must be a str of exactly "learner-registration:" followed by
+        the UUID's canonical form (lower case, hyphenated, as str(UUID) writes
+        it); an upper-case, braced or "urn:" form, a different prefix or a
+        non-UUID gives None. The UUID must then name a LearnerRegistration of
+        identity_id with effective_at at or before effective_at and received_at
+        and recorded_at at or before evaluated_at; otherwise None.
+
+        Postcondition relied on by its callers (_evaluate_founding, _submit):
+        a UUID is returned only for a canonical reference to an eligible
+        registration of this identity. Since U-TIDY-1 (GF-1) this is the only
+        check of the reference's canonical form. Read without a lock.
+        """
         prefix = "learner-registration:"
         if type(reference) is not str or not reference.startswith(prefix):
             return None
@@ -1311,6 +1721,14 @@ class ProductionApplicationAuthorityProvider:
         return S015PostFoundingAuthorityRefusal(**fields)
 
     def _current_member(self, request: S015AuthorityRequest) -> bool:
+        """Return whether the actor is a current member of the request's LO.
+
+        True when the request names an LO and an effective_at, the LO exists,
+        the actor has a membership in it, and that membership folds ACTIVE or
+        PROBATIONARY at effective_at and evaluated_at (_fold_state); otherwise
+        False. _refuse uses it to decide whether a refusal code is disclosed
+        or reported as DENIED. Read without a lock.
+        """
         organism_id = getattr(request, "living_organism_id", None)
         effective_at = getattr(request, "effective_at", None)
         if organism_id is None or effective_at is None:
@@ -1334,6 +1752,8 @@ class ProductionApplicationAuthorityProvider:
         return state in {"ACTIVE", "PROBATIONARY"}
 
     def _lo_state(self, organism: LivingOrganism, request: S015AuthorityRequest) -> str | None:
+        """Return the LO's state folded at the request's effective_at and
+        evaluated_at (_fold_state), or None when no LO event is eligible."""
         return _fold_state(
             self.database_alias,
             "core_livingorganism",
@@ -1347,6 +1767,37 @@ class ProductionApplicationAuthorityProvider:
         request: S015OwnApplicantAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify an applicant's SUBMIT_APPLICATION to the LO.
+
+        In order, at the time cuts:
+        - the Birthing source returns a non-empty str, else C_GATEWAY_NOT_OPEN
+          with fact "b" None;
+        - the LO folds ACTIVE, else C_GATEWAY_NOT_OPEN;
+        - a governance configuration is in effect, else
+          C_CONFIGURATION_NOT_ESTABLISHED, disclosed as C_GATEWAY_NOT_OPEN;
+        - application settings and an application question are in effect and
+          the settings' applications_open is True, else C_GATEWAY_NOT_OPEN;
+        - the registration source returns a reference and
+          _registered_reference_uuid resolves it to an eligible registration of
+          the actor, else E_NOT_REGISTERED;
+        - the actor's identity is active at the time cuts
+          (_identity_active_at), else E_IDENTITY_INACTIVE;
+          evaluate_organism_authority does not apply _identity_active here;
+        - the actor is not a current member: a membership in this LO folding
+          ACTIVE or PROBATIONARY is DENIED, and one in any other state does
+          not stop an application;
+        - the actor has no open application to this LO, one with neither a
+          decision nor a withdrawal, else C_APPLICATION_OPEN;
+        - a predecessor_reference, when given, names the actor's own
+          application to this LO that has been withdrawn, else DENIED.
+
+        Applications, decisions and withdrawals are cut on effective_at and
+        recorded_at, not received_at, so a decision or withdrawal effective
+        after effective_at leaves the application open here. Each code is
+        disclosed as itself except as stated. Qualified facts: "b" the
+        Birthing reference, "c", "q" and "s" the configuration, question and
+        settings versions, and "r" the registration UUID. Reads only.
+        """
         effective_at = request.effective_at
         evaluated_at = request.evaluated_at
         birthing_reference = self.birthing_source.reference_at(
@@ -1464,6 +1915,25 @@ class ProductionApplicationAuthorityProvider:
         request: S015OwnApplicantAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify an applicant's WITHDRAW_APPLICATION.
+
+        In order:
+        - request.application_pk names an application by the actor to this
+          LO, cut on effective_at and recorded_at, else E_NOT_APPLICANT
+          disclosed as DENIED;
+        - target["application_uuid"] equals its UUID, else E_NOT_APPLICANT
+          disclosed as DENIED;
+        - no decision and no withdrawal of it is recorded by evaluated_at,
+          whatever its effective_at, else C_TERMINAL_ROW_STANDS;
+        - its latest engagement (highest engagement_ordinal, cut on
+          effective_at and recorded_at), when there is one, is on route LO_CSA
+          or LO_AUTOMATIC; LO_CQ, CIRCLE_CQ or any other route is
+          UNRECOGNISED_ROUTE.
+
+        C_TERMINAL_ROW_STANDS and UNRECOGNISED_ROUTE are disclosed as
+        themselves. Qualified facts: "a" the application UUID and "t" the
+        engagement's route, or "NONE" when there is no engagement. Reads only.
+        """
         application = Application.objects.using(self.database_alias).filter(
             pk=request.application_pk,
             applicant_id=request.actor_pk,
@@ -1509,6 +1979,57 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Route authority checks for acts not dispatched to another qualifier.
+
+        These include gateway versions, phase advance, Birthing, entitlement
+        election, governance formation and application processing. LO and
+        membership folds use request.effective_at and request.evaluated_at.
+
+        REQUEST_GOVERNANCE_SEAT refuses DORMANT or CLOSED as
+        SBG_LO_NOT_ACTIVE, otherwise delegates to
+        _qualify_governance_seat_request without the later capacity,
+        membership or office gates in this router. The same two states also
+        refuse ADOPT_GOVERNING_INSTRUMENT, CREATE_DORMANT_CIRCLE and
+        ADMIT_CIRCLE_PARTICIPANT as SBG_LO_NOT_ACTIVE.
+
+        For remaining cases, check capacity first (C_LO_NO_CAPACITY), then
+        read the effective governance configuration. DORMANT is C_LO_PAUSED
+        and CLOSED is C_LO_CLOSED. Another non-ACTIVE state is
+        C_LO_NO_CAPACITY unless this is the founder's first
+        EFFECT_GOVERNANCE_CONFIGURATION with no configuration in effect,
+        or, while FOUNDING_PENDING, a gateway-version act with a configuration
+        in effect or one of the three formation acts above. These exceptions
+        do not bypass the earlier capacity or DORMANT/CLOSED checks.
+
+        Next require the actor's membership in this LO, matching supplied
+        locked heads and folding ACTIVE, else E_NOT_EFFECTIVE_COORDINATOR.
+        Route as follows, treating a Birthing-source result of None as
+        pre-Birthing and any other result as post-Birthing:
+        - Pre-Birthing ADMIT_CIRCLE_PARTICIPANT requires the founder, else
+          DENIED, and route CIRCLE_FOUNDING, else SBG_SEAT_ROUTE_UNAVAILABLE;
+          delegate to _qualify_governance_founding_seating without an office
+          requirement. Post-Birthing, refuse CIRCLE_FOUNDING with the same
+          route code, require an effective Coordinator office, and delegate
+          to _qualify_governance_constitutional_seating.
+        - Pre-Birthing ADOPT_GOVERNING_INSTRUMENT and CREATE_DORMANT_CIRCLE
+          require the founder, else DENIED, but do not require an office;
+          delegate to _qualify_governance_adoption or
+          _qualify_governance_circle_creation.
+        - All other cases require an effective Coordinator office, then use
+          _qualify_phase_advance or _qualify_birthing for the corresponding
+          TRANSITION_LIVING_ORGANISM subtype; _qualify_birthing also handles
+          EFFECT_ENTITLEMENT_ELECTION whose subtype equals the action and
+          whose target has type exactly dict and exactly the keys action,
+          organism_uuid and snapshot_uuid. Otherwise dispatch adoption or
+          circle creation to their qualifiers, version actions to
+          _qualify_gateway_change, and the remainder to
+          _qualify_application_processing.
+
+        A required office being absent is E_NOT_EFFECTIVE_COORDINATOR.
+        Local refusals use _refuse's disclosure rule; delegated qualifiers
+        supply their own results and facts. The router's own queries acquire
+        no command locks and write no governed records or decisions.
+        """
         effective_at = request.effective_at
         evaluated_at = request.evaluated_at
         lo_state = self._lo_state(organism, request)
@@ -1649,6 +2170,48 @@ class ProductionApplicationAuthorityProvider:
         organism: LivingOrganism,
         office: ContextualRoleAssignment,
     ) -> S015AuthorityResult:
+        """Qualify a pre-Birthing PHASE_ADVANCE of the LO.
+
+        The dispatcher checks the target keys and string phases; the
+        router requires an effective Coordinator office. A missing
+        target is UNRECOGNISED_ACTION, a defensive guard.
+
+        Read BIRTHING and the latest PHASE_ADVANCE events effective
+        by request.effective_at and received and recorded by
+        evaluated_at. Select the latest phase by effective_at,
+        occurred_at, received_at, recorded_at, sequence and
+        event_uuid, descending. A missing phase reference means
+        CONCEIVING; otherwise parse after the last colon and the
+        first arrow. This is not format validation: a malformed
+        non-null reference can raise IndexError.
+
+        In order, refuse:
+        - PHASE_OUT_OF_ORDER when Birthing is present at those cuts,
+          from_phase differs from the parsed phase, or the step is
+          neither CONCEIVING->GERMINATING nor GERMINATING->BIRTHING;
+        - INV_CQ_ROUTE_REQUIRED when more than one membership folds
+          ACTIVE at the cuts. PROBATIONARY is not counted; this
+          helper has no separate zero-count refusal;
+        - PHASE_CONDITION_UNMET for GERMINATING unless
+          founding-content version 1, effective and recorded at the
+          cuts, has a non-blank name and purpose;
+        - PHASE_CONDITION_UNMET for BIRTHING unless an effective
+          governance configuration has a non-null governance_enabled
+          choice. If enabled, return any PHASE_ADVANCE readiness
+          refusal.
+
+        The first two refusals supply "p" as FROM->TO. Condition
+        failures supply "p" as "founding content (name and purpose)",
+        "an effective governance configuration" or "GOVERNANCE
+        choice". Readiness refusals supply no auxiliary facts here.
+
+        Qualified facts are "kind": PHASE_ADVANCE; "c": the
+        configuration UUID, or "-" for GERMINATING; "o": the office
+        assignment UUID; "f": FORMATION_RULES:PLATFORM_DEFAULT@v1;
+        and "p": FROM->TO. Refusals use _refuse's disclosure rule.
+        This method reads without acquiring command locks or writing
+        a phase event.
+        """
         target = request.target
         if target is None:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -1764,6 +2327,54 @@ class ProductionApplicationAuthorityProvider:
         organism: LivingOrganism,
         office: ContextualRoleAssignment,
     ) -> S015AuthorityResult:
+        """Qualify Birthing, including the snapshot-form entitlement
+        election.
+
+        The router supplies an effective Coordinator office for
+        TRANSITION_LIVING_ORGANISM/BIRTHING and for the snapshot form
+        of EFFECT_ENTITLEMENT_ELECTION. The dispatcher checks the
+        snapshot UUID's canonical form; this helper does not load its
+        snapshot row.
+
+        At request.effective_at and request.evaluated_at, check in
+        order:
+        - LO capacity and ACTIVE folded state, else C_LO_NO_CAPACITY;
+        - no BIRTHING event effective by effective_at and received
+          and recorded by evaluated_at, else
+          BIRTHING_ALREADY_RECORDED;
+        - the latest PHASE_ADVANCE event at those same cuts has
+          reference formation-phase:GERMINATING->BIRTHING, else
+          BIRTHING_PREREQUISITE_MISSING with "p": "phase";
+        - exactly one membership folds ACTIVE: zero is
+          SB_BIRTHING_ELECTORATE_EMPTY, more than one is
+          INV_CQ_ROUTE_REQUIRED. PROBATIONARY is not counted;
+        - an effective governance configuration with a non-null
+          governance_enabled choice, else
+          BIRTHING_PREREQUISITE_MISSING with "p": "an effective
+          governance configuration". If enabled, return any BIRTHING
+          readiness refusal;
+        - effective application settings with non-null
+          applications_open and automatic_acceptance, else
+          BIRTHING_PREREQUISITE_MISSING with "p": "both application
+          settings chosen";
+        - an effective application question, else the same
+          prerequisite code with "p": "a reviewed application
+          question";
+        - a target, else UNRECOGNISED_ACTION, a defensive guard.
+
+        Latest phase ordering is effective_at, occurred_at,
+        received_at, recorded_at, sequence and event_uuid,
+        descending. These checks require the settings' choices, not
+        that either choice is True.
+
+        Qualified facts are "kind": BIRTHING; "c", "s" and "q": the
+        configuration, settings and question UUIDs; "o": the office
+        assignment UUID; and "n": snapshot_uuid copied from the
+        target. No snapshot contents are validated here. Refusals use
+        _refuse's disclosure rule. This method reads without
+        acquiring command locks, writing a Birthing event or granting
+        an entitlement.
+        """
         effective_at = request.effective_at
         evaluated_at = request.evaluated_at
         if not self._lo_capacity(organism, request) or self._lo_state(organism, request) != "ACTIVE":
@@ -1887,6 +2498,22 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify adopting the LO's governing instrument
+        (ADOPT_GOVERNING_INSTRUMENT, subtype GOVERNANCE_CONSTITUTION).
+
+        Reached from _coordinator_act: before Birthing by the founder, with
+        no office required; after Birthing with an effective Coordinator
+        office. evaluate_organism_authority has checked the target's key
+        set, a canonical rule_uuid, a version of at least 1, a str source
+        and a dict body. A missing target is UNRECOGNISED_ACTION (a guard).
+        The target's source must be FOUNDING_BODY_PRESCRIPTION while the
+        Birthing source returns None, and LO_PRESCRIPTION once it returns a
+        reference, else DENIED.
+
+        Qualified facts: "kind" GOVERNANCE_CONSTITUTION, "g" the target's
+        rule_uuid and "source". The body, version and effective_from are not
+        checked here. Reads only.
+        """
         target = request.target
         if target is None:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -1911,6 +2538,22 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify the founder seating themself on the Governance Circle
+        before Birthing (ADMIT_CIRCLE_PARTICIPANT, route CIRCLE_FOUNDING).
+
+        Reached from _coordinator_act for the founder only, before Birthing,
+        with no office required. UNRECOGNISED_ACTION when there is no target,
+        or the subtype is not ADMIT_CIRCLE_PARTICIPANT, or the target's
+        action, organism_uuid, kind (GOVERNANCE) or route (CIRCLE_FOUNDING)
+        does not match, or its applicant_identity_uuid is not the actor's.
+        The seat request the target names must be a fact at the time cuts
+        (_governance_request_matches_target, with its same-request rule for
+        a compound seating), else SBG_MEMBER_NOT_ELIGIBLE.
+
+        Qualified facts: "kind" GOVERNANCE, "route" CIRCLE_FOUNDING, and "c",
+        "r", "s" and "q" the target's circle_uuid, seat_rule_uuid, seat_id
+        and request_uuid. Codes are disclosed by _refuse's rule. Reads only.
+        """
         target = request.target
         if target is None:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -2082,6 +2725,23 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify a member's request for a Governance Circle seat
+        (REQUEST_GOVERNANCE_SEAT).
+
+        Reached from _coordinator_act once the LO folds neither DORMANT nor
+        CLOSED, without the router's capacity, membership or office gates.
+        evaluate_organism_authority has checked the target's key set, its
+        kind, a str seat_id, canonical UUIDs and that the applicant is the
+        actor, so this method's own test (a missing target or another
+        applicant is E_NOT_APPLICANT) is a guard. The actor's membership in
+        this LO must exist, match the request's locked heads and fold ACTIVE,
+        else SBG_MEMBER_NOT_ELIGIBLE.
+
+        Qualified facts: "kind" GOVERNANCE_SEAT_REQUEST, and "c", "r" and "s"
+        the target's circle_uuid, seat_rule_uuid and seat_id. The circle,
+        the seat rule and the seat are not checked here. Codes are disclosed
+        by _refuse's rule. Reads only.
+        """
         target = request.target
         if target is None or target.get("applicant_identity_uuid") != str(
             request.actor_identity_id
@@ -2118,6 +2778,26 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify a Coordinator's appointment decision on a Governance Circle
+        seat request after Birthing (ADMIT_CIRCLE_PARTICIPANT, route
+        GOVERNANCE_CONSTITUTIONAL).
+
+        Reached from _coordinator_act after Birthing, with an effective
+        Coordinator office. UNRECOGNISED_ACTION when there is no target, or
+        the subtype is not ADMIT_CIRCLE_PARTICIPANT, or the target's action,
+        organism_uuid, kind (GOVERNANCE), route (GOVERNANCE_CONSTITUTIONAL),
+        constitutional_route (APPOINTMENT) or deciding_party
+        (office:LO_COORDINATOR) does not match, or its outcome is not ACCEPT
+        or DECLINE, or the seat request it names is not a fact
+        (_governance_request_matches_target). Then a state event taking the
+        circle to ACTIVE, cut on effective_at and recorded_at, refuses
+        SBG_SEAT_ROUTE_UNAVAILABLE.
+
+        Qualified facts: "kind" GOVERNANCE, "route" GOVERNANCE_CONSTITUTIONAL,
+        "constitutional_route" APPOINTMENT, and "c", "r", "s" and "q" as for
+        the founding seating; the outcome is not among them. Codes are
+        disclosed by _refuse's rule. Reads only.
+        """
         target = request.target
         if target is None:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -2161,6 +2841,41 @@ class ProductionApplicationAuthorityProvider:
         recorded_at: datetime,
         lifecycle: str,
     ) -> S015AuthorityRefusalCode | None:
+        """Return a Governance readiness code from the database, or
+        None.
+
+        Call public.sbg_governance_readiness on database_alias with
+        the LO primary key, effective_at, recorded_at and lifecycle.
+        Here recorded_at is the knowledge cut: all callers pass
+        evaluated_at. Callers use PHASE_ADVANCE, BIRTHING or
+        ENABLING.
+
+        Migration 0045 defines the checks. First select a Governance
+        Circle with a CREATE_DORMANT event recorded by the knowledge
+        cut and a fold distinct from CLOSED; the fold may be NULL.
+        Require an effective, recorded GOVERNANCE_CONSTITUTION rule
+        with the recognised arrangement shape and at least one seat
+        in effect. Missing circle/rule and invalid
+        arrangement/eligibility return the corresponding SBG refusal
+        code. PHASE_ADVANCE stops there.
+
+        For ENABLING, a circle with an ELIGIBLE event at the cuts
+        returns SBG_IL_GRESD if its fold is DORMANT, or succeeds if
+        ELIGIBLE. Otherwise, as for BIRTHING, readiness succeeds with
+        an unended participation whose member folds ACTIVE, or an
+        in-effect vacant Coordinator-appointment seat with an ACTIVE
+        membership and Coordinator assignment. Without either, return
+        SBG_NO_INITIAL_PARTICIPATION_ROUTE. Recognising an
+        arrangement's shape does not establish that every declared
+        route is executable.
+
+        Convert SQL NULL to None and a returned code to
+        S015AuthorityRefusalCode. Raise RuntimeError for no row or an
+        unknown code; database errors propagate. This helper adds no
+        eligibility checks, acquires no command locks, writes
+        nothing, and does not itself build an authority response or
+        refusal.
+        """
         with connections[self.database_alias].cursor() as cursor:
             cursor.execute(
                 "SELECT public.sbg_governance_readiness(%s, %s, %s, %s)",
@@ -2184,6 +2899,19 @@ class ProductionApplicationAuthorityProvider:
         candidate: LOGovernanceConfigurationVersion,
         previous_configuration: LOGovernanceConfigurationVersion | None,
     ) -> S015AuthorityRefusalCode | None:
+        """Return the Governance readiness refusal for a configuration effect
+        that newly enables governance after Birthing, or None.
+
+        Used by _qualify_gateway_change for EFFECT_GOVERNANCE_CONFIGURATION.
+        It checks only when the request is that action with version_kind
+        EFFECT, the candidate's governance_enabled is True, the previous
+        configuration (when there is one) does not have it True, and the
+        Birthing source returns a non-empty str at the request's effective_at
+        and evaluated_at. Then it returns
+        _sbg_governance_readiness("ENABLING"). In every other case, a draft,
+        a candidate that does not newly enable governance, or any time
+        before Birthing, it returns None.
+        """
         if (
             request.action is not OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
             or request.version_kind != "EFFECT"
@@ -2213,6 +2941,21 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
+        """Qualify creating the LO's dormant Governance Circle
+        (CREATE_DORMANT_CIRCLE).
+
+        Reached from _coordinator_act: before Birthing by the founder, with
+        no office required; after Birthing with an effective Coordinator
+        office. First, any Governance Circle of this LO refuses
+        SBG_SECOND_GOVERNANCE_CIRCLE. That read has no time cut and no state
+        test, matching the database's one-Governance-Circle-per-LO index
+        (s015_circle_one_governance_uidx, migration 0045). Then a missing
+        target, or a kind other than GOVERNANCE, is UNRECOGNISED_ACTION (a
+        guard: evaluate_organism_authority has checked both).
+
+        Qualified facts: "kind" GOVERNANCE and "c" the target's circle_uuid.
+        Codes are disclosed by _refuse's rule. Reads only.
+        """
         if Circle.objects.using(self.database_alias).filter(
             parent_organism=organism,
             kind="GOVERNANCE",
@@ -2230,6 +2973,21 @@ class ProductionApplicationAuthorityProvider:
         })
 
     def _lo_capacity(self, organism: LivingOrganism, request: S015AuthorityRequest) -> bool:
+        """Return whether the LO has capacity for an act at the request's
+        time cuts.
+
+        False unless the LO has its sequence-1 event (its founding)
+        effective by request.effective_at and recorded by
+        request.evaluated_at. That read has no received_at cut and does not
+        test the event's action. True when the LO folds anything but CLOSED
+        (_lo_state), including DORMANT and None. When it folds CLOSED, fold
+        again one microsecond before effective_at at the same evaluated_at:
+        an LO closed at exactly the act's effective_at keeps capacity for
+        that act; one closed earlier has none.
+
+        Every caller refuses False with C_LO_NO_CAPACITY. Reads only,
+        without locks.
+        """
         founding = LivingOrganismEvent.objects.using(self.database_alias).filter(
             living_organism=organism,
             sequence=1,
@@ -2255,6 +3013,36 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         membership: OrganismMembership,
     ) -> bool:
+        """Compare supplied locked-head references with current heads.
+
+        Any locking is the caller's. This method neither acquires
+        locks nor verifies that the caller holds them.
+
+        Return True only when:
+        - the membership has a head transition whose lineage
+          reference equals request.active_membership_head_reference;
+        - its latest transition at request.effective_at and
+          evaluated_at exists and is that current head or one of its
+          predecessors;
+        - the head lineage references of this membership's
+          assignments with cached state ACTIVE and a non-null head,
+          ordered by assignment primary key, equal the supplied
+          contextual_role_head_references tuple exactly;
+        - each of those assignments has a latest event at the same
+          cuts that is its current head or one of the head's
+          predecessors.
+
+        Latest transitions use _latest_transition; ancestry uses
+        _is_ancestor. The assignment set comes from the current
+        cached state, not a fold at the request's cuts. An empty
+        assignment set can match an empty tuple; this does not prove
+        office eligibility.
+
+        A failed comparison returns False; database errors propagate.
+        Callers translate False to DENIED, except _coordinator_act
+        uses E_NOT_EFFECTIVE_COORDINATOR and the seat-request
+        qualifier uses SBG_MEMBER_NOT_ELIGIBLE. Reads only.
+        """
         if membership.head_transition_id is None or membership.head_transition.lineage_reference != request.active_membership_head_reference:
             return False
         effective_membership_head = _latest_transition(
@@ -2298,6 +3086,14 @@ class ProductionApplicationAuthorityProvider:
 
     @staticmethod
     def _is_ancestor(head, possible_predecessor) -> bool:
+        """Return whether possible_predecessor is head itself or on head's
+        predecessor chain.
+
+        Walk head, head.predecessor and so on, comparing primary keys, until
+        a match (True) or a row with no predecessor (False). Each step may
+        read the predecessor row from the database. There is no guard
+        against a cycle in the chain.
+        """
         current = head
         while current is not None:
             if current.pk == possible_predecessor.pk:
@@ -2310,6 +3106,21 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         membership: OrganismMembership,
     ) -> ContextualRoleAssignment | None:
+        """Return the membership's effective Coordinator office, or None.
+
+        Consider the membership's assignments of an active role definition
+        with code COORDINATOR and scope LIVING_ORGANISM, in primary-key
+        order. Return the first that:
+        - has a head state event whose lineage_reference is among
+          request.contextual_role_head_references;
+        - folds ACTIVE at request.effective_at and request.evaluated_at
+          (_fold_state);
+        - has a latest state event at those cuts (_latest_transition);
+        - has its term in effect (_assignment_term_in_effect).
+
+        None when no assignment qualifies. Callers refuse None with
+        E_NOT_EFFECTIVE_COORDINATOR. Reads only, without locks.
+        """
         assignments = ContextualRoleAssignment.objects.using(self.database_alias).filter(
             membership=membership,
             role_definition__code="COORDINATOR",
@@ -2344,6 +3155,21 @@ class ProductionApplicationAuthorityProvider:
         return None
 
     def _eligible_coordinator_count(self, organism: LivingOrganism, request: S015AuthorityRequest) -> int:
+        """Count the LO's members who hold an effective Coordinator office.
+
+        For every membership row of the LO that folds ACTIVE at
+        request.effective_at and request.evaluated_at, count it once if any
+        of its assignments of an active COORDINATOR role definition with
+        scope LIVING_ORGANISM folds ACTIVE at those cuts and has its term in
+        effect (_term_in_effect). PROBATIONARY members are not counted. Unlike
+        _effective_coordinator_office, no head state event or locked head
+        reference is required.
+
+        Used by the role proposal and the role transition's ASSIGN (zero
+        refuses C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED) and by application
+        processing (with CQ active, any count but one refuses
+        C_ROUTE_IS_CQ, except for a decision). Reads only, without locks.
+        """
         count = 0
         memberships = OrganismMembership.objects.using(self.database_alias).filter(living_organism=organism)
         for membership in memberships:
@@ -2369,6 +3195,9 @@ class ProductionApplicationAuthorityProvider:
         return count
 
     def _term_in_effect(self, assignment: ContextualRoleAssignment, request: S015AuthorityRequest) -> bool:
+        """Return _assignment_term_in_effect for the assignment at the
+        request's effective_at and evaluated_at. Used by
+        _eligible_coordinator_count."""
         return _assignment_term_in_effect(
             self.database_alias,
             assignment.pk,
@@ -2383,6 +3212,59 @@ class ProductionApplicationAuthorityProvider:
         membership: OrganismMembership,
         office: ContextualRoleAssignment,
     ) -> S015AuthorityResult:
+        """Qualify claiming, reassigning or deciding an LO application.
+
+        The router supplies an ACTIVE LO, an ACTIVE actor membership
+        with matching supplied heads, and an effective Coordinator
+        office. The dispatcher checks application_uuid has type UUID;
+        the same local check refuses UNRECOGNISED_ACTION defensively.
+
+        In order:
+        - require this LO's application, effective by effective_at
+          and recorded by evaluated_at, else DENIED;
+        - refuse C_TERMINAL_ROW_STANDS for a decision or withdrawal
+          recorded by evaluated_at, without an effective-time test;
+        - select the eligible engagement with highest ordinal. LO_CQ,
+          CIRCLE_CQ and CIRCLE_CSA refuse C_ROUTE_IS_CQ; another
+          route except LO_CSA refuses UNRECOGNISED_ROUTE;
+        - for DECIDE_APPLICATION require an LO_CSA engagement, else
+          UNRECOGNISED_ROUTE, and resolve its recorded settings basis
+          through _settings_basis_versions. Otherwise resolve
+          configuration and settings at the request's cuts. A missing
+          version is C_CONFIGURATION_NOT_ESTABLISHED;
+        - except for a decision, require processing_responsibility LO
+          and, when CQ is True, exactly one eligible Coordinator
+          member. Either failure is C_ROUTE_IS_CQ.
+
+        Select the latest CSA claim by effective_at, recorded_at and
+        PK, all descending. CLAIM_APPLICATION refuses DENIED if an
+        engagement already exists. REASSIGN_APPLICATION requires an
+        engagement and claim with no eligible end, else DENIED; it
+        does not require the actor to be that claim's assignee.
+
+        DECIDE_APPLICATION requires assignment_uuid to name the
+        claim, else E_NOT_ASSIGNEE; the engagement reference to name
+        that claim, else UNRECOGNISED_ROUTE; the claim's actor and
+        assignee membership to match this actor and membership, else
+        E_NOT_ASSIGNEE; the assignee office to match this office,
+        else E_NOT_EFFECTIVE_COORDINATOR; and no eligible end, else
+        E_NOT_ASSIGNEE. An unsupported action is UNRECOGNISED_ACTION.
+
+        Application, engagement, claim and end reads use effective
+        and recorded cuts, without separate received_at predicates.
+        Terminal reads use recorded time alone. Version selection has
+        its own receipt and recorded predicates through
+        _effective_version. For decisions its cuts are the
+        engagement's effective_at and recorded_at; other version
+        selection uses the request's cuts.
+
+        Qualified facts extend _coordinator_facts: claims add "k": C
+        and "t": CQ_INACTIVE or SOLE_COORDINATOR; reassignments and
+        decisions add "a": the claim UUID and "e": the engagement
+        ordinal. Refusals use _refuse's disclosure rule. This method
+        reads without command locks and writes no claim, engagement,
+        end or decision.
+        """
         application_uuid = request.target.get("application_uuid")
         if type(application_uuid) is not UUID:
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -2490,6 +3372,60 @@ class ProductionApplicationAuthorityProvider:
         membership: OrganismMembership,
         office: ContextualRoleAssignment,
     ) -> S015AuthorityResult:
+        """Qualify a gateway change: application settings, the entitlement
+        election by version, the application question or the governance
+        configuration (the _VERSION_SPECS actions).
+
+        Reached from _coordinator_act after its capacity and LO-state gates
+        (which also admit a non-ACTIVE LO for the founder's first
+        configuration, and a FOUNDING_PENDING LO for a gateway change once a
+        configuration is effective), with the actor's locked, ACTIVE
+        membership and an effective Coordinator office. Read the effective
+        configuration and, except for a configuration change, the effective
+        settings at request.effective_at and request.evaluated_at.
+
+        The route:
+        - with no effective configuration, only a configuration change by
+          the LO's founder proceeds: another action refuses
+          C_CONFIGURATION_NOT_ESTABLISHED, another actor
+          E_NOT_EFFECTIVE_COORDINATOR. The basis is FIRST_CONFIGURATION;
+        - otherwise inherit_portal_cq_settings True refuses C_ROUTE_IS_CQ.
+          For a configuration change naming a version, a candidate recorded
+          by evaluated_at that would set cq_active or either require-CQ flag
+          to False, while CQ is active and changing LO settings requires CQ,
+          refuses C_CHANGE_SELF_AUTHORISING. Then, with CQ active and the
+          action's require-CQ flag True (the application question's flag for
+          a question, the LO settings flag otherwise), refuse
+          SE_OPT_IN_NEEDS_CQ for an election and C_ROUTE_IS_CQ for the rest.
+          The basis is CQ_INACTIVE, or CHANGE_FLAG_NO when CQ is active.
+
+        When request.version_uuid is set, the candidate is the action's
+        version row of this LO with that UUID, recorded by evaluated_at
+        (no recorded_at cut for an election), with entitlement choice and
+        route null for settings and non-null for an election. Then, in order:
+        - no candidate refuses DENIED;
+        - an event of this action effective by effective_at and received
+          and recorded by evaluated_at that already references the version
+          refuses DENIED;
+        - a version_kind other than DRAFT or EFFECT is UNRECOGNISED_ACTION
+          (a guard);
+        - an EFFECT whose version is incomplete (_version_complete) refuses
+          DENIED;
+        - for a configuration, any Governance enabling readiness refusal
+          (_governance_enabling_readiness);
+        - for a configuration, its nomination policy (None or empty means
+          C) other than A, B or C refuses DENIED. Policy A or B needs a
+          non-empty str from the nomination entitlement source, else
+          E_NOMINATION_POLICY_NOT_ENTITLED with _coordinator_facts less "s",
+          "i": None and "v": the candidate UUID. The policy checks run for a
+          DRAFT too.
+
+        When version_uuid is None, none of these version checks run.
+        Qualified facts are _coordinator_facts ("s" removed for a
+        configuration), "t": the basis, "v": the version UUID or "-", and
+        "i": the entitlement reference when one was required. Refusals use
+        _refuse's disclosure rule. Reads only, without locks.
+        """
         configuration = _effective_version(
             self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
             request.effective_at, request.evaluated_at,
@@ -2630,6 +3566,15 @@ class ProductionApplicationAuthorityProvider:
         configuration,
         settings,
     ) -> dict[str, object]:
+        """Return the common facts of a Coordinator's act.
+
+        "c": the configuration's version UUID; "m": the event UUID of the
+        membership's latest transition; "o": the event UUID of the office's
+        latest state event; "s": the settings' version UUID. Each is "-"
+        when absent. The transitions are read with _latest_transition at
+        request.effective_at and request.evaluated_at. Callers add or remove
+        keys for their action. Reads only, without locks.
+        """
         membership_head = _latest_transition(
             self.database_alias,
             OrganismMembershipTransition,
@@ -2658,6 +3603,23 @@ class ProductionApplicationAuthorityProvider:
         engagement: ApplicationEngagement,
         organism: LivingOrganism,
     ) -> tuple[LOGovernanceConfigurationVersion | None, LOApplicationSettingsVersion | None]:
+        """Return the configuration and settings versions an engagement
+        recorded as its basis, or (None, None).
+
+        Return (None, None) when the engagement has no recorded_at, or its
+        settings_basis does not parse as "key:value" parts joined by ";"
+        with no repeated key, or lacks a governance-configuration-version or
+        application-settings-version value that parses as a UUID. Other keys
+        are ignored. Load that configuration version and that settings
+        version of this LO, the settings with null entitlement fields; both
+        must exist. They must also be the effective configuration and
+        settings (_effective_version) at the engagement's own effective_at
+        and recorded_at, else (None, None).
+
+        Used for DECIDE_APPLICATION, so a decision stands on the basis
+        recorded at engagement rather than the versions in effect at the
+        request. Reads only, without locks.
+        """
         if engagement.recorded_at is None:
             return None, None
         references = {}
@@ -2702,6 +3664,26 @@ class ProductionApplicationAuthorityProvider:
 
     @staticmethod
     def _version_complete(version, action: OrganismAction) -> bool:
+        """Return whether a gateway version is complete enough to take
+        effect for the action.
+
+        Application settings rows:
+        - for EFFECT_ENTITLEMENT_ELECTION: choice COMPLIMENTARY_BETA, route
+          POST_BIRTHING, a policy version above 0, a non-empty policy text
+          digest, a non-blank authority source and version, and
+          applications_open, automatic_acceptance and
+          processing_responsibility all None;
+        - for EFFECT_APPLICATION_SETTINGS: every entitlement field None,
+          applications_open and automatic_acceptance set, and
+          processing_responsibility LO or APPLICATION_CIRCLE;
+        - for any other action, False.
+
+        An application question: non-blank question_text and a set
+        answer_format. Any other row (a governance configuration):
+        cq_active, inherit_portal_cq_settings and both require-CQ flags set.
+        The action is not checked for those two, and no other configuration
+        field is required.
+        """
         if isinstance(version, LOApplicationSettingsVersion):
             election_fields = (
                 version.entitlement_choice,
