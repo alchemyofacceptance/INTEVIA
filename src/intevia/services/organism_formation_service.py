@@ -1,3 +1,20 @@
+"""Founding, phase advance and Birthing of a Living Organism (LO).
+
+Three S015 command services:
+- OrganismFormationService founds an LO (FOUND_LIVING_ORGANISM).
+- OrganismPhaseAdvanceService reports readiness for, and records,
+  the phase advances Conceiving to Germinating and Germinating to
+  Birthing (TRANSITION_LIVING_ORGANISM/PHASE_ADVANCE).
+- OrganismBirthingService records Birthing
+  (TRANSITION_LIVING_ORGANISM/BIRTHING).
+
+Also holds the SB-G readiness message helpers that phase advance,
+Birthing and organism_application_service use for GOVERNANCE
+readiness refusals.
+
+Founding does not go through the durable intake; it reads
+received_at from the injected clock.
+"""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -100,6 +117,37 @@ def _sbg_arrangement_condition(
     recorded_at: datetime,
     code: S015AuthorityRefusalCode,
 ) -> str:
+    """Name a condition for an already selected SB-G refusal.
+
+    Read the LO's GOVERNANCE_CONSTITUTION rule effective by
+    effective_at and recorded by recorded_at. Choose the latest
+    by effective time, recorded time and version, in that order.
+
+    For SBG_ARRANGEMENT_FIELD_UNSUPPORTED, look first for
+    unsupported officer roles, then an election schedule,
+    then a seat term or a vacancy rule other than BY_SEAT_ROUTE.
+    A non-dict body gives a generic phrase. Missing or non-list
+    officer_roles counts as unsupported. The seats value is
+    iterated without a list check; a null value can raise
+    TypeError instead of returning a phrase.
+
+    For SBG_ELIGIBILITY_UNSUPPORTED, find the first dict seat
+    whose eligibility is not LO_MEMBER, in a dict body's list
+    of seats. Return its seat_id as text, using
+    "the requested seat" only when the key is absent.
+    Raise RuntimeError if no such seat is found.
+
+    For other codes, check the body, seat list and each seat,
+    requiring exact dict and list types. Name the first problem
+    with the identifier's string type, admission route,
+    deciding body, duplicate identifier or aware start date.
+    If every seat passes but none starts by effective_at,
+    name that condition; otherwise return a generic phrase.
+
+    This explains a code; it does not decide readiness or
+    perform the readiness function's complete validation.
+    Database errors and uncaught value errors propagate.
+    """
     rule = GovernedRule.objects.using(database_alias).filter(
         scope_kind="LIVING_ORGANISM",
         scope_organism=organism,
@@ -189,6 +237,27 @@ def _sbg_readiness_message(
     effective_at: datetime,
     recorded_at: datetime,
 ) -> str | None:
+    """Return user-facing text for an SB-G code, or None.
+
+    act supplies the opening clause. Most texts begin with
+    that clause followed by "and nothing changed.".
+    Cover a missing GOVERNANCE Circle or arrangement,
+    an incomplete arrangement, unsupported fields or
+    eligibility, and no initial participation route.
+
+    For incomplete, field and eligibility refusals, obtain
+    the condition through _sbg_arrangement_condition using
+    effective_at and recorded_at. Its errors propagate.
+
+    The participation-route text offers the pre-Birthing
+    next step only when act equals "The LO was not born".
+    Every other act gets the alternative next step;
+    this helper does not independently check the lifecycle.
+
+    The field and eligibility texts always open with
+    "No arrangement was adopted and nothing changed."
+    They do not substitute act into that opening.
+    """
     opening = f"{act} and nothing changed."
     if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
         return (
@@ -259,6 +328,18 @@ def _sbg_readiness_message(
 
 @dataclass(frozen=True, slots=True)
 class FoundLivingOrganismCommand:
+    """Inputs to found_living_organism.
+
+    credential is the founder's Django User. name and purpose are
+    required; vision, mission and values are optional.
+    request_reference and idempotency_key identify the request.
+    accepted_terms_version_uuid names the platform-terms version the
+    founder accepted, or None. effective_at is when the founding takes
+    effect; None means the time the service receives the command.
+
+    There is no received_at field: the service takes it from its
+    clock. found_living_organism validates every field.
+    """
     credential: User
     name: str
     purpose: str
@@ -273,6 +354,16 @@ class FoundLivingOrganismCommand:
 
 @dataclass(frozen=True, slots=True)
 class FoundLivingOrganismResult:
+    """Result of founding an LO.
+
+    Carries the new LO's UUID, the FOUND event's UUID, the receipt's
+    lineage reference, and the authority and authority-decision
+    references.
+
+    Declares no audience-specific field restrictions. New and replayed
+    results are both served through serve_replay, which can still
+    withhold authority_reference.
+    """
     living_organism_uuid: UUID
     event_uuid: UUID
     lineage_reference: str
@@ -280,6 +371,8 @@ class FoundLivingOrganismResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str]:
+        """Return the receipt form: UUIDs as strings, the other fields as they
+        are."""
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "event_uuid": str(self.event_uuid),
@@ -290,12 +383,24 @@ class FoundLivingOrganismResult:
 
     @classmethod
     def replay_field_audiences(cls, result: FoundLivingOrganismResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class; raise
+        TypeError otherwise."""
         if type(result) is not cls:
             raise TypeError("founding replay result has the wrong type")
         return {}
 
 
 def _result_from_payload(payload: object) -> FoundLivingOrganismResult:
+    """Rebuild a founding result from a receipt payload.
+
+    Require a dict of exactly that type, else raise
+    S015CommandReplayMismatch. Construct the two UUIDs; missing fields,
+    and TypeError or ValueError from construction, become
+    S015CommandReplayMismatch. Other exceptions propagate.
+
+    The three references are taken as stored, without checking their
+    types or values.
+    """
     if type(payload) is not dict:
         raise S015CommandReplayMismatch("completed receipt does not match request")
     try:
@@ -311,6 +416,24 @@ def _result_from_payload(payload: object) -> FoundLivingOrganismResult:
 
 
 class OrganismFormationService:
+    """Found a Living Organism (FOUND_LIVING_ORGANISM).
+
+    A successful founding records its authority decision and, in the
+    same transaction:
+    - the founder's platform-terms acceptance;
+    - the founding authority basis;
+    - the LO, version 1 of its founding content and its FOUND event;
+    - the founder's ACTIVE membership, with OPEN and ACTIVATE
+      transitions;
+    - the LO Coordinator role, the founder's ACTIVE assignment to
+      it, and its ASSIGN event;
+    - the GOVERNANCE coverage requirement, its case and a SATISFIED
+      assessment;
+    - the receipt.
+
+    This service does not extend _OrganismCommandService or use the
+    durable intake. It reads received_at from its injected clock.
+    """
     def __init__(
         self,
         *,
@@ -318,6 +441,14 @@ class OrganismFormationService:
         authority: S015Authority | None = None,
         database_alias: str = "default",
     ) -> None:
+        """Check and keep the clock, authority and database alias.
+
+        clock must be callable, else TypeError; database_alias a non-empty
+        str, else ValueError. With no authority, build an S015Authority over
+        ProductionApplicationAuthorityProvider on database_alias. A supplied
+        or built authority must be an S015Authority on the same alias, else
+        TypeError.
+        """
         if not callable(clock):
             raise TypeError("clock must be callable")
         if type(database_alias) is not str or not database_alias:
@@ -337,6 +468,54 @@ class OrganismFormationService:
         self,
         command: FoundLivingOrganismCommand,
     ) -> FoundLivingOrganismResult:
+        """Found an LO from the command and return the served result.
+
+        Raise S015FormationTechnicalFailure if the connection is already
+        in an atomic block. Inside authority_atomic, in order:
+        - lock the actor's Identity and credential. Inactive Identity or
+          credential becomes S015AuthorityDenied with
+          E_IDENTITY_INACTIVE; a missing Identity raises
+          S015FormationActorUnavailable;
+        - check request_reference and idempotency_key as canonical keys,
+          with limits of 128 and 120 characters. Read received_at from
+          the clock; default effective_at to it. Require aware datetimes
+          and effective_at <= received_at. Check required and optional
+          texts and that accepted_terms_version_uuid is exactly UUID or
+          None;
+        - refuse with LO_NAME_REQUIRED if the name gives an empty slug;
+        - acquire the actor/action/idempotency-key mutex and fingerprint
+          the command. Serve a matching completed receipt before
+          checking slug availability or qualifying authority. A
+          different request reference or fingerprint raises
+          S015CommandReplayMismatch;
+        - refuse with LO_NAME_UNAVAILABLE if the slug already exists;
+        - build a pre-founding request for a new LO UUID, with authority
+          evaluated at received_at, and qualify it. Replace a denial's
+          message when an authored founding message exists, preserving
+          its codes and decision reference; otherwise propagate it;
+        - write the founding batch and serve its result. An
+          IntegrityError whose direct database cause names the LO slug
+          constraint becomes LO_NAME_UNAVAILABLE; other IntegrityErrors
+          propagate.
+
+        Key checks raise TypeError or ValueError; invalid timestamps and
+        terms UUID types raise TypeError, and a future effective_at
+        raises ValueError. Text checks have their own validation and
+        refusal rules. Mutex, authority and replay helpers can raise
+        their own errors; the enclosing transaction and contention rules
+        apply.
+
+        S015AuthorityDenied is deferred until the atomic scope exits.
+        Earlier writes can commit if the transaction remains committable
+        and its exit succeeds; this includes a recorded REFUSED
+        authority decision. A denial alone does not prove persistence.
+        In particular, a failed LO insert can leave the transaction
+        requiring rollback; translating that error does not preserve
+        earlier writes. Errors at transaction exit can replace a pending
+        denial or successful result. The outer contention wrapper
+        translates qualifying database lock errors after transaction
+        exit and performs no retry.
+        """
         if connections[self._alias].in_atomic_block:
             raise S015FormationTechnicalFailure(
                 "FOUND_LIVING_ORGANISM requires a top-level transaction; an enclosing atomic block "
@@ -491,6 +670,44 @@ class OrganismFormationService:
         effective_at: datetime | None,
         received_at: datetime,
     ) -> FoundLivingOrganismResult:
+        """Write every row of a qualified founding and return the served result.
+
+        Read the registration and founding-rule references from the
+        decision's authority reference, and the platform-terms version from
+        the rule. The LO's UUID is the request's; the acceptance UUID comes
+        from founding_acceptance_uuid. Refuse with FOUNDING_PRINCIPAL_ABSENT,
+        keeping the decision reference, if no founding principal is found;
+        nothing has been written by this method at that point.
+
+        Then write, in order:
+        - the FOUNDING platform-terms acceptance, accepted at effective_at,
+          with its s015r1 commitment;
+        - the FOUNDING authority basis: issued by the founder under the
+          principal, with the rule as instrument and the acceptance as
+          evidence;
+        - the LO in FOUNDING_PENDING, then version 1 of its founding content,
+          then its FOUND event (to ACTIVE);
+        - the founder's ACTIVE membership; the LO's founding basis and founder
+          are then set; then the membership's OPEN (to PROPOSED) and ACTIVATE
+          (to ACTIVE) transitions, reason FOUNDING;
+        - the active LO-scope COORDINATOR role (version 1), the founder's
+          ACTIVE assignment to it with no Circle, and its ASSIGN event;
+        - the GOVERNANCE coverage requirement (COORDINATOR, at least one
+          occupant, from effective_at), its case, and a SATISFIED assessment;
+        - the receipt, holding the result's receipt payload.
+
+        The FOUND, ASSIGN and assessment events are each the first on their
+        anchor; the membership's transitions are sequence 1 and 2. Each event
+        and transition carries the actor as PARTY in STANDING capacity,
+        TRANSPORT entry, the basis, the decision reference, the request's
+        references and the command fingerprint. The acceptance, the content
+        and the three events leave recorded_at to the database, which also
+        assigns the content commitment.
+
+        Finally refresh the cached state of the LO, the membership and the
+        assignment as of effective_at, and serve the result to the founder at
+        the clock's time.
+        """
         authority_facts = json.loads(decision.authority_reference[len("s015a1:"):])
         rule_reference = authority_facts["rule"]
         registration_reference = authority_facts["registration"]
@@ -809,6 +1026,13 @@ class OrganismFormationService:
         idempotency_key: str,
         fingerprint: str,
     ) -> FoundLivingOrganismResult | None:
+        """Return the served result of a completed founding, or None.
+
+        Lock the receipt for this actor, action and idempotency key; with
+        none, return None. A different request reference or fingerprint
+        raises S015CommandReplayMismatch. Otherwise rebuild the result from
+        the receipt payload and serve it to the actor at the clock's time.
+        """
         receipt = (
             OrganismCommandReceipt.objects.using(self._alias)
             .select_for_update()
@@ -839,6 +1063,20 @@ class OrganismFormationService:
         idempotency_key: str,
         effective_at: datetime,
     ) -> str:
+        """Return the founding command's fingerprint.
+
+        SHA-256 hex of _COMMAND_DOMAIN and the canonical JSON of the
+        action, the actor's identity UUID and access epoch, the request
+        reference, the idempotency key, the name, purpose, vision,
+        mission and values, the terms version UUID, and effective_at
+        (canonical, or None).
+
+        found_living_organism passes the command's effective_at, not its
+        received_at default. Omitting effective_at therefore keeps that
+        fingerprint input as None across attempts. The fingerprint
+        remains the same only if the other inputs also remain the same.
+        received_at is not included.
+        """
         payload = {
             "action": _ACTION.value,
             "actor_access_epoch": actor.access_epoch,
@@ -879,6 +1117,25 @@ class OrganismFormationService:
         received_at: datetime,
         extra: dict[str, object] | None = None,
     ) -> int:
+        """Insert the first event on a founding chain by raw SQL; return its id.
+
+        The table must be core_livingorganismevent,
+        core_contextualroleassignmentstateevent or core_coverageassessment,
+        with its own anchor column, else ValueError. core_coverageassessment
+        takes its state in result and needs exactly the extra fields
+        roster_version, evaluated_state_at, evaluated_known_at and
+        determiner_capacity_reference; the other tables take resulting_state
+        and no extra fields. A mismatch raises ValueError.
+
+        The row is sequence 1 with no predecessor. The actor is PARTY in
+        STANDING capacity and the enterer. Entry is TRANSPORT, with no
+        composing rule or composer and no end. occurred_at is effective_at.
+        The lineage reference comes from _lineage_reference(action, ...),
+        and the temporal basis from _resulting_temporal_basis. recorded_at
+        is left to the database. parts_commitment is computed by the
+        database's s015_0022_digest before the insert, and
+        predecessor_l1_commitment is None.
+        """
         allowed = {
             "core_livingorganismevent": ("living_organism_id", "resulting_state", ()),
             "core_contextualroleassignmentstateevent": ("assignment_id", "resulting_state", ()),
@@ -955,6 +1212,10 @@ class OrganismFormationService:
             return cursor.fetchone()[0]
 
     def _membership_event_id(self, event_uuid: UUID) -> int:
+        """Return the id of the membership transition with this event UUID.
+
+        Raise S015FormationTechnicalFailure if none is found.
+        """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
                 "SELECT id FROM public.core_organismmembershiptransition WHERE event_uuid = %s",
@@ -966,11 +1227,24 @@ class OrganismFormationService:
         return row[0]
 
     def _founding_principal(self) -> AuthorityPrincipal | None:
+        """Return the founding authority principal, or None.
+
+        Delegates to organism_authority._founding_authority_principal: the
+        genesis principal, else, only when fixture substitutes are
+        permitted, the fixture principal.
+        """
         from src.intevia.services.organism_authority import _founding_authority_principal
 
         return _founding_authority_principal(self._alias)
 
     def _founding_principal_absent_message(self) -> str:
+        """Return the refusal text for a missing founding principal.
+
+        When a fixture-namespace principal exists but fixture substitutes are
+        not permitted, say that the labelled development substitute is not
+        permitted here. Otherwise say that the GENESIS principal is not
+        registered on this database and how to register it.
+        """
         fixture_substitute_exists = AuthorityPrincipal.objects.using(self._alias).filter(
             governed_source_namespace="INTEVIA_FIXTURE_AUTHORITY_V1",
         ).exists()
@@ -986,6 +1260,13 @@ class OrganismFormationService:
         self,
         code: S015AuthorityRefusalCode | None,
     ) -> str | None:
+        """Return the authored founding message for a refusal code, or None.
+
+        FOUNDING_PRINCIPAL_ABSENT takes _founding_principal_absent_message.
+        FOUNDING_TERMS_NOT_ACCEPTED, FOUNDING_TERMS_VERSION_SUPERSEDED,
+        E_NOT_REGISTERED and E_IDENTITY_INACTIVE have fixed texts. Any other
+        code, or None, gives None.
+        """
         if code is S015AuthorityRefusalCode.FOUNDING_PRINCIPAL_ABSENT:
             return self._founding_principal_absent_message()
         messages = {
@@ -1012,6 +1293,16 @@ class OrganismFormationService:
         return messages.get(code)
 
     def _refresh(self, anchor_token: str, anchor_id: int, effective_at: datetime) -> None:
+        """Refresh a founding anchor's cached state through the
+        database.
+
+        Call s015_refresh_governed_cache with the anchor table and id,
+        effective_at as the state time and the database's
+        clock_timestamp() as the known time. For founding's LO,
+        membership and assignment anchors, the function locks the row
+        and sets current_state_effective_at and state_known_at. Its
+        returned fingerprint is not used.
+        """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
                 "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
@@ -1021,6 +1312,8 @@ class OrganismFormationService:
 
     @staticmethod
     def _lineage_reference(kind: str, event_uuid: UUID, fingerprint: str) -> str:
+        """Return "s015l1:" and the SHA-256 hex of _LINEAGE_DOMAIN and the
+        canonical JSON of the event UUID, the fingerprint and the kind."""
         payload = canonical_json_bytes({
             "event_uuid": event_uuid,
             "fingerprint": fingerprint,
@@ -1030,18 +1323,31 @@ class OrganismFormationService:
 
     @staticmethod
     def _constraint_name(exc: IntegrityError) -> str | None:
+        """Return the violated constraint's name from the IntegrityError's
+        database cause, or None when it has none."""
         cause = exc.__cause__
         diagnostics = getattr(cause, "diag", None)
         return getattr(diagnostics, "constraint_name", None)
 
     @staticmethod
     def _timestamp(value: object, name: str) -> datetime:
+        """Return value unchanged if it is a timezone-aware datetime of
+        exactly that type; raise TypeError otherwise. Unlike
+        _validate_timestamp, it does not convert to UTC."""
         if type(value) is not datetime or value.tzinfo is None or value.utcoffset() is None:
             raise TypeError(f"{name} must be timezone-aware")
         return value
 
     @staticmethod
     def _required_text(value: object, name: str) -> str:
+        """Check a required founding text and return it unchanged.
+
+        Must be a str, else TypeError. If it is empty or whitespace after
+        NFC normalisation, raise S015AuthorityDenied with LO_NAME_REQUIRED,
+        for purpose as well as name. Then it must already be NFC, else
+        ValueError, and a name may be at most 90 characters, else
+        ValueError. Surrounding whitespace is kept.
+        """
         if type(value) is not str:
             raise TypeError(f"{name} must be a string")
         normalized = unicodedata.normalize("NFC", value)
@@ -1059,6 +1365,12 @@ class OrganismFormationService:
 
     @staticmethod
     def _optional_text(value: object, name: str) -> str | None:
+        """Check an optional founding text and return it unchanged.
+
+        None stays None. Otherwise it must be a str, else TypeError, and
+        already NFC, else ValueError. Empty strings are accepted, and there
+        is no length limit.
+        """
         if value is None:
             return None
         if type(value) is not str:
@@ -1069,10 +1381,22 @@ class OrganismFormationService:
 
 
 class S015FormationActorUnavailable(Exception):
+    """The founder's Identity could not be locked as an active actor.
+
+    _lock_actor raises it. found_living_organism turns an inactive
+    Identity or credential into an E_IDENTITY_INACTIVE refusal, so it
+    propagates only when no Identity holds the credential.
+    """
     pass
 
 
 class S015FormationTechnicalFailure(Exception):
+    """Founding cannot proceed for a technical reason.
+
+    Raised when found_living_organism is called inside an atomic block,
+    and when a membership's opening transition cannot be found after
+    its insert.
+    """
     pass
 
 
@@ -1151,6 +1475,17 @@ _NEXT_PHASE = {
 
 @dataclass(frozen=True, slots=True)
 class PhaseAdvanceCommand:
+    """Inputs to advance_phase.
+
+    credential is the actor's Django User. living_organism_uuid names
+    the LO; from_phase and to_phase name the advance. request_reference
+    and idempotency_key identify the request. effective_at is when the
+    advance takes effect; None means the time the service receives the
+    command.
+
+    There is no received_at field: the service takes it from its clock.
+    advance_phase checks every field.
+    """
     credential: User
     living_organism_uuid: UUID
     from_phase: str
@@ -1162,6 +1497,13 @@ class PhaseAdvanceCommand:
 
 @dataclass(frozen=True, slots=True)
 class PhaseReadinessQuery:
+    """Inputs to assess_readiness.
+
+    The LO's UUID, the proposed from_phase and to_phase, the effective
+    time to judge the LO at, and evaluated_at, the latest received and
+    recorded time that counts as known. effective_at must not be later
+    than evaluated_at.
+    """
     living_organism_uuid: UUID
     from_phase: str
     to_phase: str
@@ -1171,6 +1513,14 @@ class PhaseReadinessQuery:
 
 @dataclass(frozen=True, slots=True)
 class PhaseReadiness:
+    """Result of assess_readiness.
+
+    ready says whether the advance's own conditions hold. current_phase
+    is the LO's phase at the query's times. refusal_code is None when
+    ready; otherwise PHASE_OUT_OF_ORDER, PHASE_CONDITION_UNMET or the
+    code the SB-G readiness function returned. missing_provision names
+    what is missing for a PHASE_CONDITION_UNMET, and is None otherwise.
+    """
     ready: bool
     current_phase: str
     refusal_code: S015AuthorityRefusalCode | None
@@ -1179,6 +1529,16 @@ class PhaseReadiness:
 
 @dataclass(frozen=True, slots=True)
 class PhaseAdvanceResult:
+    """Result of a phase advance.
+
+    Carries the LO's UUID, the PHASE_ADVANCE event's UUID and sequence,
+    the two phases, the receipt's lineage reference, and the authority
+    and authority-decision references.
+
+    Declares no audience-specific field restrictions. New and replayed
+    results are both served through serve_replay, which can still
+    withhold authority_reference.
+    """
     living_organism_uuid: UUID
     event_uuid: UUID
     event_sequence: int
@@ -1189,6 +1549,9 @@ class PhaseAdvanceResult:
     authority_decision_reference: str
 
     def receipt_payload(self) -> dict[str, str | int]:
+        """Return the receipt form: the two UUIDs as strings, the other
+        fields as they are.
+        """
         return {
             "living_organism_uuid": str(self.living_organism_uuid),
             "event_uuid": str(self.event_uuid),
@@ -1202,12 +1565,25 @@ class PhaseAdvanceResult:
 
     @classmethod
     def replay_field_audiences(cls, result: PhaseAdvanceResult) -> dict[str, str]:
+        """Return an empty mapping for a result of exactly this class;
+        raise TypeError otherwise.
+        """
         if type(result) is not cls:
             raise TypeError("phase-advance replay result has the wrong type")
         return {}
 
 
 def _phase_result_from_payload(payload: object) -> PhaseAdvanceResult:
+    """Rebuild a phase-advance result from a receipt payload.
+
+    Require a dict of exactly that type, else raise
+    S015CommandReplayMismatch. Construct the two UUIDs; missing fields,
+    and TypeError or ValueError from construction, become
+    S015CommandReplayMismatch. Other exceptions propagate.
+
+    The sequence, the phases and the three references are taken as
+    stored, without checking their types or values.
+    """
     if type(payload) is not dict:
         raise S015CommandReplayMismatch("completed receipt does not match request")
     try:
@@ -1226,18 +1602,55 @@ def _phase_result_from_payload(payload: object) -> PhaseAdvanceResult:
 
 
 class S015PhaseAdvanceNotFound(Exception):
+    """The named LO was absent at the service's own row lookup.
+
+    assess_readiness raises this when no LO has the UUID.
+    advance_phase has the same translation after its registered
+    organism lock. That earlier lock can itself raise a database
+    error for a missing LO, before this translation is reached.
+    """
     pass
 
 
 class S015PhaseAdvanceUnavailable(Exception):
+    """The actor's locked identity or membership context is
+    unavailable.
+
+    _lock_actor raises this when no Identity holds the credential,
+    when the Identity is inactive or when its credential is
+    inactive. _lock_actor_membership_context raises it when
+    membership is missing, is not ACTIVE or has no head transition.
+    An empty set of active role-head references does not itself
+    raise this exception.
+    """
     pass
 
 
 class S015PhaseAdvanceTechnicalFailure(Exception):
+    """A phase advance could not be completed for a technical reason.
+
+    Raised when advance_phase is called inside an atomic block, when the
+    LO has no head event or founding basis, when the head event has no
+    l1 commitment, and when no authored message fits a remapped refusal.
+    """
     pass
 
 
 class OrganismPhaseAdvanceService(_OrganismCommandService):
+    """Assess and record an LO's phase advances
+    (TRANSITION_LIVING_ORGANISM/PHASE_ADVANCE).
+
+    The advances are Conceiving to Germinating and Germinating to
+    Birthing. assess_readiness reads whether the advance's own
+    conditions hold; advance_phase records it as a PHASE_ADVANCE event
+    on the LO's chain, with its authority decision and a receipt. The
+    LO's state does not change. Its phase is read from the latest
+    PHASE_ADVANCE event's evidence reference, and is CONCEIVING when
+    there is none.
+
+    Extends _OrganismCommandService for replay and the receipt, and
+    reads received_at from its injected clock.
+    """
     _action = OrganismAction.TRANSITION_LIVING_ORGANISM
     _not_found = S015PhaseAdvanceNotFound
     _authority_unavailable = S015PhaseAdvanceUnavailable
@@ -1249,6 +1662,15 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         authority: S015Authority | None = None,
         database_alias: str = "default",
     ) -> None:
+        """Check the clock and alias, build the default authority, and pass
+        them to _OrganismCommandService.
+
+        clock must be callable, else TypeError; database_alias a non-empty
+        str, else ValueError. With no authority, build an S015Authority over
+        ProductionApplicationAuthorityProvider on database_alias. The base
+        then requires an S015Authority (TypeError) on the same alias
+        (ValueError).
+        """
         if not callable(clock):
             raise TypeError("clock must be callable")
         if type(database_alias) is not str or not database_alias:
@@ -1261,9 +1683,41 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         super().__init__(authority=authority, clock=clock, database_alias=database_alias)
 
     def _replay_result(self, payload: object) -> PhaseAdvanceResult:
+        """Rebuild a stored result with _phase_result_from_payload.
+        """
         return _phase_result_from_payload(payload)
 
     def assess_readiness(self, query: PhaseReadinessQuery) -> PhaseReadiness:
+        """Report whether the LO could advance from from_phase to to_phase.
+
+        Validate the query: the LO UUID must be a UUID (TypeError); the
+        phases canonical keys of at most 24 characters (TypeError or
+        ValueError); both times aware (TypeError), with effective_at not
+        later than evaluated_at (ValueError). A missing LO raises
+        S015PhaseAdvanceNotFound.
+
+        The phase, Birthing and founding-content reads, and the governance
+        configuration event, are cut at the query's times: effective by
+        effective_at, and received and recorded by evaluated_at where the
+        record has those times. The configuration version is then read by
+        its UUID.
+
+        Not ready, with PHASE_OUT_OF_ORDER, when the pair is not Conceiving
+        to Germinating or Germinating to Birthing, when from_phase is not
+        the LO's current phase, or when a Birthing is recorded within the
+        cut. To Germinating, not ready unless version 1 of the founding
+        content has a non-blank name and purpose. To Birthing, not ready
+        without an effective governance configuration or with no GOVERNANCE
+        choice. Both refuse with PHASE_CONDITION_UNMET and name the missing
+        provision. If GOVERNANCE is on, the database's SB-G readiness
+        function decides: any code it returns is the refusal, and an unknown
+        code or no row raises RuntimeError.
+
+        It writes nothing and takes no lock itself. It does not check the
+        actor, the actor's Coordinator office or the size of the LO's
+        electorate, which qualification also checks, so ready does not
+        promise that advance_phase will qualify.
+        """
         organism_uuid = _canonical_uuid(query.living_organism_uuid, "living_organism_uuid")
         from_phase = _canonical_key(query.from_phase, "from_phase", 24)
         to_phase = _canonical_key(query.to_phase, "to_phase", 24)
@@ -1339,6 +1793,69 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         return PhaseReadiness(True, current_phase, None, None)
 
     def advance_phase(self, command: PhaseAdvanceCommand) -> PhaseAdvanceResult:
+        """Record a phase advance and return the served result.
+
+        Raise S015PhaseAdvanceTechnicalFailure if the connection is
+        already in an atomic block. Inside authority_atomic, in order:
+        - lock the actor's Identity and credential; a missing Identity,
+          inactive Identity or inactive credential raises
+          S015PhaseAdvanceUnavailable;
+        - check the LO UUID, the phases (at most 24 characters), the
+          request reference (128) and the idempotency key (120). Read
+          received_at from the clock and default effective_at to it.
+          Validate aware datetimes, convert them to UTC and require
+          effective_at <= received_at;
+        - fingerprint the command, acquire the
+          actor/action/idempotency-key mutex and serve a matching
+          completed receipt. A different request reference or
+          fingerprint raises S015CommandReplayMismatch;
+        - take the registered-organism lock, which can raise a database
+          error for a missing LO. Then lock the LO row; a missing row at
+          this later lookup becomes S015PhaseAdvanceNotFound;
+        - lock the actor's membership, requiring stored state ACTIVE and
+          a head transition, else S015PhaseAdvanceUnavailable. Lock its
+          ACTIVE role assignments with head events and collect their
+          head references; this tuple may be empty;
+        - qualify the post-founding request at received_at. For the
+          handled phase, CQ-route and SB-G refusals, raise the denial
+          with its authored message, preserving its codes and decision
+          reference; other denials propagate unchanged;
+        - require the LO's head event and founding basis; lock the head
+          event and require its l1 commitment. The explicit
+          missing-head, missing-basis and missing-commitment checks
+          raise S015PhaseAdvanceTechnicalFailure;
+        - insert the next PHASE_ADVANCE event with the head as
+          predecessor, and equal prior and resulting LO states. The
+          actor state is LIVING_ORGANISM, with no actor Identity or
+          access epoch, in STANDING capacity. The person is the enterer
+          in TRANSPORT mode. Carry the founding basis, decision and
+          request references, fingerprint, and
+          "formation-phase:<from>-><to>" evidence;
+        - refresh the LO's cache at effective_at with database known
+          time, then write the receipt, rebuild the result from its stored
+          payload and serve it at a fresh clock reading.
+
+        The fingerprint includes received_at and the resolved
+        effective_at; changing the receipt time therefore prevents a
+        matching replay. The event's occurred_at equals effective_at; an
+        earlier effective time adds a retrospective temporal basis.
+        recorded_at is omitted from the insert for the database to
+        assign.
+
+        UUID and time type errors raise TypeError; key checks raise
+        TypeError or ValueError; effective_at after received_at raises
+        ValueError. Other helper and database errors follow their own
+        contracts and the outer contention translation.
+
+        S015AuthorityDenied is deferred until the atomic scope exits.
+        Earlier writes, including a recorded REFUSED authority decision,
+        remain only if the transaction can commit and its exit succeeds.
+        A technical failure while building a refusal message is not
+        deferred and rolls back this command's transaction. Exit failure
+        can prevent a pending result or denial from reaching the caller.
+        The outer contention wrapper translates qualifying database lock
+        errors after exit; nothing is retried.
+        """
         if connections[self._alias].in_atomic_block:
             raise S015PhaseAdvanceTechnicalFailure(
                 "PHASE_ADVANCE could not be completed because of a technical problem; "
@@ -1573,6 +2090,14 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> str:
+        """Return the LO's phase as of effective_at, known by evaluated_at.
+
+        Take the latest PHASE_ADVANCE event with effective_at, received_at
+        and recorded_at within those times, ordered by effective, occurred,
+        received and recorded time, then sequence and event UUID. Its phase
+        is the part after "->" in its evidence reference. With no such
+        event, the phase is CONCEIVING.
+        """
         evidence_reference = LivingOrganismEvent.objects.using(self._alias).filter(
             living_organism=organism,
             action="PHASE_ADVANCE",
@@ -1594,6 +2119,9 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> bool:
+        """Return whether a BIRTHING event exists with effective_at,
+        received_at and recorded_at within the given times.
+        """
         return LivingOrganismEvent.objects.using(self._alias).filter(
             living_organism=organism,
             action="BIRTHING",
@@ -1608,6 +2136,10 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> bool:
+        """Return whether version 1 of the LO's founding content, effective
+        by effective_at and recorded by evaluated_at, has a name and a
+        purpose that are not blank.
+        """
         content = LOFoundingContentVersion.objects.using(self._alias).filter(
             living_organism=organism,
             version=1,
@@ -1622,6 +2154,16 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> LOGovernanceConfigurationVersion | None:
+        """Return the LO's effective governance configuration version, or
+        None.
+
+        Take the latest EFFECT_GOVERNANCE_CONFIGURATION event with
+        effective_at, received_at and recorded_at within the given times, in
+        the same order as _phase_at. Its evidence reference must be
+        "governance-configuration-version:<uuid>"; return the LO's version
+        with that UUID. Return None when there is no event, the reference
+        has another form or a malformed UUID, or no such version exists.
+        """
         evidence_reference = LivingOrganismEvent.objects.using(self._alias).filter(
             living_organism=organism,
             action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION.value,
@@ -1651,6 +2193,24 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         effective_at: datetime,
         evaluated_at: datetime,
     ) -> str:
+        """Return user-facing text for a remapped phase-advance refusal.
+
+        Read the current phase first, at the supplied time cuts.
+        PHASE_OUT_OF_ORDER names it and the next phase; the next-phase
+        lookup falls back to to_phase. INV_CQ_ROUTE_REQUIRED explains
+        the unavailable route for a multi-member electorate. Otherwise
+        try _sbg_readiness_message and return any text it supplies.
+
+        If no message was supplied and to_phase is GERMINATING, return
+        the fixed founding-content explanation without re-reading that
+        content. Otherwise re-read the effective governance
+        configuration: report a missing configuration or an unset
+        GOVERNANCE choice; if neither applies, raise
+        S015PhaseAdvanceTechnicalFailure.
+
+        This method is not given the refusal's facts. Phase,
+        configuration and delegated diagnostic read failures propagate.
+        """
         current_phase = self._phase_at(organism, effective_at, evaluated_at)
         if code is S015AuthorityRefusalCode.PHASE_OUT_OF_ORDER:
             next_phase = _NEXT_PHASE.get(current_phase, to_phase)
@@ -1715,6 +2275,18 @@ _BIRTHING_COMMAND_DOMAIN = b"INTEVIA:S015:TRANSITION_LIVING_ORGANISM/BIRTHING:CO
 
 @dataclass(frozen=True, slots=True)
 class BirthingCommand:
+    """Inputs to birth_living_organism.
+
+    credential is the actor's Django User; living_organism_uuid names
+    the LO. request_reference and idempotency_key identify the request.
+    offering_choice, policy_version and policy_text_sha256 are the
+    Birthing entitlement election: FREE or COMPLIMENTARY_BETA, and the
+    policy version and text digest the actor accepted. effective_at is
+    when Birthing takes effect; None means the time the service
+    receives the command.
+
+    There is no received_at field: the service takes it from its clock.
+    """
     credential: User
     living_organism_uuid: UUID
     request_reference: str
@@ -1727,6 +2299,19 @@ class BirthingCommand:
 
 @dataclass(frozen=True, slots=True)
 class BirthingResult:
+    """Result of Birthing an LO.
+
+    Carries the LO's UUID, the snapshot's UUID, the BIRTHING event's
+    UUID and sequence, the receipt's lineage reference, and the
+    authority and authority-decision references. The election fields
+    carry the offering choice, policy version and text digest, the
+    election event's UUID, the beta entitlement's UUID (None for FREE),
+    and the election's own authority and authority-decision references.
+
+    Declares no audience-specific field restrictions. New and replayed
+    results are both served through serve_replay, which can still
+    withhold authority_reference.
+    """
     living_organism_uuid: UUID
     snapshot_uuid: UUID
     event_uuid: UUID
@@ -1743,6 +2328,11 @@ class BirthingResult:
     entitlement_authority_decision_reference: str | None = None
 
     def receipt_payload(self) -> dict[str, str | int | None]:
+            """Return the receipt form.
+
+            Convert UUIDs to strings and absent optional UUIDs to None.
+            Keep the other fields as they are.
+            """
             return {
                 "living_organism_uuid": str(self.living_organism_uuid),
                 "snapshot_uuid": str(self.snapshot_uuid),
@@ -1770,12 +2360,29 @@ class BirthingResult:
 
     @classmethod
     def replay_field_audiences(cls, result: BirthingResult) -> dict[str, str]:
+            """Return an empty mapping for this exact result class.
+
+            Raise TypeError for a result of any other class.
+            """
             if type(result) is not cls:
                 raise TypeError("birthing replay result has the wrong type")
             return {}
 
 
 def _birthing_result_from_payload(payload: object) -> BirthingResult:
+    """Rebuild a Birthing result from a receipt payload.
+
+    Require a dict of exactly that type, else raise
+    S015CommandReplayMismatch. Construct the three required UUIDs and,
+    when present and not None, the election event and entitlement
+    UUIDs; missing required fields, and TypeError or ValueError from
+    construction, become S015CommandReplayMismatch. Other exceptions
+    propagate.
+
+    The optional election fields default to None when absent. The
+    sequence and the other fields are taken as stored, without checking
+    their types or values.
+    """
     if type(payload) is not dict:
             raise S015CommandReplayMismatch("completed receipt does not match request")
     try:
@@ -1812,19 +2419,51 @@ def _birthing_result_from_payload(payload: object) -> BirthingResult:
 
 
 class S015BirthingNotFound(Exception):
+    """The named LO was absent at the service's own row lookup.
+
+    birth_living_organism raises this after its registered-organism
+    lock. That earlier lock can itself raise a database error for a
+    missing LO, before this translation is reached.
+    """
     pass
 
 
 class S015BirthingUnavailable(Exception):
+    """The actor's locked identity or membership context is
+    unavailable.
+
+    _lock_actor raises this when no Identity holds the credential, or
+    the Identity or its credential is inactive.
+    _lock_actor_membership_context raises it when the membership is
+    missing, is not ACTIVE or has no head transition.
+    """
     pass
 
 
 class S015BirthingTechnicalFailure(Exception):
+    """Birthing could not be completed for a technical reason or a
+    record inconsistency.
+
+    Raised when birth_living_organism is called inside an atomic block;
+    when the LO has no head event or founding basis; when a record the
+    snapshot needs is missing; when the head event has no l1
+    commitment; when the database refuses the snapshot as invalid; and,
+    after rollback, for the entitlement grant guard's failure.
+    """
     pass
 
 
 @contextmanager
 def _birthing_guard_atomic(alias: str) -> Iterator[None]:
+    """Run authority_atomic, and translate one guard failure after it.
+
+    An IntegrityError that escapes the block is re-raised as
+    S015BirthingTechnicalFailure only when no atomic block remains open
+    and _is_entitlement_granted_guard_failure identifies the entitlement
+    grant guard (SE_ENTITLEMENT_WITHOUT_GRANT). Other IntegrityErrors,
+    and any error inside an enclosing transaction, propagate unchanged.
+    S015AuthorityDenied keeps authority_atomic's deferral.
+    """
     try:
         with authority_atomic(alias):
             yield
@@ -1841,6 +2480,18 @@ def _birthing_guard_atomic(alias: str) -> Iterator[None]:
 
 
 class OrganismBirthingService(_OrganismCommandService):
+    """Birth an LO (TRANSITION_LIVING_ORGANISM/BIRTHING).
+
+    Birthing is the LO's move from the Birthing phase to Birthed, once.
+    It records the constitutional snapshot, the BIRTHING event on the
+    LO's chain and the Birthing entitlement election, with the authority
+    decisions and a receipt. The LO's state does not change.
+
+    Extends _OrganismCommandService for replay and the receipt, reads
+    received_at from its injected clock, and uses an
+    OrganismEntitlementService on the same authority, clock and alias
+    for the election.
+    """
     _action = OrganismAction.TRANSITION_LIVING_ORGANISM
     _not_found = S015BirthingNotFound
     _authority_unavailable = S015BirthingUnavailable
@@ -1852,6 +2503,18 @@ class OrganismBirthingService(_OrganismCommandService):
             authority: S015Authority | None = None,
             database_alias: str = "default",
     ) -> None:
+            """Build the command base and the entitlement service.
+
+            Require a callable clock, else TypeError, and a non-empty
+            str database_alias, else ValueError. With no authority,
+            build S015Authority using the production application
+            provider on that alias.
+
+            The command base requires an S015Authority, else TypeError,
+            and the same database alias, else ValueError.
+            Pass the authority, clock and alias to the base and
+            use them for the entitlement service too.
+            """
             if not callable(clock):
                 raise TypeError("clock must be callable")
             if type(database_alias) is not str or not database_alias:
@@ -1869,9 +2532,130 @@ class OrganismBirthingService(_OrganismCommandService):
             )
 
     def _replay_result(self, payload: object) -> BirthingResult:
+            """Rebuild the stored Birthing result.
+
+            Delegate to _birthing_result_from_payload.
+            """
             return _birthing_result_from_payload(payload)
 
     def birth_living_organism(self, command: BirthingCommand) -> BirthingResult:
+            """Birth the LO and return the served result.
+
+            Raise S015BirthingTechnicalFailure if an atomic block is
+            already open. Inside _birthing_guard_atomic, first lock
+            the actor's Identity and credential. Missing or inactive
+            identity or credential raises S015BirthingUnavailable.
+
+            Require a UUID and canonical request and idempotency keys,
+            limited to 128 and 120 characters. Read received_at from
+            the clock; use it when effective_at is omitted. Require
+            aware datetime values, converted to UTC. Invalid types
+            raise TypeError; invalid keys or a future effective_at
+            raise ValueError.
+
+            Fingerprint the actor UUID and access epoch, action, LO,
+            request reference, idempotency key, schema, election
+            inputs and resolved times. occurred_at is effective_at;
+            received_at is included. Acquire the actor/action/key
+            mutex and serve a matching completed receipt before
+            new work. A mismatched reference or fingerprint raises
+            S015CommandReplayMismatch. Serving uses a fresh clock
+            reading; a changed receipt time prevents matching replay.
+
+            Take the registered-organism lock, then lock the LO row.
+            The first can raise a database error for an absent LO;
+            absence at the row lookup raises S015BirthingNotFound.
+            Require the head event and founding basis, otherwise
+            raise S015BirthingTechnicalFailure. Lock the actor's
+            membership and active role heads; require ACTIVE membership
+            and its head transition, else S015BirthingUnavailable.
+            These locks inspect stored states, not a temporal fold.
+
+            Qualify Birthing for a new snapshot UUID, evaluated at
+            received_at with effective_at supplied separately.
+            Remap the handled Birthing, CQ, electorate and SB-G denials
+            to authored text, keeping both codes and the decision
+            reference. Other denials propagate unchanged.
+
+            Lock the head event and collect the snapshot inputs:
+            - configuration, settings and question: take the latest
+              effect event of each, effective by effective_at,
+              received and recorded by received_at; resolve its
+              named version by UUID and LO, without another
+              version-time filter. A missing, wrongly prefixed or
+              non-UUID reference resolves to None, as does a
+              settings row with an entitlement choice or route;
+            - founding content: version 1, effective by effective_at
+              and recorded by received_at;
+            - founding event: sequence 1, with no time filter;
+            - founder's FOUNDING acceptance for this LO: recorded by
+              received_at, latest by recorded time and primary key;
+              no accepted-time or effective-time predicate;
+            - GOVERNANCE_CONSTITUTION, only when GOVERNANCE is True:
+              effective by effective_at and recorded by received_at,
+              latest by effective time, recorded time and version.
+
+            Missing configuration, settings, question, content,
+            founding event or acceptance raises
+            S015BirthingTechnicalFailure. This local check does not
+            require a governance rule. The snapshot holds those
+            references, the chain range through the locked head,
+            empty documents and laws, and the rule reference or None.
+
+            Write the snapshot, leaving its commitment and recorded_at
+            to the database. Prepare the entitlement election using
+            the same received_at and effective_at. That helper checks
+            the choice, policy, settings, prior election and provider
+            provenance, writes its version, then qualifies
+            EFFECT_ENTITLEMENT_ELECTION for that version and snapshot.
+            Invalid choice or policy arguments raise ValueError;
+            an unrecorded or mismatched policy text, missing
+            settings, an existing election or invalid provenance
+            raise S015EntitlementTechnicalFailure. Other helper
+            errors propagate according to their own contracts.
+
+            Require the predecessor's l1 commitment, else
+            S015BirthingTechnicalFailure. Insert the BIRTHING event
+            at the next sequence, with equal prior and resulting state.
+            Its actor state is LIVING_ORGANISM, capacity STANDING,
+            with no actor Identity; the person is the TRANSPORT enterer.
+            Record the founding basis, decision reference and
+            "birthing-snapshot:<uuid>" evidence. occurred_at equals
+            effective_at; a retrospective temporal basis is supplied
+            when it precedes received_at. Leave recorded_at to the
+            database. Refresh the cache at effective_at with database
+            clock_timestamp() as its known time.
+
+            Only within snapshot creation, election preparation,
+            event insertion and cache refresh, an IntegrityError whose
+            string contains BIRTHING_SNAPSHOT_INVALID becomes
+            S015BirthingTechnicalFailure. Other integrity errors
+            propagate. Completion, finalisation and atomic exit are
+            outside that handler.
+
+            Delegate election completion to the entitlement service:
+            append its event and, for COMPLIMENTARY_BETA, compose the
+            grant from the Birthing event; FREE returns no entitlement.
+            Write the receipt, rebuild its stored result and serve it
+            at a fresh clock reading before the atomic scope exits.
+
+            An election denial reaches authority_atomic only if deletion
+            of its new version succeeds. If that denial reaches the
+            wrapper and commit succeeds, the earlier snapshot and
+            Birthing QUALIFIED decision can remain, together with the
+            election REFUSED decision; no Birthing event or receipt
+            has yet been written. Cleanup errors replace the denial.
+            More generally, authority_atomic defers S015AuthorityDenied
+            until successful atomic exit; it does not isolate refusal
+            evidence from other writes. Other escaping failures roll
+            back the transaction. An exit failure does not establish
+            retention.
+
+            After rollback, the grant-guard wrapper translates its
+            matched entitlement integrity error. Contention translation
+            handles qualifying lock errors outside the atomic block.
+            Other failures propagate; nothing is retried here.
+            """
             if connections[self._alias].in_atomic_block:
                 raise S015BirthingTechnicalFailure(
                     "BIRTHING could not be completed because of a technical problem; "
@@ -2232,6 +3016,31 @@ class OrganismBirthingService(_OrganismCommandService):
             effective_at: datetime,
             received_at: datetime,
     ) -> str:
+            """Return authored text for a remapped Birthing refusal.
+
+            SB_BIRTHING_ELECTORATE_EMPTY returns the shared text.
+            BIRTHING_ALREADY_RECORDED selects the latest Birthing event
+            within the effective, received and recorded time cuts,
+            ordered by effective time, recorded time, sequence and UUID.
+            Report its effective date, or "an earlier date" if absent.
+
+            Delegate SB-G codes with act "The LO was not born".
+            INV_CQ_ROUTE_REQUIRED explains the unavailable CQ route
+            for an electorate with more than one member.
+
+            Otherwise derive a missing prerequisite through fresh reads,
+            without the refusal's facts. Check the phase first, then
+            whether an effective configuration exists, then whether
+            settings exist with both choices made. A missing settings
+            version also means "both application settings chosen".
+            The phase read has effective, received and recorded cuts;
+            version reads use _effective_version at the supplied times.
+
+            If those checks pass, say a reviewed question is missing.
+            This is the default phrase: no question is queried here,
+            and the configuration's GOVERNANCE choice is not checked.
+            The helper's read and message-building errors propagate.
+            """
             if code is S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY:
                 return SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE
             if code is S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED:
