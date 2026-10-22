@@ -2858,10 +2858,11 @@ class S015RoleCommandTests(TransactionTestCase):
 
     # R1 — propose, then appoint (ASSIGN): sequences 1, 2; state ACTIVE; two receipts; the term on ASSIGN.
     def test_propose_then_appoint_commits_and_refreshes_cache(self):
-        until = NOW + timedelta(days=180)
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
-            effective_until_state="FIXED", effective_until=until,
+            effective_until_state="FIXED", effective_until_offset=timedelta(days=180),
         )
+        # The helper's setup rebinds NOW; the term is 180 days after that NOW, as the helper computed it.
+        until = NOW + timedelta(days=180)
         assignment = _assignment_for_result(assign_result)
         events = list(
             ContextualRoleAssignmentStateEvent.objects.filter(assignment=assignment).order_by("sequence")
@@ -3036,8 +3037,9 @@ class S015RoleCommandTests(TransactionTestCase):
     # design default), so the reachable mismatch is the changed term; the value itself is asserted
     # on the receipt.
     def test_tolling_snapshot_recorded_and_term_change_mismatches(self):
-        until = NOW + timedelta(days=30)
         ids, founder = self._setup_organism("tolling")
+        # After _setup_organism rebinds NOW, so the term is not tied to the module's fixed date.
+        until = NOW + timedelta(days=30)
         _, member, member_membership_uuid = self._add_active_member(ids, "tolling")
         service = self._service(_ExactProvider())
         propose_result = service.propose_assignment(
