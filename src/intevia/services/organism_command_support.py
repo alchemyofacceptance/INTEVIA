@@ -187,6 +187,17 @@ def withheld_fields(result: object) -> tuple[WithheldField, ...]:
 
 
 def _result_organism_pk(result: object, database_alias: str) -> int | None:
+    """Return the primary key of the LO a replayed result belongs to.
+
+    Uses the first of these attributes the result has, and returns
+    that lookup's answer, None included: application_uuid (the
+    Application's LO), membership_uuid (the membership's LO),
+    assignment_uuid (the LO of the assignment's membership), then
+    version_uuid, looked up in the application settings, application
+    question and governance configuration version tables in that
+    order. Returns None when the result has none of them. Reads only,
+    on database_alias.
+    """
     if hasattr(result, "application_uuid"):
         return Application.objects.using(database_alias).filter(
             application_uuid=result.application_uuid
@@ -214,6 +225,13 @@ def _result_organism_pk(result: object, database_alias: str) -> int | None:
 
 
 def _subject_identity_id(result: object, database_alias: str):
+    """Return the UUID of the Identity a replayed result is about.
+
+    Uses membership_uuid if the result has it (the membership's
+    Identity), otherwise assignment_uuid (the Identity of the
+    assignment's membership). Returns None when the result has neither
+    attribute or no row matches. Reads only, on database_alias.
+    """
     if hasattr(result, "membership_uuid"):
         return OrganismMembership.objects.using(database_alias).filter(
             membership_uuid=result.membership_uuid
@@ -231,6 +249,39 @@ def _viewer_has_audience(
     viewer: ReplayViewer,
     database_alias: str,
 ) -> bool:
+    """Check the viewer's audience using database_alias.
+
+    SUBJECT compares the resolved subject UUID with
+    viewer.identity_id. It does not check the viewer's primary key,
+    activity or time. serve_replay validates the viewer before
+    calling this helper.
+
+    Otherwise require a resolved LO and an Identity matching both
+    viewer identifiers; return False if either is absent. Read the
+    Application when application_uuid is present, then call
+    _present_application_audiences at viewer.now.
+
+    That helper selects the latest IdentityTransition by occurred_at
+    and primary key, restricted to occurred_at no later than
+    viewer.now. Require an ACTIVE result. There is no separate
+    recorded-time cut. An applicant matches the Application's
+    applicant Identity UUID and is excluded from PROCESSING, even
+    when also a Coordinator.
+
+    PROCESSING requires a current ACTIVE membership in the LO and an
+    ACTIVE LO-scope COORDINATOR assignment. Membership and
+    assignment states are read as stored, without a historical fold.
+    Read the term from the latest ASSIGN event by sequence, with no
+    time cut. That term lookup does not consult later END or
+    REASSIGN events. An absent term, a non-FIXED term or a null end
+    qualifies; a FIXED term with an end qualifies only before that
+    end.
+
+    Return the applicant flag for APPLICANT. Every other audience
+    value except SUBJECT uses the processing flag, including an
+    unrecognised value. The helper does not validate the vocabulary.
+    Reads only; read and term-evaluation errors propagate.
+    """
     if audience == "SUBJECT":
         return _subject_identity_id(result, database_alias) == viewer.identity_id
 
@@ -263,6 +314,27 @@ def _viewer_has_audience(
 
 
 def _has_pk_valued_reference(reference: object) -> bool:
+    """Recognise selected primary-key forms in authority facts.
+
+    Require exact type str and prefix "s015a1:". Parse the suffix as
+    JSON. Return False for TypeError or ValueError during parsing or
+    for a parsed value whose exact type is not dict.
+
+    Return True when top-level "a" is an exact int or decimal
+    string. Integers include zero and negative values; booleans do
+    not count. Otherwise match "e" as a decimal string, or a string
+    with a decimal part before its first colon. An integer-valued
+    "e" does not match.
+
+    Decimal means an exact, non-empty str accepted by str.isdecimal,
+    including non-ASCII decimal digits. There is no recursive
+    search, record lookup or full authority-reference validation.
+    Unmatched values return False. Other parser errors propagate.
+
+    serve_replay uses this result to withhold authority_reference
+    from every viewer. It does not thereby filter other reference
+    fields or replace the unfiltered payload stored in the receipt.
+    """
     if type(reference) is not str or not reference.startswith("s015a1:"):
         return False
     try:
@@ -273,6 +345,7 @@ def _has_pk_valued_reference(reference: object) -> bool:
         return False
 
     def is_pk_string(value: object) -> bool:
+        """Return whether value is a non-empty str of decimal digits."""
         return type(value) is str and value.isdecimal()
 
     if type(facts.get("a")) is int or is_pk_string(facts.get("a")):
@@ -407,6 +480,14 @@ def contention_translated(database_alias: str):
 
 
 def _canonical_key(value: object, name: str, maximum: int) -> str:
+    """Return value unchanged if it is already a canonical key.
+
+    value must have exact type str, or TypeError "<name> must be a
+    string". It must equal its own NFC form with surrounding
+    whitespace stripped, be non-empty and have at most maximum
+    characters, or ValueError "<name> is not canonical". It checks;
+    it does not normalise.
+    """
     if type(value) is not str:
         raise TypeError(f"{name} must be a string")
     canonical = unicodedata.normalize("NFC", value).strip()
@@ -416,12 +497,21 @@ def _canonical_key(value: object, name: str, maximum: int) -> str:
 
 
 def _canonical_uuid(value: object, name: str) -> UUID:
+    """Return value if its exact type is UUID; otherwise raise
+    TypeError "<name> must be a UUID". A UUID subclass or a UUID
+    string is refused."""
     if type(value) is not UUID:
         raise TypeError(f"{name} must be a UUID")
     return value
 
 
 def _validate_timestamp(value: object, name: str) -> datetime:
+    """Return a timezone-aware datetime converted to UTC.
+
+    value must have exact type datetime and a tzinfo that gives a UTC
+    offset, or TypeError "<name> must be timezone-aware". A datetime
+    subclass is refused.
+    """
     if type(value) is not datetime or value.tzinfo is None or value.utcoffset() is None:
         raise TypeError(f"{name} must be timezone-aware")
     return value.astimezone(timezone.utc)
@@ -433,6 +523,15 @@ def _resulting_temporal_basis(
     effective_at: datetime,
     received_at: datetime,
 ) -> tuple[str | None, str | None]:
+    """Return the temporal-basis kind and reference for a recorded act.
+
+    (None, None) when effective_at equals received_at. Otherwise the
+    kind is "RETROSPECTIVE" when effective_at is earlier and
+    "PROSPECTIVE" when it is later, and the reference is "s015tb1:"
+    followed by payload_fingerprint. This is the shape the event
+    tables' temporal-basis check requires (migration 0021). Nothing is
+    validated here.
+    """
     if effective_at == received_at:
         return None, None
     kind = "RETROSPECTIVE" if effective_at < received_at else "PROSPECTIVE"
@@ -452,6 +551,17 @@ def _command_payload(
     target: dict[str, object],
     command: dict[str, object],
 ) -> str:
+    """Return a command's payload fingerprint, a SHA-256 hex digest.
+
+    Builds an object with action (its value), actor_access_epoch,
+    actor_identity_id (as a string), command, idempotency_key,
+    occurred_at (canonical_timestamp), request_reference, schema and
+    target, and hashes domain followed by its canonical_json_bytes.
+    The digest has no prefix. Nothing is validated here, except that
+    canonical_timestamp raises ValueError unless occurred_at is a
+    timezone-aware datetime, and canonical_json_bytes raises for a
+    value it cannot render.
+    """
     payload = {
         "action": action.value,
         "actor_access_epoch": actor_access_epoch,
@@ -547,6 +657,18 @@ def _empty_anchor_fingerprint(
     anchor_token: str,
     anchor_uuid: UUID,
 ) -> str:
+    """Ask the database for an anchor's empty event-set fingerprint.
+
+    On database_alias, pass anchor_token, anchor_uuid and an empty
+    record list to public.s015_canonical_envelope, then pass that
+    result to public.s015_digest_envelope and return its value. The
+    installed database functions determine the canonical form and
+    digest prefix; this helper does not choose or verify them.
+
+    The membership service uses this for a new membership's
+    state_source_event_set_fingerprint with anchor token
+    "core_organismmembership". Database errors propagate.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             "SELECT public.s015_digest_envelope(public.s015_canonical_envelope(%s, %s::uuid, '{}'::text[]))",
@@ -657,6 +779,20 @@ def _read_actor_active_membership(
     living_organism_pk: int,
     unavailable: type[Exception],
 ) -> OrganismMembership:
+    """Read the actor's ACTIVE membership without a row lock.
+
+    Look up the membership using the actor's Identity primary key
+    and the LO's primary key. Return it only when its stored state
+    is ACTIVE. Absence or any other state raises the supplied
+    unavailable exception with the message "actor active membership
+    is required". PROBATIONARY does not qualify.
+
+    This checks stored state. It performs no temporal fold and does
+    not supply a locked authority context. It does not require a
+    head transition or read role heads. Callers needing those
+    guarantees must obtain them separately, as
+    _lock_actor_membership_context does.
+    """
     membership = OrganismMembership.objects.using(database_alias).filter(
         identity_id=actor_identity_pk,
         living_organism_id=living_organism_pk,
@@ -686,6 +822,27 @@ def _authority_request(
     version_kind: str | None = None,
     command_subtype: str | None = None,
 ) -> S015PostFoundingAuthorityRequest:
+    """Build a post-founding request from supplied context.
+
+    Copy the actor's primary key, Identity UUID and access epoch.
+    Set evaluated_at to received_at. Use the membership head's
+    lineage_reference and the supplied actor_role_head_refs.
+    Accessing the head relation may read the database if not cached;
+    a missing head is not translated into an authored refusal here.
+
+    Use action.value when command_subtype is None; an explicitly
+    supplied subtype passes through, including an empty string. Pass
+    the remaining arguments unchanged, including effective_at,
+    target, target_fingerprint, LO and assignment identifiers,
+    outcome, version_uuid and version_kind.
+
+    This builder neither obtains received_at nor computes a target
+    fingerprint. It does not check that the membership belongs to
+    the actor and LO, validate role references, take explicit row
+    locks, qualify authority or write a decision. The caller
+    supplies context; qualification checks the request. Attribute,
+    relation-read and construction errors propagate.
+    """
     return S015PostFoundingAuthorityRequest(
         database_alias=database_alias,
         actor_pk=actor.pk,
@@ -727,6 +884,12 @@ class _OrganismCommandService:
         clock: Callable[[], datetime],
         database_alias: str = "default",
     ) -> None:
+        """Check and store the authority, clock and database alias.
+
+        Require an S015Authority and a callable clock, else TypeError.
+        Require database_alias to be a non-empty str matching the
+        authority's database_alias, else ValueError.
+        """
         if not isinstance(authority, S015Authority):
             raise TypeError("authority must be an S015Authority")
         if not callable(clock):
@@ -740,6 +903,11 @@ class _OrganismCommandService:
         self._alias = database_alias
 
     def _replay_result(self, payload: object) -> object:
+        """Rebuild a result from a receipt's stored payload.
+
+        Each service implements this hook. The base version raises
+        NotImplementedError.
+        """
         raise NotImplementedError
 
     def _verify_replay_result(self, result: object) -> None:
@@ -759,6 +927,15 @@ class _OrganismCommandService:
         payload_fingerprint: str,
         idempotency_key: str,
     ) -> OrganismCommandReceipt | None:
+        """Lock and return the actor's receipt for this action and key.
+
+        Select the OrganismCommandReceipt FOR UPDATE using the actor,
+        this service's action and idempotency_key. Those three fields
+        are unique together. Return None when no receipt matches.
+
+        A differing request_reference or payload_fingerprint raises
+        S015CommandReplayMismatch.
+        """
         receipt = (
             OrganismCommandReceipt.objects.using(self._alias)
             .select_for_update()
@@ -793,6 +970,16 @@ class _OrganismCommandService:
         living_organism_id: UUID | None = None,
         assignment_uuid: UUID | None = None,
     ) -> QualifiedS015AuthorityDecision:
+        """Qualify this service's action and return the decision.
+
+        Build the request through _authority_request with this service's
+        action, received_at as its evaluation time, and the optional
+        effective_at, target, living_organism_id and assignment_uuid.
+        Return self._authority.qualify(request); its exceptions,
+        including S015AuthorityDenied, propagate.
+
+        Pass no outcome, version_uuid, version_kind or command_subtype.
+        """
         request = _authority_request(
             database_alias=self._alias,
             actor=actor,
@@ -819,6 +1006,26 @@ class _OrganismCommandService:
         payload_fingerprint: str,
         result,
     ):
+        """Insert a completed command's receipt, then serve its result.
+
+        Obtain result.receipt_payload(), then create the receipt with
+        the actor, this service's action, idempotency key, request
+        reference, fingerprint, authority-decision reference and lineage
+        reference. The payload is stored before viewer withholding.
+
+        Rebuild from the returned receipt object's result_payload; there
+        is no fresh database read of that payload here. Create the
+        actor's ReplayViewer at self._clock(), then return
+        serve_replay's result on this service's database alias. Unlike
+        _attempt_replay, do not call _verify_replay_result.
+
+        Payload creation or insertion can fail before a receipt exists.
+        Decoder, clock and serving failures can occur after insertion.
+        Errors propagate. This method opens no atomic scope and performs
+        no explicit commit or rollback. The surrounding transaction or
+        autocommit mode determines whether writes survive a later error.
+        Returning a served result is not a separate commit check.
+        """
         receipt = OrganismCommandReceipt.objects.using(self._alias).create(
             actor=actor,
             action=self._action.value,
