@@ -44,7 +44,6 @@ from s015_0021_support import (
     T0, append_event, drop_unset_check, empty_fp, found_nonroot, fresh, refresh, seed_identity, u,
 )
 from src.intevia.services.organism_authority import (
-    C_FOUNDER_PROTECTED_MESSAGE,
     S015Authority,
     S015AuthorityDenied,
     S015AuthorityMalformed,
@@ -53,6 +52,7 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityRefusal,
     S015PostFoundingAuthorityRequest,
     S015PostFoundingAuthorityResponse,
+    canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import (
     ReplayResultType,
@@ -87,6 +87,25 @@ from tests.sb2_route_support import birth, prepare_route, route_fixture_state, r
 from tests.s015_concurrency_support import backend_pid, exact_wait
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+
+def _r_auth_03_text(actor, idempotency_key):
+    """R-AUTH-03 in full, rendered from this request's own intake binding."""
+    intake = CommandIntake.objects.get(
+        actor=actor,
+        action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+        idempotency_key=idempotency_key,
+    )
+    return (
+        "The office was not ended or reassigned; no change was made to the office. Until "
+        "this LO is born, the founder's original Coordinator appointment can be ended or "
+        "reassigned only by the founder. This is a governed protection of the LO's founding, "
+        "not a technical fault. After Birthing it no longer applies: the appointment can "
+        "then be ended or reassigned under the LO's ordinary governed rules. INTEVIA kept a "
+        "record that this request was received at "
+        f"{canonical_timestamp(intake.received_at)}; sent again unchanged, it is answered "
+        "as of that time."
+    )
 
 _support_append_event = append_event
 _support_refresh = refresh
@@ -3249,6 +3268,7 @@ class S015RoleCommandTests(TransactionTestCase):
             "core_authoritydecision",
         )
         before = _snapshot_tables(*tables)
+        intake_count = CommandIntake.objects.count()
         with self.assertRaises(S015CommandReceiptMalformed) as refused:
             with transaction.atomic():
                 service._attempt_replay(
@@ -3267,6 +3287,7 @@ class S015RoleCommandTests(TransactionTestCase):
         receipt.refresh_from_db()
         self.assertEqual(receipt.result_payload, malformed_payload)
         self.assertEqual(_snapshot_tables(*tables), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
         self.assertEqual(first.assignment_uuid, UUID(original.result_payload["assignment_uuid"]))
 
     def test_role_replay_rejects_chain_lineage_disagreement_without_writes(self):
@@ -3308,6 +3329,7 @@ class S015RoleCommandTests(TransactionTestCase):
             "core_authoritydecision",
         )
         before = _snapshot_tables(*tables)
+        intake_count = CommandIntake.objects.count()
         with self.assertRaises(S015CommandReceiptMalformed):
             with transaction.atomic():
                 service._attempt_replay(
@@ -3320,6 +3342,7 @@ class S015RoleCommandTests(TransactionTestCase):
         receipt.refresh_from_db()
         self.assertEqual(receipt.result_payload, malformed_payload)
         self.assertEqual(_snapshot_tables(*tables), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
 
     def test_role_authority_reference_withholding_contract(self):
         import json
@@ -3609,7 +3632,7 @@ class S015RoleCommandTests(TransactionTestCase):
         self.assertEqual(self._counts(), before)
 
     # R9 — IL-3: an out-of-order office event refused; no row.
-    def test_out_of_order_event_raises_il3_and_writes_nothing(self):
+    def test_out_of_order_event_raises_il3_and_writes_no_governed_record(self):
         ids, founder, member, service, propose_result, assign_result = self._propose_then_assign(
             label="out-of-order",
         )
@@ -3661,7 +3684,10 @@ class S015RoleCommandTests(TransactionTestCase):
                     caught.exception.refusal_code,
                     S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
                 )
-                self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
+                self.assertEqual(
+                    str(caught.exception),
+                    _r_auth_03_text(other, f"idem:founder-guard:{action.lower()}"),
+                )
         self.assertEqual(self._counts(), before)
         assignment = ContextualRoleAssignment.objects.get(assignment_uuid=founding_uuid)
         self.assertEqual(assignment.state, "ACTIVE")
@@ -3963,7 +3989,10 @@ class S015RoleCommandTests(TransactionTestCase):
             caught.exception.refusal_code,
             S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
         )
-        self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
+        self.assertEqual(
+            str(caught.exception),
+            _r_auth_03_text(member, "idem:production-pe04:end"),
+        )
         self.assertEqual(self._counts(), before)
 
     def test_cq_active_refuses_assign_for_sole_coordinator_and_other_office_end(self):
@@ -4157,7 +4186,10 @@ class S015RoleCommandTests(TransactionTestCase):
             caught.exception.refusal_code,
             S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
         )
-        self.assertEqual(str(caught.exception), C_FOUNDER_PROTECTED_MESSAGE)
+        self.assertEqual(
+            str(caught.exception),
+            _r_auth_03_text(other, "idem:founder-refresh:end"),
+        )
         self.assertEqual(self._counts(), before)
 
     # R10d — a later fresh COORDINATOR appointment held by the founder is not protected.
@@ -4479,8 +4511,8 @@ class S015RoleCommandTests(TransactionTestCase):
                     self._service(provider).transition_assignment(transition_command)
         self.assertEqual(self._counts(), mid)
 
-    # R13 — atomic failure leaves nothing; two sessions, one row.
-    def test_atomic_failure_leaves_nothing(self):
+    # R13 — atomic failure leaves no governed record; two sessions, one row.
+    def test_atomic_failure_leaves_no_governed_record(self):
         ids, founder = self._setup_organism("atomic-failure")
         _, member, member_membership_uuid = self._add_active_member(ids, "atomic-failure")
         service = self._service(_ExactProvider())
@@ -4492,6 +4524,7 @@ class S015RoleCommandTests(TransactionTestCase):
             "core_organismcommandreceipt",
         )
         before = _snapshot_tables(*tables)
+        intake_count = CommandIntake.objects.count()
         command = self._propose_command(
             actor=founder,
             membership_uuid=member_membership_uuid,
@@ -4515,6 +4548,7 @@ class S015RoleCommandTests(TransactionTestCase):
         with self.assertRaises(IntegrityError):
             service._execute_propose_assignment(command, bound)
         self.assertEqual(_snapshot_tables(*tables), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_count)
 
     def test_concurrent_same_request_replays_once(self):
         from core.models import AuthorityDecision

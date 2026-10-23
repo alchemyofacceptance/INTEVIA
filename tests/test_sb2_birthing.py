@@ -1591,23 +1591,30 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.assertEqual(_counts(), before_replay)
 
     def test_founder_cannot_enable_governance_after_birth_but_other_configuration_effects(self):
+        from src.intevia.services.organism_authority import canonical_timestamp
+
         route = prepare_route(governance_enabled=False)
         birth(route)
         draft = _governance_draft(route, True, "after-birth")
         before = _counts()
+        command = _governance_effect_command(route, draft.version_uuid, "after-birth")
         with self.assertRaises(S015ApplicationRefused) as refused:
-            route.application_service.effect_gateway_version(
-                _governance_effect_command(route, draft.version_uuid, "after-birth")
-            )
+            route.application_service.effect_gateway_version(command)
+        intake = CommandIntake.objects.get(
+            actor=route.founder,
+            idempotency_key=command.idempotency_key,
+        )
         self.assertIs(
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
         )
         self.assertEqual(
             str(refused.exception),
-            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this LO, "
+            "GOVERNANCE was not switched on. GOVERNANCE is on for this LO, "
             "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this.",
+            "try again. Creating the Circle early in formation avoids this. "
+            "INTEVIA recorded this refusal and that the request was received at "
+            f"{canonical_timestamp(intake.received_at)}; nothing else was saved.",
         )
         self.assertEqual(
             _counts(),
@@ -1769,6 +1776,8 @@ class BirthingAfterWitnessTests(TransactionTestCase):
 
     def test_governance_effect_and_birthing_serialize_in_both_lock_orders(self):
         """Concurrent governance effects and Birthing remain serialized in both lock orders."""
+        from src.intevia.services.organism_authority import canonical_timestamp
+
         workers = []
         effect_entered, release_effect = Event(), Event()
         birth_entered, release_birth = Event(), Event()
@@ -1838,8 +1847,18 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             workers.append(birth_thread)
             self.assertTrue(birth_entered.wait(10))
             birth_pid = birth_pids.get(timeout=10)
-            effect_thread, effect_results, effect_pids = _start_worker(
-                lambda: OrganismApplicationService(
+            effect_commands = []
+
+            def call_second_effect():
+                # Built in the worker after the birth request, as before chunk 5,
+                # so that its effective time follows the birth event's.
+                command = _governance_effect_command(
+                    second,
+                    second_draft.version_uuid,
+                    "concurrent-after-birth",
+                )
+                effect_commands.append(command)
+                return OrganismApplicationService(
                     authority=S015Authority(
                         provider=_PausedProductionProvider(
                             effect_entered_after_birth,
@@ -1847,10 +1866,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                         ),
                     ),
                     clock=database_now,
-                ).effect_gateway_version(
-                    _governance_effect_command(second, second_draft.version_uuid, "concurrent-after-birth")
-                )
-            )
+                ).effect_gateway_version(command)
+
+            effect_thread, effect_results, effect_pids = _start_worker(call_second_effect)
             workers.append(effect_thread)
             effect_pid = effect_pids.get(timeout=10)
             with connection.cursor() as cursor:
@@ -1866,11 +1884,18 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 second_refusal.exception.refusal_code,
                 S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
             )
+            self.assertEqual(len(effect_commands), 1)
+            intake = CommandIntake.objects.get(
+                actor=second.founder,
+                idempotency_key=effect_commands[0].idempotency_key,
+            )
             self.assertEqual(
                 str(second_refusal.exception),
-                "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this "
+                "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE is on for this "
                 "LO, so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, "
-                "then try again. Creating the Circle early in formation avoids this.",
+                "then try again. Creating the Circle early in formation avoids this. "
+                "INTEVIA kept a record that this request was received at "
+                f"{canonical_timestamp(intake.received_at)}; sent again unchanged, it is answered as of that time.",
             )
             self.assertEqual(_counts(), before_second_effect)
             self.assertFalse(

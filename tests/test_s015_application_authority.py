@@ -9,9 +9,11 @@ points acquire locks and read request context before qualify(); no receipt,
 application, engagement, assignment, terminal, or lineage write precedes it.
 For commands 6-8, both save_gateway_draft and effect_gateway_version acquire
 locks and read the version context before qualify(); no version or LO-chain
-event write precedes it. In all eight commands, the first durable row or
-governed-chain write follows successful qualification. Locks are
-transaction-scoped, including the advisory command mutex.
+event write precedes it. In all eight commands, the first governed-chain write
+follows successful qualification; the only durable row written before
+qualification is the intake's record of the request, committed before the
+command's transaction. Locks are transaction-scoped, including the advisory
+command mutex.
 """
 
 import hashlib

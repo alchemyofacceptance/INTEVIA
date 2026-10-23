@@ -1,16 +1,26 @@
 """Membership commands and own-membership reads for a Living Organism (S015).
 
 OrganismMembershipService provides open_membership and
-transition_membership. The opening path creates a PROPOSED membership and
-its first transition inside transaction.atomic. The transition path runs
-inside authority_atomic and applies authority qualification, edge checks
-and the implemented limits; _STATE_ALLOWED does not by itself establish
-that an edge is delivered.
+transition_membership. Each public method admits the request through the
+shared intake (one committed record of the request's key, content
+fingerprint and server-assigned received_at) before its executor runs.
+The opening path creates a PROPOSED membership and its first transition
+inside transaction.atomic. The transition path runs inside
+authority_atomic and applies authority qualification, as of the intake's
+received_at, edge checks and the implemented limits; _STATE_ALLOWED does
+not by itself establish that an edge is delivered.
 
 A successful fresh command writes a membership transition, refreshes the
-governed cache and records a command receipt. Both paths attempt replay
-before their fresh-command work and return a replay result when supplied
-by _attempt_replay.
+governed cache and records a command receipt. The intake record commits
+separately from the command: a rollback of the opening or transition
+transaction does not remove an intake record already committed, and a
+refusal before admission creates none. The opening path's authority
+request names no target, so it records no authority decision. The
+transition path's request names a target, so a provider denial there can
+leave its REFUSED authority decision, which persists when
+authority_atomic exits successfully. Both paths attempt replay before
+their fresh-command work and return a replay result when supplied by
+_attempt_replay; a matching retry reuses the existing intake record.
 
 For a fresh transition reaching the departure checks, a participation
 starting after the departure's effective_at causes a refusal, whether or
@@ -918,14 +928,19 @@ class OrganismMembershipService(_OrganismCommandService):
         )
 
     def open_membership(self, command: OpenMembershipCommand) -> MembershipCommandResult:
-        """Open a PROPOSED membership; runs _execute_open in transaction.atomic.
+        """Open a PROPOSED membership through the durable request intake.
 
-        Uses this service's database alias. The transaction runs inside
-        contention_translated: an OperationalError with SQLSTATE 40P01, 40001
-        or 55P03 becomes S015CommandContended when this is the outermost
-        transaction. Those errors inside an enclosing transaction, and every
-        other exception raised by _execute_open, propagate unchanged; no
-        IntegrityError is mapped to an authored refusal.
+        First checks the connection's admission state, validates the command's
+        shape and admits the request on this service's database alias. An
+        already-open transaction is refused before admission. Delegates through
+        _execute_open_membership to _execute_open with the bound request.
+
+        The executor places contention_translated outside transaction.atomic
+        and passes the binding's received_at. An OperationalError whose direct
+        cause carries SQLSTATE 40P01, 40001 or 55P03 becomes
+        S015CommandContended after the outermost transaction exits. Other errors
+        propagate without an IntegrityError-to-refusal translation. A rollback
+        of the executor's transaction does not remove the admitted intake row.
         """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
@@ -938,7 +953,7 @@ class OrganismMembershipService(_OrganismCommandService):
         )
 
         entry = IntakeEntry.OPEN_MEMBERSHIP
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("OPEN_MEMBERSHIP is not active")
         shape = intake_shape(entry, command)
@@ -951,7 +966,7 @@ class OrganismMembershipService(_OrganismCommandService):
     ) -> MembershipCommandResult:
         """Execute an admitted opening using the existing contention and transaction form."""
         # Keep T-LOCK-1 translation outside atomic so it follows rollback (15 Oct commission, §1).
-        with contention_translated(self._alias):
+        with contention_translated(self._alias, received_at=bound.received_at):
             with transaction.atomic(using=self._alias):
                 return self._execute_open(command, bound=bound)
 
@@ -960,11 +975,13 @@ class OrganismMembershipService(_OrganismCommandService):
     ) -> MembershipCommandResult:
         """Open a membership in PROPOSED; called by open_membership.
 
-        Runs inside the caller's transaction.atomic block, in this order:
+        Runs inside the caller's transaction.atomic block with a bound request,
+        in this order:
 
-        1. Validates the canonical keys, reason, LO UUID and member Identity UUID,
-           and validates and normalises the timestamps; locks the actor's
-           Identity and credential (_lock_actor) and takes the command mutex.
+        1. Locks the actor's Identity and credential (_lock_actor), verifies
+           the command against the binding, and takes the command mutex; the
+           canonical keys, reason, UUIDs and timestamps were validated before
+           admission, and received_at is the binding's.
         2. Reads the LO without requesting a row lock (S015MembershipNotFound
            if absent) and computes the target and command fingerprints. If
            _attempt_replay returns a result, returns it with no further work.
@@ -1221,6 +1238,7 @@ class OrganismMembershipService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             payload_fingerprint=command_fingerprint,
             result=result,
+            received_at=bound.received_at,
         )
 
     def transition_membership(
@@ -1236,9 +1254,11 @@ class OrganismMembershipService(_OrganismCommandService):
         effective_at, the diagnostic detail, and the person and organism slug
         captured in memory by _execute_transition; raise it from the original error.
 
-        Re-raise other IntegrityErrors, or the matching error when reconstruction
-        returns None. This handler does not catch a deferred constraint failure
-        raised later when a caller's enclosing transaction commits.
+        Re-raise other IntegrityErrors, or the matching error when
+        reconstruction returns None. A caller's enclosing transaction is
+        refused before admission, so the deferred constraint failure surfaces
+        at this command's own commit and reaches this handler; the intake
+        record of the request stands when it does.
         """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
@@ -1251,7 +1271,7 @@ class OrganismMembershipService(_OrganismCommandService):
         )
 
         entry = IntakeEntry.TRANSITION_MEMBERSHIP
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("TRANSITION_MEMBERSHIP is not active")
         shape = intake_shape(entry, command)
@@ -1265,7 +1285,7 @@ class OrganismMembershipService(_OrganismCommandService):
         """Execute an admitted transition using the existing refusal translation."""
         departure_context: dict[str, str] = {}
         try:
-            with authority_atomic(self._alias):
+            with authority_atomic(self._alias, received_at=bound.received_at):
                 return self._execute_transition(
                     command, departure_context, bound=bound
                 )
@@ -1288,6 +1308,7 @@ class OrganismMembershipService(_OrganismCommandService):
                 effective_at,
                 person=departure_context.get("person"),
                 organism_slug=departure_context.get("organism_slug"),
+                received_at=bound.received_at,
             )
             if refusal is None:
                 raise
@@ -1297,6 +1318,7 @@ class OrganismMembershipService(_OrganismCommandService):
         self,
         membership: OrganismMembership,
         effective_at: datetime,
+        received_at: datetime,
     ) -> S015MembershipRefused | None:
         """Return the authored refusal for a departure dated before a seat began, or None.
 
@@ -1304,6 +1326,9 @@ class OrganismMembershipService(_OrganismCommandService):
         pk) whose effective_at is after the departure's effective_at, regardless of
         any ending, and returns the SBG_DEPARTURE_PRECEDES_PARTICIPATION refusal for
         it. Returns None when there is none.
+
+        received_at is the bound request's receipt time, used in the refusal's
+        text.
         """
         participation = (
             CircleParticipation.objects.using(self._alias)
@@ -1328,6 +1353,7 @@ class OrganismMembershipService(_OrganismCommandService):
             participation_effective_at=canonical_timestamp(
                 participation.effective_at
             ),
+            received_at=received_at,
         )
 
     @staticmethod
@@ -1338,21 +1364,25 @@ class OrganismMembershipService(_OrganismCommandService):
         seat_id: str,
         departure_effective_at: str,
         participation_effective_at: str,
+        received_at: datetime,
     ) -> S015MembershipRefused:
         """Build the SBG_DEPARTURE_PRECEDES_PARTICIPATION refusal.
 
-        The message names the person, the LO's slug, the departure date, the seat
-        and the date it began, states that nothing changed, and directs the reader
-        to check the leaving date or correct the seat through its own governed route.
+        The message names the person, the LO's slug, the departure date, the
+        seat and the date it began, states that no governed record was written
+        and that the record of the request's receipt at received_at was kept,
+        and directs the reader to check the leaving date or correct the seat
+        through its own governed route.
         """
         message = (
-            f"{person} was not recorded as leaving {organism_slug}, and nothing changed. "
+            f"{person} was not recorded as leaving {organism_slug}; no governed record was written. "
             f"The leaving date given, {departure_effective_at}, is earlier than "
             f"the start of their GOVERNANCE seat {seat_id}, which began on "
             f"{participation_effective_at}. A member cannot leave "
             "before a seat they took while still a member. Check the leaving date. If the "
             "seat itself was recorded in error, it must be corrected through its own "
-            "governed route first."
+            "governed route first. INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(received_at)}; sent again unchanged, it is answered as of that time."
         )
         return S015MembershipRefused(message, refusal_code=(
             S015AuthorityRefusalCode.SBG_DEPARTURE_PRECEDES_PARTICIPATION
@@ -1366,6 +1396,7 @@ class OrganismMembershipService(_OrganismCommandService):
         *,
         person: str | None,
         organism_slug: str | None,
+        received_at: datetime,
     ) -> S015MembershipRefused | None:
         """Rebuild the refusal from the completeness guard's JSON detail, or None.
 
@@ -1373,6 +1404,9 @@ class OrganismMembershipService(_OrganismCommandService):
         seat_id, started_at, person and organism_slug non-empty strings, and
         started_at in the exact form YYYY-MM-DDTHH:MM:SS.ffffffZ (it must round-trip
         unchanged). Returns None when any requirement fails.
+
+        received_at is the bound request's receipt time, used in the refusal's
+        text.
         """
         if type(detail) is not str:
             return None
@@ -1409,6 +1443,7 @@ class OrganismMembershipService(_OrganismCommandService):
             seat_id=seat_id,
             departure_effective_at=canonical_timestamp(effective_at),
             participation_effective_at=participation_effective_at,
+            received_at=received_at,
         )
 
     def _compose_current_participation_endings(
@@ -1498,11 +1533,13 @@ class OrganismMembershipService(_OrganismCommandService):
     ) -> MembershipCommandResult:
         """Carry out one membership transition; called by transition_membership.
 
-        Runs inside the caller's authority_atomic transaction, in this order:
+        Runs inside the caller's authority_atomic transaction with a bound
+        request, in this order:
 
-        1. Validates the canonical keys, reason and membership UUID, validates
-           and normalises the timestamps, and validates the requested state;
-           locks the actor's Identity row and takes the command mutex.
+        1. Locks the actor's Identity row, verifies the command against the
+           binding and takes the command mutex; the canonical keys, reason,
+           membership UUID, timestamps and requested state were validated
+           before admission, and received_at is the binding's.
         2. Reads the membership (S015MembershipNotFound if absent) and computes the
            target and command fingerprints. If _attempt_replay returns a result,
            returns it with no further work.
@@ -1685,6 +1722,7 @@ class OrganismMembershipService(_OrganismCommandService):
             refusal = self._departure_precedes_participation(
                 membership,
                 effective_at,
+                received_at,
             )
             if refusal is not None:
                 raise refusal
@@ -1790,6 +1828,7 @@ class OrganismMembershipService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             payload_fingerprint=command_fingerprint,
             result=result,
+            received_at=bound.received_at,
         )
 
 @dataclass(frozen=True, slots=True)

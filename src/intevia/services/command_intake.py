@@ -25,6 +25,7 @@ from src.intevia.services.organism_command_support import (
     S015CommandReplayMismatch,
     _canonical_key,
     _canonical_uuid,
+    _intake_tail,
     _validate_timestamp,
 )
 
@@ -235,7 +236,9 @@ class BoundRequest:
             raise _request_binding_mismatch()
         if bound.actor_access_epoch != actor.access_epoch:
             raise _authority_unavailable(bound.entry)(
-                "actor access epoch changed after intake; nothing was done"
+                "Your account's security settings changed while this request was being processed; "
+                "no governed record was written. INTEVIA kept a record that this request was received "
+                f"at {canonical_timestamp(bound.received_at)}. Sign in again and send a new request."
             )
         if bound.intake_id is not None:
             with connections[alias].cursor() as cursor:
@@ -375,7 +378,24 @@ class IntakeAdmissionTechnicalFailure(RuntimeError):
 
 
 class IntakeUnexpectedHistory(IntakeAdmissionTechnicalFailure):
-    """A pre-intake record cannot be attributed to an existing binding."""
+    """A record for the request key that no intake binding accounts for."""
+
+    def __init__(
+        self,
+        *,
+        unaccounted_kind: str,
+        unaccounted_id: int,
+        unaccounted_action: str,
+        unaccounted_idempotency_key: str,
+    ) -> None:
+        super().__init__(
+            "A record for this request key exists without a corresponding intake binding; "
+            "this attempt made no changes and kept no new intake record. Report it."
+        )
+        self.unaccounted_kind = unaccounted_kind
+        self.unaccounted_id = unaccounted_id
+        self.unaccounted_action = unaccounted_action
+        self.unaccounted_idempotency_key = unaccounted_idempotency_key
 
 
 ENTRY_ACTIONS: dict[IntakeEntry, str | None] = {
@@ -479,7 +499,7 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
 
 def _request_binding_mismatch() -> IntakeAdmissionTechnicalFailure:
     return IntakeAdmissionTechnicalFailure(
-        "the request being executed is not the request that was admitted; nothing was done"
+        "The request being executed is not the request that was admitted; nothing was done."
     )
 
 
@@ -601,26 +621,36 @@ def accounts_for(binding: IntakeBinding, record: IntakeRecord) -> bool:
     return False
 
 
-def _require_admission_state(alias: str) -> None:
+def _require_admission_state(alias: str, entry: IntakeEntry) -> None:
     """Refuse unsupported writers or transaction state using attribute reads only."""
+    entry = IntakeEntry(entry)
+    action = ENTRY_ACTIONS[entry]
+    action_text = action if action is not None else entry.value
     connection = connections[alias]
     if connection.vendor != "postgresql":
         raise S015CommandMutexUnavailable("command intake requires PostgreSQL")
     if alias != "default":
         raise IntakeAdmissionTechnicalFailure(
-            "command intake must use the default writer connection"
+            "The request could not be admitted: the intake must be admitted on the writer database. "
+            "Nothing was saved."
         )
     if connection.in_atomic_block:
         raise S015CommandAtomicityRequired(
-            "command intake requires a top-level transaction; nothing was saved"
+            f"{action_text} requires a top-level transaction and was not started: "
+            "an atomic block is open on this connection. Nothing was saved; "
+            "the caller's transaction is untouched."
         )
     if connection.get_autocommit() is not True:
         raise S015CommandAtomicityRequired(
-            "command intake requires autocommit; a manual transaction is open"
+            f"{action_text} requires a top-level transaction and was not started: "
+            "a manual transaction is open on this connection. Nothing was saved; "
+            "the caller's transaction is untouched."
         )
     if connection.needs_rollback:
         raise S015CommandAtomicityRequired(
-            "command intake cannot use a connection with a pending rollback"
+            f"{action_text} requires a top-level transaction and was not started: "
+            "the connection has a pending rollback. Nothing was saved; "
+            "the caller's transaction is untouched."
         )
 
 
@@ -776,9 +806,10 @@ def _refuse_unexpected_history(
         return existing
     record = unaccounted[0]
     raise IntakeUnexpectedHistory(
-        "a record for this request key exists from before the intake was enabled; "
-        f"unaccounted {record.kind} id={record.id} action={record.action} "
-        f"key={record.idempotency_key}; nothing was admitted"
+    unaccounted_kind=record.kind,
+    unaccounted_id=record.id,
+    unaccounted_action=record.action,
+    unaccounted_idempotency_key=record.idempotency_key,
     )
 
 
@@ -812,7 +843,7 @@ def _application_keys_and_times(
     occurred_at = _validate_timestamp(occurred_at, "occurred_at")
     effective_at = _validate_timestamp(effective_at, "effective_at")
     if received_at is not None:
-        raise ValueError("received_at is assigned by INTEVIA")
+        raise ValueError("received_at is assigned by INTEVIA and must not be supplied.")
     return request_reference, idempotency_key, occurred_at, effective_at
 
 
@@ -1082,7 +1113,7 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
         if command.received_at is not None:
-            raise ValueError("received_at is assigned by INTEVIA")
+            raise ValueError("received_at is assigned by INTEVIA and must not be supplied.")
         target = {
             "living_organism_id": _canonical_uuid(
                 command.living_organism_id, "living_organism_id"
@@ -1103,7 +1134,7 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
         effective_at = _validate_timestamp(command.effective_at, "effective_at")
         if command.received_at is not None:
-            raise ValueError("received_at is assigned by INTEVIA")
+            raise ValueError("received_at is assigned by INTEVIA and must not be supplied.")
         target = {
             "membership_uuid": _canonical_uuid(command.membership_uuid, "membership_uuid")
         }
@@ -1469,7 +1500,8 @@ def _bound_from_row(
     _, stored_entry, reference, stored_fingerprint, stored_schema, received_at, target = row
     if stored_schema != FINGERPRINT_SCHEMA:
         raise S015CommandReplayMismatch(
-            "request was received under an earlier request format"
+            "This request key was received under an earlier request format. This attempt made no changes. "
+            "The earlier request's outcome must be checked before it is sent under a different key. Report it."
         )
     if (
         stored_entry != entry.value
@@ -1477,11 +1509,13 @@ def _bound_from_row(
         or stored_fingerprint != fingerprint
     ):
         raise S015CommandReplayMismatch(
-            "a different request already used this key; nothing was done"
+            "A different request already used this request key; nothing was done. No record of this request "
+            "was kept and it inherits nothing from the earlier one. Send it under a new request key."
         )
     if target != shape.target_organism_id:
         raise S015CommandReplayMismatch(
-            "a different request already used this key; nothing was done"
+            "A different request already used this request key; nothing was done. No record of this request "
+            "was kept and it inherits nothing from the earlier one. Send it under a new request key."
         )
     return BoundRequest(
         entry=entry,
@@ -1514,8 +1548,8 @@ def admit_request(
     those without SQLSTATE become uncertain connection failures stating the
     request may or may not have been received.
     """
-    _require_admission_state(alias)
     entry = IntakeEntry(entry)
+    _require_admission_state(alias, entry)
     action = _normalise_shape(entry, shape)
     action_text = action if action is not None else entry.value
     fingerprint = intake_fingerprint(

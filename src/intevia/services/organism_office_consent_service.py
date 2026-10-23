@@ -202,7 +202,7 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         )
 
         entry = IntakeEntry.RECORD_OFFICE_CONSENT
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("RECORD_OFFICE_CONSENT is not active")
         shape = intake_shape(entry, command)
@@ -214,7 +214,7 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         self, command: RecordOfficeConsentCommand, bound: BoundRequest,
     ) -> OfficeConsentCommandResult:
         """Execute an admitted consent record within authority_atomic."""
-        with authority_atomic(self._alias):
+        with authority_atomic(self._alias, received_at=bound.received_at):
             return self._execute(command, bound=bound)
 
     def _execute(

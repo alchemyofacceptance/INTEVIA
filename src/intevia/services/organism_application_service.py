@@ -5,17 +5,19 @@ Coordinator claim, reassignment and decision commands, gateway commands
 to draft and put application settings, questions and governance
 configuration into effect, and the application_status read.
 
-Command execution uses authority_atomic, directly or through the gateway
-effect implementation. The applicant and Coordinator commands and
-effect_gateway_version lock the actor before looking up a receipt by
-actor, action and idempotency key. A receipt must also match the request
-reference and payload fingerprint before its result is served as a
-replay. These paths qualify fresh requests through S015Authority before
-their governed writes. save_gateway_draft also qualifies authority and
-writes no command receipt. A first creation or edit returns the saved
-version; a retry of a completed draft request returns a
-GatewayDraftResult, located or unresolved, found through its authority
-decision.
+Every public command first admits the request through the shared intake
+(a committed record of the request's key, content fingerprint and
+server-assigned received_at, outside the command's transaction), then
+executes it inside authority_atomic, directly or through the gateway
+effect implementation. The executors lock the actor before looking up a
+receipt by actor, action and idempotency key. A receipt must also match
+the request reference and payload fingerprint before its result is
+served as a replay. These paths qualify fresh requests through
+S015Authority, as of the intake's received_at, before their governed
+writes. save_gateway_draft also qualifies authority and writes no
+command receipt. A first creation or edit returns the saved version; a
+retry of a completed draft request returns a GatewayDraftResult, located
+or unresolved, found through its authority decision.
 
 Also defines command and result carriers, receipt decoders, gateway and
 Coordinator helpers, exceptions, and the LO name, CARE executor and
@@ -53,6 +55,7 @@ from src.intevia.services.organism_command_support import (
     S015CommandReplayMismatch, _canonical_key, _canonical_uuid, _command_payload,
     _empty_anchor_fingerprint, _lock_actor, _lock_actor_membership_context,
     _read_actor_active_membership, _resulting_temporal_basis, _validate_timestamp, _authority_request,
+    _intake_tail,
     acquire_organism_command_mutex,
     # Shared helper keeps the 15 Oct T-LOCK-1 translation outside the transaction.
     authority_atomic as _authority_atomic,
@@ -82,13 +85,17 @@ _SBG_ENABLING_REFUSAL_CODES = {
 }
 _AUTOMATIC_ACCEPTANCE_CARE_REFUSAL = (
     "These settings were not put into effect: automatic acceptance needs a CARE executor, "
-    "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged. You can still "
-    "choose manual processing by the LO's Coordinators."
+    "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged and no governed "
+    "record was written. INTEVIA kept a record that this request was received at {received_at}; "
+    "sent again unchanged, it is answered as of that time. You can still choose manual processing "
+    "by the LO's Coordinators."
 )
 _AUTOMATIC_ACCEPTANCE_WELCOME_REFUSAL = (
     "These settings were not put into effect: automatic acceptance needs the welcome for new "
-    "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged. You "
-    "can still choose manual processing by the LO's Coordinators."
+    "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged and no "
+    "governed record was written. INTEVIA kept a record that this request was received at "
+    "{received_at}; sent again unchanged, it is answered as of that time. You can still choose "
+    "manual processing by the LO's Coordinators."
 )
 
 
@@ -99,6 +106,8 @@ def _governance_enabling_refusal_message(
     effective_at: datetime,
     recorded_at: datetime,
     code: S015AuthorityRefusalCode,
+    opening_end: str = " and nothing changed.",
+    tail: str = "",
 ) -> str:
     """Return the authored message for a refused GOVERNANCE enablement.
 
@@ -113,15 +122,21 @@ def _governance_enabling_refusal_message(
     and unsupported-eligibility branches read arrangement diagnostics; the
     field and eligibility messages use their own opening. Diagnostic errors
     propagate. Raises RuntimeError if the delegated helper returns None.
+
+    opening_end and tail are passed to _sbg_readiness_message and applied in
+    the same way to the SBG_IL_GRESD message. effect_gateway_version passes
+    the class B form on its IntegrityError arm and the class A form on its
+    S015AuthorityDenied arm, each with the bound request's received_at.
     """
     if code is S015AuthorityRefusalCode.SBG_IL_GRESD:
-        return (
-            "GOVERNANCE was not switched on and nothing changed. This LO's GOVERNANCE Circle "
+        message = (
+            f"GOVERNANCE was not switched on{opening_end} This LO's GOVERNANCE Circle "
             "was active before and is now dormant; its next step is the restoration route for "
             "a dormant GOVERNANCE, which is not yet available in this release. This is a limit "
             "of the current build, not a refusal of the LO's choice. The LO's Coordinators "
             "continue to govern until that route is delivered."
         )
+        return f"{message} {tail}" if tail else message
     message = _sbg_readiness_message(
         code=code,
         act="GOVERNANCE was not switched on",
@@ -129,6 +144,8 @@ def _governance_enabling_refusal_message(
         organism=organism,
         effective_at=effective_at,
         recorded_at=recorded_at,
+        opening_end=opening_end,
+        tail=tail,
     )
     if message is None:
         raise RuntimeError("SB-G enabling refusal has no authored message")
@@ -239,10 +256,12 @@ class DiscussionWelcome(Protocol):
     """Protocol for the welcome following an automatic acceptance.
 
     Submission calls send_for synchronously inside its authority_atomic
-    context, after admission and the submission and acceptance lineage
-    events, and before its final command receipt. This call is not deferred
-    until commit. Exceptions pass through authority_atomic's handling;
-    external delivery is not made rollback-safe by the database transaction.
+    context, after automatic admission and the submission and acceptance
+    lineage events, and before its final command receipt. This call is not
+    deferred until commit. Exceptions pass through authority_atomic's
+    handling; external delivery is not made rollback-safe by the database
+    transaction, and the intake record that the request was received,
+    committed before that transaction, stands whatever the transaction does.
     """
     def send_for(self, application: Application, decision: ApplicationDecision) -> None:
         """Send the welcome for application's accepted decision."""
@@ -254,9 +273,11 @@ class UnavailableDiscussionWelcome:
 
     If a fresh submission reaches the automatic-welcome call with this
     default, its implementation-limit exception aborts the submission and
-    rolls back that submission's writes in the service's database transaction.
-    Completing automatic acceptance requires a supplied welcome collaborator
-    as well as the CARE executor and all earlier submission checks.
+    rolls back that submission's writes in the service's database
+    transaction; the intake record of the request, committed before that
+    transaction, is not rolled back. Completing automatic acceptance
+    requires a supplied welcome collaborator as well as the CARE executor
+    and all earlier submission checks.
     """
     def send_for(self, application: Application, decision: ApplicationDecision) -> None:
         """Raise S015OperationNotYetImplemented for automatic_welcome with
@@ -338,7 +359,11 @@ class GatewayDraftCommand:
     A first creation or edit returns the saved version. A retry of a
     completed request returns a GatewayDraftResult, located (its
     version_uuid served through serve_replay) or unresolved. No command
-    receipt is recorded for a draft.
+    receipt is recorded for a draft. The request is bound by the intake
+    before it runs, and its completion is established from the authority
+    decision: an identical repeated request is served from the draft it
+    saved (or told that INTEVIA cannot tell which draft that is) and never
+    saves a second draft.
     """
     credential: User
     living_organism_id: UUID
@@ -550,6 +575,40 @@ class GatewayDraftResult:
     @classmethod
     def replay_field_audiences(cls, result: "GatewayDraftResult") -> dict[str, str]:
         return {"version_uuid": "PROCESSING"}
+
+
+def gateway_draft_retry_text(result: GatewayDraftResult, *, edit: bool) -> str:
+    """Return the response text for a retry of a completed draft request. Selects the unresolved text when result.located is false, the withheld text when result.version_uuid is withheld from the viewer, and otherwise the located text; edit selects the edit wording over the creation wording. The receipt time is result.received_at. result is a completed-request result that has already passed the viewer filter, or the unresolved result; edit is true when the same request named a version_uuid."""
+    received_at = canonical_timestamp(result.received_at)
+    if not result.located:
+        return (
+            "Your draft was saved from this request, received at "
+            f"{received_at}, but INTEVIA cannot tell which of your drafts it is; "
+            "check your drafts. Nothing was written by this attempt."
+        )
+    if isinstance(result.version_uuid, WithheldField):
+        if edit:
+            return (
+                "This change was already applied to a draft from this request, "
+                f"received at {received_at}; it is a draft you cannot currently see. "
+                "Nothing was written by this attempt."
+            )
+        return (
+            "A draft was already saved from this request, "
+            f"received at {received_at}; it is a draft you cannot currently see. "
+            "Nothing was written by this attempt."
+        )
+    if not isinstance(result.version_uuid, UUID):
+        raise ValueError("a located gateway draft result must contain a visible version UUID")
+    if edit:
+        return (
+            "This change was already applied to a draft from this request, "
+            f"received at {received_at}. Nothing was written by this attempt."
+        )
+    return (
+        "This draft was already saved from this request, "
+        f"received at {received_at}. Nothing was written by this attempt."
+    )
 
 
 def _gateway_result_from_receipt(payload: object) -> GatewayEffectCommandResult:
@@ -1341,7 +1400,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.SAVE_GATEWAY_DRAFT
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("SAVE_GATEWAY_DRAFT is not active")
         shape = self._validate_shape(entry, command)
@@ -1352,7 +1411,7 @@ class OrganismApplicationService:
     def _execute_save_gateway_draft(self, command: GatewayDraftCommand, bound: BoundRequest):
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             start = self._gateway_start(
                 command,
                 create_head=True,
@@ -1430,7 +1489,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.EFFECT_GATEWAY_VERSION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("EFFECT_GATEWAY_VERSION is not active")
         shape = self._validate_shape(entry, command)
@@ -1456,6 +1515,12 @@ class OrganismApplicationService:
                 effective_at=command.effective_at,
                 recorded_at=bound.received_at,
                 code=exc.refusal_code,
+                opening_end=".",
+                tail=_intake_tail(
+                    "INTEVIA recorded this refusal and that the request was received at {received_at}; "
+                    "nothing else was saved.",
+                    bound.received_at,
+                ),
             )
             raise S015ApplicationRefused(
                 message,
@@ -1487,6 +1552,12 @@ class OrganismApplicationService:
                 effective_at=command.effective_at,
                 recorded_at=bound.received_at,
                 code=refusal_code,
+                opening_end="; no governed record was written.",
+                tail=_intake_tail(
+                    "INTEVIA kept a record that this request was received at {received_at}; "
+                    "sent again unchanged, it is answered as of that time.",
+                    bound.received_at,
+                ),
             )
             raise S015ApplicationRefused(
                 message,
@@ -1496,7 +1567,7 @@ class OrganismApplicationService:
     def _effect_gateway_version(self, command: EffectGatewayVersionCommand, *, bound: BoundRequest):
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             start = self._gateway_start(
                 command,
                 create_head=False,
@@ -1526,9 +1597,17 @@ class OrganismApplicationService:
                 raise S015OperationNotYetImplemented("circle_application_processing", "S3-IL-CIRCLE", "DISCUSSION")
             if isinstance(version, LOApplicationSettingsVersion) and version.automatic_acceptance is True:
                 if self._care_executor is None:
-                    raise S015ApplicationRefused(_AUTOMATIC_ACCEPTANCE_CARE_REFUSAL)
+                    raise S015ApplicationRefused(
+                        _AUTOMATIC_ACCEPTANCE_CARE_REFUSAL.format(
+                            received_at=canonical_timestamp(bound.received_at),
+                        )
+                    )
                 if isinstance(self._welcome, UnavailableDiscussionWelcome):
-                    raise S015ApplicationRefused(_AUTOMATIC_ACCEPTANCE_WELCOME_REFUSAL)
+                    raise S015ApplicationRefused(
+                        _AUTOMATIC_ACCEPTANCE_WELCOME_REFUSAL.format(
+                            received_at=canonical_timestamp(bound.received_at),
+                        )
+                    )
             _lock_owning_organism(self._alias, organism.organism_id)
             organism = LivingOrganism.objects.using(self._alias).select_for_update().get(pk=organism.pk)
             predecessor = LivingOrganismEvent.objects.using(self._alias).filter(pk=organism.head_event_id).first()
@@ -1804,7 +1883,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.SUBMIT_APPLICATION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("SUBMIT_APPLICATION is not active")
         shape = self._validate_shape(entry, command)
@@ -1819,7 +1898,7 @@ class OrganismApplicationService:
     ) -> ApplicationCommandResult:
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -1981,7 +2060,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.WITHDRAW_APPLICATION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("WITHDRAW_APPLICATION is not active")
         shape = self._validate_shape(entry, command)
@@ -1996,7 +2075,7 @@ class OrganismApplicationService:
     ) -> ApplicationCommandResult:
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -2084,7 +2163,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.CLAIM_APPLICATION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("CLAIM_APPLICATION is not active")
         shape = self._validate_shape(entry, command)
@@ -2099,7 +2178,7 @@ class OrganismApplicationService:
     ) -> ApplicationCommandResult:
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             context = self._coordinator_start(
                 command,
                 OrganismAction.CLAIM_APPLICATION,
@@ -2157,7 +2236,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.REASSIGN_APPLICATION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("REASSIGN_APPLICATION is not active")
         shape = self._validate_shape(entry, command)
@@ -2172,7 +2251,7 @@ class OrganismApplicationService:
     ) -> ApplicationCommandResult:
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             context = self._coordinator_start(
                 command,
                 OrganismAction.REASSIGN_APPLICATION,
@@ -2242,7 +2321,7 @@ class OrganismApplicationService:
         )
 
         entry = IntakeEntry.DECIDE_APPLICATION
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("DECIDE_APPLICATION is not active")
         shape = self._validate_shape(entry, command)
@@ -2257,7 +2336,7 @@ class OrganismApplicationService:
     ) -> ApplicationCommandResult:
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias):
+        with _authority_atomic(self._alias, received_at=bound.received_at):
             outcome = _canonical_key(command.outcome, "outcome", 7)
             if outcome not in {"ACCEPT", "DECLINE"}:
                 raise ValueError("outcome must be ACCEPT or DECLINE")

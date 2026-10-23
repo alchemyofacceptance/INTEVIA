@@ -55,6 +55,11 @@ from src.intevia.services.organism_authority import (
 _MUTEX_DOMAIN = b"INTEVIA:S015:ORGANISM_COMMAND_MUTEX:v1\x00"
 
 
+def _intake_tail(template: str, received_at: datetime) -> str:
+    """Return template with {received_at} replaced by canonical_timestamp(received_at), the form of the receipt time in the intake's restated texts."""
+    return template.replace("{received_at}", canonical_timestamp(received_at))
+
+
 def _lock_registered_organism(database_alias: str, organism_id) -> None:
     """Take the registered organism lock before any per-organism row locks."""
     with connections[database_alias].cursor() as cursor:
@@ -82,7 +87,9 @@ class S015CommandMutexUnavailable(S015CommandSubstrateError):
 
 class S015CommandReplayMismatch(S015CommandSubstrateError):
     """Raised when a completed receipt does not match the request it is
-    replayed for; raised in this module by _OrganismCommandService.
+    replayed for; raised in this module by _OrganismCommandService. Also
+    raised by the request intake when the content of a request differs from
+    the request already received under the same key.
     """
     pass
 
@@ -97,18 +104,43 @@ class S015CommandReceiptMalformed(S015CommandSubstrateError):
 
     On the existing-receipt replay path these checks precede new domain
     work. The shared _finalise path also calls a decoder, after inserting
-    the new receipt. The exception itself neither prevents prior writes
-    nor performs rollback; transaction handling must uphold the message's
-    assurance that this attempt made no new changes.
+    the new receipt. The exception itself neither prevents prior writes nor
+    performs rollback; transaction handling must uphold the message's
+    assurance about this attempt's changes.
+
+    On an admitted active entry, the intake record was committed outside
+    the command's transaction and survives its rollback. When _finalise is
+    given that binding's received_at and its decoder raises this class,
+    the message uses R-FIX-04: no new governed change and the intake record
+    kept. Without received_at the original record-fault message is used,
+    including on the completed-receipt replay path (R-FIX-03) and callers
+    whose entry the intake does not yet serve.
     """
-    def __init__(self) -> None:
+    def __init__(self, *, received_at: datetime | None = None) -> None:
         # RC-1 commission v1.3, item 1 (text (a), as resolved by the Human Governor).
-        """Create the refusal with the fixed record-fault text (a)."""
-        super().__init__(
-            "The earlier record of this request could not be read. This attempt made no new changes. "
-            "This is a record fault, not evidence that you submitted a different request; it needs to "
-            "be checked before the request is retried."
-        )
+        """Create the refusal with the fixed record-fault text (a).
+
+        received_at, when given, is the bound request's receipt time and
+        selects the form _finalise raises: the result could not be read back,
+        the attempt made no new governed change and the record of the request's
+        receipt was kept. Without it the original text is used, as on the
+        replay path.
+        """
+        self.received_at = received_at
+        if received_at is None:
+            message = (
+                "The earlier record of this request could not be read. This attempt made no new changes. "
+                "This is a record fault, not evidence that you submitted a different request; it needs to "
+                "be checked before the request is retried."
+            )
+        else:
+            message = (
+                "The record of this request's result could not be read back. This attempt made no new "
+                "governed change; INTEVIA kept a record that your request was received at "
+                f"{canonical_timestamp(received_at)}. This is a record fault, not evidence that you "
+                "submitted a different request; it needs to be checked before the same request is sent again."
+            )
+        super().__init__(message)
 
 
 class S015CommandContended(S015CommandSubstrateError):
@@ -119,22 +151,50 @@ class S015CommandContended(S015CommandSubstrateError):
     failure) or 55P03 (lock not available), when no atomic block remains
     open on the selected connection. The command wrappers place that
     translation outside their transaction so the named statement or commit
-    failure is handled after rollback.
+    failure is handled after rollback. On an admitted active entry, the
+    intake record committed before that transaction remains.
 
-    The message is T-LOCK-1, the Human Governor's text, stating that the
-    attempt made no changes. diagnostic_sqlstate records the code, and the
-    translator preserves the original OperationalError as the cause.
-    Constructing this exception does not itself roll back a transaction.
-    Nothing is retried.
+    The message is the Human Governor's T-LOCK-1 text. With the bound
+    request's received_at, it states that no governed record was written
+    and that the record of receipt was kept. Without received_at, including
+    at the admission boundary and on entries the intake does not yet serve,
+    it retains the original text stating that the attempt made no changes.
+    diagnostic_sqlstate records the code, and the translator preserves the
+    original OperationalError as the cause. Constructing this exception
+    does not itself roll back a transaction. Nothing is retried.
     """
 
-    def __init__(self, diagnostic_sqlstate: Literal["40P01", "40001", "55P03"]) -> None:
-        """Set the T-LOCK-1 message and record diagnostic_sqlstate."""
-        super().__init__(
-            "Your request could not be completed because it conflicted with another database operation. "
-            "This attempt made no changes. Please wait a moment before trying again. "
-            "If this keeps happening, note the time it occurred; it needs to be checked."
-        )
+    def __init__(
+        self,
+        diagnostic_sqlstate: Literal["40P01", "40001", "55P03"],
+        *,
+        received_at: datetime | None = None,
+    ) -> None:
+        """Set the T-LOCK-1 message and record diagnostic_sqlstate and
+        received_at.
+
+        received_at, when given, is the bound request's receipt time and
+        selects the post-admission text, which states that the attempt wrote no
+        governed record and that the record of the request's receipt was kept.
+        Without it the original text is used, as at the admission boundary and
+        on entries the intake does not yet serve.
+        """
+        self.received_at = received_at
+        if received_at is None:
+            message = (
+                "Your request could not be completed because it conflicted with another database operation. "
+                "This attempt made no changes. Please wait a moment before trying again. "
+                "If this keeps happening, note the time it occurred; it needs to be checked."
+            )
+        else:
+            message = (
+                "Your request could not be completed because it conflicted with another database operation. "
+                "This attempt wrote no governed record; INTEVIA kept a record that your request was received "
+                f"at {canonical_timestamp(received_at)}. Please wait a moment before sending the same request "
+                "again; it is judged as of that time. If this keeps happening, note the time it occurred; "
+                "it needs to be checked."
+            )
+        super().__init__(message)
         self.diagnostic_sqlstate = diagnostic_sqlstate
 
 
@@ -410,7 +470,7 @@ def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
 
 
 @contextmanager
-def authority_atomic(database_alias: str):
+def authority_atomic(database_alias: str, *, received_at: datetime | None = None):
     """Run an atomic block that defers S015AuthorityDenied, inside contention translation.
 
     Uses transaction.atomic on database_alias. Catches S015AuthorityDenied
@@ -432,8 +492,12 @@ def authority_atomic(database_alias: str):
     together with the provider's writes and the caller's transaction scope.
     The contention translation is PKT-LOCK-1's
     (PKT_LOCK_1_BUILD_COMMISSION_v1_0.md, section 2.6).
+
+    received_at, when given, is the bound request's receipt time and is
+    passed to contention_translated. The executors of entries the intake
+    serves pass it; other callers omit it.
     """
-    with contention_translated(database_alias):
+    with contention_translated(database_alias, received_at=received_at):
         refusal = None
         with transaction.atomic(using=database_alias):
             try:
@@ -445,7 +509,11 @@ def authority_atomic(database_alias: str):
 
 
 @contextmanager
-def contention_translated(database_alias: str):
+def contention_translated(
+    database_alias: str,
+    *,
+    received_at: datetime | None = None,
+):
     """Translate named contention after the wrapped transaction block exits.
 
     Place this wrapper outside the command's transaction block on
@@ -454,10 +522,11 @@ def contention_translated(database_alias: str):
     statement or commit failure before that failure reaches this wrapper.
 
     An OperationalError whose direct cause's sqlstate is 40P01, 40001 or
-    55P03 is raised as S015CommandContended(sqlstate), from the original
-    exception, only when no atomic block remains open on database_alias.
-    If an enclosing atomic block remains, or the error does not match,
-    the original exception propagates unchanged. Nothing is retried.
+    55P03 is raised as S015CommandContended(sqlstate), with received_at when
+    one is given, from the original exception, only when no atomic block
+    remains open on database_alias. If an enclosing atomic block remains, or
+    the error does not match, the original exception propagates unchanged.
+    Nothing is retried.
 
     Used outside transaction.atomic by authority_atomic and by
     OrganismMembershipService.open_membership. The no-open-atomic-block
@@ -466,6 +535,10 @@ def contention_translated(database_alias: str):
 
     Source: PKT_LOCK_1_BUILD_COMMISSION_v1_0.md, section 2.6, with the Human
     Governor's outermost-transaction correction in section 3.2.
+
+    received_at, when given, is the bound request's receipt time;
+    S015CommandContended then states that the record of the request's
+    receipt was kept.
     """
     try:
         yield
@@ -475,7 +548,7 @@ def contention_translated(database_alias: str):
             sqlstate in {"40P01", "40001", "55P03"}
             and not transaction.get_connection(database_alias).in_atomic_block
         ):
-            raise S015CommandContended(sqlstate) from exc
+            raise S015CommandContended(sqlstate, received_at=received_at) from exc
         raise
 
 
@@ -1005,6 +1078,7 @@ class _OrganismCommandService:
         idempotency_key: str,
         payload_fingerprint: str,
         result,
+        received_at: datetime | None = None,
     ):
         """Insert a completed command's receipt, then serve its result.
 
@@ -1025,6 +1099,12 @@ class _OrganismCommandService:
         no explicit commit or rollback. The surrounding transaction or
         autocommit mode determines whether writes survive a later error.
         Returning a served result is not a separate commit check.
+
+        received_at, when given, is the bound request's receipt time. If the
+        decoder then raises S015CommandReceiptMalformed, the same class is
+        raised again with received_at and with the decoder's original cause, so
+        that the message states the record of the request's receipt kept.
+        Callers whose entry the intake does not yet serve omit it.
         """
         receipt = OrganismCommandReceipt.objects.using(self._alias).create(
             actor=actor,
@@ -1036,7 +1116,12 @@ class _OrganismCommandService:
             lineage_reference=result.lineage_reference,
             result_payload=result.receipt_payload(),
         )
-        replay_result = self._replay_result(receipt.result_payload)
+        try:
+            replay_result = self._replay_result(receipt.result_payload)
+        except S015CommandReceiptMalformed as exc:
+            if received_at is None:
+                raise
+            raise S015CommandReceiptMalformed(received_at=received_at) from exc.__cause__
         viewer = ReplayViewer(actor.pk, actor.identity_id, self._clock())
         return serve_replay(
             replay_result,

@@ -1760,7 +1760,7 @@ class S015MembershipCommandTests(TransactionTestCase):
         self.assertEqual(retrospective.temporal_basis_kind, "RETROSPECTIVE")
         self.assertIsNotNone(retrospective.temporal_basis_reference)
 
-    def test_out_of_order_transition_raises_il3_and_writes_nothing(self):
+    def test_out_of_order_transition_raises_il3_and_writes_no_governed_record(self):
         ids, actor, target = self._setup_organism("out-of-order")
         service = self._service(_ExactProvider())
         membership = self._fixture_membership(ids, target, "ACTIVE", "out-of-order-active-prior",

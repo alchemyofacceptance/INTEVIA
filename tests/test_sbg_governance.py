@@ -1546,7 +1546,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         with self.assertRaises(S015ApplicationRefused) as refused:
             self._effect_governance_choice(route, draft, tag)
         self.assertIs(refused.exception.refusal_code, code)
-        self.assertEqual(str(refused.exception), authored_message)
+        intake = CommandIntake.objects.get(
+            actor=route.founder,
+            request_reference=request_reference,
+        )
+        self.assertEqual(
+            str(refused.exception),
+            authored_message.replace("⟨T⟩", canonical_timestamp(intake.received_at)),
+        )
         expected = before.copy()
         expected["authority_decisions"] += 1
         self.assertEqual(self._enabling_route_state(route), expected)
@@ -1581,7 +1588,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             with self.assertRaises(S015ApplicationRefused) as refused:
                 self._effect_governance_choice(route, draft, tag)
         self.assertIs(refused.exception.refusal_code, code)
-        self.assertEqual(str(refused.exception), authored_message)
+        intake = CommandIntake.objects.get(
+            actor=route.founder,
+            request_reference=request_reference,
+        )
+        self.assertEqual(
+            str(refused.exception),
+            authored_message.replace("⟨T⟩", canonical_timestamp(intake.received_at)),
+        )
         self.assertEqual(self._enabling_route_state(route), before)
         self.assertFalse(
             AuthorityDecision.objects.filter(
@@ -2648,9 +2662,10 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "circle-missing-a",
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
-            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this LO, "
+            "GOVERNANCE was not switched on. GOVERNANCE is on for this LO, "
             "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this.",
+            "try again. Creating the Circle early in formation avoids this. "
+            "INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
         circle_missing_b = self._prepare_post_birthing_governance_route(
@@ -2663,9 +2678,10 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "circle-missing-b",
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
-            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE is on for this LO, "
+            "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE is on for this LO, "
             "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this.",
+            "try again. Creating the Circle early in formation avoids this. "
+            "INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
         )
 
         arrangement_missing = self._prepare_post_birthing_governance_route(
@@ -2682,10 +2698,10 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-missing-a",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
-            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE needs an adopted "
+            "GOVERNANCE was not switched on. GOVERNANCE needs an adopted "
             "arrangement saying which seats exist, how each is filled and who decides, and this "
             "LO has none in effect. Adopt an arrangement, then try again. Adopting it before "
-            "creating the Circle avoids this.",
+            "creating the Circle avoids this. INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
         arrangement_missing_b = self._prepare_post_birthing_governance_route(
@@ -2702,10 +2718,10 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-missing-b",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
-            "GOVERNANCE was not switched on and nothing changed. GOVERNANCE needs an adopted "
+            "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE needs an adopted "
             "arrangement saying which seats exist, how each is filled and who decides, and this "
             "LO has none in effect. Adopt an arrangement, then try again. Adopting it before "
-            "creating the Circle avoids this.",
+            "creating the Circle avoids this. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
         )
 
         incomplete_body = governance_arrangement_body(
@@ -2726,9 +2742,9 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-incomplete-a",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-            "GOVERNANCE was not switched on and nothing changed. The arrangement is incomplete: "
+            "GOVERNANCE was not switched on. The arrangement is incomplete: "
             "it has no seat in effect at this time. Adopt a corrected version, then try again. Every seat needs an "
-            "admission route and a deciding body that matches it.",
+            "admission route and a deciding body that matches it. INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
         arrangement_incomplete_b = self._prepare_post_birthing_governance_route(
@@ -2746,9 +2762,9 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-incomplete-b",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-            "GOVERNANCE was not switched on and nothing changed. The arrangement is incomplete: "
+            "GOVERNANCE was not switched on; no governed record was written. The arrangement is incomplete: "
             "it has no seat in effect at this time. Adopt a corrected version, then try again. Every seat needs an "
-            "admission route and a deciding body that matches it.",
+            "admission route and a deciding body that matches it. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
         )
 
         no_route = self._prepare_post_birthing_governance_route(
@@ -2762,11 +2778,12 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "no-route-a",
             S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
-            "GOVERNANCE was not switched on and nothing changed. Nobody holds a GOVERNANCE seat "
+            "GOVERNANCE was not switched on. Nobody holds a GOVERNANCE seat "
             "yet, and no seat in the arrangement can be filled in this release: election seats "
             "wait for elections, co-option seats wait for an active GOVERNANCE, and ex officio "
             "seats are not yet available. Adopt a version with a seat the LO Coordinators appoint, "
-            "then try again. The arrangement you adopted stays recorded and in effect.",
+            "then try again. The arrangement you adopted stays recorded and in effect. "
+            "INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
         no_route_b = self._prepare_post_birthing_governance_route(
@@ -2780,11 +2797,12 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "no-route-b",
             S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
-            "GOVERNANCE was not switched on and nothing changed. Nobody holds a GOVERNANCE seat "
+            "GOVERNANCE was not switched on; no governed record was written. Nobody holds a GOVERNANCE seat "
             "yet, and no seat in the arrangement can be filled in this release: election seats "
             "wait for elections, co-option seats wait for an active GOVERNANCE, and ex officio "
             "seats are not yet available. Adopt a version with a seat the LO Coordinators appoint, "
-            "then try again. The arrangement you adopted stays recorded and in effect.",
+            "then try again. The arrangement you adopted stays recorded and in effect. "
+            "INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
         )
 
         ready = self._prepare_post_birthing_governance_route("p3-ready")
@@ -2839,11 +2857,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "dormant-a",
             S015AuthorityRefusalCode.SBG_IL_GRESD,
-            "GOVERNANCE was not switched on and nothing changed. This LO's GOVERNANCE Circle "
+            "GOVERNANCE was not switched on. This LO's GOVERNANCE Circle "
             "was active before and is now dormant; its next step is the restoration route for a "
             "dormant GOVERNANCE, which is not yet available in this release. This is a limit of "
             "the current build, not a refusal of the LO's choice. The LO's Coordinators continue "
-            "to govern until that route is delivered.",
+            "to govern until that route is delivered. INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
         dormant_snapshot.refresh_from_db()
         self.assertEqual(dormant_snapshot.body, dormant_snapshot_body)
@@ -2857,11 +2875,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "dormant-b",
             S015AuthorityRefusalCode.SBG_IL_GRESD,
-            "GOVERNANCE was not switched on and nothing changed. This LO's GOVERNANCE Circle "
+            "GOVERNANCE was not switched on; no governed record was written. This LO's GOVERNANCE Circle "
             "was active before and is now dormant; its next step is the restoration route for a "
             "dormant GOVERNANCE, which is not yet available in this release. This is a limit of "
             "the current build, not a refusal of the LO's choice. The LO's Coordinators continue "
-            "to govern until that route is delivered.",
+            "to govern until that route is delivered. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
         )
 
     def test_w_d1_disabling_preserves_governance_establishment(self):
@@ -4254,18 +4272,20 @@ class SBGGovernanceDepartureCascadeTests(
         membership,
         participation,
         effective_at,
+        received_at,
     ):
         identity = membership.identity
         person = identity.display_name or identity.canonical_username
         return (
-            f"{person} was not recorded as leaving {membership.living_organism.slug}, "
-            "and nothing changed. The leaving date given, "
+            f"{person} was not recorded as leaving {membership.living_organism.slug}"
+            "; no governed record was written. The leaving date given, "
             f"{canonical_timestamp(effective_at)}, is earlier than the start of their "
             f"GOVERNANCE seat {participation.seat_id}, which began on "
             f"{canonical_timestamp(participation.effective_at)}. A member cannot leave "
             "before a seat they took while still a member. Check the leaving date. If the "
             "seat itself was recorded in error, it must be corrected through its own "
-            "governed route first."
+            "governed route first. INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(received_at)}; sent again unchanged, it is answered as of that time."
         )
 
     def test_w_d3_1_departure_composes_a_causally_linked_ending(self):
@@ -4355,15 +4375,18 @@ class SBGGovernanceDepartureCascadeTests(
         self.assertLess(previous.effective_at, leave_at)
         before = self._whole_departure_state(route, membership)
 
+        command = self._departure_command(
+            route,
+            membership,
+            "future-seat",
+            leave_at,
+        )
         with self.assertRaises(S015MembershipRefused) as refused:
-            self._membership_service().transition_membership(
-                self._departure_command(
-                    route,
-                    membership,
-                    "future-seat",
-                    leave_at,
-                )
-            )
+            self._membership_service().transition_membership(command)
+        intake = CommandIntake.objects.get(
+            actor=applicant,
+            idempotency_key=command.idempotency_key,
+        )
 
         self.assertIs(
             refused.exception.refusal_code,
@@ -4375,6 +4398,7 @@ class SBGGovernanceDepartureCascadeTests(
                 membership,
                 participation,
                 leave_at,
+                intake.received_at,
             ),
         )
         self.assertEqual(self._whole_departure_state(route, membership), before)
@@ -4406,26 +4430,29 @@ class SBGGovernanceDepartureCascadeTests(
         original_check = service._departure_precedes_participation
         calls = []
 
-        def defer_to_database_guard(candidate_membership, effective_at):
+        def defer_to_database_guard(candidate_membership, effective_at, received_at):
             calls.append(True)
             if len(calls) == 1:
                 return None
-            return original_check(candidate_membership, effective_at)
+            return original_check(candidate_membership, effective_at, received_at)
 
+        guard_command = self._departure_command(
+            guard_route,
+            guard_membership,
+            "guard-backstop",
+            guard_leave_at,
+        )
         with patch.object(
             service,
             "_departure_precedes_participation",
             side_effect=defer_to_database_guard,
         ):
             with self.assertRaises(S015MembershipRefused) as guard_refusal:
-                service.transition_membership(
-                    self._departure_command(
-                        guard_route,
-                        guard_membership,
-                        "guard-backstop",
-                        guard_leave_at,
-                    )
-                )
+                service.transition_membership(guard_command)
+        guard_intake = CommandIntake.objects.get(
+            actor=guard_applicant,
+            idempotency_key=guard_command.idempotency_key,
+        )
 
         self.assertEqual(calls, [True])
         self.assertIs(
@@ -4438,6 +4465,7 @@ class SBGGovernanceDepartureCascadeTests(
                 guard_membership,
                 guard_participation,
                 guard_leave_at,
+                guard_intake.received_at,
             ),
         )
         self.assertEqual(

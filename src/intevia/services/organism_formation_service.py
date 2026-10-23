@@ -236,12 +236,16 @@ def _sbg_readiness_message(
     organism: LivingOrganism,
     effective_at: datetime,
     recorded_at: datetime,
+    opening_end: str = " and nothing changed.",
+    tail: str = "",
 ) -> str | None:
     """Return user-facing text for an SB-G code, or None.
 
-    act supplies the opening clause. Most texts begin with
-    that clause followed by "and nothing changed.".
-    Cover a missing GOVERNANCE Circle or arrangement,
+    act supplies the opening clause and opening_end what
+    follows it, " and nothing changed." by default, so most
+    texts begin with that clause followed by "and nothing
+    changed.". tail, when not empty, is appended after one
+    space. Cover a missing GOVERNANCE Circle or arrangement,
     an incomplete arrangement, unsupported fields or
     eligibility, and no initial participation route.
 
@@ -255,18 +259,23 @@ def _sbg_readiness_message(
     this helper does not independently check the lifecycle.
 
     The field and eligibility texts always open with
-    "No arrangement was adopted and nothing changed."
+    "No arrangement was adopted" followed by opening_end.
     They do not substitute act into that opening.
     """
-    opening = f"{act} and nothing changed."
+    opening = f"{act}{opening_end}"
+    field_opening = f"No arrangement was adopted{opening_end}"
+
+    def with_tail(message: str) -> str:
+        return f"{message} {tail}" if tail else message
+
     if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
-        return (
+        return with_tail(
             f"{opening} GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first. "
             "Create the LO's GOVERNANCE Circle, then try again. Creating the Circle early in "
             "formation avoids this."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING:
-        return (
+        return with_tail(
             f"{opening} GOVERNANCE needs an adopted arrangement saying which seats exist, how each "
             "is filled and who decides, and this LO has none in effect. Adopt an arrangement, then "
             "try again. Adopting it before creating the Circle avoids this."
@@ -279,7 +288,7 @@ def _sbg_readiness_message(
             recorded_at=recorded_at,
             code=code,
         )
-        return (
+        return with_tail(
             f"{opening} The arrangement is incomplete: {condition}. Adopt a corrected version, then "
             "try again. Every seat needs an admission route and a deciding body that matches it."
         )
@@ -291,8 +300,8 @@ def _sbg_readiness_message(
             recorded_at=recorded_at,
             code=code,
         )
-        return (
-            f"No arrangement was adopted and nothing changed. The arrangement includes {condition}, "
+        return with_tail(
+            f"{field_opening} The arrangement includes {condition}, "
             "which this release cannot yet act on. Leave it out for now; it can be added by a later "
             "version once the release that acts on it is delivered."
         )
@@ -304,8 +313,8 @@ def _sbg_readiness_message(
             recorded_at=recorded_at,
             code=code,
         )
-        return (
-            f"No arrangement was adopted and nothing changed. Seat {seat_id} names an eligibility "
+        return with_tail(
+            f"{field_opening} Seat {seat_id} names an eligibility "
             "rule this release cannot check; it can check only \"an active member of the LO\". Use "
             "that rule for now; other eligibility rules arrive with the slices that can check them."
         )
@@ -317,7 +326,7 @@ def _sbg_readiness_message(
             if before_birthing
             else "Adopt a version with a seat the LO Coordinators appoint, then try again."
         )
-        return (
+        return with_tail(
             f"{opening} Nobody holds a GOVERNANCE seat yet, and no seat in the arrangement can be "
             "filled in this release: election seats wait for elections, co-option seats wait for an "
             "active GOVERNANCE, and ex officio seats are not yet available. "

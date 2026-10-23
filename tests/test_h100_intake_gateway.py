@@ -100,6 +100,7 @@ from src.intevia.services.organism_application_service import (
     OrganismApplicationService,
     S015ApplicationAuthorityUnavailable,
     S015ApplicationRefused,
+    gateway_draft_retry_text,
 )
 from src.intevia.services.organism_authority import (
     S015Authority,
@@ -121,6 +122,7 @@ from src.intevia.services.organism_role_service import (
     OrganismRoleService,
     TransitionAssignmentCommand,
 )
+from src.intevia.services.service_authority import canonical_timestamp
 from tests.s015_0021_support import append_event, database_now, fresh, refresh, seed_identity
 from tests.s015_concurrency_support import cleanup_workers, start_worker, wait_until_locked
 from tests.sb2_route_support import add_active_elector, birth, prepare_route, route_test_now
@@ -1000,6 +1002,13 @@ class GatewayIntakeFlowTests(TransactionTestCase):
         result = self.service.save_gateway_draft(draft)
 
         self._assert_located(result, command=draft, version=version, intake=intake)
+        response = gateway_draft_retry_text(result, edit=False)
+        self.assertEqual(
+            response,
+            "This draft was already saved from this request, received at "
+            f"{canonical_timestamp(intake.received_at)}. Nothing was written by this attempt.",
+        )
+        self.assertNotIn(str(version.version_uuid), response)
         self.assertEqual(_public_row_counts(), before)
         self.assertEqual(len(self.provider.requests), provider_calls)
         self.assertEqual(CommandIntake.objects.filter(pk=intake.pk).get().received_at, intake.received_at)
@@ -1026,6 +1035,14 @@ class GatewayIntakeFlowTests(TransactionTestCase):
         self.assertEqual(result.action, draft.action)
         self.assertEqual(result.effective_at, draft.effective_at)
         self.assertEqual(result.received_at, intake.received_at)
+        response = gateway_draft_retry_text(result, edit=False)
+        self.assertEqual(
+            response,
+            "A draft was already saved from this request, received at "
+            f"{canonical_timestamp(intake.received_at)}; it is a draft you cannot currently see. "
+            "Nothing was written by this attempt.",
+        )
+        self.assertNotIn(str(version.version_uuid), response)
         _no_uuid_in(self, result, version.version_uuid)
         self.assertEqual(_public_row_counts(), before)
         self.assertEqual(len(self.provider.requests), provider_calls)
@@ -1067,6 +1084,14 @@ class GatewayIntakeFlowTests(TransactionTestCase):
         self.assertEqual(result.action, draft.action)
         self.assertEqual(result.effective_at, draft.effective_at)
         self.assertEqual(result.received_at, intake.received_at)
+        response = gateway_draft_retry_text(result, edit=False)
+        self.assertEqual(
+            response,
+            "Your draft was saved from this request, received at "
+            f"{canonical_timestamp(intake.received_at)}, but INTEVIA cannot tell which of your drafts it is; "
+            "check your drafts. Nothing was written by this attempt.",
+        )
+        self.assertNotIn(str(version.version_uuid), response)
         _no_uuid_in(self, result, version.version_uuid, twin_uuid)
         self.assertEqual(_public_row_counts(), before)
         self.assertEqual(len(self.provider.requests), provider_calls)
@@ -1140,6 +1165,13 @@ class GatewayIntakeFlowTests(TransactionTestCase):
         result = self.service.save_gateway_draft(edit_one)
 
         self._assert_located(result, command=edit_one, version=draft, intake=edit_one_intake)
+        response = gateway_draft_retry_text(result, edit=True)
+        self.assertEqual(
+            response,
+            "This change was already applied to a draft from this request, received at "
+            f"{canonical_timestamp(edit_one_intake.received_at)}. Nothing was written by this attempt.",
+        )
+        self.assertNotIn(str(draft.version_uuid), response)
         draft.refresh_from_db()
         self.assertNotEqual(result.received_at, draft.received_at)
         self.assertIs(draft.applications_open, False)
@@ -1737,6 +1769,14 @@ class GatewayIntakeFlowTests(TransactionTestCase):
         self.assertEqual(result.action, edit.action)
         self.assertEqual(result.effective_at, edit.effective_at)
         self.assertEqual(result.received_at, edit_intake.received_at)
+        response = gateway_draft_retry_text(result, edit=True)
+        self.assertEqual(
+            response,
+            "This change was already applied to a draft from this request, received at "
+            f"{canonical_timestamp(edit_intake.received_at)}; it is a draft you cannot currently see. "
+            "Nothing was written by this attempt.",
+        )
+        self.assertNotIn(str(draft.version_uuid), response)
         self.assertNotEqual(result.received_at, draft.received_at)
         _no_uuid_in(self, result, draft.version_uuid)
         self.assertEqual(_public_row_counts(), before)

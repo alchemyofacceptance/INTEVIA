@@ -270,11 +270,14 @@ class IntakeAdmissionStateTests(TransactionTestCase):
         # Isolate this defensive branch; real atomic refusal is tested separately.
         with patch.object(db, "needs_rollback", True):
             with CaptureQueriesContext(connection) as queries:
-                with self.assertRaisesMessage(
-                    S015CommandAtomicityRequired,
-                    "command intake cannot use a connection with a pending rollback",
-                ):
+                with self.assertRaises(S015CommandAtomicityRequired) as raised_message:
                     self.service.submit_application(command)
+                self.assertEqual(
+                    str(raised_message.exception),
+                    "SUBMIT_APPLICATION requires a top-level transaction and was not started: "
+                    "the connection has a pending rollback. Nothing was saved; the caller's "
+                    "transaction is untouched.",
+                )
             self.assertEqual(len(queries), 0)
         self.assertFalse(db.needs_rollback)
 

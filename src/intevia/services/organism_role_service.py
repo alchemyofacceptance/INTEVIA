@@ -1,7 +1,8 @@
 """Office proposals, appointments and authorised endings for an LO (S015).
 
-OrganismRoleService provides propose_assignment and transition_assignment,
-each inside authority_atomic, plus assignment_in_effect and
+OrganismRoleService provides propose_assignment and
+transition_assignment, each admitted through the shared intake and then
+run inside authority_atomic, plus assignment_in_effect and
 open_nominations reads.
 
 A successful proposal creates a contextual role assignment in PROPOSED
@@ -38,7 +39,13 @@ resolve the target and attempt replay. Fresh commands then obtain the
 required actor context and locks and qualify authority before their
 local target-state refusals. Actor-context checks can refuse earlier.
 Successful commands write an event, refresh the governed cache and
-finalise a receipt.
+finalise a receipt. The intake record commits separately from the
+command: when the command's transaction rolls back, its writes roll back
+and the intake record remains. A provider denial can leave its REFUSED
+authority decision, and the founder-protection denial that
+transition_assignment raises after successful qualification can leave
+that QUALIFIED decision; authority_atomic does not itself isolate
+refusal evidence from other writes.
 
 Local implementation limits cover non-LO-scoped definitions,
 non-COORDINATOR codes, role suspension and events whose
@@ -83,6 +90,7 @@ from src.intevia.services.organism_command_support import (
     _command_payload,
     _empty_anchor_fingerprint,
     _founding_provenance_assignment_id,
+    _intake_tail,
     _lock_actor,
     _lock_actor_membership_context,
     _lock_registered_organism,
@@ -102,7 +110,6 @@ from src.intevia.services.organism_membership_service import (
     S015OperationNotYetImplemented,
 )
 from src.intevia.services.organism_authority import (
-    C_FOUNDER_PROTECTED_MESSAGE,
     S015AuthorityDenied,
     S015AuthorityRefusalCode,
 )
@@ -911,11 +918,14 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
     def propose_assignment(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
-        """Propose an office assignment within authority_atomic.
+        """Propose an office assignment: admits the request through the shared
+        intake, then runs _execute_propose with the bound request within
+        authority_atomic on this service's database alias and returns its
+        result.
 
-        Runs _execute_propose on this service's database alias and returns its
-        result. A matching completed request is reconstructed from its receipt
-        and served through the replay viewer rules.
+        A matching completed request is reconstructed from its receipt and
+        served through the replay viewer rules; a changed request under an
+        occupied key is refused at the intake.
         """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
@@ -928,7 +938,7 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
         entry = IntakeEntry.PROPOSE_ASSIGNMENT
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("PROPOSE_ASSIGNMENT is not active")
         shape = intake_shape(entry, command)
@@ -940,18 +950,21 @@ class OrganismRoleService(_OrganismCommandService):
         self, command: ProposeAssignmentCommand, bound: BoundRequest,
     ) -> AssignmentCommandResult:
         """Execute an admitted proposal inside the service's authority transaction."""
-        with authority_atomic(self._alias):
+        with authority_atomic(self._alias, received_at=bound.received_at):
             return self._execute_propose(command, bound=bound)
 
     def transition_assignment(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
-        """Appoint or end an office assignment within authority_atomic.
+        """Appoint or end an office assignment: admits the request through the
+        shared intake, then runs _execute_transition with the bound request
+        within authority_atomic on this service's database alias and returns
+        its result.
 
-        Runs _execute_transition on this service's database alias and returns
-        its result. REASSIGN ends the existing assignment; a replacement
-        appointment requires a new assignment anchor.
+        REASSIGN ends the existing assignment; a replacement appointment
+        requires a new assignment anchor.
 
         A matching completed request is reconstructed from its receipt and
-        served through the replay viewer rules.
+        served through the replay viewer rules; a changed request under an
+        occupied key is refused at the intake.
         """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
@@ -964,7 +977,7 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
         entry = IntakeEntry.TRANSITION_ASSIGNMENT
-        _require_admission_state(self._alias)
+        _require_admission_state(self._alias, entry)
         if entry not in ACTIVE_ENTRIES:
             raise IntakeAdmissionTechnicalFailure("TRANSITION_ASSIGNMENT is not active")
         shape = intake_shape(entry, command)
@@ -975,9 +988,39 @@ class OrganismRoleService(_OrganismCommandService):
     def _execute_transition_assignment(
         self, command: TransitionAssignmentCommand, bound: BoundRequest,
     ) -> AssignmentCommandResult:
-        """Execute an admitted assignment transition inside authority_atomic."""
-        with authority_atomic(self._alias):
-            return self._execute_transition(command, bound=bound)
+        """Execute an admitted assignment transition inside authority_atomic.
+
+        Passes the bound request's received_at to authority_atomic. A
+        C_FOUNDER_PROTECTED denial from authority qualification, which carries
+        a decision reference, is raised again as S015AuthorityDenied with the
+        restated text and its recorded-refusal tail, keeping its codes and
+        decision reference, with the original denial as its cause.
+        """
+        try:
+            with authority_atomic(self._alias, received_at=bound.received_at):
+                return self._execute_transition(command, bound=bound)
+        except S015AuthorityDenied as exc:
+            if (
+                exc.disclosed_refusal_code is not S015AuthorityRefusalCode.C_FOUNDER_PROTECTED
+                or exc.authority_decision_reference is None
+            ):
+                raise
+            message = _intake_tail(
+                "The office was not ended or reassigned. Until this LO is born, the founder's original "
+                "Coordinator appointment can be ended or reassigned only by the founder. This is a "
+                "governed protection of the LO's founding, not a technical fault. After Birthing it no "
+                "longer applies: the appointment can then be ended or reassigned under the LO's ordinary "
+                "governed rules. INTEVIA recorded this refusal and that the request was received at "
+                "{received_at}; nothing else was saved.",
+                bound.received_at,
+            )
+            raise S015AuthorityDenied(
+                message,
+                refusal_code=exc.refusal_code,
+                disclosed_refusal_code=exc.disclosed_refusal_code,
+                authority_decision_reference=exc.authority_decision_reference,
+                request_uuid=exc.request_uuid,
+            ) from exc
 
     def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime) -> bool:
         """Apply assignment_in_effect using this service's database alias.
@@ -1287,6 +1330,7 @@ class OrganismRoleService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             payload_fingerprint=command_fingerprint,
             result=result,
+            received_at=bound.received_at,
         )
 
     def _execute_transition(
@@ -1584,7 +1628,17 @@ class OrganismRoleService(_OrganismCommandService):
                     )
                     if birthing_reference is None:
                         raise S015AuthorityDenied(
-                            C_FOUNDER_PROTECTED_MESSAGE,
+                            _intake_tail(
+                                "The office was not ended or reassigned; no change was made to the office. "
+                                "Until this LO is born, the founder's original Coordinator appointment can "
+                                "be ended or reassigned only by the founder. This is a governed protection "
+                                "of the LO's founding, not a technical fault. After Birthing it no longer "
+                                "applies: the appointment can then be ended or reassigned under the LO's "
+                                "ordinary governed rules. INTEVIA kept a record that this request was "
+                                "received at {received_at}; sent again unchanged, it is answered as of "
+                                "that time.",
+                                received_at,
+                            ),
                             refusal_code=S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
                             disclosed_refusal_code=S015AuthorityRefusalCode.C_FOUNDER_PROTECTED,
                         )
@@ -1638,6 +1692,7 @@ class OrganismRoleService(_OrganismCommandService):
             idempotency_key=idempotency_key,
             payload_fingerprint=command_fingerprint,
             result=result,
+            received_at=bound.received_at,
         )
 
     def _verify_assign_consent(

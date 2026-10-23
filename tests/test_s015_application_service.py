@@ -14,7 +14,7 @@ from django.test import TransactionTestCase
 
 from core.models import (
     Application, ApplicationLineage, ApplicationLineageEvent, ApplicationWithdrawal, AuthorityDecision,
-    Identity, IdentityTransition,
+    CommandIntake, Identity, IdentityTransition,
     OrganismCommandReceipt, OrganismMembership,
 )
 from core.organism_contract import OrganismAction
@@ -191,11 +191,18 @@ class S015ApplicantCommandTests(TransactionTestCase):
         self.assertFalse(Application.objects.exists())
         self.assertFalse(OrganismCommandReceipt.objects.filter(actor=self.applicant).exists())
 
-    def test_missing_provision_refuses_without_writes(self):
+    def test_missing_provision_refuses_without_governed_writes(self):
         self.history(provision=False)
+        command = self.submit()
+        intake_count = CommandIntake.objects.count()
         with self.assertRaises(S015ApplicationRefused):
-            self.service().submit_application(self.submit())
+            self.service().submit_application(command)
         self.assertFalse(Application.objects.exists())
+        self.assertEqual(CommandIntake.objects.count(), intake_count + 1)
+        self.assertEqual(
+            CommandIntake.objects.filter(idempotency_key=command.idempotency_key).count(),
+            1,
+        )
 
     def test_account_not_active_at_record_time_refused(self):
         self.history(active=False)

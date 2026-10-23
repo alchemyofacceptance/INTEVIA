@@ -33,7 +33,7 @@ from src.intevia.services.organism_application_service import (
 from src.intevia.services.command_intake import ActorRef, BoundRequest, ENTRY_ACTIONS
 from src.intevia.services.organism_authority import (
     S015Authority, S015OwnApplicantAuthorityRequest, S015OwnApplicantAuthorityResponse,
-    S015PostFoundingAuthorityResponse,
+    S015PostFoundingAuthorityResponse, canonical_timestamp,
 )
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch, WithheldField, withheld_fields
 from src.intevia.services.organism_membership_service import (
@@ -645,10 +645,18 @@ class ApplicationGatewayTests(TransactionTestCase):
         initial_settings = LOApplicationSettingsVersion.objects.get(
             pk=self.gateway["core_loapplicationsettingsversion"],
         )
-        with self.assertRaisesMessage(S015ApplicationRefused, message) as refused:
+        with self.assertRaises(S015ApplicationRefused) as refused:
             self._effect_with_service(
                 service, version, OrganismAction.EFFECT_APPLICATION_SETTINGS, suffix,
             )
+        intake = CommandIntake.objects.get(
+            actor=self.actor,
+            idempotency_key=f"s3:effect:{suffix}",
+        )
+        self.assertEqual(
+            str(refused.exception),
+            message.replace("⟨T⟩", canonical_timestamp(intake.received_at)),
+        )
         self.assertIsNone(refused.exception.refusal_code)
         self.assertEqual(
             LivingOrganismEvent.objects.filter(living_organism=self.organism).count(),
@@ -660,8 +668,10 @@ class ApplicationGatewayTests(TransactionTestCase):
     def test_effecting_automatic_settings_refuses_for_missing_care_first(self):
         message = (
             "These settings were not put into effect: automatic acceptance needs a CARE executor, "
-            "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged. You can still "
-            "choose manual processing by the LO's Coordinators."
+            "which is not configured (S3-IL-CARE-EXEC). Existing settings are unchanged and no governed "
+            "record was written. INTEVIA kept a record that this request was received at ⟨T⟩; sent again "
+            "unchanged, it is answered as of that time. You can still choose manual processing by the LO's "
+            "Coordinators."
         )
         welcome_service = OrganismApplicationService(
             authority=S015Authority(provider=_CoordinatorProvider()),
@@ -685,8 +695,10 @@ class ApplicationGatewayTests(TransactionTestCase):
         self._assert_automatic_settings_refused(
             care_only_service,
             "These settings were not put into effect: automatic acceptance needs the welcome for new "
-            "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged. You "
-            "can still choose manual processing by the LO's Coordinators.",
+            "members, which is not yet available (S3-IL-NOTICE). Existing settings are unchanged and no "
+            "governed record was written. INTEVIA kept a record that this request was received at ⟨T⟩; "
+            "sent again unchanged, it is answered as of that time. You can still choose manual processing "
+            "by the LO's Coordinators.",
             "care-supplied-welcome-unavailable",
         )
 
