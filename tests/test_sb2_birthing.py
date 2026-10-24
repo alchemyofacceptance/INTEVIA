@@ -1750,16 +1750,38 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             self.assertEqual(cursor.fetchone()[0], 0)
 
         MigrationExecutor(connection).migrate(list(original_targets))
-        # H100 chunk 4 tests v1.4 (R-1): the snapshot needs only an organism. A route with no
-        # gateway effect (FOUND and one phase advance, neither an admitted entry) leaves no
-        # core_commandintake row, so the reverse passes 0049 (whose reverse refuses while intake
-        # rows exist, and the table refuses DELETE and TRUNCATE) and reaches the 0044 guard.
-        route = prepare_route(
-            governance_enabled=None,
-            include_settings=False,
-            include_question=False,
-            to_birthing_phase=False,
-        )
+        # H100 chunk 4 tests v1.4 (R-1): the snapshot needs only an organism. The reverse
+        # passes 0049 only while core_commandintake has no rows (0049's reverse refuses while
+        # intake rows exist, and the table refuses DELETE and TRUNCATE). Since CLK3-1 public
+        # founding is an admitted intake entry that writes an intake row, so the fixture founds
+        # through the executor with a test-only bound request (as W-SBG-M5 does). The phase
+        # advance is not an admitted entry and the route has no gateway effect, so no intake
+        # row is written and the reverse reaches the 0044 guard.
+        from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
+        from src.intevia.services.organism_formation_service import OrganismFormationService
+
+        def found_without_intake(service, command):
+            actor = _resolve_actor(service._alias, command.credential)
+            with override_settings(INTEVIA_TEST_CONTEXT=True):
+                bound = BoundRequest.for_test(
+                    IntakeEntry.FOUND_LIVING_ORGANISM,
+                    command,
+                    received_at=database_now(),
+                    actor=actor,
+                )
+                return service._execute_found_living_organism(command, bound)
+
+        with patch.object(
+            OrganismFormationService,
+            "found_living_organism",
+            new=found_without_intake,
+        ):
+            route = prepare_route(
+                governance_enabled=None,
+                include_settings=False,
+                include_question=False,
+                to_birthing_phase=False,
+            )
         self.assertFalse(CommandIntake.objects.exists())
         snapshot_at = database_now()
         LOBirthingSnapshot.objects.create(

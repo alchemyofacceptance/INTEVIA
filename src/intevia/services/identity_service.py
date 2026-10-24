@@ -54,6 +54,9 @@ class CredentialServiceRefused(IdentityLifecycleError):
     """Raised when a credential operation is refused by policy."""
 
     def __init__(self, code: str, message: str):
+        """Keep the refusal code and its message; the message is also the
+        exception's text.
+        """
         self.code = code
         self.message = message
         super().__init__(message)
@@ -74,6 +77,15 @@ class RegistrationServiceRefused(IdentityLifecycleError):
         effective_at: datetime | None = None,
         received_at: datetime | None = None,
     ):
+        """Keep the refusal code, message and optional registration context.
+
+        reason names the terms refusal where there is one. The submitted
+        version's UUID takes precedence over submitted_version_uuid.
+        current_version is the supplied terms version in force;
+        effective_at and received_at are the supplied time coordinates.
+        These context values may be None. The message is also the
+        exception's text.
+        """
         self.code = code
         self.message = message
         self.reason = reason
@@ -90,13 +102,30 @@ class RegistrationServiceRefused(IdentityLifecycleError):
 
 
 class IdentityLifecycleRefused(IdentityLifecycleError):
+    """Raised when a governed access change is refused, with a code and
+    the message the person reads.
+
+    change_access raises it for reactivation: REACT_NOT_DEACTIVATED,
+    REACT_PROOF_OF_CONTROL_REQUIRED and E_NOT_REGISTERED.
+    """
     def __init__(self, code: str, message: str):
+        """Keep the refusal code and its message; the message is also the
+        exception's text.
+        """
         self.code = code
         self.message = message
         super().__init__(message)
 
 
 class IdentityLifecycleService:
+    """Change an Identity's access state and record each change.
+
+    _ALLOWED names the states each action may start from: ACTIVATE from
+    PENDING; RESTRICT from ACTIVE; DEACTIVATE from PENDING, ACTIVE or
+    RESTRICTED; REACTIVATE from DEACTIVATED. Every change locks the
+    Identity and appends one IdentityTransition linked to the previous
+    one. The other services in this module use its helpers.
+    """
     _ALLOWED = {
         IdentityTransition.Action.ACTIVATE: {
             Identity.AccessState.PENDING,
@@ -116,6 +145,12 @@ class IdentityLifecycleService:
 
     @staticmethod
     def _text(value: str, name: str, *, max_length: int = 255) -> str:
+        """Return value stripped of surrounding whitespace.
+
+        Raises ValidationError "<name> is required" if value is not a string
+        or is blank, and "<name> is too long" if the stripped value is
+        longer than max_length (255 unless given).
+        """
         if not isinstance(value, str) or not value.strip():
             raise ValidationError(f"{name} is required")
         value = value.strip()
@@ -125,6 +160,12 @@ class IdentityLifecycleService:
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
+        """Return value, or the host clock's now (timezone.now()) if it is
+        None.
+
+        Raises ValidationError "occurred_at must be timezone-aware" for a
+        naive datetime, whichever time the caller passed.
+        """
         value = value or timezone.now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("occurred_at must be timezone-aware")
@@ -132,6 +173,13 @@ class IdentityLifecycleService:
 
     @staticmethod
     def _locked(identity_id: UUID) -> Identity:
+        """Return the Identity with identity_id, row-locked (SELECT ... FOR
+        UPDATE) with its credential joined.
+
+        The lock clause names no table, so PostgreSQL also locks the joined
+        auth_user row. Raises Identity.DoesNotExist for an unknown id. Locks
+        are held until the enclosing transaction ends.
+        """
         return Identity.objects.select_for_update().select_related(
             "credential"
         ).get(identity_id=identity_id)
@@ -153,6 +201,20 @@ class IdentityLifecycleService:
         occurred_at: datetime,
         received_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Append one IdentityTransition for identity and return it.
+
+        The previous transition is the identity's latest by (occurred_at,
+        pk), or None. authority_reference and evidence_reference are
+        checked by _text (255 characters), technical_executor at 120.
+        effective_at is occurred_at. The transition's received_at is the
+        given value, or the host clock's now if None. Only _register passes
+        one (its registration receipt's database-assigned received_at); for
+        every other caller it is a host-clock time, not a receipt time. The
+        model's save runs full_clean and refuses an update; the database
+        assigns recorded_at (statement_timestamp()). The row is reloaded so
+        recorded_at is set. correlation_id is unique across transitions.
+        Callers lock or create the identity in the same transaction.
+        """
         previous = identity.access_transitions.order_by(
             "occurred_at", "pk"
         ).last()
@@ -187,6 +249,17 @@ class IdentityLifecycleService:
 
     @staticmethod
     def _fulfilled_request(identity: Identity, evidence_reference: str):
+        """Return the identity's active originating-membership intent once
+        fulfilment evidence is accepted for it.
+
+        The intent is the one not superseded, for the originating INTEVIA LO
+        reference and the current contract version. Raises
+        MembershipFulfilmentRequired "originating membership provisioning
+        intent is required" if there is none, and "accepted originating
+        membership fulfilment evidence is required" unless one of its
+        reconciliation attempts is FULFILLED with evidence_reference. A
+        later attempt on the same intent is not considered.
+        """
         request = identity.originating_membership_requests.filter(
             organism_reference=ORIGINATING_INTEVIA_LO_REFERENCE,
             contract_version=ORIGINATING_MEMBERSHIP_CONTRACT_VERSION,
@@ -219,6 +292,22 @@ class IdentityLifecycleService:
         correlation_id: UUID,
         occurred_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Activate a PENDING Identity once its originating membership is
+        fulfilled; return the ACTIVATE transition.
+
+        In one transaction: resolves occurred_at (_at, so the host clock if
+        none is given), locks the Identity (_locked; Identity.DoesNotExist
+        if unknown), requires PENDING (InvalidIdentityTransition "activate
+        is not permitted from <state>"), checks the evidence reference
+        (_text) and requires a FULFILLED reconciliation with it
+        (_fulfilled_request; MembershipFulfilmentRequired). Then sets the
+        state to ACTIVE with activated_at = occurred_at, clears restricted_at
+        and deactivated_at, marks the credential active, and appends the
+        transition with reason GOVERNED_ACTIVATION.
+
+        access_epoch is not changed. Registration activates through
+        LearnerRegistrationService instead, without this check.
+        """
         occurred_at = cls._at(occurred_at)
         identity = cls._locked(identity_id)
         cls._require(identity, IdentityTransition.Action.ACTIVATE)
@@ -259,6 +348,10 @@ class IdentityLifecycleService:
 
     @classmethod
     def _require(cls, identity: Identity, action: str) -> None:
+        """Raise InvalidIdentityTransition "<action> is not permitted from
+        <state>" unless the identity's state is one action may start from
+        (_ALLOWED).
+        """
         if identity.access_state not in cls._ALLOWED[action]:
             raise InvalidIdentityTransition(
                 f"{action} is not permitted from {identity.access_state}"
@@ -280,6 +373,42 @@ class IdentityLifecycleService:
         occurred_at: datetime | None = None,
         proof_password: str | None = None,
     ) -> IdentityTransition:
+        """Restrict, deactivate or reactivate an Identity; return the
+        transition.
+
+        In one transaction. action must be RESTRICT, DEACTIVATE or
+        REACTIVATE (else InvalidIdentityTransition "unsupported access
+        transition", before any read). Resolves occurred_at (_at) and locks
+        the Identity (_locked).
+
+        REACTIVATE is the holder's own act. It refuses, with
+        IdentityLifecycleRefused and nothing changed: REACT_NOT_DEACTIVATED
+        unless the state is DEACTIVATED; REACT_PROOF_OF_CONTROL_REQUIRED
+        unless proof_password is a non-empty string matching the
+        credential's password (check_password; a retired credential's
+        unusable password never matches); E_NOT_REGISTERED if the identity
+        has no LearnerRegistration. It then records the act as the
+        holder's: requesting_actor is the identity, authority_reference
+        "learner-registration:<uuid>", evidence_reference
+        "reauthentication:password:<correlation_id>", technical_executor
+        "identity-service", reason HUMAN_REQUEST; the values passed for
+        these are not used.
+
+        RESTRICT and DEACTIVATE refuse a proof_password (ValidationError)
+        and require an allowed starting state (_require). The caller's
+        references are stripped and validated by _transition; the reason
+        is checked against the model choices. Neither branch qualifies
+        the requesting actor's authority.
+
+        Every action increases access_epoch by one. RESTRICTED sets
+        restricted_at without changing the credential's is_active value.
+        DEACTIVATED sets deactivated_at and makes the credential inactive.
+        REACTIVATE sets ACTIVE and activated_at, clears restricted_at and
+        deactivated_at and makes the credential active. The Identity is
+        saved (its save runs full_clean) and one transition appended.
+        _transition assigns effective_at from occurred_at and a separate
+        host-clock received_at; the database assigns recorded_at.
+        """
         if action not in {
             IdentityTransition.Action.RESTRICT,
             IdentityTransition.Action.DEACTIVATE,
@@ -368,6 +497,9 @@ class IdentityLifecycleService:
 
 
 class OriginatingMembershipProvisioningService:
+    """Record the intent to provision an Identity's membership in the
+    originating INTEVIA LO, and each reconciliation attempt against it.
+    """
     @classmethod
     @transaction.atomic
     def request(
@@ -380,6 +512,21 @@ class OriginatingMembershipProvisioningService:
         requested_at: datetime | None = None,
         supersedes: OriginatingMembershipProvisioningRequest | None = None,
     ) -> OriginatingMembershipProvisioningRequest:
+        """Record a new originating-membership intent for identity; return it.
+
+        In one transaction: resolves requested_at (_at, so the host clock if
+        none is given) and locks the Identity row. If an intent for the
+        originating LO reference is not superseded, it must be the one
+        named by supersedes (else ProvisioningConflict "an active
+        originating membership intent already exists"); it is then marked
+        superseded at requested_at and linked from the new intent. If there
+        is no such intent, supersedes is not used.
+
+        Creates the intent with the current contract version and the
+        checked references (_text), then its first REQUESTED reconciliation
+        attempt at requested_at, with correlation_id
+        uuid_for_child(correlation_id, "requested").
+        """
         requested_at = IdentityLifecycleService._at(requested_at)
         locked = Identity.objects.select_for_update().get(pk=identity.pk)
         existing = locked.originating_membership_requests.filter(
@@ -430,6 +577,23 @@ class OriginatingMembershipProvisioningService:
         occurred_at: datetime | None = None,
         corrects_attempt: ProvisioningReconciliationAttempt | None = None,
     ) -> ProvisioningReconciliationAttempt:
+        """Append one reconciliation attempt to an active intent; return it.
+
+        In one transaction: resolves occurred_at (_at) and locks the intent
+        with request_id that is not superseded (DoesNotExist otherwise).
+        The previous attempt is the intent's latest by (occurred_at, pk).
+        An unknown state raises ValidationError "invalid provisioning
+        reconciliation state". CORRECTED requires corrects_attempt
+        ("corrects_attempt is required"); another state refuses one
+        ("only correction attempts may correct"). _text checks references.
+
+        The new attempt's save runs full_clean. It rejects a previous or
+        corrected attempt from another intent, and validates the unique
+        correlation id and previous-attempt link. The attempt is append-only.
+        No progression order between states is required. occurred_at is the
+        supplied aware time, or the host clock if omitted; this model has
+        no recorded_at field.
+        """
         occurred_at = IdentityLifecycleService._at(occurred_at)
         request = OriginatingMembershipProvisioningRequest.objects.select_for_update().get(
             pk=request_id,
@@ -462,6 +626,14 @@ class OriginatingMembershipProvisioningService:
 
 
 class LearnerRegistrationService:
+    """Register a Learner: a credential, an Identity, the acceptance of
+    the platform terms in force and the registration record, in one
+    transaction.
+
+    _USERNAME_CONSTRAINTS names the three unique constraints a username
+    collision can violate: auth_user's username and the canonical
+    username of core_identity and core_identityresolution.
+    """
     _USERNAME_CONSTRAINTS = {
         "auth_user_username_key",
         "core_identity_canonical_username_key",
@@ -470,6 +642,10 @@ class LearnerRegistrationService:
 
     @staticmethod
     def _username_conflict(error: IntegrityError) -> bool:
+        """Return whether error's database cause violated one of the
+        username constraints (_USERNAME_CONSTRAINTS), read from the driver's
+        diagnostic constraint name.
+        """
         cause = error.__cause__
         diagnostic = getattr(cause, "diag", None)
         constraint_name = getattr(diagnostic, "constraint_name", None)
@@ -477,11 +653,19 @@ class LearnerRegistrationService:
 
     @staticmethod
     def _unique_field_error(error: ValidationError, field: str) -> bool:
+        """Return whether error carries a "unique" error for field."""
         field_errors = getattr(error, "error_dict", {}).get(field, ())
         return any(item.code == "unique" for item in field_errors)
 
     @staticmethod
     def _username_unavailable(username: str, canonical_username: str) -> bool:
+        """Return whether the username is already taken.
+
+        True if auth_user has username exactly, or core_identity or
+        core_identityresolution has canonical_username. The second and
+        third checks compare canonical forms, so a variant of an existing
+        username differing only by case or Unicode form is unavailable.
+        """
         if User.objects.filter(username=username).exists():
             return True
         if Identity.objects.filter(canonical_username=canonical_username).exists():
@@ -503,6 +687,14 @@ class LearnerRegistrationService:
         effective_at: datetime,
         received_at: datetime,
     ) -> PlatformTermsVersion | None:
+        """Return the requested terms version if it is the one in force.
+
+        The requested version must be in force at effective_at (from on or
+        before it, until unset or after it) and recorded by received_at,
+        and be the version _latest_terms_version selects. Otherwise, or if
+        terms_version_uuid is None, returns None. Registration itself does
+        not call it.
+        """
         requested_version = (
             PlatformTermsVersion.objects.filter(
                 terms_version_uuid=terms_version_uuid,
@@ -535,6 +727,14 @@ class LearnerRegistrationService:
         effective_at: datetime,
         received_at: datetime,
     ) -> PlatformTermsVersion | None:
+        """Return the platform terms version in force, or None.
+
+        Considers versions in force at effective_at and recorded by
+        received_at, and drops any of them that another such version
+        supersedes. Of the rest, returns the latest by effective_from, then
+        recorded_at, then primary key. The database's registration terms
+        guard selects the same version.
+        """
         eligible_versions = PlatformTermsVersion.objects.filter(
             effective_from__lte=effective_at,
             recorded_at__lte=received_at,
@@ -563,6 +763,19 @@ class LearnerRegistrationService:
         effective_at: datetime,
         received_at: datetime,
     ) -> RegistrationServiceRefused:
+        """Build, without raising, the registration refusal for a terms
+        version that cannot be accepted.
+
+        Returns RegistrationServiceRefused REG_TERMS_VERSION_NOT_IN_FORCE
+        with reason and the registration's terms context. Each message
+        states that nothing was recorded, then: SUPERSEDED_AT_RECEIPT names
+        the accepted and the in-force version labels; NOT_YET_IN_FORCE
+        names the accepted label; NOT_FOUND_AT_RECEIPT says the terms
+        referred to were not known at receipt; NONE_IN_FORCE says no terms
+        were in force. Raises ValueError for an unknown reason, or if
+        SUPERSEDED_AT_RECEIPT lacks either version or NOT_YET_IN_FORCE the
+        submitted one.
+        """
         if reason == "SUPERSEDED_AT_RECEIPT":
             if submitted_version is None or current_version is None:
                 raise ValueError(
@@ -625,6 +838,15 @@ class LearnerRegistrationService:
         identity: Identity,
         accepted_at: datetime,
     ) -> str:
+        """Return the registration acceptance commitment: "s015r1:" and the
+        SHA-256 hex of a canonical JSON preimage.
+
+        The preimage has sorted keys and no spaces: accepted_at in UTC as
+        "YYYY-MM-DDTHH:MM:SS.ffffffZ", acceptance_kind REGISTRATION, epoch
+        (the identity's access_epoch), identity_id (the Identity's primary
+        key, not its identity_id UUID), subject_reference and
+        terms_version_uuid.
+        """
         accepted_at_utc = accepted_at.astimezone(datetime_timezone.utc)
         payload = {
             "accepted_at": accepted_at_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -656,6 +878,28 @@ class LearnerRegistrationService:
         entry_mode: str = LearnerRegistration.EntryMode.SELF,
         enterer_executor: str | None = None,
     ) -> LearnerRegistration:
+        """Register a Learner atomically; return the LearnerRegistration.
+
+        SELF accepts only None or "web:register_learner" as executor and
+        records the latter; otherwise ValidationError says
+        "self-registration executor is fixed to web:register_learner".
+        SUPPORTED defaults a falsey executor to
+        "management:provision_learner". Only that executor and
+        "test:registration_fixture" are accepted; any other value raises
+        ValidationError "unsupported supported-registration executor".
+        The test executor raises RegistrationServiceRefused
+        REG_TERMS_TEST_ONLY unless fixture_terms_permitted permits the
+        "default" database's configured name. This checks its name, not
+        whether the deployment is a test environment. Any other entry mode
+        raises ValidationError "invalid registration entry mode".
+
+        Then calls _register. An IntegrityError naming a constraint in
+        _USERNAME_CONSTRAINTS becomes RegistrationServiceRefused
+        REG_USERNAME_UNAVAILABLE; other IntegrityErrors propagate.
+        A refusal rolls back this atomic scope, including its receipt.
+        When called inside another transaction, success remains subject to
+        that enclosing transaction's commit.
+        """
         if entry_mode == LearnerRegistration.EntryMode.SELF:
             if enterer_executor not in (None, "web:register_learner"):
                 raise ValidationError(
@@ -718,6 +962,39 @@ class LearnerRegistrationService:
         entry_mode: str,
         enterer_executor: str,
     ) -> LearnerRegistration:
+        """Write one registration; the caller holds the transaction.
+
+        Inserts a registration receipt first: the database assigns its
+        received_at (clock_timestamp()) and transaction id, and effective_at
+        is that received_at. Then refuses, in this order, with
+        RegistrationServiceRefused:
+        - REG_TERMS_NOT_ACCEPTED unless terms_accepted;
+        - REG_TERMS_VERSION_NOT_IN_FORCE (_terms_version_refusal) if the
+          submitted version was not recorded by received_at
+          (NOT_FOUND_AT_RECEIPT, or NONE_IN_FORCE when none was submitted
+          and none is in force), takes effect after effective_at
+          (NOT_YET_IN_FORCE), no version is in force (NONE_IN_FORCE), or
+          another version is in force (SUPERSEDED_AT_RECEIPT);
+        - REG_TERMS_TEST_ONLY for fixture terms the "default" database's
+          name does not permit;
+        - REG_USERNAME_UNAVAILABLE if the username or its canonical form is
+          taken (_username_unavailable);
+        - REG_PASSWORD_REJECTED with the password validators' messages.
+        canonical_username_v1 can raise ValidationError for an invalid
+        username before the availability check; it is not translated.
+
+        Writes: an active credential (full_clean; a unique-username error
+        becomes REG_USERNAME_UNAVAILABLE), the Identity (its save runs
+        full_clean; a unique canonical-username error becomes
+        REG_USERNAME_UNAVAILABLE), its identity-resolution row by raw SQL,
+        the REGISTRATION terms acceptance at received_at with its
+        commitment (_acceptance_commitment), and the LearnerRegistration.
+        The database assigns the registration's commitment and record time
+        and refuses it unless it accepts the terms version in force at the
+        receipt. Last, PROVISION (none to PENDING) and ACTIVATE (PENDING to
+        ACTIVE) transitions at received_at, requested by the new identity,
+        with reason GOVERNED_ACTIVATION. Returns the reloaded registration.
+        """
         with connection.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO public.core_registrationreceipt DEFAULT VALUES "
@@ -967,6 +1244,10 @@ class LearnerRegistrationService:
 
 
 class CredentialService:
+    """Credential operations on an Identity: provisioning a development
+    identity, password change and retirement. Username change and
+    sign-in account replacement are refused.
+    """
     @classmethod
     @transaction.atomic
     def provision(
@@ -982,6 +1263,24 @@ class CredentialService:
         technical_executor: str,
         occurred_at: datetime | None = None,
     ) -> tuple[Identity, OriginatingMembershipProvisioningRequest]:
+        """Provision a PENDING development Identity with its originating
+        membership intent; return both.
+
+        In one transaction. human_classification must be exactly "HUMAN
+        DEVELOPMENT IDENTITY" (ValidationError otherwise). Resolves
+        occurred_at (_at). The username's canonical form and the password
+        validators can raise ValidationError, untranslated. Creates an
+        inactive credential (full_clean), the Identity (PENDING, its save
+        runs full_clean), its identity-resolution row by raw SQL, the
+        originating-membership intent with its REQUESTED attempt
+        (OriginatingMembershipProvisioningService.request), and a
+        PROVISION transition with no requesting actor, reason PROVISIONING,
+        correlation_id uuid_for_child(correlation_id, "identity").
+
+        A taken username is not translated: it surfaces as the
+        ValidationError or IntegrityError the write raises. Activation is a
+        separate step (IdentityLifecycleService.activate).
+        """
         if human_classification != "HUMAN DEVELOPMENT IDENTITY":
             raise ValidationError("explicit Human classification is required")
         occurred_at = IdentityLifecycleService._at(occurred_at)
@@ -1047,6 +1346,12 @@ class CredentialService:
         technical_executor: str,
         occurred_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Refuse every username change.
+
+        Raises CredentialServiceRefused USERNAME_CHANGE_UNAVAILABLE: a
+        username is fixed once registered; the display name can still
+        change. Reads and locks nothing; its parameters are not used.
+        """
         raise CredentialServiceRefused(
             "USERNAME_CHANGE_UNAVAILABLE",
             "Your username was not changed. Usernames in INTEVIA are fixed once "
@@ -1066,6 +1371,28 @@ class CredentialService:
         correlation_id: UUID,
         occurred_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Change the holder's password; return the REPLACE_CREDENTIAL
+        transition.
+
+        In one transaction: resolves occurred_at (_at) and locks the
+        Identity (_locked; DoesNotExist if unknown). Refuses with
+        CredentialServiceRefused PASSWORD_CHANGE_UNAUTHORIZED unless
+        requesting_actor is that identity; with InvalidIdentityTransition
+        unless the state is ACTIVE or RESTRICTED; with
+        PASSWORD_CHANGE_SESSION_STALE unless session_access_epoch equals
+        the identity's access_epoch; with PASSWORD_REJECTED and the
+        validators' messages if the new password fails them. The current
+        password is not asked for. The actor and epoch are supplied by the
+        caller; this method does not authenticate a session. The caller
+        must obtain them from its trusted authentication context.
+
+        Sets the password, increases access_epoch by one and appends the
+        transition with the state unchanged, authority
+        "self-service:password-change", evidence
+        "password-change:<correlation_id>" and reason CREDENTIAL_CHANGE.
+        _transition uses occurred_at as effective_at, samples a separate
+        host-clock received_at and reloads the database-assigned recorded_at.
+        """
         occurred_at = IdentityLifecycleService._at(occurred_at)
         identity = IdentityLifecycleService._locked(identity_id)
         if requesting_actor is None or requesting_actor.pk != identity.pk:
@@ -1128,6 +1455,13 @@ class CredentialService:
         technical_executor: str,
         occurred_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Refuse replacing the sign-in account.
+
+        Locks the Identity (_locked; DoesNotExist if unknown), then raises
+        CredentialServiceRefused CREDENTIAL_ACCOUNT_SWAP_UNAVAILABLE and
+        changes nothing; the password can be changed instead. Its other
+        parameters are not used.
+        """
         IdentityLifecycleService._locked(identity_id)
         raise CredentialServiceRefused(
             "CREDENTIAL_ACCOUNT_SWAP_UNAVAILABLE",
@@ -1149,6 +1483,20 @@ class CredentialService:
         technical_executor: str,
         occurred_at: datetime | None = None,
     ) -> IdentityTransition:
+        """Retire the Identity's credential; return the RETIRE_CREDENTIAL
+        transition.
+
+        In one transaction: resolves occurred_at (_at) and locks the
+        Identity (_locked; DoesNotExist if unknown). From any state, sets
+        DEACTIVATED with deactivated_at = occurred_at, increases
+        access_epoch by one, makes the credential inactive with an unusable
+        password, and appends the transition with the caller's references
+        and reason CREDENTIAL_CHANGE.
+
+        It checks neither the starting state nor the requesting actor's
+        authority. Because the password is unusable, change_access cannot
+        reactivate the identity afterwards.
+        """
         occurred_at = IdentityLifecycleService._at(occurred_at)
         identity = IdentityLifecycleService._locked(identity_id)
         prior = identity.access_state
@@ -1175,6 +1523,10 @@ class CredentialService:
 
 
 def uuid_for_child(parent: UUID, label: str) -> UUID:
+    """Return the name-based UUID (uuid5) of label under parent, so one
+    correlation id yields stable child ids such as "requested",
+    "provision" and "activate".
+    """
     from uuid import uuid5
 
     return uuid5(parent, label)

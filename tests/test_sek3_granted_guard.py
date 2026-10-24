@@ -169,6 +169,38 @@ class _EventlessComposer(OrganismEntitlementService):
 
 
 @contextmanager
+def _founding_without_intake():
+    """Found prepare_route's LO through the executor with a test-only bound request.
+
+    Since CLK3-1, public founding admits through the durable intake and writes a
+    core_commandintake row, which 0049's reverse refuses. As W-SBG-M5 does, the fixture
+    calls the founding executor directly, so no intake row is written.
+    """
+    from django.test import override_settings
+
+    from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
+    from src.intevia.services.organism_formation_service import OrganismFormationService
+
+    def found_without_intake(service, command):
+        actor = _resolve_actor(service._alias, command.credential)
+        with override_settings(INTEVIA_TEST_CONTEXT=True):
+            bound = BoundRequest.for_test(
+                IntakeEntry.FOUND_LIVING_ORGANISM,
+                command,
+                received_at=database_now(),
+                actor=actor,
+            )
+            return service._execute_found_living_organism(command, bound)
+
+    with patch.object(
+        OrganismFormationService,
+        "found_living_organism",
+        new=found_without_intake,
+    ):
+        yield
+
+
+@contextmanager
 def _rollback_migration_work(test_case):
     class _Rollback(Exception):
         pass
@@ -185,16 +217,19 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
 
     def test_w_se_k3_2_f_valid_rows_survive_forward_and_reverse_refuses_data(self):
         # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
-        # event. A route with no gateway effect (FOUND and one phase advance, neither an admitted
-        # entry) leaves no core_commandintake row, so the migration to 0047 passes 0049's reverse,
-        # which refuses while intake rows exist (the table refuses DELETE and TRUNCATE).
-        route = prepare_route(
-            tag=f"k3-migration-valid-{uuid4().hex}",
-            governance_enabled=None,
-            include_settings=False,
-            include_question=False,
-            to_birthing_phase=False,
-        )
+        # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
+        # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
+        # intake entry that writes an intake row, so the fixture founds through the executor with a
+        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). The phase
+        # advance is not an admitted entry and the route has no gateway effect.
+        with _founding_without_intake():
+            route = prepare_route(
+                tag=f"k3-migration-valid-{uuid4().hex}",
+                governance_enabled=None,
+                include_settings=False,
+                include_question=False,
+                to_birthing_phase=False,
+            )
         self.assertFalse(CommandIntake.objects.exists())
         before = _records_state()
         original_trigger_count = _trigger_count()
@@ -261,16 +296,19 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
 
     def test_w_se_k3_2_g_existing_obstruction_refuses_without_partial_install(self):
         # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
-        # event. A route with no gateway effect (FOUND and one phase advance, neither an admitted
-        # entry) leaves no core_commandintake row, so the migration to 0047 passes 0049's reverse,
-        # which refuses while intake rows exist (the table refuses DELETE and TRUNCATE).
-        route = prepare_route(
-            tag=f"k3-migration-obstructed-{uuid4().hex}",
-            governance_enabled=None,
-            include_settings=False,
-            include_question=False,
-            to_birthing_phase=False,
-        )
+        # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
+        # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
+        # intake entry that writes an intake row, so the fixture founds through the executor with a
+        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). The phase
+        # advance is not an admitted entry and the route has no gateway effect.
+        with _founding_without_intake():
+            route = prepare_route(
+                tag=f"k3-migration-obstructed-{uuid4().hex}",
+                governance_enabled=None,
+                include_settings=False,
+                include_question=False,
+                to_birthing_phase=False,
+            )
         self.assertFalse(CommandIntake.objects.exists())
         before = _records_state()
         original_trigger_count = _trigger_count()
