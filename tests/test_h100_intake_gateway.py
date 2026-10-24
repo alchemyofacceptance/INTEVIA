@@ -18,7 +18,7 @@ the product to pass these tests. Nothing here is a fake implementation.
       PROCESSING; located/unresolved raw forms
   command_intake.intake_shape(entry, command) for the two G3   C4 §F2.2, B1
       entries (exact type first; B1's pure checks)
-  command_intake.ACTIVE_ENTRIES = the twelve                   C4 CH-33
+  command_intake.ACTIVE_ENTRIES = the prior twelve plus step A  C4 CH-33
   GatewayDraftCommand.received_at / EffectGatewayVersionCommand.received_at
       keyword-only, default None, a supplied value refused      C4 CH-34
 
@@ -397,7 +397,7 @@ class GatewayShapeTests(SimpleTestCase):
         return BoundRequest.for_test(entry, command, received_at=T0, actor=self.actor).request_fingerprint
 
     def test_ch_33_active_entries_are_the_twelve_and_g3_is_the_pair(self):
-        """CH-33: ACTIVE_ENTRIES gains the two G3 entries and nothing else; G3 is the pair."""
+        """CH-33: ACTIVE_ENTRIES includes the prior twelve plus step A and the G3 pair."""
         self.assertEqual(
             ACTIVE_ENTRIES,
             frozenset(
@@ -414,6 +414,9 @@ class GatewayShapeTests(SimpleTestCase):
                     IntakeEntry.RECORD_OFFICE_CONSENT,
                     IntakeEntry.SAVE_GATEWAY_DRAFT,
                     IntakeEntry.EFFECT_GATEWAY_VERSION,
+                    IntakeEntry.FOUND_LIVING_ORGANISM,
+                    IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
+                    IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
                 }
             ),
         )

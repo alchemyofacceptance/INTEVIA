@@ -15,7 +15,7 @@ from django.db import IntegrityError, close_old_connections, connection, connect
 from django.db.models import Q, QuerySet
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from unittest.mock import Mock, patch
 
 from core.models import (
@@ -52,6 +52,7 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
 )
+from src.intevia.services.command_intake import ActorRef, BoundRequest, IntakeEntry
 from src.intevia.services.organism_formation_service import (
     PhaseAdvanceCommand,
     S015BirthingTechnicalFailure,
@@ -69,6 +70,7 @@ from src.intevia.services.organism_governance_service import (
     RequestGovernanceSeatCommand,
     SBGGovernanceRefused,
     SeatFoundingGovernanceCircleCommand,
+    _authored_refusal_message,
     _compound_stage_identifiers,
     _governance_applicant_identity_uuid,
     _governance_self_decision,
@@ -115,7 +117,7 @@ def _atomic_with_integrity_error_on_exit(
     exit_count = 0
 
     @contextmanager
-    def fail_at_exit(database_alias):
+    def fail_at_exit(database_alias, *, received_at=None):
         nonlocal exit_count
         exit_count += 1
         with transaction.atomic(using=database_alias):
@@ -510,6 +512,7 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
     def test_adoption_guard_maps_each_controlled_primary(self):
         service = object.__new__(OrganismGovernanceService)
         effective_from = datetime(2026, 1, 1, tzinfo=datetime_timezone.utc)
+        received_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=datetime_timezone.utc)
         command = AdoptGoverningInstrumentCommand(
             credential=None,
             living_organism_uuid=uuid4(),
@@ -523,24 +526,37 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
         cases = (
             (
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-                "No arrangement was adopted and nothing changed. The arrangement is incomplete: "
+                "No arrangement was adopted; no governed record was written. The arrangement is incomplete: "
                 "the arrangement does not meet its requirements. Adopt a corrected version, then try "
-                "again. Every seat needs an admission route and a deciding body that matches it.",
+                "again. Every seat needs an admission route and a deciding body that matches it. "
+                "INTEVIA kept a record that this request was received at 2026-01-01T00:00:01.000000Z; "
+                "sent again unchanged, it is answered as of that time.",
             ),
             (
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
-                "No arrangement was adopted and nothing changed. The arrangement includes a field this "
+                "No arrangement was adopted; no governed record was written. The arrangement includes a field this "
                 "release does not record, which this release cannot yet act on. Leave it out for now; "
-                "it can be added by a later version once the release that acts on it is delivered.",
+                "it can be added by a later version once the release that acts on it is delivered. "
+                "INTEVIA kept a record that this request was received at 2026-01-01T00:00:01.000000Z; "
+                "sent again unchanged, it is answered as of that time.",
             ),
             (
                 S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
-                'No arrangement was adopted and nothing changed. Seat the requested seat names an '
+                'No arrangement was adopted; no governed record was written. Seat the requested seat names an '
                 'eligibility rule this release cannot check; it can check only "an active member of the '
                 'LO". Use that rule for now; other eligibility rules arrive with the slices that can '
-                "check them.",
+                "check them. INTEVIA kept a record that this request was received at "
+                "2026-01-01T00:00:01.000000Z; sent again unchanged, it is answered as of that time.",
             ),
         )
+        actor = ActorRef(pk=1, identity_id=uuid4(), access_epoch=0)
+        with override_settings(INTEVIA_TEST_CONTEXT=True):
+            bound = BoundRequest.for_test(
+                IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
+                command,
+                received_at=received_at,
+                actor=actor,
+            )
         for code, expected_text in cases:
             with self.subTest(code=code):
                 controlled = self._integrity_error(
@@ -549,10 +565,50 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
                 )
                 with patch.object(service, "_execute", side_effect=controlled):
                     with self.assertRaises(SBGGovernanceRefused) as refused:
-                        service.adopt_governing_instrument(command)
+                        service._execute_adopt_governing_instrument(command, bound)
                 self.assertIs(refused.exception.refusal_code, code)
                 self.assertEqual(str(refused.exception), expected_text)
+                self.assertIs(refused.exception.__cause__, controlled)
                 self.assertIn("CONTEXT:", str(controlled))
+
+    def test_authored_refusal_builder_restates_every_branch_opening_and_tail(self):
+        """The builder's contract (DOC-16): opening_end replaces " and nothing changed." in
+        every branch that has it, a non-empty tail follows after one space, the defaults
+        give the text unchanged, and no message is manufactured for an unselected code."""
+        fixed_branches = (
+            (S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED, "seat_x"),
+            (S015AuthorityRefusalCode.SBG_ALREADY_SEATED, None),
+            (S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE, None),
+            (S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE, None),
+            (S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED, None),
+        )
+        for code, detail in fixed_branches:
+            with self.subTest(code=code):
+                default = _authored_refusal_message(code, detail, act="Nobody was seated")
+                self.assertTrue(default.startswith("Nobody was seated and nothing changed. "))
+                restated = _authored_refusal_message(
+                    code,
+                    detail,
+                    act="Nobody was seated",
+                    opening_end="; no governed record was written.",
+                    tail="TAIL.",
+                )
+                self.assertEqual(
+                    restated,
+                    "Nobody was seated; no governed record was written."
+                    + default[len("Nobody was seated and nothing changed."):]
+                    + " TAIL.",
+                )
+        self.assertIsNone(
+            _authored_refusal_message(
+                S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE,
+                None,
+                act="No arrangement was adopted",
+                organism_state="ACTIVE",
+                opening_end=".",
+                tail="TAIL.",
+            )
+        )
 
     def test_request_guard_maps_exact_primary_and_reraises_unrelated_primary(self):
         service = object.__new__(OrganismGovernanceService)
@@ -1141,14 +1197,36 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
 
     def test_w_sbg_m5_reverse_refuses_when_living_organism_rule_exists(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
+        from src.intevia.services.command_intake import _resolve_actor
+        from src.intevia.services.organism_formation_service import OrganismFormationService
         from tests.sb2_route_support import prepare_route
 
-        route = prepare_route(
-            governance_enabled=None,
-            include_settings=False,
-            include_question=False,
-            to_birthing_phase=False,
-        )
+        # At 0045 the durable intake table (0049) does not exist, so the public
+        # founding entry cannot admit a request. The fixture founds through the
+        # executor with a test-only bound request (as W-CLK3-13 does), writing the
+        # rows public founding wrote at 0045 before CLK3-1. No intake row is written.
+        def found_without_intake(service, command):
+            actor = _resolve_actor(service._alias, command.credential)
+            with override_settings(INTEVIA_TEST_CONTEXT=True):
+                bound = BoundRequest.for_test(
+                    IntakeEntry.FOUND_LIVING_ORGANISM,
+                    command,
+                    received_at=database_now(),
+                    actor=actor,
+                )
+                return service._execute_found_living_organism(command, bound)
+
+        with patch.object(
+            OrganismFormationService,
+            "found_living_organism",
+            new=found_without_intake,
+        ):
+            route = prepare_route(
+                governance_enabled=None,
+                include_settings=False,
+                include_question=False,
+                to_birthing_phase=False,
+            )
         rule_uuid = self._record_governance_arrangement(route)
         with self.assertRaisesRegex(
             RuntimeError,
@@ -1284,12 +1362,36 @@ class SBGGovernanceRequestTestMixin:
 
 
 class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTestCase):
-    def _assert_class_c(self, route, call, code, authored_message):
+    def _assert_class_c(
+        self,
+        route,
+        call,
+        code,
+        authored_message,
+        *,
+        intake_action=None,
+        intake_key=None,
+    ):
         before = governance_route_state(route)
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(SBGGovernanceRefused) as refused:
             call()
         self.assertIs(refused.exception.refusal_code, code)
-        self.assertEqual(str(refused.exception), authored_message)
+        expected_message = authored_message
+        if intake_action is not None and intake_key is not None:
+            intake = CommandIntake.objects.get(
+                actor_id=route.founder.pk,
+                action=intake_action.value,
+                idempotency_key=intake_key,
+            )
+            # authored_message is then the adopted text, with "<T>" for the receipt time.
+            self.assertIn("<T>", authored_message)
+            expected_message = authored_message.replace(
+                "<T>",
+                canonical_timestamp(intake.received_at),
+            )
+            self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        self.assertEqual(str(refused.exception), expected_message)
         self.assertEqual(governance_route_state(route), before)
 
     def _assert_founding_seating_refusal(
@@ -1329,12 +1431,37 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 membership__identity=route.founder,
             ).exists())
 
-    def _assert_class_a(self, route, call, code, request_reference, authored_message):
+    def _assert_class_a(
+        self,
+        route,
+        call,
+        code,
+        request_reference,
+        authored_message,
+        *,
+        intake_action=None,
+        intake_key=None,
+    ):
         before = governance_route_state(route)
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015AuthorityDenied) as refused:
             call()
         self.assertIs(refused.exception.refusal_code, code)
-        self.assertEqual(str(refused.exception), authored_message)
+        expected_message = authored_message
+        if intake_action is not None and intake_key is not None:
+            intake = CommandIntake.objects.get(
+                actor_id=route.founder.pk,
+                action=intake_action.value,
+                idempotency_key=intake_key,
+            )
+            # authored_message is then the adopted text, with "<T>" for the receipt time.
+            self.assertIn("<T>", authored_message)
+            expected_message = authored_message.replace(
+                "<T>",
+                canonical_timestamp(intake.received_at),
+            )
+            self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        self.assertEqual(str(refused.exception), expected_message)
         after = governance_route_state(route)
         expected = before.copy()
         expected["authority_decisions"] += 1
@@ -1438,6 +1565,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         for code in adoption_codes:
             with self.subTest(command="adoption", code=code):
                 tag = code.value.lower()
+                intake_before = CommandIntake.objects.count()
                 effective_at = route_test_now(route.route)
                 injection_reached = []
                 command = AdoptGoverningInstrumentCommand(
@@ -1467,6 +1595,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 self.assertEqual(injection_reached, [True])
                 self.assertIs(refused.exception.refusal_code, code)
                 self.assertEqual(governance_route_state(route), before)
+                self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
 
         request_codes = (
             S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
@@ -1832,9 +1961,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             (
                 {"seats": [], "officer_roles": [], "election_schedule": None},
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-                "No arrangement was adopted and nothing changed. The arrangement is incomplete: "
-                "it has no seats. Adopt a corrected version, then try again. Every seat needs an "
-                "admission route and a deciding body that matches it.",
+                "No arrangement was adopted; no governed record was written. The arrangement is "
+                "incomplete: it has no seats. Adopt a corrected version, then try again. Every "
+                "seat needs an admission route and a deciding body that matches it. INTEVIA kept a "
+                "record that this request was received at <T>; sent again unchanged, it is "
+                "answered as of that time.",
             ),
             (
                 governance_arrangement_body(
@@ -1843,16 +1974,20 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                     effective_from=start,
                 ),
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-                "No arrangement was adopted and nothing changed. The arrangement is incomplete: "
-                "seat founder names no admission route. Adopt a corrected version, then try again. "
-                "Every seat needs an admission route and a deciding body that matches it.",
+                "No arrangement was adopted; no governed record was written. The arrangement is "
+                "incomplete: seat founder names no admission route. Adopt a corrected version, "
+                "then try again. Every seat needs an admission route and a deciding body that "
+                "matches it. INTEVIA kept a record that this request was received at <T>; sent "
+                "again unchanged, it is answered as of that time.",
             ),
             (
                 {},
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-                "No arrangement was adopted and nothing changed. The arrangement is incomplete: "
-                "it has no seats. Adopt a corrected version, then try again. Every seat needs an "
-                "admission route and a deciding body that matches it.",
+                "No arrangement was adopted; no governed record was written. The arrangement is "
+                "incomplete: it has no seats. Adopt a corrected version, then try again. Every "
+                "seat needs an admission route and a deciding body that matches it. INTEVIA kept a "
+                "record that this request was received at <T>; sent again unchanged, it is "
+                "answered as of that time.",
             ),
             (
                 governance_arrangement_body(
@@ -1860,10 +1995,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                     effective_from=start,
                 ),
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-                "No arrangement was adopted and nothing changed. The arrangement is incomplete: "
-                "seat founder's deciding body does not match its admission route. Adopt a corrected "
-                "version, then try again. Every seat needs an admission route and a deciding body "
-                "that matches it.",
+                "No arrangement was adopted; no governed record was written. The arrangement is "
+                "incomplete: seat founder's deciding body does not match its admission route. "
+                "Adopt a corrected version, then try again. Every seat needs an admission route "
+                "and a deciding body that matches it. INTEVIA kept a record that this request was "
+                "received at <T>; sent again unchanged, it is answered as of that time.",
             ),
             (
                 {
@@ -1876,9 +2012,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                     ],
                 },
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
-                "No arrangement was adopted and nothing changed. The arrangement includes a term "
-                "for seat founder, which this release cannot yet act on. Leave it out for now; it "
-                "can be added by a later version once the release that acts on it is delivered.",
+                "No arrangement was adopted; no governed record was written. The arrangement "
+                "includes a term for seat founder, which this release cannot yet act on. Leave it "
+                "out for now; it can be added by a later version once the release that acts on it "
+                "is delivered. INTEVIA kept a record that this request was received at <T>; sent "
+                "again unchanged, it is answered as of that time.",
             ),
         )
         for index, (body, code, message) in enumerate(invalid_cases):
@@ -1895,6 +2033,8 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                     ),
                     code,
                     message,
+                    intake_action=OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+                    intake_key=f"sbg:adopt:key:{route.route.tag}:invalid:{index}",
                 )
 
         unsupported_eligibility = governance_arrangement_body(
@@ -1912,9 +2052,13 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 version=2,
             ),
             S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
-            'No arrangement was adopted and nothing changed. Seat founder names an eligibility '
-            'rule this release cannot check; it can check only "an active member of the LO". Use '
-            "that rule for now; other eligibility rules arrive with the slices that can check them.",
+            'No arrangement was adopted; no governed record was written. Seat founder names an '
+            'eligibility rule this release cannot check; it can check only "an active member of '
+            'the LO". Use that rule for now; other eligibility rules arrive with the slices that '
+            'can check them. INTEVIA kept a record that this request was received at <T>; sent '
+            'again unchanged, it is answered as of that time.',
+            intake_action=OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+            intake_key=f"sbg:adopt:key:{route.route.tag}:unsupported-eligibility",
         )
 
         guard_effective_from = start + timedelta(days=1)
@@ -1931,25 +2075,28 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 "unsupported-field",
                 unsupported_field_guard_body,
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
-                "No arrangement was adopted and nothing changed. The arrangement includes a field "
-                "this release does not record, which this release cannot yet act on. Leave it out "
-                "for now; it can be added by a later version once the release that acts on it is "
-                "delivered.",
+                "No arrangement was adopted; no governed record was written. The arrangement "
+                "includes a field this release does not record, which this release cannot yet act "
+                "on. Leave it out for now; it can be added by a later version once the release "
+                "that acts on it is delivered. INTEVIA kept a record that this request was "
+                "received at <T>; sent again unchanged, it is answered as of that time.",
             ),
             (
                 "unsupported-eligibility",
                 unsupported_eligibility_guard_body,
                 S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
-                'No arrangement was adopted and nothing changed. Seat the requested seat names an '
-                'eligibility rule this release cannot check; it can check only "an active member of '
-                'the LO". Use that rule for now; other eligibility rules arrive with the slices that '
-                'can check them.',
+                'No arrangement was adopted; no governed record was written. Seat the requested '
+                'seat names an eligibility rule this release cannot check; it can check only "an '
+                'active member of the LO". Use that rule for now; other eligibility rules arrive '
+                'with the slices that can check them. INTEVIA kept a record that this request was '
+                'received at <T>; sent again unchanged, it is answered as of that time.',
             ),
         )
         # These defects cannot be persisted: the database adoption guard refuses them before readiness.
         for tag, body, code, expected_text in guard_cases:
             with self.subTest(database_guard=tag):
                 before_guard = governance_route_state(route)
+                intake_before_guard = CommandIntake.objects.count()
                 with patch.object(route.service, "_validate_arrangement_body", return_value=None):
                     with self.assertRaises(SBGGovernanceRefused) as guarded:
                         adopt_governance_arrangement(
@@ -1961,7 +2108,17 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                             version=2,
                         )
                 self.assertIs(guarded.exception.refusal_code, code)
+                intake = CommandIntake.objects.get(
+                    actor_id=route.founder.pk,
+                    action=OrganismAction.ADOPT_GOVERNING_INSTRUMENT.value,
+                    idempotency_key=f"sbg:adopt:key:{route.route.tag}:guard:{tag}",
+                )
+                expected_text = expected_text.replace(
+                    "<T>",
+                    canonical_timestamp(intake.received_at),
+                )
                 self.assertEqual(str(guarded.exception), expected_text)
+                self.assertEqual(CommandIntake.objects.count(), intake_before_guard + 1)
                 self.assertIsInstance(guarded.exception.__cause__, IntegrityError)
                 self.assertIn(code.value, str(guarded.exception.__cause__))
                 self.assertEqual(governance_route_state(route), before_guard)
@@ -1983,9 +2140,13 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 effective_from=future_start + timedelta(days=1),
             ),
             S015AuthorityRefusalCode.SBG_VERSION_DROPS_HELD_SEAT,
-            "No arrangement was adopted and nothing changed. The new version leaves out seat "
-            "founder, which someone currently holds. Keep that seat in the new version; a held "
-            "seat cannot be removed by a new version in this release.",
+            "No arrangement was adopted; no governed record was written. The new version leaves "
+            "out seat founder, which someone currently holds. Keep that seat in the new version; a "
+            "held seat cannot be removed by a new version in this release. INTEVIA kept a record "
+            "that this request was received at <T>; sent again unchanged, it is answered as of "
+            "that time.",
+            intake_action=OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+            intake_key=f"sbg:adopt:key:{route.route.tag}:drop-held-seat",
         )
 
         future_body = governance_arrangement_body(effective_from=future_start)
@@ -2033,9 +2194,12 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_SECOND_GOVERNANCE_CIRCLE,
             f"sbg:create-circle:{route.route.tag}:second-circle",
-            "No Circle was created and nothing changed. This LO already has its GOVERNANCE "
-            "Circle, and an LO has exactly one. Use the existing Circle; switching GOVERNANCE "
-            "back on uses the same one.",
+            "No Circle was created. This LO already has its GOVERNANCE Circle, and an LO has "
+            "exactly one. Use the existing Circle; switching GOVERNANCE back on uses the same one. "
+            "INTEVIA recorded this refusal and that the request was received at <T>; nothing else "
+            "was saved.",
+            intake_action=OrganismAction.CREATE_DORMANT_CIRCLE,
+            intake_key=f"sbg:create-circle:key:{route.route.tag}:second-circle",
         )
 
         for close, state, remedy in (
@@ -2053,8 +2217,11 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 ),
                 S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE,
                 f"sbg:create-circle:{inactive.route.tag}:inactive:{close}",
-                f"No Circle was created and nothing changed. This LO is {state}, so it can take "
-                f"no new act of this kind. {remedy} Nothing about the LO's records changed.",
+                f"No Circle was created. This LO is {state}, so it can take no new act of this "
+                f"kind. {remedy} Nothing about the LO's records changed. INTEVIA recorded this "
+                "refusal and that the request was received at <T>; nothing else was saved.",
+                intake_action=OrganismAction.CREATE_DORMANT_CIRCLE,
+                intake_key=f"sbg:create-circle:key:{inactive.route.tag}:inactive:{close}",
             )
 
     def test_w_f4_founding_self_seating_and_post_birthing_class_a_refusal(self):
@@ -2645,9 +2812,12 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_SECOND_GOVERNANCE_CIRCLE,
             f"sbg:create-circle:{route.route.tag}:second-circle",
-            "No Circle was created and nothing changed. This LO already has its GOVERNANCE "
-            "Circle, and an LO has exactly one. Use the existing Circle; switching GOVERNANCE "
-            "back on uses the same one.",
+            "No Circle was created. This LO already has its GOVERNANCE Circle, and an LO has "
+            "exactly one. Use the existing Circle; switching GOVERNANCE back on uses the same one. "
+            "INTEVIA recorded this refusal and that the request was received at <T>; nothing else "
+            "was saved.",
+            intake_action=OrganismAction.CREATE_DORMANT_CIRCLE,
+            intake_key=f"sbg:create-circle:key:{route.route.tag}:second-circle",
         )
 
     def test_w_p3_post_birthing_enabling_readiness_and_guard_fixtures(self):

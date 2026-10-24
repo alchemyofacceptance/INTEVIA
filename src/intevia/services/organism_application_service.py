@@ -574,6 +574,9 @@ class GatewayDraftResult:
 
     @classmethod
     def replay_field_audiences(cls, result: "GatewayDraftResult") -> dict[str, str]:
+        """Return the replay audiences of result's fields: version_uuid is
+        visible only to the PROCESSING audience.
+        """
         return {"version_uuid": "PROCESSING"}
 
 
@@ -705,6 +708,17 @@ def _effective_gateway_version(
 def _engagement_settings_basis(
     database_alias: str, organism: LivingOrganism, effective_at: datetime,
 ) -> str:
+    """Return the settings basis recorded on a Coordinator engagement.
+
+    Reads the database's clock_timestamp() as known_at, then the LO's
+    governance configuration and application settings in effect at
+    effective_at as known at that time (_effective_gateway_version).
+    Raises S015ApplicationRefused "effective governance configuration
+    and application settings are required" if either is None.
+    Otherwise returns "governance-configuration-version:<uuid>;"
+    followed by "application-settings-version:<uuid>". Claim and
+    reassignment record it on their LO_CSA engagement.
+    """
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT clock_timestamp()")
         known_at = cursor.fetchone()[0]
@@ -855,6 +869,25 @@ def _insert_admission_transition(
     actor_access_epoch: int | None = None,
     composing_rule_reference: str | None = None,
 ) -> int:
+    """Insert one membership transition by raw SQL; return its row id.
+
+    Writes core_organismmembershiptransition with action
+    TRANSITION_MEMBERSHIP. sequence is 1 without a predecessor, else
+    the predecessor's plus one; the predecessor's id, sequence and
+    l1_commitment are carried. lineage_reference is "s015l1:" and the
+    SHA-256 of the command domain and the canonical JSON of the new
+    event UUID, the membership UUID, the sequence and the fingerprint.
+    parts_commitment comes from s015_0022_digest, and the temporal
+    basis from _resulting_temporal_basis.
+
+    With no actor the row records actor state LIVING_ORGANISM and no
+    access epoch; with one, PARTY and actor_access_epoch. A
+    composing_rule_reference makes the entry COMPOSED with the
+    enterer as composer; otherwise TRANSPORT. Capacity is STANDING
+    and effective_until_state NONE; l1_commitment and l2_commitment
+    are inserted as NULL. Checks no order and takes no lock; _admit
+    checks the order, and its callers hold the organism lock.
+    """
     event_uuid = uuid4()
     sequence = 1 if predecessor is None else predecessor.sequence + 1
     temporal_kind, temporal_reference = _resulting_temporal_basis(
@@ -933,6 +966,21 @@ def _append_application_event(
     received_at: datetime,
     composing_rule_reference: str | None = None,
 ) -> None:
+    """Append one event to an Application's lineage by raw SQL.
+
+    Locks the ApplicationLineage row and reads its head event. Raises
+    S015OperationNotYetImplemented (out_of_order_application_act,
+    IL-3) when (effective_at, occurred_at, received_at) sorts before
+    the head's. Otherwise inserts a core_applicationlineageevent:
+    sequence 1, or the head's plus one; prior_state the head's
+    resulting_state (None for the first event); the head's
+    l1_commitment as predecessor commitment; and the LO's founding
+    authority basis. lineage_reference, parts_commitment, temporal
+    basis, actor state and entry mode are formed as in
+    _insert_admission_transition, with the application UUID in place
+    of the membership UUID. actor_access_epoch is written as given.
+    Returns None.
+    """
     lineage = ApplicationLineage.objects.using(database_alias).select_for_update().get(application=application)
     predecessor = ApplicationLineageEvent.objects.using(database_alias).filter(
         pk=lineage.head_event_id,
@@ -1043,11 +1091,42 @@ class _AdmissionDetails:
 
 
 class OrganismApplicationService:
+    """Application and gateway commands for living organisms.
+
+    submit_application and withdraw_application are the applicant's;
+    claim_application, reassign_application and decide_application
+    are the LO's Coordinators'; save_gateway_draft and
+    effect_gateway_version shape and put into effect the LO's
+    application settings, question and governance configuration,
+    also by a Coordinator. application_status reads.
+
+    Each public command admits its request through the durable
+    intake, then executes inside authority_atomic with the intake's
+    received_at. Authority is evaluated at that retained time. Other
+    checks and cache refreshes use the coordinates stated on their
+    helpers and executors; not every read is an as-of-receipt read.
+
+    Holds the S015 authority, the clock (used for the replay
+    viewer's time and passed to OrganismRoleService), the database
+    alias, and the optional LO name source, CARE executor and
+    discussion welcome. See the module docstring for the intake and
+    replay contract.
+    """
     def __init__(
         self, *, authority: S015Authority | None = None, clock: Callable[[], datetime], database_alias: str = "default",
         name_source: LONameSource | None = None,
         care_executor: CareExecutor | None = None, welcome: DiscussionWelcome | None = None,
     ) -> None:
+        """Build the service from its collaborators.
+
+        authority defaults to an S015Authority over a
+        ProductionApplicationAuthorityProvider on database_alias. The
+        authority must be an S015Authority on the same database_alias, or
+        TypeError "matching S015 authority is required". clock must be
+        callable, or TypeError "clock is required"; it is not called here.
+        name_source and care_executor are kept as given (None allowed);
+        welcome, when None or falsy, becomes UnavailableDiscussionWelcome.
+        """
         if authority is None:
             from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 
@@ -1071,6 +1150,17 @@ class OrganismApplicationService:
         idempotency_key: str, fingerprint: str, viewer: ReplayViewer,
         result_class: type = ApplicationCommandResult,
     ) -> ApplicationCommandResult | GatewayEffectCommandResult | None:
+        """Return the replay of a completed request, or None.
+
+        Locks the actor's command receipt for action and idempotency_key
+        and returns None when there is none. Raises
+        S015CommandReplayMismatch "completed receipt does not match
+        request" when its request reference or payload fingerprint
+        differs. Otherwise rebuilds the stored result
+        (_gateway_result_from_receipt when result_class is
+        GatewayEffectCommandResult, else _result_from_receipt) and returns
+        it through serve_replay for viewer.
+        """
         receipt = OrganismCommandReceipt.objects.using(self._alias).select_for_update().filter(
             actor=actor, action=action.value, idempotency_key=idempotency_key,
         ).first()
@@ -1095,6 +1185,17 @@ class OrganismApplicationService:
         request_reference: str, idempotency_key: str, received_at: datetime,
         effective_at: datetime, predecessor_reference: UUID | None = None,
     ):
+        """Qualify an applicant's own command through S015Authority.
+
+        Builds an S015OwnApplicantAuthorityRequest for actor, evaluated at
+        received_at, with effective_at, the request keys and
+        predecessor_reference, and returns the authority's qualified
+        decision. The target holds the action, the LO's organism UUID and
+        the actor's Identity UUID, and the application's UUID when one is
+        given; target_fingerprint is authority_target_fingerprint of it.
+        Refusals raised by the authority propagate. Used by submission and
+        withdrawal.
+        """
         authority_target: dict[str, object] = {
             "action": action.value,
             "organism_uuid": organism.organism_id,
@@ -1129,6 +1230,18 @@ class OrganismApplicationService:
         record_uuid: UUID | None = None, completion_due_at: datetime | None = None,
         completion_due_source: str | None = None,
     ) -> ApplicationCommandResult:
+        """Write an application command's receipt and serve its result.
+
+        Builds the ApplicationCommandResult for application with
+        recorded_at, the authority references and the optional record UUID
+        and completion due fields. Its lineage_reference is "s015l1:" and
+        the SHA-256 of the command domain and the canonical JSON of the
+        action, the actor's Identity UUID, the application UUID and the
+        fingerprint. Creates the OrganismCommandReceipt with the keys,
+        fingerprint, references and receipt_payload, then returns the
+        result through serve_replay for the actor, as viewer at
+        self._clock().
+        """
         lineage_reference = "s015l1:" + hashlib.sha256(
             _COMMAND_DOMAIN + canonical_json_bytes({
                 "action": action.value, "actor": actor.identity_id, "application": application.application_uuid,
@@ -1173,6 +1286,40 @@ class OrganismApplicationService:
 
     def _automatic_accept(self, application: Application, care: Identity, request_reference: str,
                           idempotency_key: str, fingerprint: str) -> tuple[ApplicationDecision, str, str, str, str, str]:
+        """Accept a new application automatically under the LO's settings.
+
+        Called by the fresh submission inside its authority_atomic
+        block, after the caller has locked the applicant, any supplied
+        CARE Identity and the organism. Opens no transaction, takes no
+        explicit preparatory lock and performs no separate replay or
+        authority qualification; it writes no command receipt.
+
+        The application settings in effect at the application's
+        effective_at, as known at its recorded_at, must be the
+        application's own settings version, with applications_open and
+        automatic_acceptance true, or S015ApplicationRefused with
+        "automatic acceptance requires the application's recorded
+        effective setting". The rule is
+        "application-settings-version:<uuid>".
+
+        The decision fingerprint is the SHA-256 of the command domain
+        and the canonical JSON of action LO_AUTOMATIC, the application
+        UUID, the rule and the submission's fingerprint. The decision
+        reference is "s015d1:" and the SHA-256 of the domain and the
+        canonical JSON of that fingerprint and the rule. The request
+        reference and the idempotency key are both "s3fu:auto:<decision
+        fingerprint>".
+
+        Creates engagement 1 on route LO_AUTOMATIC (no actor; the rule
+        as engagement reference and settings basis) and an ACCEPT
+        decision. Both name the LO as deciding party and care as
+        enterer; care is also the decision's executor. Both take the
+        application's occurred, effective and received times. Then
+        admits the applicant (_admit) with those keys, fingerprint and
+        times and the rule as composing rule. Returns (decision,
+        decision fingerprint, decision reference, rule, idempotency key,
+        request reference).
+        """
         settings = _effective_gateway_version(
             self._alias, application.living_organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
             application.effective_at, application.recorded_at,
@@ -1218,6 +1365,59 @@ class OrganismApplicationService:
         expected_entry: IntakeEntry,
         received_at: datetime,
     ):
+        """Run the shared opening of the two gateway commands.
+
+        create_head is True for save_gateway_draft and False for
+        effect_gateway_version. command.action must be one of the three
+        gateway actions, or ValueError "unknown gateway relation".
+        Checks the keys (at most 128 and 120 characters), the occurred,
+        effective and received times and the LO UUID; locks the actor;
+        verifies the bound request; takes the command mutex; reads the
+        LO (an unknown LO raises LivingOrganism.DoesNotExist).
+
+        Effect path: computes the fingerprint (schema "s015-gateway-v1";
+        action, LO and version; effective_at, received_at and fields),
+        returns a matching receipt's replay, and requires the actor's
+        active membership in the LO.
+
+        Both paths then take the organism lock, lock the actor's
+        membership context and lock the LO's gateway row, if any.
+
+        Draft path: a QUALIFIED DRAFT authority decision for this actor,
+        action, keys and LO, evaluated at received_at, with the same
+        version UUID (None matching None), means the request completed.
+        With a version UUID, the result takes that UUID from the
+        recorded decision; this branch does not load the draft version.
+        With none, the LO's versions of that kind by this actor with
+        these received, occurred and effective times are looked up;
+        anything but exactly one gives an unlocated GatewayDraftResult,
+        returned as is. A located result is returned through
+        serve_replay. Otherwise the fingerprint is computed as on the
+        effect path.
+
+        Both paths then qualify authority (_authority_request at
+        received_at, version_kind DRAFT or EFFECT). The draft path
+        creates the gateway if there is none; the effect path refuses
+        "S3FU gateway closed" without one. gateway_at is the database's
+        clock_timestamp(). If the governance configuration in effect at
+        gateway_at has cq_active true, inherited portal settings raise
+        not-yet-implemented S3-IL-INHERIT, and a CQ required for this
+        change (the question flag for a question, the LO settings flag
+        otherwise) raises S3-IL-CQ.
+
+        Selects the first stored ACTIVE LO-scope COORDINATOR assignment
+        on the actor's membership, then calls assignment_in_effect with
+        effective_at. That helper checks stored ACTIVE state and the
+        latest ASSIGN term's fixed expiry; it does not check the
+        office's start or reconstruct historical state. An absent
+        assignment or a false result raises S015ApplicationRefused with
+        "effective Coordinator office is required".
+
+        Returns a replay result, a GatewayDraftResult, or (actor,
+        organism, decision, fingerprint, request_reference,
+        idempotency_key, occurred_at, effective_at, received_at,
+        gateway_at).
+        """
         action = command.action
         if action not in _VERSION_KINDS:
             raise ValueError("unknown gateway relation")
@@ -1390,6 +1590,18 @@ class OrganismApplicationService:
                 idempotency_key, occurred_at, effective_at, received_at, gateway_at)
 
     def save_gateway_draft(self, command: GatewayDraftCommand):
+        """Create or edit a draft gateway version for an LO.
+
+        Requires the intake's admission state for SAVE_GATEWAY_DRAFT
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "SAVE_GATEWAY_DRAFT is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_save_gateway_draft's result: the
+        saved version, or a GatewayDraftResult for a completed request.
+        Writes no command receipt.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -1409,6 +1621,33 @@ class OrganismApplicationService:
         return self._execute_save_gateway_draft(command, bound)
 
     def _execute_save_gateway_draft(self, command: GatewayDraftCommand, bound: BoundRequest):
+        """Execute an admitted SAVE_GATEWAY_DRAFT request.
+
+        Inside authority_atomic as of bound.received_at. Opens with
+        _gateway_start (create_head True) and returns its
+        GatewayDraftResult for a completed request. command.fields must be
+        a dict whose keys are allowed for the version's kind, or
+        S015ApplicationRefused "invalid gateway draft fields". Settings:
+        applications_open, automatic_acceptance and
+        processing_responsibility. Question: question_text, answer_format
+        and options. Governance configuration: the four CQ choices,
+        governance_enabled, coordinator_nomination_policy,
+        role_suspension_enabled and suspension_tolls_term.
+
+        With a version_uuid: locks that version of the LO (an unknown one
+        raises the model's DoesNotExist); it must be DRAFT at gateway_at,
+        or "governed gateway version cannot be edited"; saves the given
+        fields on it. Without one: creates a version with the actor as
+        actor and enterer, the command's times, the received_at, and as
+        supersedes the version in effect at gateway_at. A new question
+        missing question_text or answer_format takes
+        default_application_question's values for the fields not given.
+
+        For a governance configuration, governance_enabled, when not given
+        (and, on an edit, unset on the version), is taken from the version
+        in effect at gateway_at, or True when there is none or it is
+        unset. Returns the saved version.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -1479,6 +1718,17 @@ class OrganismApplicationService:
             return version
 
     def effect_gateway_version(self, command: EffectGatewayVersionCommand):
+        """Put a draft gateway version into effect for an LO.
+
+        Requires the intake's admission state for EFFECT_GATEWAY_VERSION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "EFFECT_GATEWAY_VERSION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_effect_gateway_version's
+        GatewayEffectCommandResult, served through serve_replay.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -1498,6 +1748,25 @@ class OrganismApplicationService:
         return self._execute_effect_gateway_version(command, bound)
 
     def _execute_effect_gateway_version(self, command: EffectGatewayVersionCommand, bound: BoundRequest):
+        """Execute an admitted EFFECT_GATEWAY_VERSION request.
+
+        Runs _effect_gateway_version. For EFFECT_GOVERNANCE_CONFIGURATION
+        only, two failures carrying one of the seven SB-G enabling codes
+        (_SBG_ENABLING_REFUSAL_CODES) become S015ApplicationRefused with
+        that refusal_code and a message from
+        _governance_enabling_refusal_message, for the LO, the command's
+        effective_at and bound.received_at:
+
+        - S015AuthorityDenied with such a refusal_code: the message's
+          opening ends "." and its tail says the refusal and the request's
+          receipt time were recorded and nothing else was saved.
+        - IntegrityError whose cause's diagnostic primary message equals
+          such a code's value: the opening ends "; no governed record was
+          written." and the tail says the receipt time was kept and an
+          unchanged retry is answered as of that time.
+
+        Every other failure propagates unchanged.
+        """
         try:
             return self._effect_gateway_version(command, bound=bound)
         except S015AuthorityDenied as exc:
@@ -1565,6 +1834,40 @@ class OrganismApplicationService:
             ) from exc
 
     def _effect_gateway_version(self, command: EffectGatewayVersionCommand, *, bound: BoundRequest):
+        """Put a draft gateway version into effect and record it on the LO.
+
+        Inside authority_atomic as of bound.received_at. Opens with
+        _gateway_start (create_head False) and returns its replay for a
+        completed request. Locks the named version of the LO (an unknown
+        one raises the model's DoesNotExist). It is refused
+        (S015ApplicationRefused) unless, at gateway_at, it is DRAFT
+        ("gateway version already effective") and complete
+        (_gateway_version_complete; "S3FU gateway effect: version
+        incomplete"), and, for a governance
+        configuration, its governance_enabled is set. Not yet implemented:
+        a governance configuration with cq_active true (S3-IL-CQ) and
+        settings with processing_responsibility APPLICATION_CIRCLE
+        (S3-IL-CIRCLE). Settings with automatic_acceptance true are
+        refused when the service has no CARE executor, or only the default
+        welcome; both messages cite bound.received_at.
+
+        Takes the organism lock again and locks the LO row. The LO's head
+        event must exist and be effective no later than effective_at, or
+        "gateway effect requires a current LO chain". Inserts, by raw
+        SQL, the next core_livingorganismevent: the gateway action, the
+        head's resulting_state as both prior and resulting state, actor
+        state LIVING_ORGANISM with the actor as enterer, the LO's founding
+        authority basis, and evidence "<kind prefix><version UUID>". Its
+        lineage_reference is "s015l1:" and the SHA-256 of the command
+        domain and the canonical JSON of the event UUID, the organism UUID
+        and the fingerprint. That event is what _effective_gateway_version
+        reads. Refreshes the LO's governed cache at effective_at, known at
+        the database's clock_timestamp().
+
+        Writes the command receipt and returns the
+        GatewayEffectCommandResult through serve_replay for the actor, as
+        viewer at self._clock().
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -1683,6 +1986,11 @@ class OrganismApplicationService:
             )
 
     def _validate_shape(self, entry: IntakeEntry, command: object) -> IntakeShape:
+        """Return command's intake shape for entry.
+
+        The two gateway entries use intake_shape; every other entry uses
+        application_shape. Their errors propagate.
+        """
         from src.intevia.services.command_intake import (
             IntakeEntry,
             application_shape,
@@ -1703,6 +2011,31 @@ class OrganismApplicationService:
         received_at: datetime,
         outcome: str | None = None,
     ) -> _CoordinatorContext | ApplicationCommandResult:
+        """Run the shared opening of the claim, reassign and decide commands.
+
+        Checks the keys (at most 128 and 120 characters), the occurred and
+        effective times and the application UUID; received_at is used as
+        passed (its callers validate it). Locks the actor, verifies the
+        bound request and takes the command mutex. Reads the application,
+        or S015ApplicationNotFound "application not found". The
+        fingerprint (schema "s015-application-v1") covers the action, the
+        application UUID and the LO's organism UUID, effective_at,
+        received_at and outcome. A matching receipt returns its replay;
+        otherwise the actor must hold an active membership in the LO.
+
+        Lock order on a fresh request: for DECIDE_APPLICATION, a FOR KEY
+        SHARE lock on the applicant's Identity row first; then the
+        organism lock, the actor's membership context, and the application
+        row.
+
+        For DECIDE_APPLICATION, if the application's engagement with the
+        highest ordinal effective by effective_at and recorded by
+        received_at is on LO_CSA, its engagement_reference, parsed as a
+        UUID, is the assignment passed to the authority (None if it does
+        not parse). Qualifies authority (_authority_request, at
+        received_at, with outcome). Returns a _CoordinatorContext, or the
+        replay result.
+        """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
@@ -1862,6 +2195,13 @@ class OrganismApplicationService:
         self, context: _CoordinatorContext, action: OrganismAction, record_uuid: UUID,
         recorded_at: datetime, *, completion_due_at: datetime | None = None,
     ) -> ApplicationCommandResult:
+        """Finish a Coordinator command through _finish.
+
+        Passes the context's actor, keys, fingerprint and application, its
+        qualified decision's authority references, record_uuid and
+        recorded_at. With completion_due_at, the due source is "DEFAULT
+        (no settings store)"; without it, both are None.
+        """
         return self._finish(
             actor=context.actor, action=action, request_reference=context.request_reference,
             idempotency_key=context.idempotency_key, fingerprint=context.fingerprint,
@@ -1873,6 +2213,16 @@ class OrganismApplicationService:
         )
 
     def submit_application(self, command: SubmitApplicationCommand) -> ApplicationCommandResult:
+        """Submit an application to join a living organism.
+
+        Requires the intake's admission state for SUBMIT_APPLICATION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "SUBMIT_APPLICATION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_submit_application's result.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -1896,6 +2246,53 @@ class OrganismApplicationService:
         command: SubmitApplicationCommand,
         bound: BoundRequest,
     ) -> ApplicationCommandResult:
+        """Execute an admitted SUBMIT_APPLICATION request.
+
+        Inside authority_atomic as of bound.received_at. Checks the
+        keys, the times, the LO UUID and any predecessor UUID; locks the
+        actor; verifies the bound request; takes the command mutex. An
+        unknown LO raises S015ApplicationNotFound "living organism not
+        found". The fingerprint (schema "s015-application-v1") covers
+        the action, LO and applicant, effective_at, received_at, the
+        predecessor and the answer. A matching receipt returns its
+        replay.
+
+        A fresh request goes on in this order. A supplied CARE
+        executor's Identity is locked and must be active and not the
+        applicant's, or S015ApplicationAuthorityUnavailable. The
+        organism lock and the applicant-LO pair lock are taken, and the
+        gateway row is read FOR SHARE. Authority is qualified
+        (_authorise, at received_at). A current (ACTIVE or PROBATIONARY)
+        member is refused; an ENDED membership raises
+        not-yet-implemented IL-1. Without a gateway, "S3FU gateway
+        closed".
+
+        gateway_at is the database's clock_timestamp(). The settings and
+        question in effect at gateway_at must exist, with
+        applications_open true, and the LO's folded state at
+        effective_at, known at gateway_at, must be ACTIVE, or "S3FU
+        gateway closed". The answer must fit the question
+        (_validate_gateway_answer). Automatic acceptance without a CARE
+        executor raises not-yet-implemented S3-IL-CARE-EXEC. An open
+        application (no decision, no withdrawal) by this applicant to
+        this LO is refused, and a predecessor must be this applicant's
+        application to this LO.
+
+        Creates the Application with those versions, the answer and the
+        authority references, and reloads it for its recorded_at. The
+        predecessor needs a withdrawal effective by effective_at and
+        recorded by that recorded_at, and the applicant must be eligible
+        (applicant_eligible) at effective_at and that recorded_at, or
+        the command is refused. Creates the lineage; under automatic
+        acceptance, accepts (_automatic_accept). Appends the SUBMITTED
+        event; under automatic acceptance, then the ACCEPTED event (no
+        actor; CARE as enterer; the rule as composing rule) and the
+        welcome. The welcome runs synchronously inside this transaction,
+        before the command receipt; it is not deferred until commit.
+        Exceptions follow authority_atomic's handling, and the database
+        transaction does not make external delivery rollback-safe.
+        Finishes with _finish at the application's recorded_at.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -2050,6 +2447,16 @@ class OrganismApplicationService:
             )
 
     def withdraw_application(self, command: WithdrawApplicationCommand) -> ApplicationCommandResult:
+        """Withdraw the applicant's open application.
+
+        Requires the intake's admission state for WITHDRAW_APPLICATION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "WITHDRAW_APPLICATION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_withdraw_application's result.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -2073,6 +2480,25 @@ class OrganismApplicationService:
         command: WithdrawApplicationCommand,
         bound: BoundRequest,
     ) -> ApplicationCommandResult:
+        """Execute an admitted WITHDRAW_APPLICATION request.
+
+        Inside authority_atomic as of bound.received_at. Checks the keys,
+        the times and the application UUID; locks the actor; verifies the
+        bound request; takes the command mutex. An unknown application
+        raises S015ApplicationNotFound "application not found". The
+        fingerprint (schema "s015-application-v1") covers the action, the
+        application and its LO, effective_at and received_at. A matching
+        receipt returns its replay.
+
+        A fresh request takes the organism lock, locks the application row
+        and qualifies authority (_authorise, with the application, at
+        received_at). Refuses an application already decided, then one
+        already withdrawn; one with an LO_CQ or CIRCLE_CQ engagement
+        raises not-yet-implemented S3-IL-CQ. Creates the
+        ApplicationWithdrawal and reloads it for its recorded_at, appends
+        the WITHDRAWN event, and finishes with _finish at that
+        recorded_at.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -2153,6 +2579,16 @@ class OrganismApplicationService:
             )
 
     def claim_application(self, command: ClaimApplicationCommand) -> ApplicationCommandResult:
+        """Claim an open application for the acting Coordinator.
+
+        Requires the intake's admission state for CLAIM_APPLICATION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "CLAIM_APPLICATION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_claim_application's result.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -2176,6 +2612,28 @@ class OrganismApplicationService:
         command: ClaimApplicationCommand,
         bound: BoundRequest,
     ) -> ApplicationCommandResult:
+        """Execute an admitted CLAIM_APPLICATION request.
+
+        Inside authority_atomic as of bound.received_at, which is
+        validated here and passed to _coordinator_start. Opens with
+        _coordinator_start and returns its replay for a completed
+        request. The application must be open (_open_for_coordinator)
+        and have no claim at any time, or "application already has a
+        claim". _coordinator_office selects a stored ACTIVE LO-scope
+        COORDINATOR assignment and checks its latest ASSIGN term's fixed
+        expiry at effective_at. It does not reconstruct historical
+        office state or check the office's start. No assignment or a
+        failed check raises S015ApplicationRefused with "effective
+        Coordinator office is required".
+
+        Creates a CSAAssignment of the actor's membership and office,
+        due 27 days after effective_at, and reloads it for its
+        recorded_at. Creates engagement 1 on route LO_CSA, with the LO
+        as deciding party, the claim's UUID as reference and the
+        settings basis from _engagement_settings_basis, and appends the
+        IN_REVIEW event. Finishes with the claim's UUID, its recorded_at
+        and the due time.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -2226,6 +2684,17 @@ class OrganismApplicationService:
             )
 
     def reassign_application(self, command: ReassignApplicationCommand) -> ApplicationCommandResult:
+        """Take over an application's current claim for the acting
+        Coordinator.
+
+        Requires the intake's admission state for REASSIGN_APPLICATION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "REASSIGN_APPLICATION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_reassign_application's result.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -2249,6 +2718,35 @@ class OrganismApplicationService:
         command: ReassignApplicationCommand,
         bound: BoundRequest,
     ) -> ApplicationCommandResult:
+        """Execute an admitted REASSIGN_APPLICATION request.
+
+        Inside authority_atomic as of bound.received_at, which is
+        validated here and passed to _coordinator_start. Opens with
+        _coordinator_start and returns its replay for a completed
+        request. The application must be open. Its current claim at
+        effective_at (_current_claim) must be the reference of its
+        highest-ordinal engagement, read with no time bound, or "current
+        engagement does not match claim". _coordinator_office selects a
+        stored ACTIVE LO-scope COORDINATOR assignment and checks its
+        latest ASSIGN term's fixed expiry at effective_at. It does not
+        reconstruct historical office state or check the office's start.
+        No assignment or a failed check raises S015ApplicationRefused
+        with "effective Coordinator office is required".
+
+        Reads the settings basis (_engagement_settings_basis), ends the
+        current claim (CSAAssignmentEnd), and creates a replacement
+        claim of the actor's membership and office that replaces it, due
+        27 days after effective_at; both are reloaded for their
+        recorded_at. Creates the next engagement (ordinal plus one) on
+        LO_CSA with the replacement's UUID as reference and the ending's
+        UUID as basis_reference, and appends an IN_REVIEW event.
+        Finishes with the replacement's UUID, its recorded_at and the
+        due time.
+
+        This method does not require a different assignee: the existing
+        assignee can replace their own claim. The new due time is always
+        this command's effective_at plus 27 days.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -2311,6 +2809,16 @@ class OrganismApplicationService:
             )
 
     def decide_application(self, command: DecideApplicationCommand) -> ApplicationCommandResult:
+        """Accept or decline an application as its current self-assignee.
+
+        Requires the intake's admission state for DECIDE_APPLICATION
+        (_require_admission_state) and the entry to be in ACTIVE_ENTRIES,
+        or IntakeAdmissionTechnicalFailure "DECIDE_APPLICATION is not
+        active". Validates the command's intake shape, resolves the actor
+        from command.credential and admits the request (admit_request),
+        which commits or recovers its binding and received_at before the
+        command runs. Returns _execute_decide_application's result.
+        """
         from src.intevia.services.command_intake import (
             ACTIVE_ENTRIES,
             IntakeAdmissionTechnicalFailure,
@@ -2334,6 +2842,42 @@ class OrganismApplicationService:
         command: DecideApplicationCommand,
         bound: BoundRequest,
     ) -> ApplicationCommandResult:
+        """Execute an admitted DECIDE_APPLICATION request.
+
+        Inside authority_atomic as of bound.received_at, which is
+        validated here and passed to _coordinator_start. Before the
+        actor is locked, _canonical_key checks command.outcome: a
+        non-string raises TypeError "outcome must be a string"; an
+        empty, non-canonical or overlong string raises ValueError
+        "outcome is not canonical" (maximum 7 characters). A canonical
+        value other than ACCEPT or DECLINE raises ValueError "outcome
+        must be ACCEPT or DECLINE". Opens with _coordinator_start (the
+        outcome in the fingerprint and the authority request) and
+        returns its replay for a completed request.
+
+        The application must be open. Only the current self-assignee
+        decides: the current claim at effective_at must have been made
+        by the actor for the actor's membership ("only the current
+        self-assignee may decide"). _coordinator_office selects a stored
+        ACTIVE LO-scope COORDINATOR assignment and checks its latest
+        ASSIGN term's fixed expiry at effective_at; it does not check
+        its start or reconstruct historical office state. That selected
+        office must be the claim's office, or "claim's qualifying office
+        is not effective". The highest-ordinal engagement effective by
+        effective_at must be on LO_CSA and name that claim, or "no
+        current CSA engagement". For ACCEPT, an LO whose folded state at
+        effective_at, known at the database's clock_timestamp(), is
+        RESTRICTED_CONTINUITY raises not-yet-implemented S3-IL-RC.
+
+        Creates the ApplicationDecision on route LO_CSA: the LO as
+        deciding party, the claim, the actor as responsible Coordinator,
+        executor and enterer, the office and the authority references.
+        Reloads it for its recorded_at. ACCEPT admits the applicant
+        (_admit) with this command's keys, fingerprint and times.
+        Appends an ACCEPTED or DECLINED event with no actor and the
+        Coordinator as enterer. Finishes with the decision's UUID and
+        recorded_at.
+        """
         from src.intevia.services.command_intake import IntakeEntry
 
         with _authority_atomic(self._alias, received_at=bound.received_at):
@@ -2403,6 +2947,44 @@ class OrganismApplicationService:
             )
 
     def _admit(self, context: _AdmissionDetails, decision: ApplicationDecision) -> None:
+        """Admit an accepted applicant to the LO as an ACTIVE member.
+
+        Runs within the authority_atomic block of the command that
+        reaches it (a submission under automatic acceptance, through
+        _automatic_accept, or decide_application), after that command
+        has taken the organism lock and a lock on the applicant's
+        Identity: the submission's actor lock, the applicant being its
+        actor, or decide's FOR KEY SHARE lock. Opens no transaction and
+        performs no separate authority or replay check; it writes no
+        command receipt.
+
+        Reads the applicant's Identity and any membership of theirs in
+        the LO. An ENDED membership raises not-yet-implemented IL-1; any
+        state other than PROPOSED is refused ("applicant already has a
+        current membership"). The LO needs a founding authority basis,
+        or S015ApplicationAuthorityUnavailable.
+
+        With no membership, creates one in state PROPOSED (effective at
+        the application's effective_at, known at its received_at, with
+        an empty anchor fingerprint) and inserts its first transition:
+        reason APPLICATION, the applicant as actor with the
+        application's access epoch, context's enterer (CARE, or the
+        deciding Coordinator), the application's authority decision
+        reference and times, evidence "application:<uuid>", and
+        context's keys and fingerprint. Then refreshes the membership.
+        An existing PROPOSED membership skips this creation and first
+        transition.
+
+        The admission must not sort before the membership's head
+        transition by (effective_at, occurred_at, received_at), or
+        not-yet-implemented IL-3. Inserts the PROPOSED to ACTIVE
+        transition: reason ADMISSION, no actor (the LO acts), context's
+        enterer, authority decision reference, keys, fingerprint, times
+        and composing rule, and evidence "application-decision:<uuid>".
+        Records the ApplicationDecisionEffect linking the decision to
+        that transition, and refreshes the membership at
+        context.effective_at.
+        """
         application = context.application
         applicant = Identity.objects.using(self._alias).get(pk=application.applicant_id)
         membership = OrganismMembership.objects.using(self._alias).filter(
@@ -2463,6 +3045,12 @@ class OrganismApplicationService:
         self._refresh_membership(membership, context.effective_at)
 
     def _refresh_membership(self, membership: OrganismMembership, effective_at: datetime) -> None:
+        """Refresh a membership's governed cache, then reload it.
+
+        Calls s015_refresh_governed_cache for the membership at
+        effective_at, known at the database's clock_timestamp(), and
+        reloads the instance from the database.
+        """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
                 "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",

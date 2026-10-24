@@ -12,8 +12,9 @@ Also holds the SB-G readiness message helpers that phase advance,
 Birthing and organism_application_service use for GOVERNANCE
 readiness refusals.
 
-Founding does not go through the durable intake; it reads
-received_at from the injected clock.
+Founding admits its request through the durable intake and runs as of
+the intake's received_at; phase advance and Birthing read received_at
+from the injected clock until their own activation.
 """
 from __future__ import annotations
 
@@ -73,6 +74,7 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import (
     ReplayResultType,
     ReplayViewer,
+    _intake_tail,
     S015CommandReplayMismatch,
     _canonical_uuid,
     _canonical_key,
@@ -87,6 +89,7 @@ from src.intevia.services.organism_command_support import (
     authority_atomic,
     serve_replay,
 )
+from src.intevia.services.command_intake import BoundRequest, IntakeEntry
 from src.intevia.services.organism_formation_authority import (
     founding_acceptance_uuid,
     founding_authority_request,
@@ -102,6 +105,14 @@ _COMMAND_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:COMMAND:v1\x00"
 _LINEAGE_DOMAIN = b"INTEVIA:S015:FOUND_LIVING_ORGANISM:LINEAGE:v1\x00"
 _ACTION = OrganismAction.FOUND_LIVING_ORGANISM
 _NAME_CONSTRAINT = "core_livingorganism_slug_key"
+_FOUNDING_TAIL_NOT_WRITTEN = (
+    "No governed record was written; INTEVIA kept a record that this request was received at "
+    "{received_at}; sent again unchanged, it is answered as of that time."
+)
+_TAIL_REFUSAL_RECORDED = (
+    "INTEVIA recorded this refusal and that the request was received at {received_at}; "
+    "nothing else was saved."
+)
 _SBG_ROUTE_BODIES = {
     "ELECTION": {"body:LO_MEMBERSHIP"},
     "COOPTION": {"body:GOVERNANCE"},
@@ -346,8 +357,8 @@ class FoundLivingOrganismCommand:
     founder accepted, or None. effective_at is when the founding takes
     effect; None means the time the service receives the command.
 
-    There is no received_at field: the service takes it from its
-    clock. found_living_organism validates every field.
+    There is no received_at field: the durable intake assigns it when the
+    request is admitted. found_living_organism validates every field.
     """
     credential: User
     name: str
@@ -440,8 +451,10 @@ class OrganismFormationService:
       assessment;
     - the receipt.
 
-    This service does not extend _OrganismCommandService or use the
-    durable intake. It reads received_at from its injected clock.
+    This service does not extend _OrganismCommandService.
+    found_living_organism admits the request through the durable intake, and
+    founding runs as of the intake's received_at; the injected clock gives
+    only the replay viewer's present time.
     """
     def __init__(
         self,
@@ -477,60 +490,65 @@ class OrganismFormationService:
         self,
         command: FoundLivingOrganismCommand,
     ) -> FoundLivingOrganismResult:
-        """Found an LO from the command and return the served result.
+        """Admit a founding request and return its served result (D §5.2).
 
-        Raise S015FormationTechnicalFailure if the connection is already
-        in an atomic block. Inside authority_atomic, in order:
-        - lock the actor's Identity and credential. Inactive Identity or
-          credential becomes S015AuthorityDenied with
-          E_IDENTITY_INACTIVE; a missing Identity raises
-          S015FormationActorUnavailable;
-        - check request_reference and idempotency_key as canonical keys,
-          with limits of 128 and 120 characters. Read received_at from
-          the clock; default effective_at to it. Require aware datetimes
-          and effective_at <= received_at. Check required and optional
-          texts and that accepted_terms_version_uuid is exactly UUID or
-          None;
-        - refuse with LO_NAME_REQUIRED if the name gives an empty slug;
-        - acquire the actor/action/idempotency-key mutex and fingerprint
-          the command. Serve a matching completed receipt before
-          checking slug availability or qualifying authority. A
-          different request reference or fingerprint raises
-          S015CommandReplayMismatch;
-        - refuse with LO_NAME_UNAVAILABLE if the slug already exists;
-        - build a pre-founding request for a new LO UUID, with authority
-          evaluated at received_at, and qualify it. Replace a denial's
-          message when an authored founding message exists, preserving
-          its codes and decision reference; otherwise propagate it;
-        - write the founding batch and serve its result. An
-          IntegrityError whose direct database cause names the LO slug
-          constraint becomes LO_NAME_UNAVAILABLE; other IntegrityErrors
-          propagate.
-
-        Key checks raise TypeError or ValueError; invalid timestamps and
-        terms UUID types raise TypeError, and a future effective_at
-        raises ValueError. Text checks have their own validation and
-        refusal rules. Mutex, authority and replay helpers can raise
-        their own errors; the enclosing transaction and contention rules
-        apply.
-
-        S015AuthorityDenied is deferred until the atomic scope exits.
-        Earlier writes can commit if the transaction remains committable
-        and its exit succeeds; this includes a recorded REFUSED
-        authority decision. A denial alone does not prove persistence.
-        In particular, a failed LO insert can leave the transaction
-        requiring rollback; translating that error does not preserve
-        earlier writes. Errors at transaction exit can replace a pending
-        denial or successful result. The outer contention wrapper
-        translates qualifying database lock errors after transaction
-        exit and performs no retry.
+        Raises S015FormationTechnicalFailure inside an atomic block, then
+        requires admission state and the active FOUND_LIVING_ORGANISM entry.
+        Shape validation and actor resolution precede admission; shape
+        refusals such as a missing name or purpose occur before an intake
+        row. The admitted request is passed to the executor, which runs
+        using its bound received_at. A refusal after admission retains its
+        intake record; transaction outcome determines whether authority
+        decisions or founding rows persist.
         """
         if connections[self._alias].in_atomic_block:
             raise S015FormationTechnicalFailure(
                 "FOUND_LIVING_ORGANISM requires a top-level transaction; an enclosing atomic block "
                 "would put founding rows in a savepoint and invalidate founding xmin provenance."
             )
-        with authority_atomic(self._alias):
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.FOUND_LIVING_ORGANISM
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("FOUND_LIVING_ORGANISM is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_found_living_organism(command, bound)
+
+    def _execute_found_living_organism(
+        self,
+        command: FoundLivingOrganismCommand,
+        bound: BoundRequest,
+    ) -> FoundLivingOrganismResult:
+        """Execute admitted founding as of its bound request (D §5.2).
+
+        Locks the actor, verifies the bound request, validates keys, times
+        and command fields, then handles replay, slug availability and
+        authority qualification before writing the founding batch. Inactive
+        actors, an empty or occupied slug, authored qualification denials
+        and a slug-constraint IntegrityError refuse the act.
+
+        S015AuthorityDenied is deferred until the atomic scope exits. If the
+        transaction stays committable and its exit succeeds, earlier writes
+        commit, including a REFUSED authority decision; a denial alone does
+        not prove persistence. A slug IntegrityError from the batch leaves
+        the transaction requiring rollback, so the translated denial keeps
+        nothing but the separately committed intake row. Errors at
+        transaction exit can replace a pending denial or a successful
+        result; the outer contention wrapper translates qualifying lock
+        errors after exit and performs no retry.
+        """
+        with authority_atomic(self._alias, received_at=bound.received_at):
             try:
                 actor = _lock_actor(
                     database_alias=self._alias,
@@ -549,15 +567,21 @@ class OrganismFormationService:
                     or not inactive_identity.credential.is_active
                 ):
                     raise S015AuthorityDenied(
-                        "The LO was not founded and nothing was saved: your account is not active "
-                        "at the time of this act.",
+                        "The LO was not founded: your account is not active at the time of this act. "
+                        + _intake_tail(_FOUNDING_TAIL_NOT_WRITTEN, bound.received_at),
                         refusal_code=S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
                         disclosed_refusal_code=S015AuthorityRefusalCode.E_IDENTITY_INACTIVE,
                     ) from exc
                 raise
+            bound.verify(
+                command,
+                actor,
+                IntakeEntry.FOUND_LIVING_ORGANISM,
+                self._alias,
+            )
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-            received_at = self._timestamp(self._clock(), "received_at")
+            received_at = self._timestamp(bound.received_at, "received_at")
             effective_at = (
                 received_at
                 if command.effective_at is None
@@ -577,7 +601,8 @@ class OrganismFormationService:
             slug = slugify(name)[:90]
             if not slug:
                 raise S015AuthorityDenied(
-                    "The LO was not founded and nothing was saved: a name (and a purpose) is required.",
+                    "The LO was not founded: a name (and a purpose) is required. "
+                    + _intake_tail(_FOUNDING_TAIL_NOT_WRITTEN, bound.received_at),
                     refusal_code=S015AuthorityRefusalCode.LO_NAME_REQUIRED,
                     disclosed_refusal_code=S015AuthorityRefusalCode.LO_NAME_REQUIRED,
                 )
@@ -609,7 +634,8 @@ class OrganismFormationService:
                 return replay
             if LivingOrganism.objects.using(self._alias).filter(slug=slug).exists():
                 raise S015AuthorityDenied(
-                    "The LO was not founded and nothing was saved: that name is already taken by another LO. Choose a different name.",
+                    "The LO was not founded: that name is already taken by another LO. Choose a different name. "
+                    + _intake_tail(_FOUNDING_TAIL_NOT_WRITTEN, bound.received_at),
                     refusal_code=S015AuthorityRefusalCode.LO_NAME_UNAVAILABLE,
                     disclosed_refusal_code=S015AuthorityRefusalCode.LO_NAME_UNAVAILABLE,
                 )
@@ -630,7 +656,10 @@ class OrganismFormationService:
             try:
                 decision = self._authority.qualify(request)
             except S015AuthorityDenied as exc:
-                message = self._authored_founding_refusal_message(exc.refusal_code)
+                message = self._authored_founding_refusal_message(
+                    exc.refusal_code,
+                    received_at=bound.received_at,
+                )
                 if message is None:
                     raise
                 raise S015AuthorityDenied(
@@ -657,7 +686,8 @@ class OrganismFormationService:
             except IntegrityError as exc:
                 if self._constraint_name(exc) == _NAME_CONSTRAINT:
                     raise S015AuthorityDenied(
-                        "The LO was not founded and nothing was saved: that name is already taken by another LO. Choose a different name.",
+                        "The LO was not founded: that name is already taken by another LO. Choose a different name. "
+                        + _intake_tail(_FOUNDING_TAIL_NOT_WRITTEN, bound.received_at),
                         refusal_code=S015AuthorityRefusalCode.LO_NAME_UNAVAILABLE,
                         disclosed_refusal_code=S015AuthorityRefusalCode.LO_NAME_UNAVAILABLE,
                     ) from exc
@@ -1023,6 +1053,7 @@ class OrganismFormationService:
         self._refresh("core_contextualroleassignment", assignment.pk, effective_at)
         return serve_replay(
             result,
+            # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
             viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             result_type=ReplayResultType(FoundLivingOrganismResult, self._alias),
         )
@@ -1054,6 +1085,7 @@ class OrganismFormationService:
             raise S015CommandReplayMismatch("completed receipt does not match request")
         return serve_replay(
             _result_from_payload(receipt.result_payload),
+            # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
             viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             result_type=ReplayResultType(FoundLivingOrganismResult, self._alias),
         )
@@ -1268,6 +1300,8 @@ class OrganismFormationService:
     def _authored_founding_refusal_message(
         self,
         code: S015AuthorityRefusalCode | None,
+        *,
+        received_at: datetime,
     ) -> str | None:
         """Return the authored founding message for a refusal code, or None.
 
@@ -1280,26 +1314,28 @@ class OrganismFormationService:
             return self._founding_principal_absent_message()
         messages = {
             S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED: (
-                "The LO was not founded and nothing was saved. INTEVIA records which platform-terms "
+                "The LO was not founded. INTEVIA records which platform-terms "
                 "version every founder accepts, and no acceptance of the version in force was "
                 "received. Read the terms shown and confirm them, then found again."
             ),
             S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED: (
-                "The LO was not founded and nothing was saved. The terms version you accepted is no "
+                "The LO was not founded. The terms version you accepted is no "
                 "longer the version in force. Reload to see the current terms and confirm them."
             ),
             S015AuthorityRefusalCode.E_NOT_REGISTERED: (
-                "The LO was not founded and nothing was saved. Founding is a registered Learner's "
+                "The LO was not founded. Founding is a registered Learner's "
                 "act, and no governed registration is effective for your account at this time. "
                 "(Development: the setup command's account has no registration; provision through "
                 "the supported path.)"
             ),
             S015AuthorityRefusalCode.E_IDENTITY_INACTIVE: (
-                "The LO was not founded and nothing was saved: your account is not active at the "
-                "time of this act."
+                "The LO was not founded: your account is not active at the time of this act."
             ),
         }
-        return messages.get(code)
+        message = messages.get(code)
+        if message is None:
+            return None
+        return f"{message} {_intake_tail(_TAIL_REFUSAL_RECORDED, received_at)}"
 
     def _refresh(self, anchor_token: str, anchor_id: int, effective_at: datetime) -> None:
         """Refresh a founding anchor's cached state through the

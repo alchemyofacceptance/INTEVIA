@@ -738,8 +738,12 @@ class H100IntakeTextTests(TransactionTestCase):
                 "authority_atomic",
                 "_finalise",
                 "_sbg_readiness_message",
+                "_execute_found_living_organism",
             },
-            "src/intevia/services/organism_governance_service.py": {"authority_atomic"},
+            "src/intevia/services/organism_governance_service.py": {
+                "authority_atomic",
+                "_execute",
+            },
             "src/intevia/services/organism_entitlement_service.py": {
                 "authority_atomic",
                 "_finalise",
@@ -750,10 +754,48 @@ class H100IntakeTextTests(TransactionTestCase):
             "_finalise": {"received_at"},
             "_sbg_readiness_message": {"received_at", "opening_end", "tail"},
         }
+        bound_time_executors = {
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "_execute_found_living_organism",
+            ),
+            ("src/intevia/services/organism_governance_service.py", "_execute"),
+        }
         offenders = []
+        positive_calls = set()
         for relative_path, names in census.items():
             source = (root / Path(relative_path)).read_text(encoding="utf-8")
             tree = ast.parse(source, filename=relative_path)
+            parents = {
+                child: node
+                for node in ast.walk(tree)
+                for child in ast.iter_child_nodes(node)
+            }
+
+            def enclosing_function(node):
+                parent = parents.get(node)
+                while parent is not None:
+                    if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        return parent.name
+                    parent = parents.get(parent)
+                return None
+
+            def inside_replay_viewer(node):
+                parent = parents.get(node)
+                while parent is not None:
+                    if isinstance(parent, ast.Call):
+                        called = (
+                            parent.func.id
+                            if isinstance(parent.func, ast.Name)
+                            else parent.func.attr
+                            if isinstance(parent.func, ast.Attribute)
+                            else None
+                        )
+                        if called == "ReplayViewer":
+                            return True
+                    parent = parents.get(parent)
+                return False
+
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -765,6 +807,29 @@ class H100IntakeTextTests(TransactionTestCase):
                     else None
                 )
                 if called_name not in names:
+                    if called_name == "_clock" and (
+                        relative_path,
+                        enclosing_function(node),
+                    ) in bound_time_executors and not inside_replay_viewer(node):
+                        offenders.append(
+                            f"{relative_path}:{node.lineno}:_clock:outside-ReplayViewer"
+                        )
+                    continue
+                scope = enclosing_function(node)
+                if (
+                    called_name == "authority_atomic"
+                    and (relative_path, scope) in bound_time_executors
+                ):
+                    received_at = next(
+                        (keyword.value for keyword in node.keywords if keyword.arg == "received_at"),
+                        None,
+                    )
+                    if received_at is None or ast.unparse(received_at) != "bound.received_at":
+                        offenders.append(
+                            f"{relative_path}:{node.lineno}:authority_atomic:missing-bound-time"
+                        )
+                    else:
+                        positive_calls.add((relative_path, scope))
                     continue
                 forbidden = forbidden_keywords.get(called_name, {"received_at"})
                 for keyword in node.keywords:
@@ -772,6 +837,7 @@ class H100IntakeTextTests(TransactionTestCase):
                         offenders.append(
                             f"{relative_path}:{node.lineno}:{called_name}:{keyword.arg or '**'}"
                         )
+        self.assertEqual(positive_calls, bound_time_executors)
         self.assertEqual(offenders, [])
 
     def test_nw8_ep17_public_opening_refusal_keeps_only_the_intake_binding(self):

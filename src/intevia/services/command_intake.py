@@ -493,6 +493,9 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.RECORD_OFFICE_CONSENT,
         IntakeEntry.SAVE_GATEWAY_DRAFT,
         IntakeEntry.EFFECT_GATEWAY_VERSION,
+        IntakeEntry.FOUND_LIVING_ORGANISM,
+        IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
+        IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
     }
 )
 
@@ -1384,6 +1387,225 @@ def _governance_decision_shape(
     )
 
 
+def _founding_shape(command: object) -> IntakeShape:
+    """Validate founding's material inputs and project them before admission (D §5.5).
+
+    Requires the exact founding command type, canonical request keys, nonempty
+    required texts, valid optional texts and an optional UUID terms version.
+    A stated effective time must be aware. Returns only the submitted material;
+    actor lookup, receipt time and database state are handled by admission.
+    """
+    from src.intevia.services.organism_formation_service import (
+        FoundLivingOrganismCommand,
+        OrganismFormationService,
+    )
+
+    if type(command) is not FoundLivingOrganismCommand:
+        raise TypeError("founding entry requires FoundLivingOrganismCommand")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    name = OrganismFormationService._required_text(command.name, "name")
+    purpose = OrganismFormationService._required_text(command.purpose, "purpose")
+    vision = OrganismFormationService._optional_text(command.vision, "vision")
+    mission = OrganismFormationService._optional_text(command.mission, "mission")
+    values = OrganismFormationService._optional_text(command.values, "values")
+    terms_version_uuid = command.accepted_terms_version_uuid
+    if terms_version_uuid is not None and type(terms_version_uuid) is not UUID:
+        raise TypeError("accepted_terms_version_uuid must be a UUID or None")
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={},
+        command={
+            "name": name,
+            "purpose": purpose,
+            "vision": vision,
+            "mission": mission,
+            "values": values,
+            "accepted_terms_version_uuid": terms_version_uuid,
+            "effective_at": effective_at,
+        },
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _phase_advance_shape(command: object) -> IntakeShape:
+    """Validate and project a phase advance's identifiers and effective time (D §5.5).
+
+    Requires the exact phase-advance command and its canonical keys and UUID
+    identifiers. Validates an optional effective time without reading the
+    clock or database; admission supplies the receipt time and actor binding.
+    """
+    from src.intevia.services.organism_formation_service import PhaseAdvanceCommand
+
+    if type(command) is not PhaseAdvanceCommand:
+        raise TypeError("phase advance entry requires PhaseAdvanceCommand")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    from_phase = _canonical_key(command.from_phase, "from_phase", 24)
+    to_phase = _canonical_key(command.to_phase, "to_phase", 24)
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={
+            "living_organism_uuid": organism_uuid,
+            "from_phase": from_phase,
+            "to_phase": to_phase,
+        },
+        command={"effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _birthing_shape(command: object) -> IntakeShape:
+    """Validate Birthing inputs and its pure offering-choice rule (D §5.5).
+
+    Requires the exact command, canonical keys and identifiers, an aware
+    effective time when one is supplied, and a supported pure choice of
+    offering. It performs no
+    actor or database reads; admission binds the request and receipt time.
+    """
+    from src.intevia.services.organism_formation_service import BirthingCommand
+
+    if type(command) is not BirthingCommand:
+        raise TypeError("Birthing entry requires BirthingCommand")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    if command.offering_choice not in {"FREE", "COMPLIMENTARY_BETA"}:
+        raise ValueError("offering_choice is invalid")
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"living_organism_uuid": organism_uuid},
+        command={
+            "effective_at": effective_at,
+            "offering_choice": command.offering_choice,
+            "policy_text_sha256": command.policy_text_sha256,
+            "policy_version": command.policy_version,
+        },
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _governance_act_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    """Validate and project adoption or Circle creation without database reads (D §5.5).
+
+    Requires the exact command type for the active entry, canonical request
+    keys and UUIDs, a positive adoption version, an arrangement body that
+    passes the pure dictionary and serialisation check (_validate_body), and a
+    valid optional effective time. Semantic arrangement validation, actor
+    resolution and current governance state are left to admission and
+    execution.
+    """
+    from src.intevia.services.organism_governance_service import (
+        AdoptGoverningInstrumentCommand,
+        CreateGovernanceCircleCommand,
+        _timestamp,
+        _validate_body,
+    )
+
+    if entry is IntakeEntry.ADOPT_GOVERNING_INSTRUMENT:
+        if type(command) is not AdoptGoverningInstrumentCommand:
+            raise TypeError(
+                "adoption entry requires AdoptGoverningInstrumentCommand"
+            )
+        if type(command.version) is not int or command.version < 1:
+            raise ValueError("version must be a positive integer")
+        target = {
+            "living_organism_uuid": _canonical_uuid(
+                command.living_organism_uuid, "living_organism_uuid"
+            ),
+            "rule_uuid": _canonical_uuid(command.rule_uuid, "rule_uuid"),
+            "version": command.version,
+            "body": _validate_body(command.body),
+            "effective_from": _timestamp(command.effective_from, "effective_from"),
+        }
+    elif entry is IntakeEntry.CREATE_GOVERNANCE_CIRCLE:
+        if type(command) is not CreateGovernanceCircleCommand:
+            raise TypeError(
+                "Circle creation entry requires CreateGovernanceCircleCommand"
+            )
+        target = {
+            "living_organism_uuid": _canonical_uuid(
+                command.living_organism_uuid, "living_organism_uuid"
+            )
+        }
+    else:
+        raise ValueError("entry is not a governance act")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    effective_at = (
+        None
+        if command.effective_at is None
+        else _validate_timestamp(command.effective_at, "effective_at")
+    )
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target=target,
+        command={"effective_at": effective_at},
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
+def _beta_election_shape(command: object) -> IntakeShape:
+    """Validate beta's election request and policy formatting (D §5.5).
+
+    Requires the exact command, canonical request keys and LO UUID, an aware
+    occurrence time, positive policy version and lowercase SHA-256 policy
+    digest. The pure projection performs no actor or database reads.
+    """
+    from src.intevia.services.organism_entitlement_service import EntitlementElectionCommand
+
+    if type(command) is not EntitlementElectionCommand:
+        raise TypeError("beta election entry requires EntitlementElectionCommand")
+    request_reference = _canonical_key(command.request_reference, "request_reference", 128)
+    idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
+    organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
+    if type(command.policy_version) is not int or command.policy_version <= 0:
+        raise ValueError("policy_version must be a positive integer")
+    if (
+        type(command.policy_text_sha256) is not str
+        or len(command.policy_text_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in command.policy_text_sha256)
+    ):
+        raise ValueError("policy_text_sha256 must be a lowercase SHA-256 digest")
+    return IntakeShape(
+        idempotency_key=idempotency_key,
+        request_reference=request_reference,
+        target={"living_organism_uuid": organism_uuid},
+        command={
+            "occurred_at": occurred_at,
+            "policy_version": command.policy_version,
+            "policy_text_sha256": command.policy_text_sha256,
+        },
+        omitted=(),
+        target_organism_id=None,
+    )
+
+
 def _founding_seating_shape(command: object) -> IntakeShape:
     """Project a compound founding-seating command without performing reads."""
     from src.intevia.services.organism_governance_service import (
@@ -1438,6 +1660,19 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
         return _governance_decision_shape(entry, command)
     if entry is IntakeEntry.SEAT_GOVERNANCE_CIRCLE:
         return _founding_seating_shape(command)
+    if entry is IntakeEntry.FOUND_LIVING_ORGANISM:
+        return _founding_shape(command)
+    if entry is IntakeEntry.ADVANCE_PHASE:
+        return _phase_advance_shape(command)
+    if entry is IntakeEntry.BIRTHING:
+        return _birthing_shape(command)
+    if entry in {
+        IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
+        IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
+    }:
+        return _governance_act_shape(entry, command)
+    if entry is IntakeEntry.ACTIVATE_BETA:
+        return _beta_election_shape(command)
     if entry in APPLICATION_SHAPES:
         return application_shape(entry, command)
     if entry in {IntakeEntry.OPEN_MEMBERSHIP, IntakeEntry.TRANSITION_MEMBERSHIP}:

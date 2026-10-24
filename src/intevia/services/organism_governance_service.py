@@ -62,6 +62,7 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import (
     ReplayResultType,
     ReplayViewer,
+    _intake_tail,
     _authority_request,
     _canonical_key,
     _canonical_uuid,
@@ -80,6 +81,14 @@ _RULE_SUBTYPE = "ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION"
 _CIRCLE_SUBTYPE = OrganismAction.CREATE_DORMANT_CIRCLE.value
 _FOUNDING_SEATING_SUBTYPE = OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
 _SEAT_REQUEST_SUBTYPE = OrganismAction.REQUEST_GOVERNANCE_SEAT.value
+_TAIL_NOT_WRITTEN = (
+    "INTEVIA kept a record that this request was received at {received_at}; "
+    "sent again unchanged, it is answered as of that time."
+)
+_TAIL_REFUSAL_RECORDED = (
+    "INTEVIA recorded this refusal and that the request was received at {received_at}; "
+    "nothing else was saved."
+)
 _SEAT_ID = re.compile(r"[a-z0-9_-]{1,64}\Z")
 _ROUTE_BODIES = {
     "ELECTION": {"body:LO_MEMBERSHIP"},
@@ -88,10 +97,6 @@ _ROUTE_BODIES = {
     "EX_OFFICIO": set(),
 }
 _AUTHORED_REFUSALS = {
-    S015AuthorityRefusalCode.SBG_SECOND_GOVERNANCE_CIRCLE: (
-        "No Circle was created and nothing changed. This LO already has its GOVERNANCE Circle, and "
-        "an LO has exactly one. Use the existing Circle; switching GOVERNANCE back on uses the same one."
-    ),
     S015AuthorityRefusalCode.E_NOT_APPLICANT: (
         "Nobody was seated and nothing changed. Before the LO is born, a person is seated only on "
         "their own request, through the founding route, and this request was made by someone else. "
@@ -146,6 +151,8 @@ def _authored_refusal_message(
     *,
     act: str,
     organism_state: str | None = None,
+    opening_end: str = " and nothing changed.",
+    tail: str = "",
 ) -> str | None:
     """Return an authored refusal explanation, or None if none is selected.
 
@@ -154,52 +161,60 @@ def _authored_refusal_message(
     For SBG_LO_NOT_ACTIVE, organism_state must be DORMANT or CLOSED to select
     the corresponding explanation.
 
-    After the explicit branches, look up the code in _AUTHORED_REFUSALS,
-    which currently supplies SBG_SECOND_GOVERNANCE_CIRCLE and E_NOT_APPLICANT
-    (the founding decision on another person's seat request).
+    After the explicit branches, look up E_NOT_APPLICANT in
+    _AUTHORED_REFUSALS (the founding decision on another person's seat
+    request).
 
-    SB-G build commission v1.0, section 10.2, requires refusal explanations
-    to state what happened and that nothing changed, why, what can be done,
-    and how to avoid it. This helper selects text; it does not validate that
-    the text satisfies that form.
+    SB-G build commission v1.0, section 10.2, requires refusal explanations to
+    state what happened and that nothing changed, why, what can be done, and
+    how to avoid it. Under the request intake, an explanation raised after
+    admission does not say that nothing changed: it states the route's actual
+    persisted effects, including the intake's record of the request's receipt,
+    through a tail the caller supplies. This helper selects text; it does not
+    validate that the text satisfies that form. opening_end replaces
+    " and nothing changed." in every branch that has it, and a non-empty tail
+    is appended after one space; the defaults give the text unchanged.
     """
+    def with_tail(message: str) -> str:
+        return f"{message} {tail}" if tail else message
+
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE:
         condition = detail or "the arrangement does not meet its requirements"
-        return (
-            f"{act} and nothing changed. The arrangement is incomplete: {condition}. "
+        return with_tail(
+            f"{act}{opening_end} The arrangement is incomplete: {condition}. "
             "Adopt a corrected version, then try again. Every seat needs an admission route "
             "and a deciding body that matches it."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
         condition = detail or "a field this release does not record"
-        return (
-            f"No arrangement was adopted and nothing changed. The arrangement includes {condition}, "
+        return with_tail(
+            f"No arrangement was adopted{opening_end} The arrangement includes {condition}, "
             "which this release cannot yet act on. Leave it out for now; it can be added by a later "
             "version once the release that acts on it is delivered."
         )
     if code is S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED:
         seat_id = detail or "the requested seat"
-        return (
-            f"No arrangement was adopted and nothing changed. Seat {seat_id} names an eligibility "
+        return with_tail(
+            f"No arrangement was adopted{opening_end} Seat {seat_id} names an eligibility "
             "rule this release cannot check; it can check only \"an active member of the LO\". Use "
             "that rule for now; other eligibility rules arrive with the slices that can check them."
         )
     if code is S015AuthorityRefusalCode.SBG_VERSION_DROPS_HELD_SEAT:
         seat_id = detail or "the requested seat"
-        return (
-            f"No arrangement was adopted and nothing changed. The new version leaves out seat {seat_id}, "
+        return with_tail(
+            f"No arrangement was adopted{opening_end} The new version leaves out seat {seat_id}, "
             "which someone currently holds. Keep that seat in the new version; a held seat cannot be "
             "removed by a new version in this release."
         )
     if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
-        return (
-            f"{act} and nothing changed. GOVERNANCE is on for this LO, so it needs its GOVERNANCE "
+        return with_tail(
+            f"{act}{opening_end} GOVERNANCE is on for this LO, so it needs its GOVERNANCE "
             "Circle first. Create the LO's GOVERNANCE Circle, then try again. Creating the Circle "
             "early in formation avoids this."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING:
-        return (
-            f"{act} and nothing changed. GOVERNANCE needs an adopted arrangement saying which seats "
+        return with_tail(
+            f"{act}{opening_end} GOVERNANCE needs an adopted arrangement saying which seats "
             "exist, how each is filled and who decides, and this LO has none in effect. Adopt an "
             "arrangement, then try again. Adopting it before creating the Circle avoids this."
         )
@@ -210,8 +225,8 @@ def _authored_refusal_message(
             if act == "The LO was not born"
             else "Adopt a version with a seat the LO Coordinators appoint, then try again."
         )
-        return (
-            f"{act} and nothing changed. Nobody holds a GOVERNANCE seat yet, and no seat in the "
+        return with_tail(
+            f"{act}{opening_end} Nobody holds a GOVERNANCE seat yet, and no seat in the "
             "arrangement can be filled in this release: election seats wait for elections, co-option "
             "seats wait for an active GOVERNANCE, and ex officio seats are not yet available. "
             f"{timing} The arrangement you adopted stays recorded and in effect."
@@ -222,33 +237,33 @@ def _authored_refusal_message(
             if organism_state == "DORMANT"
             else "A closed LO is not reopened."
         )
-        return (
-            f"{act} and nothing changed. This LO is {organism_state.lower()}, so it can take no new "
+        return with_tail(
+            f"{act}{opening_end} This LO is {organism_state.lower()}, so it can take no new "
             f"act of this kind. {remedy} Nothing about the LO's records changed."
         )
     if code is S015AuthorityRefusalCode.SBG_SEAT_ABSENT:
         seat_id = detail or "the requested seat"
-        return (
-            f"{act} and nothing changed. The arrangement in effect has no seat {seat_id}. "
+        return with_tail(
+            f"{act}{opening_end} The arrangement in effect has no seat {seat_id}. "
             "Choose a seat the arrangement in effect names. Check the seats in the current version "
             "before requesting one."
         )
     if code is S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED:
         seat_id = detail or "the requested seat"
-        return (
-            f"Nobody was seated and nothing changed. Seat {seat_id} is already held at that time, and "
+        return with_tail(
+            f"Nobody was seated{opening_end} Seat {seat_id} is already held at that time, and "
             "each seat holds one person. Choose a vacant seat, or wait until this seat becomes vacant. "
             "A seat becomes vacant when its holder's seat ends."
         )
     if code is S015AuthorityRefusalCode.SBG_ALREADY_SEATED:
-        return (
-            "Nobody was seated and nothing changed. This person already holds a seat in this GOVERNANCE "
+        return with_tail(
+            f"Nobody was seated{opening_end} This person already holds a seat in this GOVERNANCE "
             "Circle, and a person holds at most one. No further action is needed for this person."
         )
     if code is S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE:
         condition = detail or "is not an active member at that time"
-        return (
-            "Nobody was seated and nothing changed. A GOVERNANCE seat needs an active member of this LO "
+        return with_tail(
+            f"Nobody was seated{opening_end} A GOVERNANCE seat needs an active member of this LO "
             f"at that time, and this person {condition}. Seat someone who is an active member of this LO."
         )
     if code is S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE:
@@ -256,14 +271,19 @@ def _authored_refusal_message(
         route = detail or "the founding route, which ends when the LO is born"
         if ":" in route:
             seat_id, route = route.split(":", 1)
-        return (
-            f"Nobody was seated and nothing changed. Seat {seat_id} is filled by {route}. Use a seat "
+        return with_tail(
+            f"Nobody was seated{opening_end} Seat {seat_id} is filled by {route}. Use a seat "
             "the LO Coordinators appoint, or wait for that route."
         )
     if code is S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED:
-        return (
-            "Nobody was seated and nothing changed. GOVERNANCE is switched off for this LO, so no one "
+        return with_tail(
+            f"Nobody was seated{opening_end} GOVERNANCE is switched off for this LO, so no one "
             "can be seated. Switch GOVERNANCE on through the LO's settings first, if the LO chooses to."
+        )
+    if code is S015AuthorityRefusalCode.SBG_SECOND_GOVERNANCE_CIRCLE:
+        return with_tail(
+            f"No Circle was created{opening_end} This LO already has its GOVERNANCE Circle, and "
+            "an LO has exactly one. Use the existing Circle; switching GOVERNANCE back on uses the same one."
         )
     return _AUTHORED_REFUSALS.get(code)
 
@@ -274,6 +294,8 @@ def _controlled_integrity_refusal(
     *,
     detail: str | None,
     act: str,
+    opening_end: str = " and nothing changed.",
+    tail: str = "",
 ) -> SBGGovernanceRefused | None:
     """Build a controlled database refusal exception, or return None.
 
@@ -304,7 +326,13 @@ def _controlled_integrity_refusal(
         if code is S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE
         else detail
     )
-    message = _authored_refusal_message(code, message_detail, act=act)
+    message = _authored_refusal_message(
+        code,
+        message_detail,
+        act=act,
+        opening_end=opening_end,
+        tail=tail,
+    )
     if message is None:
         return None
     return SBGGovernanceRefused(code, message)
@@ -765,9 +793,10 @@ class SBGGovernanceUnavailable(Exception):
 class OrganismGovernanceService:
     """Governed service for SB-G arrangements, Circle creation and seating.
 
-    Requires an injected clock for received_at. Uses an S015Authority bound
-    to the same database alias, constructing one with
-    ProductionApplicationAuthorityProvider when no authority is supplied.
+    Requires an injected clock. Adoption and Circle creation take received_at
+    from the durable intake; seat routes read it from the clock until
+    PKT-CLK-3's chunk CLK3-3. When a route serves a result through ReplayViewer,
+    it reads the injected clock for the present-time access check.
 
     The founding-seating method and the decision method's no-request branch
     compose separately authorised request and admission-decision stages
@@ -811,7 +840,9 @@ class OrganismGovernanceService:
 
         Permission row: ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION.
         Writes the rule version, LO adoption event and receipt within the
-        command's authority_atomic scope.
+        command's authority_atomic scope. Admits the request through the
+        durable intake first (shape, actor, binding); the act then runs as of
+        the intake's received_at.
 
         For an omitted recorded seat participation, raises
         SBG_VERSION_DROPS_HELD_SEAT when no ending is known or its effective_at
@@ -822,6 +853,36 @@ class OrganismGovernanceService:
         SBG_ARRANGEMENT_INCOMPLETE, SBG_ARRANGEMENT_FIELD_UNSUPPORTED and
         SBG_ELIGIBILITY_UNSUPPORTED. Other IntegrityError exceptions propagate.
         Malformed inputs may raise TypeError or ValueError.
+        """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.ADOPT_GOVERNING_INSTRUMENT
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("ADOPT_GOVERNING_INSTRUMENT is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_adopt_governing_instrument(command, bound)
+
+    def _execute_adopt_governing_instrument(
+        self,
+        command: AdoptGoverningInstrumentCommand,
+        bound: BoundRequest,
+    ) -> GovernanceActResult:
+        """Execute admitted adoption using the bound request (D §5.4).
+
+        Canonicalizes identifiers, validates the version, arrangement body and
+        effective time, then invokes the adoption transaction with the bound
+        receipt time. Translates only IntegrityErrors whose primary message
+        matches an adoption guard refusal; unrelated database errors propagate.
         """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         rule_uuid = _canonical_uuid(command.rule_uuid, "rule_uuid")
@@ -841,6 +902,7 @@ class OrganismGovernanceService:
                     "body": body,
                     "effective_from": effective_from,
                 },
+                bound=bound,
             )
         except IntegrityError as exc:
             refusal = _controlled_integrity_refusal(
@@ -848,6 +910,8 @@ class OrganismGovernanceService:
                 _ADOPTION_GUARD_REFUSAL_CODES,
                 detail=None,
                 act="No arrangement was adopted",
+                opening_end="; no governed record was written.",
+                tail=_intake_tail(_TAIL_NOT_WRITTEN, bound.received_at),
             )
             if refusal is None:
                 raise
@@ -870,6 +934,38 @@ class OrganismGovernanceService:
         GOVERNANCE is re-enabled (SB-G build commission v1.0, section 6).
         If authority qualification denies with SBG_SECOND_GOVERNANCE_CIRCLE,
         this service supplies the authored explanation.
+        Admits the request through the durable intake first (shape, actor,
+        binding); the act then runs as of the intake's received_at.
+        """
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.CREATE_GOVERNANCE_CIRCLE
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("CREATE_GOVERNANCE_CIRCLE is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_create_governance_circle(command, bound)
+
+    def _execute_create_governance_circle(
+        self,
+        command: CreateGovernanceCircleCommand,
+        bound: BoundRequest,
+    ) -> GovernanceActResult:
+        """Execute admitted Circle creation using the bound request (D §5.4).
+
+        Canonicalizes the target LO identifier and invokes the act transaction
+        with the bound receipt time. The transaction derives a stable Circle
+        identifier, qualifies authority, writes the dormant Circle and event,
+        and stores a receipt; a denied act preserves the refusal decision.
         """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         result = self._execute(
@@ -878,6 +974,7 @@ class OrganismGovernanceService:
             subtype=_CIRCLE_SUBTYPE,
             organism_uuid=organism_uuid,
             payload={"kind": "GOVERNANCE"},
+            bound=bound,
         )
         if not isinstance(result, GovernanceActResult):
             raise RuntimeError("Circle creation returned a seating result")
@@ -2009,27 +2106,28 @@ class OrganismGovernanceService:
         subtype: str,
         organism_uuid: UUID,
         payload: dict[str, object],
+        bound: BoundRequest,
     ) -> GovernanceActResult:
         """Run an adoption or a GOVERNANCE Circle creation in one authority_atomic scope.
 
-        Before the scope: validates the keys and times as the seat request does;
-        for a Circle creation, derives circle_uuid from the LO and idempotency key;
-        fingerprints the act (schema sbg-governance-act-v1).
+        Before the scope, shape validation and admission are performed by the
+        public caller; the seat routes acquire the same intake boundary when
+        CLK3-3 activates them. For Circle creation, derives circle_uuid from
+        the LO and idempotency key; fingerprints the act (schema
+        sbg-governance-act-v1).
 
-        Within the scope, in this order: locks the actor and takes the command
-        mutex; returns a replayed result when a matching receipt exists (_replay);
-        locks the registered LO and its row and the actor's membership context;
-        builds the authority target, replacing the adoption's source placeholder
-        with _source_at; asks the authority to qualify the act, rewording a denial
-        where an authored text exists (using the LO's folded state for
-        SBG_LO_NOT_ACTIVE). After qualification it validates an adoption
-        (_validate_adoption), writes the act (_write_adoption or _write_circle),
-        then writes a receipt citing the authority decision and the result's
-        lineage reference. Raises ValueError for any other action.
+        Within the scope, locks the actor, verifies the bound request and takes
+        the command mutex; returns a matching replay; locks the registered LO
+        and actor membership context; builds the authority target, including
+        the adoption source at the bound time; then qualifies the act and
+        rewords a denial when an authored explanation exists. After
+        qualification it validates adoption, writes the adoption or Circle,
+        and stores a receipt citing the authority decision and result lineage.
+        Raises ValueError for any other action.
         """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-        received_at = _timestamp(self._clock(), "received_at")
+        received_at = bound.received_at
         effective_at = (
             received_at if command.effective_at is None
             else _timestamp(command.effective_at, "effective_at")
@@ -2049,12 +2147,23 @@ class OrganismGovernanceService:
             "request_reference": request_reference,
             "schema": "sbg-governance-act-v1",
         })).hexdigest()
-        with authority_atomic(self._alias):
+        with authority_atomic(self._alias, received_at=bound.received_at):
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
                 unavailable=SBGGovernanceUnavailable,
             )
+            entry = {
+                OrganismAction.ADOPT_GOVERNING_INSTRUMENT: (
+                    IntakeEntry.ADOPT_GOVERNING_INSTRUMENT
+                ),
+                OrganismAction.CREATE_DORMANT_CIRCLE: (
+                    IntakeEntry.CREATE_GOVERNANCE_CIRCLE
+                ),
+            }.get(action)
+            if entry is None:
+                raise ValueError(f"unsupported governance act: {action.value}")
+            bound.verify(command, actor, entry, self._alias)
             acquire_organism_command_mutex(
                 database_alias=self._alias,
                 actor_identity_id=actor.identity_id,
@@ -2125,6 +2234,24 @@ class OrganismGovernanceService:
                     None,
                     act=act,
                     organism_state=organism_state,
+                    opening_end=(
+                        "."
+                        if action
+                        in {
+                            OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+                            OrganismAction.CREATE_DORMANT_CIRCLE,
+                        }
+                        else " and nothing changed."
+                    ),
+                    tail=(
+                        _intake_tail(_TAIL_REFUSAL_RECORDED, received_at)
+                        if action
+                        in {
+                            OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
+                            OrganismAction.CREATE_DORMANT_CIRCLE,
+                        }
+                        else ""
+                    ),
                 )
                 if message is None:
                     raise
@@ -2141,6 +2268,8 @@ class OrganismGovernanceService:
                     payload=payload,
                     effective_at=effective_at,
                     received_at=received_at,
+                    opening_end="; no governed record was written.",
+                    tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
                 )
                 result = self._write_adoption(
                     organism=organism,
@@ -2225,6 +2354,7 @@ class OrganismGovernanceService:
             raise ValueError("completed receipt does not match request") from exc
         replay_result = serve_replay(
             result,
+            # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
             viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             result_type=ReplayResultType(type(result), self._alias),
         )
@@ -2782,6 +2912,8 @@ class OrganismGovernanceService:
         payload: dict[str, object],
         effective_at: datetime,
         received_at: datetime,
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> None:
         """Validate an arrangement adoption before it is written.
 
@@ -2800,6 +2932,8 @@ class OrganismGovernanceService:
             self._refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "the arrangement cannot take effect before it is adopted",
+                opening_end=opening_end,
+                tail=tail,
             )
         current = GovernedRule.objects.using(self._alias).filter(
             scope_kind="LIVING_ORGANISM",
@@ -2812,6 +2946,8 @@ class OrganismGovernanceService:
             self._refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "the arrangement does not continue this LO's existing version sequence",
+                opening_end=opening_end,
+                tail=tail,
             )
         if current is None and GovernedRule.objects.using(self._alias).filter(
             scope_kind="LIVING_ORGANISM",
@@ -2822,8 +2958,14 @@ class OrganismGovernanceService:
             self._refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "this LO already has a GOVERNANCE arrangement",
+                opening_end=opening_end,
+                tail=tail,
             )
-        self._validate_arrangement_body(body)
+        self._validate_arrangement_body(
+            body,
+            opening_end=opening_end,
+            tail=tail,
+        )
         if current is not None:
             self._refuse_if_held_seat_dropped(
                 organism=organism,
@@ -2831,11 +2973,16 @@ class OrganismGovernanceService:
                 next_body=body,
                 effective_from=effective_from,
                 received_at=received_at,
+                opening_end=opening_end,
+                tail=tail,
             )
 
     def _validate_arrangement_body(
         self,
         body: dict[str, object],
+        *,
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> None:
         """Validate a GOVERNANCE_CONSTITUTION body at adoption.
 
@@ -2870,18 +3017,26 @@ class OrganismGovernanceService:
         admission route is available in this release.
 
         Source: SB-G build commission v1.0, section 5.2.1, as amended by
-        amendment 2.
+        amendment 2; D §5.4.
         """
+        def refuse(code: S015AuthorityRefusalCode, detail: str | None) -> NoReturn:
+            self._refuse(
+                code,
+                detail,
+                opening_end=opening_end,
+                tail=tail,
+            )
+
         required_fields = {"seats", "officer_roles", "election_schedule"}
         if type(body) is not dict or not required_fields.issubset(body):
-            self._refuse(
+            refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "it has no seats"
                 if type(body) is not dict or "seats" not in body
                 else "a required arrangement field is missing",
             )
         if set(body) - required_fields:
-            self._refuse(
+            refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
                 "a field this release does not record",
             )
@@ -2890,7 +3045,7 @@ class OrganismGovernanceService:
             or body["officer_roles"]
             or body["election_schedule"] is not None
         ):
-            self._refuse(
+            refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
                 "officer roles"
                 if type(body["officer_roles"]) is not list or body["officer_roles"]
@@ -2898,7 +3053,7 @@ class OrganismGovernanceService:
             )
         seats = body["seats"]
         if type(seats) is not list or not seats:
-            self._refuse(
+            refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "it has no seats",
             )
@@ -2910,13 +3065,13 @@ class OrganismGovernanceService:
                     seat_ids.append(seat_id)
         if len(seat_ids) != len(set(seat_ids)):
             duplicate = next(seat_id for seat_id in seat_ids if seat_ids.count(seat_id) > 1)
-            self._refuse(
+            refuse(
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 f"seat {duplicate} is duplicated",
             )
         for seat in seats:
             if type(seat) is not dict:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     "a seat is incomplete",
                 )
@@ -2930,22 +3085,22 @@ class OrganismGovernanceService:
                 "effective_from",
             }
             if not required_seat_fields.issubset(seat):
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     "a seat is incomplete",
                 )
             if set(seat) - required_seat_fields:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
                     "a field this release does not record",
                 )
             if seat.get("term") is not None:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
                     f"a term for seat {seat.get('seat_id')}",
                 )
             if seat.get("vacancy_rule") != "BY_SEAT_ROUTE":
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
                     "a vacancy rule other than filling the seat by its own route",
                 )
@@ -2953,22 +3108,22 @@ class OrganismGovernanceService:
             route = seat.get("admission_route")
             deciding_body = seat.get("deciding_body")
             if type(seat_id) is not str or _SEAT_ID.fullmatch(seat_id) is None:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     "a seat has no valid seat identifier",
                 )
             if type(seat.get("eligibility")) is not str or seat["eligibility"] != "LO_MEMBER":
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
                     seat_id,
                 )
             if type(route) is not str or type(deciding_body) is not str:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     "seat route and deciding body must be strings",
                 )
             if route not in _ROUTE_BODIES:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id} names no admission route",
                 )
@@ -2990,7 +3145,7 @@ class OrganismGovernanceService:
                     if deciding_body is None
                     else f"seat {seat_id}'s deciding body does not match its admission route"
                 )
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     condition,
                 )
@@ -3002,7 +3157,7 @@ class OrganismGovernanceService:
                     effective_from,
                 ) is None
             ):
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id} has no valid start date",
                 )
@@ -3011,12 +3166,12 @@ class OrganismGovernanceService:
                     effective_from.replace("Z", "+00:00")
                 )
             except ValueError:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id} has no valid start date",
                 )
             if seat_effective_from.tzinfo is None or seat_effective_from.utcoffset() is None:
-                self._refuse(
+                refuse(
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id} has no valid start date",
                 )
@@ -3029,6 +3184,8 @@ class OrganismGovernanceService:
         next_body: dict[str, object],
         effective_from: datetime,
         received_at: datetime,
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> None:
         """Refuse a new arrangement version that leaves out a seat still held.
 
@@ -3059,6 +3216,8 @@ class OrganismGovernanceService:
                 self._refuse(
                     S015AuthorityRefusalCode.SBG_VERSION_DROPS_HELD_SEAT,
                     participation.seat_id,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
 
     @staticmethod
@@ -3068,6 +3227,8 @@ class OrganismGovernanceService:
         *,
         act: str = "No arrangement was adopted",
         organism_state: str | None = None,
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> NoReturn:
         """Raise SBGGovernanceRefused using the selected authored explanation.
 
@@ -3082,6 +3243,8 @@ class OrganismGovernanceService:
             detail,
             act=act,
             organism_state=organism_state,
+            opening_end=opening_end,
+            tail=tail,
         )
         if message is None:
             raise RuntimeError(f"no authored message for governance refusal {code.value}")

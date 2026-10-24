@@ -15,6 +15,7 @@ from core.models import (
     AuthorityBasis,
     AuthorityDecision,
     AuthorityPrincipal,
+    CommandIntake,
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
     Identity,
@@ -68,6 +69,7 @@ from src.intevia.services.organism_authority import (
     _founding_authority_principal,
     authority_target_fingerprint,
     canonical_json_bytes,
+    canonical_timestamp,
 )
 from src.intevia.services.identity_service import IdentityLifecycleService
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
@@ -1398,6 +1400,23 @@ class SB1FoundingServiceTests(TransactionTestCase):
                 counts[table] = cursor.fetchone()[0]
         return counts
 
+    def _intake_count(self):
+        return CommandIntake.objects.count()
+
+    def _founding_intake(self, founder, tag):
+        return CommandIntake.objects.get(
+            actor_id=founder.pk,
+            action=OrganismAction.FOUND_LIVING_ORGANISM.value,
+            idempotency_key=f"sb1:found:key:{tag}",
+        )
+
+    def _assert_found_refused_decision(self, founder, tag):
+        decision = AuthorityDecision.objects.get(
+            actor=founder,
+            request_reference=f"sb1:found:{tag}",
+        )
+        self.assertEqual(decision.outcome, "REFUSED")
+
     def _prepare_founder(
         self, tag, *, with_principal=True, registered=True
     ):
@@ -1476,6 +1495,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
             tag, registered=False
         )
         before = self._founding_counts()
+        intake_before = self._intake_count()
         service = OrganismFormationService(
             clock=database_now,
             authority=S015Authority(provider=ProductionApplicationAuthorityProvider()),
@@ -1485,14 +1505,18 @@ class SB1FoundingServiceTests(TransactionTestCase):
             service.found_living_organism(self._command(founder, terms, tag))
 
         self.assertIs(refused.exception.refusal_code, S015AuthorityRefusalCode.E_NOT_REGISTERED)
+        intake = self._founding_intake(founder, tag)
         self.assertEqual(
             str(refused.exception),
-            "The LO was not founded and nothing was saved. Founding is a registered Learner's act, "
+            "The LO was not founded. Founding is a registered Learner's act, "
             "and no governed registration is effective for your account at this time. "
             "(Development: the setup command's account has no registration; provision through "
-            "the supported path.)",
+            "the supported path.) INTEVIA recorded this refusal and that the request was received at "
+            f"{canonical_timestamp(intake.received_at)}; nothing else was saved.",
         )
         self.assertEqual(self._founding_counts(), before)
+        self.assertEqual(self._intake_count(), intake_before + 1)
+        self._assert_found_refused_decision(founder, tag)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_inactive_account_with_authored_message(self):
@@ -1509,17 +1533,21 @@ class SB1FoundingServiceTests(TransactionTestCase):
             correlation_id=uuid4(),
         )
         before = self._founding_counts()
+        intake_before = self._intake_count()
 
         with self.assertRaises(S015AuthorityDenied) as refused:
             service.found_living_organism(self._command(founder, terms, tag))
 
         self.assertIs(refused.exception.refusal_code, S015AuthorityRefusalCode.E_IDENTITY_INACTIVE)
+        intake = self._founding_intake(founder, tag)
         self.assertEqual(
             str(refused.exception),
-            "The LO was not founded and nothing was saved: your account is not active at the time "
-            "of this act.",
+            "The LO was not founded: your account is not active at the time of this act. "
+            f"No governed record was written; INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(intake.received_at)}; sent again unchanged, it is answered as of that time.",
         )
         self.assertEqual(self._founding_counts(), before)
+        self.assertEqual(self._intake_count(), intake_before + 1)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_absent_and_unpermitted_founding_principal(self):
@@ -1889,6 +1917,7 @@ class SB1FoundingServiceTests(TransactionTestCase):
         prepared = self._prepare_founder(tag)
         founder, terms, service = prepared[0], prepared[1], prepared[3]
         before_missing_name = self._founding_counts()
+        intake_before_missing_name = self._intake_count()
         with self.assertRaises(S015AuthorityDenied) as missing_name:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-no-name", name="")
@@ -1902,7 +1931,9 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "The LO was not founded and nothing was saved: a name (and a purpose) is required.",
         )
         self.assertEqual(self._founding_counts(), before_missing_name)
+        self.assertEqual(self._intake_count(), intake_before_missing_name)
         before_missing_purpose = self._founding_counts()
+        intake_before_missing_purpose = self._intake_count()
         with self.assertRaises(S015AuthorityDenied) as missing_purpose:
             service.found_living_organism(
                 self._command(founder, terms, f"{tag}-no-purpose", purpose="")
@@ -1916,6 +1947,28 @@ class SB1FoundingServiceTests(TransactionTestCase):
             "The LO was not founded and nothing was saved: a name (and a purpose) is required.",
         )
         self.assertEqual(self._founding_counts(), before_missing_purpose)
+        self.assertEqual(self._intake_count(), intake_before_missing_purpose)
+
+        empty_slug_tag = f"{tag}-empty-slug"
+        before_empty_slug = self._founding_counts()
+        intake_before_empty_slug = self._intake_count()
+        with self.assertRaises(S015AuthorityDenied) as empty_slug:
+            service.found_living_organism(
+                self._command(founder, terms, empty_slug_tag, name="!!!")
+            )
+        self.assertIs(
+            empty_slug.exception.refusal_code,
+            S015AuthorityRefusalCode.LO_NAME_REQUIRED,
+        )
+        empty_slug_intake = self._founding_intake(founder, empty_slug_tag)
+        self.assertEqual(
+            str(empty_slug.exception),
+            "The LO was not founded: a name (and a purpose) is required. "
+            "No governed record was written; INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(empty_slug_intake.received_at)}; sent again unchanged, it is answered as of that time.",
+        )
+        self.assertEqual(self._intake_count(), intake_before_empty_slug + 1)
+        self.assertEqual(self._founding_counts(), before_empty_slug)
 
         _expect_service_success(
             self,
@@ -1925,43 +1978,55 @@ class SB1FoundingServiceTests(TransactionTestCase):
             ),
         )
         before_duplicate = self._founding_counts()
+        intake_before_duplicate = self._intake_count()
+        duplicate_tag = f"{tag}-duplicate"
         with self.assertRaises(S015AuthorityDenied) as duplicate:
             service.found_living_organism(
-                self._command(founder, terms, f"{tag}-duplicate")
+                self._command(founder, terms, duplicate_tag)
             )
         self.assertIs(
             duplicate.exception.refusal_code,
             S015AuthorityRefusalCode.LO_NAME_UNAVAILABLE,
         )
+        duplicate_intake = self._founding_intake(founder, duplicate_tag)
         self.assertEqual(
             str(duplicate.exception),
-            "The LO was not founded and nothing was saved: that name is already taken by another LO. "
-            "Choose a different name.",
+            "The LO was not founded: that name is already taken by another LO. Choose a different name. "
+            "No governed record was written; INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(duplicate_intake.received_at)}; sent again unchanged, it is answered as of that time.",
         )
         self.assertEqual(self._founding_counts(), before_duplicate)
+        self.assertEqual(self._intake_count(), intake_before_duplicate + 1)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
-    def test_found_service_refuses_missing_and_superseded_terms_without_writes(self):
+    def test_found_service_refuses_missing_and_superseded_terms_without_founding_writes(self):
         tag = fresh()
         founder, terms, *prepared = self._prepare_founder(tag)
         service = prepared[1]
         before_missing = self._founding_counts()
+        intake_before_missing = self._intake_count()
+        missing_tag = f"{tag}-missing"
 
         with self.assertRaises(S015AuthorityDenied) as missing:
             service.found_living_organism(
-                self._command(founder, terms, f"{tag}-missing", accepted=False)
+                self._command(founder, terms, missing_tag, accepted=False)
             )
         self.assertIs(
             missing.exception.refusal_code,
             S015AuthorityRefusalCode.FOUNDING_TERMS_NOT_ACCEPTED,
         )
+        missing_intake = self._founding_intake(founder, missing_tag)
         self.assertEqual(
             str(missing.exception),
-            "The LO was not founded and nothing was saved. INTEVIA records which platform-terms "
+            "The LO was not founded. INTEVIA records which platform-terms "
             "version every founder accepts, and no acceptance of the version in force was received. "
-            "Read the terms shown and confirm them, then found again.",
+            "Read the terms shown and confirm them, then found again. INTEVIA recorded this refusal "
+            "and that the request was received at "
+            f"{canonical_timestamp(missing_intake.received_at)}; nothing else was saved.",
         )
         self.assertEqual(self._founding_counts(), before_missing)
+        self.assertEqual(self._intake_count(), intake_before_missing + 1)
+        self._assert_found_refused_decision(founder, missing_tag)
 
         newer_body = f"Superseding fixture terms for {tag}."
         PlatformTermsVersion.objects.create(
@@ -1976,20 +2041,27 @@ class SB1FoundingServiceTests(TransactionTestCase):
             supersedes=terms,
         )
         before_superseded = self._founding_counts()
+        intake_before_superseded = self._intake_count()
+        superseded_tag = f"{tag}-superseded"
         with self.assertRaises(S015AuthorityDenied) as superseded:
             service.found_living_organism(
-                self._command(founder, terms, f"{tag}-superseded")
+                self._command(founder, terms, superseded_tag)
             )
         self.assertIs(
             superseded.exception.refusal_code,
             S015AuthorityRefusalCode.FOUNDING_TERMS_VERSION_SUPERSEDED,
         )
+        superseded_intake = self._founding_intake(founder, superseded_tag)
         self.assertEqual(
             str(superseded.exception),
-            "The LO was not founded and nothing was saved. The terms version you accepted is no "
-            "longer the version in force. Reload to see the current terms and confirm them.",
+            "The LO was not founded. The terms version you accepted is no longer the version in force. "
+            "Reload to see the current terms and confirm them. INTEVIA recorded this refusal and that "
+            "the request was received at "
+            f"{canonical_timestamp(superseded_intake.received_at)}; nothing else was saved.",
         )
         self.assertEqual(self._founding_counts(), before_superseded)
+        self.assertEqual(self._intake_count(), intake_before_superseded + 1)
+        self._assert_found_refused_decision(founder, superseded_tag)
 
     @override_settings(INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED=True)
     def test_found_service_refuses_fixture_terms_on_non_disposable_database_name(self):

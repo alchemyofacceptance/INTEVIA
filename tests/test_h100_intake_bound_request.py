@@ -719,6 +719,51 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             actor=actor_ref,
         )
         commands = _command_set(self.applicant.credential)
+        from src.intevia.services.organism_formation_service import (
+            FoundLivingOrganismCommand,
+        )
+        from src.intevia.services.organism_governance_service import (
+            AdoptGoverningInstrumentCommand,
+            CreateGovernanceCircleCommand,
+            OrganismGovernanceService,
+        )
+        from tests.sbg_route_support import governance_arrangement_body
+
+        founding_command = FoundLivingOrganismCommand(
+            credential=self.route.founder.credential,
+            name="Bound parent founding",
+            purpose="A commissioned purpose for bound-parent verification.",
+            vision="A commissioned vision.",
+            mission="A commissioned mission.",
+            values="Commissioned values.",
+            request_reference="h100:bound:founding",
+            idempotency_key="h100:bound:founding:key",
+            accepted_terms_version_uuid=self.route.terms.terms_version_uuid,
+        )
+        effective_from = route_test_now(self.route)
+        adoption_command = AdoptGoverningInstrumentCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            rule_uuid=uuid4(),
+            version=1,
+            body=governance_arrangement_body(effective_from=effective_from),
+            effective_from=effective_from,
+            request_reference="h100:bound:adoption",
+            idempotency_key="h100:bound:adoption:key",
+        )
+        circle_command = CreateGovernanceCircleCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            request_reference="h100:bound:circle",
+            idempotency_key="h100:bound:circle:key",
+        )
+        commands.update(
+            {
+                IntakeEntry.FOUND_LIVING_ORGANISM: founding_command,
+                IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: adoption_command,
+                IntakeEntry.CREATE_GOVERNANCE_CIRCLE: circle_command,
+            }
+        )
         commands[IntakeEntry.CLAIM_APPLICATION] = replace(
             commands[IntakeEntry.CLAIM_APPLICATION],
             credential=self.route.founder.credential,
@@ -737,13 +782,20 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.CLAIM_APPLICATION: self.route.founder,
             IntakeEntry.REASSIGN_APPLICATION: self.route.founder,
             IntakeEntry.DECIDE_APPLICATION: self.route.founder,
+            IntakeEntry.FOUND_LIVING_ORGANISM: self.route.founder,
+            IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: self.route.founder,
+            IntakeEntry.CREATE_GOVERNANCE_CIRCLE: self.route.founder,
         }
+        governance = OrganismGovernanceService(clock=database_now)
         executor_by_entry = {
             IntakeEntry.SUBMIT_APPLICATION: self.service._execute_submit_application,
             IntakeEntry.WITHDRAW_APPLICATION: self.service._execute_withdraw_application,
             IntakeEntry.CLAIM_APPLICATION: self.service._execute_claim_application,
             IntakeEntry.REASSIGN_APPLICATION: self.service._execute_reassign_application,
             IntakeEntry.DECIDE_APPLICATION: self.service._execute_decide_application,
+            IntakeEntry.FOUND_LIVING_ORGANISM: self.route.formation_service._execute_found_living_organism,
+            IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: governance._execute_adopt_governing_instrument,
+            IntakeEntry.CREATE_GOVERNANCE_CIRCLE: governance._execute_create_governance_circle,
         }
         before = self._counts()
         for entry in executor_by_entry:
@@ -774,3 +826,64 @@ class BoundRequestDatabaseTests(TransactionTestCase):
         command = self._submission(key_suffix="extra-argument")
         with self.assertRaises(TypeError):
             self.service.submit_application(command, object())
+        from src.intevia.services.organism_formation_service import (
+            FoundLivingOrganismCommand,
+        )
+        from src.intevia.services.organism_governance_service import (
+            AdoptGoverningInstrumentCommand,
+            CreateGovernanceCircleCommand,
+            OrganismGovernanceService,
+        )
+        from tests.sbg_route_support import governance_arrangement_body
+
+        governance = OrganismGovernanceService(clock=database_now)
+        effective_at = route_test_now(self.route)
+        commands = (
+            (
+                self.route.formation_service.found_living_organism,
+                IntakeEntry.FOUND_LIVING_ORGANISM,
+                FoundLivingOrganismCommand(
+                    credential=self.route.founder.credential,
+                    name="Bound keyword founding",
+                    purpose="A purpose for the public bound-keyword check.",
+                    request_reference="h100:bound-kw:founding",
+                    idempotency_key="h100:bound-kw:founding:key",
+                    accepted_terms_version_uuid=self.route.terms.terms_version_uuid,
+                ),
+            ),
+            (
+                governance.adopt_governing_instrument,
+                IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
+                AdoptGoverningInstrumentCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    rule_uuid=uuid4(),
+                    version=1,
+                    body=governance_arrangement_body(effective_from=effective_at),
+                    effective_from=effective_at,
+                    request_reference="h100:bound-kw:adoption",
+                    idempotency_key="h100:bound-kw:adoption:key",
+                ),
+            ),
+            (
+                governance.create_governance_circle,
+                IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
+                CreateGovernanceCircleCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    request_reference="h100:bound-kw:circle",
+                    idempotency_key="h100:bound-kw:circle:key",
+                ),
+            ),
+        )
+        for public_entry, entry, family_command in commands:
+            with self.subTest(method=public_entry.__name__):
+                with self.assertRaises(TypeError):
+                    public_entry(family_command, bound=object())
+                self.assertFalse(
+                    CommandIntake.objects.filter(
+                        actor_id=self.route.founder.pk,
+                        action=entry.value,
+                        idempotency_key=family_command.idempotency_key,
+                    ).exists()
+                )
