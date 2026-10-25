@@ -46,6 +46,7 @@ from core.models import (
     SE_ENTITLEMENT_DIMENSIONS,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.command_intake import BoundRequest, IntakeEntry
 from src.intevia.services.organism_application_authority import _effective_version
 from src.intevia.services.organism_authority import (
     S015Authority,
@@ -63,6 +64,7 @@ from src.intevia.services.organism_command_support import (
     _canonical_key,
     _canonical_uuid,
     _command_payload,
+    _intake_tail,
     _lock_actor,
     _lock_actor_membership_context,
     _lock_registered_organism,
@@ -486,12 +488,22 @@ class S015EntitlementRefused(Exception):
     def __init__(
         self,
         refusal_code: S015AuthorityRefusalCode,
+        *,
+        received_at: datetime | None = None,
     ) -> None:
         """Use the authored message for refusal_code and keep the code.
 
-        A code with no authored message raises KeyError.
+        With received_at, the receipt time of an admitted request, a code
+        restated for the intake (SE_ALREADY_BETA, SE_OFFER_CLOSED; Stop 3
+        R-ENT-04, -05) takes its restated text naming that time; every
+        other call keeps the authored text. A code with no authored
+        message raises KeyError.
         """
-        super().__init__(_ENTITLEMENT_REFUSAL_MESSAGES[refusal_code])
+        message = _ENTITLEMENT_REFUSAL_MESSAGES[refusal_code]
+        template = (
+            None if received_at is None else _ADMITTED_REFUSAL_TEMPLATES.get(refusal_code)
+        )
+        super().__init__(message if template is None else _intake_tail(template, received_at))
         self.refusal_code = refusal_code
 
 
@@ -572,6 +584,41 @@ _ENTITLEMENT_GUARD_FAILURE_TEXT = (
     "system recording fault, not a refusal of your organisation’s eligibility "
     "for beta access. The fault needs to be checked before you retry."
 )
+# Restated texts of the admitted beta opt-in (Stop 3 R-ENT-04, -05, -06, -08;
+# PKT-CLK-3 CLK3-2). {received_at} is the intake's receipt time, rendered by
+# _intake_tail; the authored texts above stay for every other caller.
+_TAIL_NOT_WRITTEN = (
+    "INTEVIA kept a record that this request was received at {received_at}; sent again "
+    "unchanged, it is answered as of that time."
+)
+_TAIL_REFUSAL_RECORDED = (
+    "INTEVIA recorded this refusal and that the request was received at {received_at}; "
+    "nothing else was saved."
+)
+_ADMITTED_REFUSAL_TEMPLATES = {
+    S015AuthorityRefusalCode.SE_ALREADY_BETA: (
+        "Your organism already has beta access; no governed record was written. "
+        + _TAIL_NOT_WRITTEN
+    ),
+    S015AuthorityRefusalCode.SE_OFFER_CLOSED: (
+        "The beta offer is no longer open to your organism; no governed record was "
+        "written. The free offering continues, and subscriptions will be offered when "
+        "they become available. " + _TAIL_NOT_WRITTEN
+    ),
+}
+_OPT_IN_NEEDS_CQ_ADMITTED_TEMPLATE = (
+    "Under your organism's rules, opting into beta access after Birthing requires "
+    "collective approval through CQ. That process is not yet available for your "
+    "organism. " + _TAIL_REFUSAL_RECORDED
+)
+_ENTITLEMENT_GUARD_FAILURE_ADMITTED_TEMPLATE = (
+    "Beta access could not be activated because the system could not confirm "
+    "the required record of the grant. This attempt wrote no governed record; "
+    "INTEVIA kept a record that this request was received at {received_at}, and the "
+    "same request can be sent again once the fault is checked; it is judged as of that "
+    "time. This is a system recording fault, not a refusal of your organisation’s "
+    "eligibility for beta access."
+)
 
 
 def _is_entitlement_granted_guard_failure(error: IntegrityError) -> bool:
@@ -591,10 +638,19 @@ def _is_entitlement_granted_guard_failure(error: IntegrityError) -> bool:
 
 
 @contextmanager
-def _entitlement_guard_atomic(alias: str) -> Iterator[None]:
-    """Translate the identified deferred guard failure after rollback."""
+def _entitlement_guard_atomic(
+    alias: str,
+    *,
+    received_at: datetime | None = None,
+) -> Iterator[None]:
+    """Translate the identified deferred guard failure after rollback.
+
+    With received_at (the bound request's receipt time), the text is the
+    restated recording-fault text naming that time (Stop 3 R-ENT-08); the
+    command's writes are rolled back and the intake record stands.
+    """
     try:
-        with authority_atomic(alias):
+        with authority_atomic(alias, received_at=received_at):
             yield
     except IntegrityError as exc:
         if (
@@ -603,6 +659,8 @@ def _entitlement_guard_atomic(alias: str) -> Iterator[None]:
         ):
             raise S015EntitlementTechnicalFailure(
                 _ENTITLEMENT_GUARD_FAILURE_TEXT
+                if received_at is None
+                else _intake_tail(_ENTITLEMENT_GUARD_FAILURE_ADMITTED_TEMPLATE, received_at)
             ) from exc
         raise
 
@@ -1754,13 +1812,49 @@ class OrganismEntitlementService(_OrganismCommandService):
         return event, entitlement
 
     def activate_beta(self, command: EntitlementElectionCommand) -> EntitlementElectionResult:
-        """Process a later opt-in from FREE to COMPLIMENTARY_BETA.
+        """Admit a beta election and run it at its bound time (D §5.1).
 
-        Raise S015EntitlementTechnicalFailure if already inside an atomic
-        block; otherwise enter authority_atomic. Lock the actor, validate the
-        request fields, take received_at from the injected service clock, and
-        validate the accepted policy. Set effective_at to that received_at, not to
-        the command's occurred_at. The clock is supplied by the caller.
+        Refuse, before any statement, a call made inside an atomic block,
+        in manual transaction mode or on a connection with a pending
+        rollback; otherwise admit the request through the intake (one
+        committed row: key, content fingerprint, server-assigned
+        received_at), then enter authority_atomic with the bound request
+        in _execute_activate_beta (Stop 3 R-ENT-10).
+        """
+        if connections[self._alias].in_atomic_block:
+            raise S015EntitlementTechnicalFailure(
+                "entitlement opt-in cannot run inside an existing transaction"
+            )
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.ACTIVATE_BETA
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("ACTIVATE_BETA is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_activate_beta(command, bound)
+
+    def _execute_activate_beta(
+        self,
+        command: EntitlementElectionCommand,
+        bound: BoundRequest,
+    ) -> EntitlementElectionResult:
+        """Execute a bound beta opt-in (D §5.3).
+
+        activate_beta has admitted the request; enter authority_atomic with
+        the bound request. Lock the actor, verify the bound request, validate
+        the request fields, take received_at from the binding (on a retry, the
+        original receipt time), and validate the accepted policy. Set
+        effective_at to that received_at, not to the command's occurred_at.
 
         Build the fingerprint and acquire the actor/action/idempotency mutex.
         Ask the base replay path for a matching completed result, with a
@@ -1803,22 +1897,20 @@ class OrganismEntitlementService(_OrganismCommandService):
         This new-election path is within the same authority_atomic block.
         If the database's commit-time guard refuses the transaction because
         the new entitlement row has no first GRANTED event
-        (SE_ENTITLEMENT_WITHOUT_GRANT, SQLSTATE 23000), the whole attempt is
-        rolled back and S015EntitlementTechnicalFailure is raised with the
-        authored recording-fault text (PKT-SE-K3). Other commit-time
+        (SE_ENTITLEMENT_WITHOUT_GRANT, SQLSTATE 23000), the command's
+        transaction is rolled back — the intake record of the request stands —
+        and S015EntitlementTechnicalFailure is raised with the authored
+        recording-fault text (PKT-SE-K3). Other commit-time
         IntegrityErrors propagate unchanged. Existing PKT-LOCK-1 contention
         translation remains in force for its named OperationalError SQLSTATEs.
         """
-        if connections[self._alias].in_atomic_block:
-            raise S015EntitlementTechnicalFailure(
-                "entitlement opt-in cannot run inside an existing transaction"
-            )
-        with _entitlement_guard_atomic(self._alias):
+        with _entitlement_guard_atomic(self._alias, received_at=bound.received_at):
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
                 unavailable=S015EntitlementUnavailable,
             )
+            bound.verify(command, actor, IntakeEntry.ACTIVATE_BETA, self._alias)
             organism_uuid = _canonical_uuid(
                 command.living_organism_uuid,
                 "living_organism_uuid",
@@ -1834,7 +1926,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                 120,
             )
             occurred_at = _validate_timestamp(command.occurred_at, "occurred_at")
-            received_at = _validate_timestamp(self._clock(), "received_at")
+            received_at = _validate_timestamp(bound.received_at, "received_at")
             effective_at = received_at
             policy = self._policy_record(
                 policy_version=command.policy_version,
@@ -1870,6 +1962,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                 request_reference=request_reference,
                 payload_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
+                # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
                 viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             )
             if replay is not None:
@@ -1893,7 +1986,10 @@ class OrganismEntitlementService(_OrganismCommandService):
                 unavailable=S015EntitlementUnavailable,
             )
             if self._beta_grant_collision(organism, received_at) is not None:
-                raise S015EntitlementRefused(S015AuthorityRefusalCode.SE_ALREADY_BETA)
+                raise S015EntitlementRefused(
+                    S015AuthorityRefusalCode.SE_ALREADY_BETA,
+                    received_at=bound.received_at,
+                )
             paid_transition = self._availability_source.paid_availability_transition_reference(
                 organism_uuid,
                 effective_at,
@@ -1904,7 +2000,10 @@ class OrganismEntitlementService(_OrganismCommandService):
                     raise S015EntitlementTechnicalFailure(
                         "the paid-availability source returned an invalid reference"
                     )
-                raise S015EntitlementRefused(S015AuthorityRefusalCode.SE_OFFER_CLOSED)
+                raise S015EntitlementRefused(
+                    S015AuthorityRefusalCode.SE_OFFER_CLOSED,
+                    received_at=bound.received_at,
+                )
             previous_election = self._effective_election(
                 organism,
                 effective_at,
@@ -1973,9 +2072,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                     S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ,
                 }:
                     raise S015AuthorityDenied(
-                        _ENTITLEMENT_REFUSAL_MESSAGES[
-                            S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ
-                        ],
+                        _intake_tail(_OPT_IN_NEEDS_CQ_ADMITTED_TEMPLATE, bound.received_at),
                         refusal_code=S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ,
                         disclosed_refusal_code=exc.disclosed_refusal_code,
                         authority_decision_reference=exc.authority_decision_reference,
@@ -2018,6 +2115,7 @@ class OrganismEntitlementService(_OrganismCommandService):
                 idempotency_key=idempotency_key,
                 payload_fingerprint=fingerprint,
                 result=result,
+                received_at=bound.received_at,
             )
 
     def refuse_person_grant(self) -> None:
@@ -2276,7 +2374,8 @@ class OrganismEntitlementService(_OrganismCommandService):
                 constraint_name="se_entitlement_beta_one_per_lo_uniq",
             ):
                 raise S015EntitlementRefused(
-                    S015AuthorityRefusalCode.SE_ALREADY_BETA
+                    S015AuthorityRefusalCode.SE_ALREADY_BETA,
+                    received_at=received_at,
                 ) from exc
             raise
         rule_reference = f"rule:{rule.rule_uuid}@{rule.version}"

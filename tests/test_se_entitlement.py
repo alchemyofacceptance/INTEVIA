@@ -1213,6 +1213,29 @@ def _birthing_command(route, *, offering_choice, suffix):
     )
 
 
+def _beta_intake(route, command):
+    """The opt-in's one intake row, read back by (actor, entry, key) (PKT-CLK-3 CLK3-2)."""
+    from core.models import CommandIntake
+
+    return CommandIntake.objects.get(
+        actor=route.founder,
+        entry="ACTIVATE_BETA",
+        idempotency_key=command.idempotency_key,
+    )
+
+
+def _intake_count():
+    from core.models import CommandIntake
+
+    return CommandIntake.objects.count()
+
+
+def _received(intake):
+    from src.intevia.services.organism_authority import canonical_timestamp
+
+    return canonical_timestamp(intake.received_at)
+
+
 def _election_command(route, *, suffix):
     policy_version, policy_text_sha256 = ensure_test_policy_text()
     return EntitlementElectionCommand(
@@ -1462,15 +1485,20 @@ class SEEntitlementCommandTests(TransactionTestCase):
             ),
         )
         second_command = _election_command(route, suffix="e2-second-opt-in")
+        intake_before = _intake_count()
         with self.assertRaises(S015EntitlementRefused) as already_beta:
             closed_offer_service.activate_beta(second_command)
+        self.assertEqual(_intake_count(), intake_before + 1)
         self.assertIs(
             already_beta.exception.refusal_code,
             S015AuthorityRefusalCode.SE_ALREADY_BETA,
         )
         self.assertEqual(
             str(already_beta.exception),
-            "Your organism already has beta access. Nothing has changed.",
+            "Your organism already has beta access; no governed record was written. "
+            "INTEVIA kept a record that this request was received at "
+            f"{_received(_beta_intake(route, second_command))}; sent again unchanged, "
+            "it is answered as of that time.",
         )
         self.assertEqual(_entitlement_domain_counts(), after_first)
         self.assertEqual(_table_state(AuthorityDecision), after_first_decisions)
@@ -1480,8 +1508,8 @@ class SEEntitlementCommandTests(TransactionTestCase):
             ).exists()
         )
 
-    def test_w_se_e6_closed_offer_fixture_uses_t7_and_persists_nothing(self):
-        """The T-7 fixture closes the offer without persisting an opt-in."""
+    def test_w_se_e6_closed_offer_fixture_uses_t7_and_persists_no_governed_record(self):
+        """The T-7 fixture closes the offer without persisting an opt-in; after activation the intake record of the refused request persists."""
         route = prepare_route()
         with disclose_authority_refusal_code():
             route.birthing_service.birth_living_organism(
@@ -1497,17 +1525,21 @@ class SEEntitlementCommandTests(TransactionTestCase):
         before = _entitlement_domain_counts()
         before_decisions = _table_state(AuthorityDecision)
         closed_command = _election_command(route, suffix="e6-closed")
+        intake_before = _intake_count()
         with self.assertRaises(S015EntitlementRefused) as offer_closed:
             service.activate_beta(closed_command)
+        self.assertEqual(_intake_count(), intake_before + 1)
         self.assertIs(
             offer_closed.exception.refusal_code,
             S015AuthorityRefusalCode.SE_OFFER_CLOSED,
         )
         self.assertEqual(
             str(offer_closed.exception),
-            "The beta offer is no longer open to your organism. Nothing has changed. "
-            "The free offering continues, and subscriptions will be offered when they "
-            "become available.",
+            "The beta offer is no longer open to your organism; no governed record was "
+            "written. The free offering continues, and subscriptions will be offered when "
+            "they become available. INTEVIA kept a record that this request was received at "
+            f"{_received(_beta_intake(route, closed_command))}; sent again unchanged, it is "
+            "answered as of that time.",
         )
         self.assertEqual(_entitlement_domain_counts(), before)
         self.assertEqual(_table_state(AuthorityDecision), before_decisions)
@@ -1517,8 +1549,8 @@ class SEEntitlementCommandTests(TransactionTestCase):
             ).exists()
         )
 
-    def test_w_se_e3_post_birthing_opt_in_requires_cq_and_persists_nothing(self):
-        """A post-Birthing opt-in requiring CQ is refused before SE writes."""
+    def test_w_se_e3_post_birthing_opt_in_requires_cq_and_writes_no_entitlement(self):
+        """A post-Birthing opt-in requiring CQ is refused before SE writes; exactly one REFUSED decision persists and, after activation, the intake record of the request."""
         route = prepare_route()
         with disclose_authority_refusal_code():
             route.birthing_service.birth_living_organism(
@@ -1591,9 +1623,11 @@ class SEEntitlementCommandTests(TransactionTestCase):
         before = _se_record_counts()
         before_decisions = _table_state(AuthorityDecision)
         election_command = _election_command(route, suffix="e3-cq")
+        intake_before = _intake_count()
         with self.assertRaises(S015AuthorityDenied) as collective_approval:
             with disclose_authority_refusal_code():
                 service.activate_beta(election_command)
+        self.assertEqual(_intake_count(), intake_before + 1)
         self.assertIs(
             collective_approval.exception.refusal_code,
             S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ,
@@ -1606,7 +1640,9 @@ class SEEntitlementCommandTests(TransactionTestCase):
             str(collective_approval.exception),
             "Under your organism's rules, opting into beta access after Birthing "
             "requires collective approval through CQ. That process is not yet "
-            "available for your organism. Nothing has changed.",
+            "available for your organism. INTEVIA recorded this refusal and that the "
+            f"request was received at {_received(_beta_intake(route, election_command))}; "
+            "nothing else was saved.",
         )
         recorded_decisions = AuthorityDecision.objects.filter(
             request_reference=election_command.request_reference

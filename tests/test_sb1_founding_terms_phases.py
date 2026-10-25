@@ -1030,6 +1030,23 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         )
 
     @staticmethod
+    def _phase_intake(actor, command):
+        """The command's one intake row, read back by (actor, entry, key) (PKT-CLK-3 CLK3-2)."""
+        return CommandIntake.objects.get(
+            actor=actor,
+            entry="ADVANCE_PHASE",
+            idempotency_key=command.idempotency_key,
+        )
+
+    @staticmethod
+    def _recorded(text, intake):
+        """Stop 3's class A tail, with the intake's persisted receipt time."""
+        return (
+            f"{text} INTEVIA recorded this refusal and that the request was received at "
+            f"{canonical_timestamp(intake.received_at)}; nothing else was saved."
+        )
+
+    @staticmethod
     def _phase_at(organism, state_at, known_at):
         event = LivingOrganismEvent.objects.filter(
             living_organism=organism,
@@ -1109,20 +1126,28 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         self.assertEqual(AuthorityDecision.objects.count(), decision_count_before)
         self.assertEqual(OrganismCommandReceipt.objects.count(), receipt_count_before)
 
+        # PKT-CLK-3 CLK3-2 (L-5): the command leaves effective_at unstated, so it defaults to
+        # the intake's received_at T, read back by key; a stated reading taken before the call
+        # would now precede T and make the event retrospective.
         command = self._command(
             actor,
             organism,
             f"{ids['lo']}-conceiving-germinating",
             "CONCEIVING",
             "GERMINATING",
-            effective_at,
+            None,
         )
+        intake_before = CommandIntake.objects.count()
         result = _expect_service_success(
             self,
             "CONCEIVING->GERMINATING PHASE_ADVANCE",
             lambda: service.advance_phase(command),
         )
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        effective_at = self._phase_intake(actor, command).received_at
         event = LivingOrganismEvent.objects.get(event_uuid=result.event_uuid)
+        self.assertEqual(event.received_at, effective_at)
+        self.assertEqual(event.effective_at, effective_at)
         decision = AuthorityDecision.objects.get(decision_reference=result.authority_decision_reference)
         receipt = OrganismCommandReceipt.objects.get(
             actor=actor,
@@ -1199,7 +1224,7 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
                 f"{ids['lo']}-conceiving-germinating",
                 "CONCEIVING",
                 "BIRTHING",
-                effective_at,
+                None,
             ))
 
     def test_out_of_order_and_missing_content_refuse_without_phase_events(self):
@@ -1208,29 +1233,41 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
         before = LivingOrganismEvent.objects.filter(living_organism=organism).count()
 
         effective_at = _database_clock() - timedelta(minutes=1)
+        out_of_order_command = self._command(
+            actor, organism, f"{ids['lo']}-out-of-order", "GERMINATING", "BIRTHING", effective_at,
+        )
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015AuthorityDenied) as out_of_order:
-            service.advance_phase(self._command(
-                actor, organism, f"{ids['lo']}-out-of-order", "GERMINATING", "BIRTHING", effective_at,
-            ))
+            service.advance_phase(out_of_order_command)
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
         self.assertIs(out_of_order.exception.refusal_code, S015AuthorityRefusalCode.PHASE_OUT_OF_ORDER)
         self.assertEqual(
             str(out_of_order.exception),
-            "The phase was not advanced and nothing changed: this LO is in Conceiving, and phases "
-            "advance one at a time (Conceiving → Germinating → Birthing → Birthed). "
-            "Advance to Germinating first.",
+            self._recorded(
+                "The phase was not advanced: this LO is in Conceiving, and phases "
+                "advance one at a time (Conceiving → Germinating → Birthing → Birthed). "
+                "Advance to Germinating first.",
+                self._phase_intake(actor, out_of_order_command),
+            ),
         )
         self.assertEqual(LivingOrganismEvent.objects.filter(living_organism=organism).count(), before)
 
         effective_at = _database_clock() - timedelta(minutes=1)
+        missing_content_command = self._command(
+            actor, organism, f"{ids['lo']}-missing-content", "CONCEIVING", "GERMINATING", effective_at,
+        )
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015AuthorityDenied) as missing_content:
-            service.advance_phase(self._command(
-                actor, organism, f"{ids['lo']}-missing-content", "CONCEIVING", "GERMINATING", effective_at,
-            ))
+            service.advance_phase(missing_content_command)
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
         self.assertIs(missing_content.exception.refusal_code, S015AuthorityRefusalCode.PHASE_CONDITION_UNMET)
         self.assertEqual(
             str(missing_content.exception),
-            "The phase was not advanced and nothing changed: moving to Germinating needs founding "
-            "content (name and purpose), which is not yet established. Establish it, then advance.",
+            self._recorded(
+                "The phase was not advanced: moving to Germinating needs founding "
+                "content (name and purpose), which is not yet established. Establish it, then advance.",
+                self._phase_intake(actor, missing_content_command),
+            ),
         )
         self.assertEqual(LivingOrganismEvent.objects.filter(living_organism=organism).count(), before)
         self.assertFalse(OrganismCommandReceipt.objects.filter(actor=actor).exists())
@@ -1248,16 +1285,21 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
             _database_clock() - timedelta(minutes=1),
         )
         event_count = LivingOrganismEvent.objects.filter(living_organism=organism).count()
+        intake_before = CommandIntake.objects.count()
 
         with self.assertRaises(S015AuthorityDenied) as refused:
             service.advance_phase(command)
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
         self.assertIs(refused.exception.refusal_code, S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED)
         self.assertEqual(
             str(refused.exception),
-            "This LO's electorate has more than one member, so this act needs the electorate's "
-            "qualified decision, and no CQ route is operative in this release (S3-IL-CQ). "
-            "Nothing changed. This is a known limit, not a refusal of the act; it lifts when "
-            "DISCUSSION's CQ is delivered.",
+            self._recorded(
+                "This LO's electorate has more than one member, so this act needs the electorate's "
+                "qualified decision, and no CQ route is operative in this release (S3-IL-CQ). "
+                "This is a known limit, not a refusal of the act; it lifts when "
+                "DISCUSSION's CQ is delivered.",
+                self._phase_intake(actor, command),
+            ),
         )
         self.assertEqual(LivingOrganismEvent.objects.filter(living_organism=organism).count(), event_count)
         self.assertFalse(
@@ -1318,42 +1360,48 @@ class SB1PhaseAdvanceServiceTests(TransactionTestCase):
                         )
                         outcome = ("QUALIFIED", None, before + 1)
                     else:
+                        intake_before = CommandIntake.objects.count()
                         with self.assertRaises(S015AuthorityDenied) as refused:
                             service.advance_phase(command)
+                        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
                         self.assertIs(refused.exception.refusal_code, expected_code)
+                        intake = self._phase_intake(actor, command)
                         if governance is None:
-                            self.assertEqual(
-                                str(refused.exception),
-                                "The phase was not advanced and nothing changed. Moving to Birthing "
+                            refusal_text = (
+                                "The phase was not advanced. Moving to Birthing "
                                 "needs this LO's GOVERNANCE choice to be confirmed in its governance "
                                 "configuration, and no choice is recorded yet: the offered default "
                                 "is not a confirmation. Confirm Yes or No by effecting the governance "
-                                "configuration, then advance.",
+                                "configuration, then advance."
                             )
                         elif governance is True:
-                            self.assertEqual(
-                                str(refused.exception),
-                                "The phase was not advanced and nothing changed. GOVERNANCE is on "
+                            refusal_text = (
+                                "The phase was not advanced. GOVERNANCE is on "
                                 "for this LO, so it needs its GOVERNANCE Circle first. Create the "
-                                "LO's GOVERNANCE Circle, then try again. Creating the Circle early "
-                                "in formation avoids this.",
+                                "LO's GOVERNANCE Circle, then make a new request to advance the "
+                                "phase. Creating the Circle early in formation avoids this."
                             )
                         elif governance is NO_GOVERNANCE_CONFIGURATION:
-                            self.assertEqual(
-                                str(refused.exception),
-                                "The phase was not advanced and nothing changed: moving to Birthing "
+                            refusal_text = (
+                                "The phase was not advanced: moving to Birthing "
                                 "needs an effective governance configuration, which is not yet "
-                                "established. Establish it, then advance.",
+                                "established. Establish it, then advance."
                             )
+                        self.assertEqual(
+                            str(refused.exception),
+                            self._recorded(refusal_text, intake),
+                        )
                         known_at = _database_clock()
                         self.assertEqual(
                             self._phase_at(organism, command.effective_at, known_at),
                             "GERMINATING",
                         )
+                        # The refusal text names this call's own receipt time; the two
+                        # sub-cases are compared on the text before that tail.
                         outcome = (
                             "REFUSED",
                             refused.exception.refusal_code,
-                            str(refused.exception),
+                            refusal_text,
                             LivingOrganismEvent.objects.filter(
                                 living_organism=organism,
                                 action="PHASE_ADVANCE",

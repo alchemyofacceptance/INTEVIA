@@ -45,12 +45,13 @@ from src.intevia.services.organism_authority import (
     S015PostFoundingAuthorityRequest,
     S015PostFoundingAuthorityResponse,
 )
-from src.intevia.services.organism_command_support import command_mutex_key
+from src.intevia.services.organism_command_support import canonical_timestamp, command_mutex_key
 from src.intevia.services.organism_entitlement_service import (
     EntitlementElectionCommand,
     OrganismEntitlementService,
     S015AuthorityRefusalCode,
     S015EntitlementRefused,
+    S015EntitlementUnavailable,
 )
 from src.intevia.services.organism_command_support import (
     S015CommandContended,
@@ -328,6 +329,47 @@ def _lock1_state_snapshot() -> dict[str, tuple[object, ...]]:
             snapshots[model._meta.db_table] = tuple(
                 row[0] for row in cursor.fetchall()
             )
+    return snapshots
+
+
+def _lo_beta_domain_snapshot(organism: LivingOrganism) -> dict[str, tuple[object, ...]]:
+    """Return one LO's beta-domain rows, whole, for a zero-domain-write comparison.
+
+    PKT-CLK-3 CLK3-2 (L-4): the LO row, its settings versions, its LO events, its
+    entitlement anchors and their entitlement events. Scoped to the LO, so an Identity
+    deactivation committed beside the command is not counted as a domain write.
+    """
+    entitlement_table = connection.ops.quote_name(OrganismEntitlement._meta.db_table)
+    entitlement_pk = connection.ops.quote_name(OrganismEntitlement._meta.pk.column)
+    entitlement_lo = connection.ops.quote_name(
+        OrganismEntitlement._meta.get_field("living_organism").column
+    )
+
+    def column(model, field_name):
+        return connection.ops.quote_name(model._meta.get_field(field_name).column)
+
+    scoped = (
+        (LivingOrganism, f"row_data.{connection.ops.quote_name(LivingOrganism._meta.pk.column)} = %s"),
+        (LOApplicationSettingsVersion, f"row_data.{column(LOApplicationSettingsVersion, 'living_organism')} = %s"),
+        (LivingOrganismEvent, f"row_data.{column(LivingOrganismEvent, 'living_organism')} = %s"),
+        (OrganismEntitlement, f"row_data.{entitlement_lo} = %s"),
+        (
+            OrganismEntitlementEvent,
+            f"row_data.{column(OrganismEntitlementEvent, 'entitlement')} IN "
+            f"(SELECT {entitlement_pk} FROM public.{entitlement_table} WHERE {entitlement_lo} = %s)",
+        ),
+    )
+    snapshots = {}
+    with connection.cursor() as cursor:
+        for model, condition in scoped:
+            table_name = connection.ops.quote_name(model._meta.db_table)
+            pk_column = connection.ops.quote_name(model._meta.pk.column)
+            cursor.execute(
+                f"SELECT to_jsonb(row_data) FROM public.{table_name} AS row_data "
+                f"WHERE {condition} ORDER BY row_data.{pk_column}",
+                [organism.pk],
+            )
+            snapshots[model._meta.db_table] = tuple(row[0] for row in cursor.fetchall())
     return snapshots
 
 
@@ -1039,6 +1081,9 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                 if not allow_deactivation_commit.wait(timeout=20):
                     raise AssertionError("reverse deactivation commit gate timed out")
 
+        # PKT-CLK-3 CLK3-2 (L-4): the reverse LO's beta-domain rows before either worker.
+        reverse_domain_before = _lo_beta_domain_snapshot(reverse_route.organism)
+        self.assertEqual(len(reverse_domain_before[LivingOrganism._meta.db_table]), 1)
         deactivation_worker = start_worker(hold_completed_deactivation)
         workers = [deactivation_worker]
         try:
@@ -1052,7 +1097,10 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                     cursor,
                     command_worker.pid(),
                     deactivation_worker.pid(),
-                    query_fragment="FOR NO KEY UPDATE",
+                    # PKT-CLK-3 CLK3-2 (L-4): activate_beta now admits first; the intake
+                    # INSERT's foreign-key check on the actor's Identity row waits on the
+                    # deactivation's lock, before the executor's actor lock is reached.
+                    query_fragment="core_commandintake",
                 )
         except BaseException:
             allow_deactivation_commit.set()
@@ -1064,9 +1112,34 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         deactivation_result = deactivation_worker.result(timeout=30)
         command_result = command_worker.result(timeout=30)
         self.assertEqual(deactivation_result, "ok")
-        self.assertIsInstance(command_result, Exception)
+        # The outcome predetermined from the contract: admission commits once the
+        # deactivation has committed (the Identity row still exists), and the
+        # executor's actor lock refuses the deactivated actor; nothing else is written.
+        self.assertIsInstance(command_result, S015EntitlementUnavailable)
+        self.assertEqual(str(command_result), "actor Identity is not active")
         self.assertNotIsInstance(command_result, S015CommandContended)
         self.assertNotEqual(_sqlstate(command_result), "40P01")
+        self.assertEqual(
+            CommandIntake.objects.filter(
+                idempotency_key=reverse_command.idempotency_key,
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            OrganismCommandReceipt.objects.filter(
+                idempotency_key=reverse_command.idempotency_key,
+            ).exists()
+        )
+        self.assertFalse(
+            AuthorityDecision.objects.filter(
+                request_reference=reverse_command.request_reference,
+            ).exists()
+        )
+        # M1 (Advisor v0.2): no beta-domain record of the reverse LO was written.
+        self.assertEqual(
+            _lo_beta_domain_snapshot(reverse_route.organism),
+            reverse_domain_before,
+        )
         self._assert_workers_closed(workers)
 
     def test_w_lock_2a_open_membership_does_not_wait_on_applicants_identity(self):
@@ -1327,8 +1400,10 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             "seat-decision-existing",
         )
         entitlement_service.activate_beta(existing_grant)
-        self.assertFalse(
-            CommandIntake.objects.filter(idempotency_key=existing_grant.idempotency_key).exists()
+        # PKT-CLK-3 CLK3-2: ACTIVATE_BETA is admitted; exactly one intake row per key.
+        self.assertEqual(
+            CommandIntake.objects.filter(idempotency_key=existing_grant.idempotency_key).count(),
+            1,
         )
         second_command = _election_command(
             governance_route.route,
@@ -1409,6 +1484,10 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         self.assertIsInstance(second_result, Exception)
         self.assertNotEqual(_sqlstate(decision_result), "40P01")
         self.assertNotEqual(_sqlstate(second_result), "40P01")
+        self.assertEqual(
+            CommandIntake.objects.filter(idempotency_key=second_command.idempotency_key).count(),
+            1,
+        )
         self._assert_workers_closed(workers)
 
     def test_w_lock_t1_deadlock_translates_only_after_command_rollback(self):
@@ -1420,6 +1499,7 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             clock=database_now,
         )
         command = _election_command(route, route.founder, "t1")
+        intake_before = CommandIntake.objects.count()
         founder_membership = OrganismMembership.objects.get(
             living_organism=route.organism,
             identity=route.founder,
@@ -1498,11 +1578,21 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
             flush=True,
         )
         self.assertIsInstance(command_result, S015CommandContended)
+        # PKT-CLK-3 CLK3-2 (R-FIX-01): admitted, so the contention names the intake's T.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        intake = CommandIntake.objects.get(
+            actor=route.founder,
+            entry="ACTIVATE_BETA",
+            idempotency_key=command.idempotency_key,
+        )
+        self.assertEqual(command_result.received_at, intake.received_at)
         self.assertEqual(
             str(command_result),
             "Your request could not be completed because it conflicted with another database operation. "
-            "This attempt made no changes. Please wait a moment before trying again. "
-            "If this keeps happening, note the time it occurred; it needs to be checked.",
+            "This attempt wrote no governed record; INTEVIA kept a record that your request was received "
+            f"at {canonical_timestamp(intake.received_at)}. Please wait a moment before sending the same "
+            "request again; it is judged as of that time. If this keeps happening, note the time it "
+            "occurred; it needs to be checked.",
         )
         self.assertEqual(command_result.diagnostic_sqlstate, "40P01")
         self.assertIsInstance(command_result.__cause__, OperationalError)
@@ -1636,11 +1726,25 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         )
         command = _election_command(route, route.founder, "t4")
         before = _lock1_state_snapshot()
+        execute_activate_beta = service._execute_activate_beta
 
-        def command_with_statement_timeout():
+        def execute_with_statement_timeout(*args, **kwargs):
+            # PKT-CLK-3 CLK3-2 (W-LOCK-T4): since G1, activate_beta admits the request
+            # before its executor runs. The 1 ms statement timeout is set at the
+            # executor's entry, after admission has committed, so the unrelated
+            # OperationalError arises inside the executor as this witness intends,
+            # never in admission (attempt 74, 24 Oct 2026: the timeout hit admission).
             with connection.cursor() as cursor:
                 cursor.execute("SET statement_timeout = '1ms'")
-            return service.activate_beta(command)
+            return execute_activate_beta(*args, **kwargs)
+
+        def command_with_statement_timeout():
+            with patch.object(
+                service,
+                "_execute_activate_beta",
+                side_effect=execute_with_statement_timeout,
+            ):
+                return service.activate_beta(command)
 
         worker = start_worker(command_with_statement_timeout)
         result = worker.result(timeout=30)
@@ -1654,6 +1758,10 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
         self.assertNotIsInstance(result, S015CommandContended)
         self.assertEqual(_sqlstate(result), "57014")
         self.assertEqual(before, after)
+        self.assertEqual(
+            CommandIntake.objects.filter(idempotency_key=command.idempotency_key).count(),
+            1,
+        )
         self._assert_workers_closed([worker])
 
     def test_w_lock_t5_nested_outer_transaction_keeps_operational_error_raw(self):

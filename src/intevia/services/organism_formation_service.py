@@ -12,9 +12,8 @@ Also holds the SB-G readiness message helpers that phase advance,
 Birthing and organism_application_service use for GOVERNANCE
 readiness refusals.
 
-Founding admits its request through the durable intake and runs as of
-the intake's received_at; phase advance and Birthing read received_at
-from the injected clock until their own activation.
+Founding, phase advance and Birthing admit their requests through the
+durable intake and run as of the intake's received_at.
 """
 from __future__ import annotations
 
@@ -60,7 +59,7 @@ from src.intevia.services.organism_application_authority import (
     _effective_version,
 )
 from src.intevia.services.organism_authority import (
-    SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE,
+    SB_BIRTHING_ELECTORATE_EMPTY_REASON,
     S015Authority,
     S015AuthorityDenied,
     S015AuthorityRefusalCode,
@@ -97,6 +96,7 @@ from src.intevia.services.organism_formation_authority import (
 from src.intevia.services.organism_membership_service import _insert_membership_transition_row
 from src.intevia.services.organism_entitlement_service import (
     OrganismEntitlementService,
+    _is_constraint_violation,
     _is_entitlement_granted_guard_failure,
 )
 
@@ -113,6 +113,109 @@ _TAIL_REFUSAL_RECORDED = (
     "INTEVIA recorded this refusal and that the request was received at {received_at}; "
     "nothing else was saved."
 )
+# Stop 3 rows of the G1 entries (PKT-CLK-3 CLK3-2): a technical failure after
+# admission (R-FORM-13, -14, -24), the snapshot mismatch (R-FORM-25) and the
+# Birthing election denial (F3-01). {received_at} is rendered by _intake_tail.
+# R-FORM-25 and F3-01 as amended, and F3-02 and R-FORM-26-B, are amendment A3's
+# texts as the Human Governor adopted them on 25 Oct 2026.
+_TAIL_TECHNICAL_RETRY = (
+    "INTEVIA kept a record that this request was received at {received_at}; the same "
+    "request can be sent again and is judged as of that time. If it persists, report it."
+)
+_PHASE_TECHNICAL_FAILURE_TEMPLATE = (
+    "PHASE_ADVANCE could not be completed because of a technical problem; no governed "
+    "record was written. " + _TAIL_TECHNICAL_RETRY
+)
+_BIRTHING_TECHNICAL_FAILURE_TEMPLATE = (
+    "BIRTHING could not be completed because of a technical problem; no governed record "
+    "was written. " + _TAIL_TECHNICAL_RETRY
+)
+_SNAPSHOT_MISMATCH_TEMPLATE = (
+    "The LO was not born, and nothing from this request was saved except a record that it "
+    "was received at {received_at}. The LO's settings may have changed after the request was "
+    "received, so the constitutional snapshot prepared for it no longer matches them. This is "
+    "a record inconsistency, not a decision against the LO. To try again, make a new Birthing "
+    "request: sending this same request again is still judged as of when it was first "
+    "received. If a new request fails the same way, please report this problem."
+)
+_ELECTION_DENIED_TEMPLATE = (
+    "The LO was not born: the entitlement election proposed with this Birthing was refused "
+    "({refusal_code}). Records kept from this attempt: the Birthing's qualification, the "
+    "constitutional snapshot prepared for it, the election's refusal, and that this request "
+    "was received at {received_at}. No LO event, no election, no grant and no receipt were "
+    "recorded; the LO remains unborn. Sending this request again, or making a new Birthing "
+    "request, cannot complete this Living Organism's (LO) Birthing. A software problem left "
+    "a constitutional snapshot from the unsuccessful attempt, which blocks further attempts. "
+    "Please report this problem; this LO's Birthing cannot complete until the problem is "
+    "repaired."
+)
+# F3-02 (class T): a later Birthing of the LO meets the snapshot left by a refused election.
+_ORPHAN_SNAPSHOT_TEMPLATE = (
+    "The LO was not born. A software problem left a constitutional snapshot from an earlier, "
+    "unsuccessful Birthing attempt, which blocks further attempts; this is not a decision "
+    "against the LO. Nothing from this request was saved except a record that it was "
+    "received at {received_at}. Sending this request again, or making a new Birthing "
+    "request, cannot complete this LO's Birthing. Please report this problem; this LO's "
+    "Birthing cannot complete until the problem is repaired."
+)
+# R-FORM-26-B (class B, as adopted 25 Oct 2026): the LO already has a BIRTHING event that this
+# request's qualification did not see (completed after receipt, or effective after the request's
+# effective time).
+_BIRTHING_OVERTAKEN_TEMPLATE = (
+    "The LO was not born again: it was born on {born_date}. An LO is born once, so nothing "
+    "more is needed. Nothing from this request was saved except a record that it was "
+    "received at {received_at}."
+)
+# The SB-G guard arm (class B, A3 §7.4): R-FORM-31a-f and R-FORM-32a, -32b, -32c, -32e, -32f.
+_ROLLED_BACK_OPENING_END = (
+    ", and nothing from this request was saved except a record that it was received at "
+    "{received_at}. The LO's governance settings changed after the request was received."
+)
+_TAIL_RESEND_ORIGINAL_TIME = (
+    "Sending this same request again is still judged as of when it was first received, "
+    "before the change."
+)
+_BIRTHING_SNAPSHOT_UNIQUE = "core_lobirthingsnapshot_living_organism_id_uniq"
+_SBG_PHASE_GUARD_CODES = (
+    S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
+    S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED,
+    S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
+)
+_SBG_BIRTHING_GUARD_CODES = _SBG_PHASE_GUARD_CODES + (
+    S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
+)
+# The corrective step of each SB-G text names a new request for the operation
+# (adopted 25 Oct 2026): a resend is judged as of its original receipt time.
+_SBG_NEW_REQUEST = {
+    "BIRTHING": "make a new Birthing request",
+    "PHASE_ADVANCE": "make a new request to advance the phase",
+    "ENABLING": "make a new request to switch GOVERNANCE on",
+}
+
+
+def _sbg_guard_refusal_code(
+    error: IntegrityError,
+    codes: tuple[S015AuthorityRefusalCode, ...],
+) -> S015AuthorityRefusalCode | None:
+    """Return the SB-G code a write-time guard raised, or None.
+
+    Walk the error's __cause__ chain. A cause matches when it carries
+    SQLSTATE 23000 (as sqlstate or pgcode) and a diagnostic whose primary
+    message equals the value of one of codes; return that code. The
+    message text of the error itself is not inspected (A3 §7.4).
+    """
+    cause = error.__cause__
+    while cause is not None:
+        state = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        primary = getattr(getattr(cause, "diag", None), "message_primary", None)
+        if state == "23000":
+            for code in codes:
+                if primary == code.value:
+                    return code
+        cause = cause.__cause__
+    return None
 _SBG_ROUTE_BODIES = {
     "ELECTION": {"body:LO_MEMBERSHIP"},
     "COOPTION": {"body:GOVERNANCE"},
@@ -243,6 +346,7 @@ def _sbg_readiness_message(
     *,
     code: S015AuthorityRefusalCode,
     act: str,
+    operation: str,
     database_alias: str,
     organism: LivingOrganism,
     effective_at: datetime,
@@ -260,36 +364,50 @@ def _sbg_readiness_message(
     an incomplete arrangement, unsupported fields or
     eligibility, and no initial participation route.
 
+    operation names the refused request: "BIRTHING",
+    "PHASE_ADVANCE" or "ENABLING" (switching GOVERNANCE on);
+    any other value raises ValueError. Each corrective step
+    ends with a new request for that operation ("then make a
+    new Birthing request"), because a resend is judged as of
+    its original receipt time (adopted 25 Oct 2026). For
+    ENABLING the missing-Circle reason says that switching
+    GOVERNANCE on needs the Circle.
+
     For incomplete, field and eligibility refusals, obtain
     the condition through _sbg_arrangement_condition using
     effective_at and recorded_at. Its errors propagate.
 
     The participation-route text offers the pre-Birthing
-    next step only when act equals "The LO was not born".
-    Every other act gets the alternative next step;
-    this helper does not independently check the lifecycle.
+    next step for BIRTHING; every other operation gets the
+    alternative next step. This helper does not
+    independently check the lifecycle.
 
-    The field and eligibility texts always open with
-    "No arrangement was adopted" followed by opening_end.
-    They do not substitute act into that opening.
+    Every text, the field and eligibility texts included,
+    opens with act followed by opening_end.
     """
+    if operation not in _SBG_NEW_REQUEST:
+        raise ValueError("operation must be BIRTHING, PHASE_ADVANCE or ENABLING")
+    new_request = _SBG_NEW_REQUEST[operation]
     opening = f"{act}{opening_end}"
-    field_opening = f"No arrangement was adopted{opening_end}"
 
     def with_tail(message: str) -> str:
         return f"{message} {tail}" if tail else message
 
     if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
+        reason = (
+            "Switching GOVERNANCE on needs the LO's GOVERNANCE Circle first."
+            if operation == "ENABLING"
+            else "GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first."
+        )
         return with_tail(
-            f"{opening} GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first. "
-            "Create the LO's GOVERNANCE Circle, then try again. Creating the Circle early in "
-            "formation avoids this."
+            f"{opening} {reason} Create the LO's GOVERNANCE Circle, then {new_request}. "
+            "Creating the Circle early in formation avoids this."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING:
         return with_tail(
             f"{opening} GOVERNANCE needs an adopted arrangement saying which seats exist, how each "
             "is filled and who decides, and this LO has none in effect. Adopt an arrangement, then "
-            "try again. Adopting it before creating the Circle avoids this."
+            f"{new_request}. Adopting it before creating the Circle avoids this."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE:
         condition = _sbg_arrangement_condition(
@@ -301,7 +419,7 @@ def _sbg_readiness_message(
         )
         return with_tail(
             f"{opening} The arrangement is incomplete: {condition}. Adopt a corrected version, then "
-            "try again. Every seat needs an admission route and a deciding body that matches it."
+            f"{new_request}. Every seat needs an admission route and a deciding body that matches it."
         )
     if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
         condition = _sbg_arrangement_condition(
@@ -312,9 +430,10 @@ def _sbg_readiness_message(
             code=code,
         )
         return with_tail(
-            f"{field_opening} The arrangement includes {condition}, "
-            "which this release cannot yet act on. Leave it out for now; it can be added by a later "
-            "version once the release that acts on it is delivered."
+            f"{opening} The arrangement includes {condition}, "
+            "which this release cannot yet act on. Adopt a version that leaves it out for now, then "
+            f"{new_request}; it can be added by a later version once the release that acts on it "
+            "is delivered."
         )
     if code is S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED:
         seat_id = _sbg_arrangement_condition(
@@ -325,17 +444,18 @@ def _sbg_readiness_message(
             code=code,
         )
         return with_tail(
-            f"{field_opening} Seat {seat_id} names an eligibility "
-            "rule this release cannot check; it can check only \"an active member of the LO\". Use "
-            "that rule for now; other eligibility rules arrive with the slices that can check them."
+            f"{opening} Seat {seat_id} names an eligibility "
+            "rule this release cannot check; it can check only \"an active member of the LO\". "
+            f"Adopt a version that uses that rule for now, then {new_request}; other eligibility "
+            "rules arrive with the slices that can check them."
         )
     if code is S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE:
-        before_birthing = act == "The LO was not born"
+        before_birthing = operation == "BIRTHING"
         next_step = (
             "Take a seat before the LO is born, or adopt a version with a seat the "
-            "LO Coordinators appoint."
+            "LO Coordinators appoint. Then make a new Birthing request."
             if before_birthing
-            else "Adopt a version with a seat the LO Coordinators appoint, then try again."
+            else f"Adopt a version with a seat the LO Coordinators appoint, then {new_request}."
         )
         return with_tail(
             f"{opening} Nobody holds a GOVERNANCE seat yet, and no seat in the arrangement can be "
@@ -1528,8 +1648,8 @@ class PhaseAdvanceCommand:
     advance takes effect; None means the time the service receives the
     command.
 
-    There is no received_at field: the service takes it from its clock.
-    advance_phase checks every field.
+    There is no received_at field: the durable intake assigns it when the
+    request is admitted. advance_phase checks every field.
     """
     credential: User
     living_organism_uuid: UUID
@@ -1693,8 +1813,10 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
     PHASE_ADVANCE event's evidence reference, and is CONCEIVING when
     there is none.
 
-    Extends _OrganismCommandService for replay and the receipt, and
-    reads received_at from its injected clock.
+    Extends _OrganismCommandService for replay and the receipt.
+    advance_phase admits the request through the durable intake, and
+    the advance runs as of the intake's received_at; the injected clock
+    gives only the replay viewer's present time.
     """
     _action = OrganismAction.TRANSITION_LIVING_ORGANISM
     _not_found = S015PhaseAdvanceNotFound
@@ -1838,16 +1960,92 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         return PhaseReadiness(True, current_phase, None, None)
 
     def advance_phase(self, command: PhaseAdvanceCommand) -> PhaseAdvanceResult:
-        """Record a phase advance and return the served result.
+        """Admit a phase advance and run it at its bound time (D §5.1).
 
-        Raise S015PhaseAdvanceTechnicalFailure if the connection is
-        already in an atomic block. Inside authority_atomic, in order:
+        Refuse a call inside an atomic block with
+        S015PhaseAdvanceTechnicalFailure before any statement, then
+        require the admission state and the active entry, build the
+        intake shape, resolve the actor and admit the request through
+        the durable intake (one committed row). The advance then runs in
+        _execute_advance_phase as of the intake's received_at.
+
+        The SB-G guard arm (amendment A3 §7.4, class B): outside any
+        atomic block, after the command's transaction rolled back, an
+        IntegrityError whose cause carries SQLSTATE 23000 and one of the
+        five phase-advance SB-G codes as its primary message is raised
+        as S015AuthorityDenied with that code, no decision reference and
+        the rolled-back text (R-FORM-32a, -32b, -32c, -32e, -32f), the error as its
+        cause. The LO is re-read after the rollback. Every other error
+        propagates unchanged; nothing is retried.
+        """
+        if connections[self._alias].in_atomic_block:
+            raise S015PhaseAdvanceTechnicalFailure(
+                "PHASE_ADVANCE could not be completed because of a technical problem; "
+                "nothing was saved. Try again; if it persists, report it."
+            )
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.ADVANCE_PHASE
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("ADVANCE_PHASE is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        try:
+            return self._execute_advance_phase(command, bound)
+        except IntegrityError as exc:
+            code = _sbg_guard_refusal_code(exc, _SBG_PHASE_GUARD_CODES)
+            if code is None or connections[self._alias].in_atomic_block:
+                raise
+            organism = LivingOrganism.objects.using(self._alias).get(
+                organism_id=_canonical_uuid(command.living_organism_uuid, "living_organism_uuid"),
+            )
+            effective_at = (
+                bound.received_at
+                if command.effective_at is None
+                else _validate_timestamp(command.effective_at, "effective_at")
+            )
+            raise S015AuthorityDenied(
+                self._authored_refusal_message(
+                    code,
+                    organism,
+                    _canonical_key(command.to_phase, "to_phase", 24),
+                    effective_at,
+                    bound.received_at,
+                    received_at=bound.received_at,
+                    rolled_back=True,
+                ),
+                refusal_code=code,
+                disclosed_refusal_code=code,
+                authority_decision_reference=None,
+            ) from exc
+
+    def _execute_advance_phase(
+        self,
+        command: PhaseAdvanceCommand,
+        bound: BoundRequest,
+    ) -> PhaseAdvanceResult:
+        """Execute a bound phase advance and return the served result (D §5.2).
+
+        advance_phase has admitted the request. Inside authority_atomic,
+        opened with the bound receipt time, in order:
         - lock the actor's Identity and credential; a missing Identity,
           inactive Identity or inactive credential raises
-          S015PhaseAdvanceUnavailable;
+          S015PhaseAdvanceUnavailable; then verify the bound request
+          against the command and the actor;
         - check the LO UUID, the phases (at most 24 characters), the
-          request reference (128) and the idempotency key (120). Read
-          received_at from the clock and default effective_at to it.
+          request reference (128) and the idempotency key (120). Take
+          received_at from the bound request (on a retry, the original
+          receipt time) and default effective_at to it.
           Validate aware datetimes, convert them to UTC and require
           effective_at <= received_at;
         - fingerprint the command, acquire the
@@ -1896,30 +2094,25 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         Earlier writes, including a recorded REFUSED authority decision,
         remain only if the transaction can commit and its exit succeeds.
         A technical failure while building a refusal message is not
-        deferred and rolls back this command's transaction. Exit failure
+        deferred and rolls back this command's transaction; the intake
+        record of the request stands. Exit failure
         can prevent a pending result or denial from reaching the caller.
         The outer contention wrapper translates qualifying database lock
         errors after exit; nothing is retried.
         """
-        if connections[self._alias].in_atomic_block:
-            raise S015PhaseAdvanceTechnicalFailure(
-                "PHASE_ADVANCE could not be completed because of a technical problem; "
-                "nothing was saved. Try again; if it persists, report it."
-            )
-
-
-        with authority_atomic(self._alias):
+        with authority_atomic(self._alias, received_at=bound.received_at):
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
                 unavailable=S015PhaseAdvanceUnavailable,
             )
+            bound.verify(command, actor, IntakeEntry.ADVANCE_PHASE, self._alias)
             organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
             from_phase = _canonical_key(command.from_phase, "from_phase", 24)
             to_phase = _canonical_key(command.to_phase, "to_phase", 24)
             request_reference = _canonical_key(command.request_reference, "request_reference", 128)
             idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-            received_at = _validate_timestamp(self._clock(), "received_at")
+            received_at = _validate_timestamp(bound.received_at, "received_at")
             effective_at = (
                 received_at
                 if command.effective_at is None
@@ -1961,6 +2154,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 request_reference=request_reference,
                 payload_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
+                # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
                 viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
             )
             if replay is not None:
@@ -2019,6 +2213,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                             to_phase,
                             effective_at,
                             received_at,
+                            received_at=bound.received_at,
                         ),
                         refusal_code=exc.refusal_code,
                         disclosed_refusal_code=exc.disclosed_refusal_code,
@@ -2028,8 +2223,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
 
             if organism.head_event_id is None or organism.founding_authority_basis_id is None:
                 raise S015PhaseAdvanceTechnicalFailure(
-                    "PHASE_ADVANCE could not be completed because of a technical problem; "
-                    "nothing was saved. Try again; if it persists, report it."
+                    _intake_tail(_PHASE_TECHNICAL_FAILURE_TEMPLATE, bound.received_at)
                 )
             predecessor = LivingOrganismEvent.objects.using(self._alias).select_for_update().get(
                 pk=organism.head_event_id,
@@ -2055,8 +2249,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 predecessor_commitment = cursor.fetchone()
                 if predecessor_commitment is None or predecessor_commitment[0] is None:
                     raise S015PhaseAdvanceTechnicalFailure(
-                        "PHASE_ADVANCE could not be completed because of a technical problem; "
-                        "nothing was saved. Try again; if it persists, report it."
+                        _intake_tail(_PHASE_TECHNICAL_FAILURE_TEMPLATE, bound.received_at)
                     )
                 cursor.execute(
                     "SELECT public.s015_0022_digest('s015p1', "
@@ -2127,6 +2320,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 idempotency_key=idempotency_key,
                 payload_fingerprint=fingerprint,
                 result=result,
+                received_at=bound.received_at,
             )
 
     def _phase_at(
@@ -2237,6 +2431,9 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         to_phase: str,
         effective_at: datetime,
         evaluated_at: datetime,
+        *,
+        received_at: datetime,
+        rolled_back: bool = False,
     ) -> str:
         """Return user-facing text for a remapped phase-advance refusal.
 
@@ -2244,50 +2441,85 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         PHASE_OUT_OF_ORDER names it and the next phase; the next-phase
         lookup falls back to to_phase. INV_CQ_ROUTE_REQUIRED explains
         the unavailable route for a multi-member electorate. Otherwise
-        try _sbg_readiness_message and return any text it supplies.
+        try _sbg_readiness_message, with the opening ending in a full
+        stop, and use any text it supplies.
 
-        If no message was supplied and to_phase is GERMINATING, return
+        If no message was supplied and to_phase is GERMINATING, use
         the fixed founding-content explanation without re-reading that
         content. Otherwise re-read the effective governance
         configuration: report a missing configuration or an unset
         GOVERNANCE choice; if neither applies, raise
-        S015PhaseAdvanceTechnicalFailure.
+        S015PhaseAdvanceTechnicalFailure with the restated technical
+        text (Stop 3 R-FORM-14).
+
+        With rolled_back False (the default), every text is the refusal of
+        an admitted request, after qualify recorded the REFUSED decision
+        (class A). It ends with the intake tail: INTEVIA recorded the
+        refusal and that the request was received at received_at, the bound
+        request's receipt time (Stop 3 R-FORM-15a to -22; PKT-CLK-3 CLK3-2).
+
+        With rolled_back True (the SB-G guard arm, A3 §7.4, class B), no
+        decision was recorded and only the SB-G texts apply: the opening
+        says nothing from this request was saved except the receipt record
+        and that the LO's governance settings changed after receipt, and
+        the tail says a resend is judged as of the original receipt
+        (R-FORM-32a, -32b, -32c, -32e, -32f). A code without an SB-G text
+        then raises RuntimeError.
 
         This method is not given the refusal's facts. Phase,
         configuration and delegated diagnostic read failures propagate.
         """
+        if rolled_back:
+            sbg_message = _sbg_readiness_message(
+                code=code,
+                act="The phase was not advanced",
+                operation="PHASE_ADVANCE",
+                database_alias=self._alias,
+                organism=organism,
+                effective_at=effective_at,
+                recorded_at=evaluated_at,
+                opening_end=_intake_tail(_ROLLED_BACK_OPENING_END, received_at),
+                tail=_TAIL_RESEND_ORIGINAL_TIME,
+            )
+            if sbg_message is None:
+                raise RuntimeError("the SB-G guard arm has no text for this code")
+            return sbg_message
+        tail = _intake_tail(_TAIL_REFUSAL_RECORDED, received_at)
         current_phase = self._phase_at(organism, effective_at, evaluated_at)
         if code is S015AuthorityRefusalCode.PHASE_OUT_OF_ORDER:
             next_phase = _NEXT_PHASE.get(current_phase, to_phase)
             return (
-                f"The phase was not advanced and nothing changed: this LO is in "
+                f"The phase was not advanced: this LO is in "
                 f"{_PHASE_NAMES.get(current_phase, current_phase)}, and phases advance one at a time "
                 "(Conceiving → Germinating → Birthing → Birthed). "
-                f"Advance to {_PHASE_NAMES.get(next_phase, next_phase)} first."
+                f"Advance to {_PHASE_NAMES.get(next_phase, next_phase)} first. {tail}"
             )
         if code is S015AuthorityRefusalCode.INV_CQ_ROUTE_REQUIRED:
             return (
                 "This LO's electorate has more than one member, so this act needs the electorate's "
                 "qualified decision, and no CQ route is operative in this release (S3-IL-CQ). "
-                "Nothing changed. This is a known limit, not a refusal of the act; it lifts when "
-                "DISCUSSION's CQ is delivered."
+                "This is a known limit, not a refusal of the act; it lifts when "
+                f"DISCUSSION's CQ is delivered. {tail}"
             )
         sbg_message = _sbg_readiness_message(
             code=code,
             act="The phase was not advanced",
+            operation="PHASE_ADVANCE",
             database_alias=self._alias,
             organism=organism,
             effective_at=effective_at,
             recorded_at=evaluated_at,
+            opening_end=".",
+            tail=tail,
         )
         if sbg_message is not None:
             return sbg_message
         if to_phase == "GERMINATING":
             provision = "founding content (name and purpose)"
             return (
-                f"The phase was not advanced and nothing changed: moving to "
+                f"The phase was not advanced: moving to "
                 f"{_PHASE_NAMES.get(to_phase, to_phase)} needs {provision}, which is not yet "
-                "established. Establish it, then advance."
+                f"established. Establish it, then advance. {tail}"
             )
         configuration = self._effective_governance_configuration(
             organism,
@@ -2297,22 +2529,20 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
         if configuration is None:
             provision = "an effective governance configuration"
             return (
-                f"The phase was not advanced and nothing changed: moving to "
+                f"The phase was not advanced: moving to "
                 f"{_PHASE_NAMES.get(to_phase, to_phase)} needs {provision}, which is not yet "
-                "established. Establish it, then advance."
+                f"established. Establish it, then advance. {tail}"
             )
         if configuration.governance_enabled is None:
             return (
-                "The phase was not advanced and nothing changed. Moving to Birthing needs this LO's "
+                "The phase was not advanced. Moving to Birthing needs this LO's "
                 "GOVERNANCE choice to be confirmed in its governance configuration, and no choice is "
                 "recorded yet: the offered default is not a confirmation. Confirm Yes or No by "
-                "effecting the governance configuration, then advance."
+                f"effecting the governance configuration, then advance. {tail}"
             )
         raise S015PhaseAdvanceTechnicalFailure(
-            "PHASE_ADVANCE could not be completed because of a technical problem; "
-            "nothing was saved. Try again; if it persists, report it."
+            _intake_tail(_PHASE_TECHNICAL_FAILURE_TEMPLATE, received_at)
         )
-
 
 _BIRTHING_SUBTYPE = "TRANSITION_LIVING_ORGANISM/BIRTHING"
 _BIRTHING_COMMAND_DOMAIN = b"INTEVIA:S015:TRANSITION_LIVING_ORGANISM/BIRTHING:COMMAND:v2\x00"
@@ -2330,7 +2560,8 @@ class BirthingCommand:
     when Birthing takes effect; None means the time the service
     receives the command.
 
-    There is no received_at field: the service takes it from its clock.
+    There is no received_at field: the durable intake assigns it when the
+    request is admitted.
     """
     credential: User
     living_organism_uuid: UUID
@@ -2499,7 +2730,11 @@ class S015BirthingTechnicalFailure(Exception):
 
 
 @contextmanager
-def _birthing_guard_atomic(alias: str) -> Iterator[None]:
+def _birthing_guard_atomic(
+    alias: str,
+    *,
+    received_at: datetime | None = None,
+) -> Iterator[None]:
     """Run authority_atomic, and translate one guard failure after it.
 
     An IntegrityError that escapes the block is re-raised as
@@ -2507,10 +2742,13 @@ def _birthing_guard_atomic(alias: str) -> Iterator[None]:
     and _is_entitlement_granted_guard_failure identifies the entitlement
     grant guard (SE_ENTITLEMENT_WITHOUT_GRANT). Other IntegrityErrors,
     and any error inside an enclosing transaction, propagate unchanged.
+    With received_at (the bound request's receipt time), the text is the
+    restated technical text naming that time (Stop 3 R-FORM-24); the
+    command's writes are rolled back and the intake record stands.
     S015AuthorityDenied keeps authority_atomic's deferral.
     """
     try:
-        with authority_atomic(alias):
+        with authority_atomic(alias, received_at=received_at):
             yield
     except IntegrityError as exc:
         if (
@@ -2520,6 +2758,8 @@ def _birthing_guard_atomic(alias: str) -> Iterator[None]:
             raise S015BirthingTechnicalFailure(
                 "BIRTHING could not be completed because of a technical problem; "
                 "nothing was saved. Try again; if it persists, report it."
+                if received_at is None
+                else _intake_tail(_BIRTHING_TECHNICAL_FAILURE_TEMPLATE, received_at)
             ) from exc
         raise
 
@@ -2532,10 +2772,12 @@ class OrganismBirthingService(_OrganismCommandService):
     LO's chain and the Birthing entitlement election, with the authority
     decisions and a receipt. The LO's state does not change.
 
-    Extends _OrganismCommandService for replay and the receipt, reads
-    received_at from its injected clock, and uses an
-    OrganismEntitlementService on the same authority, clock and alias
-    for the election.
+    Extends _OrganismCommandService for replay and the receipt, and
+    uses an OrganismEntitlementService on the same authority, clock and
+    alias for the election. birth_living_organism admits the request
+    through the durable intake, and Birthing runs as of the intake's
+    received_at; the injected clock gives only the replay viewer's
+    present time.
     """
     _action = OrganismAction.TRANSITION_LIVING_ORGANISM
     _not_found = S015BirthingNotFound
@@ -2584,16 +2826,128 @@ class OrganismBirthingService(_OrganismCommandService):
             return _birthing_result_from_payload(payload)
 
     def birth_living_organism(self, command: BirthingCommand) -> BirthingResult:
-            """Birth the LO and return the served result.
+        """Admit a Birthing request and run it at its bound time (D §5.1).
 
-            Raise S015BirthingTechnicalFailure if an atomic block is
-            already open. Inside _birthing_guard_atomic, first lock
-            the actor's Identity and credential. Missing or inactive
-            identity or credential raises S015BirthingUnavailable.
+        Refuse a call inside an atomic block with
+        S015BirthingTechnicalFailure before any statement, then require
+        the admission state and the active entry, build the intake
+        shape, resolve the actor and admit the request through the
+        durable intake (one committed row). Birthing then runs in
+        _execute_birth_living_organism as of the intake's received_at.
+
+        Two arms run outside any atomic block, after the command's
+        transaction rolled back (amendment A3 §7.4); each keeps the
+        IntegrityError as the cause and retries nothing:
+        - SB-G guard arm (class B): a cause carrying SQLSTATE 23000 and
+          one of the six Birthing SB-G codes as its primary message
+          becomes S015AuthorityDenied with that code, no decision
+          reference and the rolled-back text (R-FORM-31a to -31f);
+        - snapshot uniqueness (DF-2): a cause carrying SQLSTATE 23505 on
+          the one-snapshot-per-LO constraint becomes, when the LO has a
+          BIRTHING event (one the qualification did not see: completed
+          after receipt, or effective after the request's effective
+          time), S015AuthorityDenied(BIRTHING_ALREADY_RECORDED) with no
+          decision reference and that event's effective date
+          (R-FORM-26-B); otherwise S015BirthingTechnicalFailure, the
+          snapshot left by a refused election (F3-02).
+        The LO is re-read after the rollback. Every other error
+        propagates unchanged.
+        """
+        if connections[self._alias].in_atomic_block:
+            raise S015BirthingTechnicalFailure(
+                "BIRTHING could not be completed because of a technical problem; "
+                "nothing was saved. Try again; if it persists, report it."
+            )
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            IntakeEntry,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
+
+        entry = IntakeEntry.BIRTHING
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("BIRTHING is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        try:
+            return self._execute_birth_living_organism(command, bound)
+        except IntegrityError as exc:
+            if connections[self._alias].in_atomic_block:
+                raise
+            code = _sbg_guard_refusal_code(exc, _SBG_BIRTHING_GUARD_CODES)
+            snapshot_taken = code is None and _is_constraint_violation(
+                exc,
+                sqlstate="23505",
+                constraint_name=_BIRTHING_SNAPSHOT_UNIQUE,
+            )
+            if code is None and not snapshot_taken:
+                raise
+            organism = LivingOrganism.objects.using(self._alias).get(
+                organism_id=_canonical_uuid(command.living_organism_uuid, "living_organism_uuid"),
+            )
+            if code is not None:
+                effective_at = (
+                    bound.received_at
+                    if command.effective_at is None
+                    else _validate_timestamp(command.effective_at, "effective_at")
+                )
+                raise S015AuthorityDenied(
+                    self._authored_refusal_message(
+                        code,
+                        organism,
+                        effective_at,
+                        bound.received_at,
+                        rolled_back=True,
+                    ),
+                    refusal_code=code,
+                    disclosed_refusal_code=code,
+                    authority_decision_reference=None,
+                ) from exc
+            birth = LivingOrganismEvent.objects.using(self._alias).filter(
+                living_organism=organism,
+                action="BIRTHING",
+            ).order_by("sequence").first()
+            if birth is not None:
+                raise S015AuthorityDenied(
+                    _intake_tail(
+                        _BIRTHING_OVERTAKEN_TEMPLATE.replace(
+                            "{born_date}",
+                            birth.effective_at.date().isoformat(),
+                        ),
+                        bound.received_at,
+                    ),
+                    refusal_code=S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
+                    disclosed_refusal_code=S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
+                    authority_decision_reference=None,
+                ) from exc
+            raise S015BirthingTechnicalFailure(
+                _intake_tail(_ORPHAN_SNAPSHOT_TEMPLATE, bound.received_at)
+            ) from exc
+
+    def _execute_birth_living_organism(
+        self,
+        command: BirthingCommand,
+        bound: BoundRequest,
+    ) -> BirthingResult:
+            """Execute a bound Birthing command (D §5.2).
+
+            birth_living_organism has admitted the request. Inside
+            _birthing_guard_atomic, opened with the bound receipt time,
+            first lock the actor's Identity and credential. Missing or
+            inactive identity or credential raises
+            S015BirthingUnavailable. Then verify the bound request
+            against the command and the actor.
 
             Require a UUID and canonical request and idempotency keys,
-            limited to 128 and 120 characters. Read received_at from
-            the clock; use it when effective_at is omitted. Require
+            limited to 128 and 120 characters. Take received_at from the
+            bound request (on a retry, the original receipt time); use
+            it when effective_at is omitted. Require
             aware datetime values, converted to UTC. Invalid types
             raise TypeError; invalid keys or a future effective_at
             raise ValueError.
@@ -2692,32 +3046,31 @@ class OrganismBirthingService(_OrganismCommandService):
             has yet been written. Cleanup errors replace the denial.
             More generally, authority_atomic defers S015AuthorityDenied
             until successful atomic exit; it does not isolate refusal
-            evidence from other writes. Other escaping failures roll
-            back the transaction. An exit failure does not establish
-            retention.
+            evidence from other writes. That denial is re-raised with
+            the text stating those effects and that no Birthing of the
+            LO can complete until the defect is repaired (Stop 3 F3-01
+            as amended by A3), its codes and decision reference kept. Other
+            escaping failures roll back the command's transaction; the
+            intake record of the request stands. An exit failure does
+            not establish retention.
 
             After rollback, the grant-guard wrapper translates its
             matched entitlement integrity error. Contention translation
             handles qualifying lock errors outside the atomic block.
             Other failures propagate; nothing is retried here.
             """
-            if connections[self._alias].in_atomic_block:
-                raise S015BirthingTechnicalFailure(
-                    "BIRTHING could not be completed because of a technical problem; "
-                    "nothing was saved. Try again; if it persists, report it."
-                )
-
             # PKT-SE-K3: translate its deferred grant guard only after rollback.
-            with _birthing_guard_atomic(self._alias):
+            with _birthing_guard_atomic(self._alias, received_at=bound.received_at):
                 actor = _lock_actor(
                     database_alias=self._alias,
                     credential=command.credential,
                     unavailable=S015BirthingUnavailable,
                 )
+                bound.verify(command, actor, IntakeEntry.BIRTHING, self._alias)
                 organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
                 request_reference = _canonical_key(command.request_reference, "request_reference", 128)
                 idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-                received_at = _validate_timestamp(self._clock(), "received_at")
+                received_at = _validate_timestamp(bound.received_at, "received_at")
                 effective_at = (
                     received_at
                     if command.effective_at is None
@@ -2760,6 +3113,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     request_reference=request_reference,
                     payload_fingerprint=fingerprint,
                     idempotency_key=idempotency_key,
+                    # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
                     viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
                 )
                 if replay is not None:
@@ -2777,8 +3131,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     raise S015BirthingNotFound("living organism not found") from exc
                 if organism.head_event_id is None or organism.founding_authority_basis_id is None:
                     raise S015BirthingTechnicalFailure(
-                        "BIRTHING could not be completed because of a technical problem; "
-                        "nothing was saved. Try again; if it persists, report it."
+                        _intake_tail(_BIRTHING_TECHNICAL_FAILURE_TEMPLATE, bound.received_at)
                     )
 
                 actor_membership, role_refs = _lock_actor_membership_context(
@@ -2886,9 +3239,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     or acceptance is None
                 ):
                     raise S015BirthingTechnicalFailure(
-                        "The LO was not born and nothing changed: the constitutional snapshot did not "
-                        "match the LO's settings in effect at this time. This is a record inconsistency, "
-                        "not a decision against the LO. Prepare the snapshot again and retry."
+                        _intake_tail(_SNAPSHOT_MISMATCH_TEMPLATE, bound.received_at)
                     )
 
                 body = {
@@ -2919,19 +3270,36 @@ class OrganismBirthingService(_OrganismCommandService):
                         effective_at=effective_at,
                         received_at=received_at,
                     )
-                    prepared_election = self._entitlement_service.prepare_birthing_election(
-                        command=command,
-                        actor=actor,
-                        organism=organism,
-                        role_refs=role_refs,
-                        snapshot_uuid=snapshot_uuid,
-                        request_reference=request_reference,
-                        idempotency_key=idempotency_key,
-                        actor_membership=actor_membership,
-                        occurred_at=effective_at,
-                        effective_at=effective_at,
-                        received_at=received_at,
-                    )
+                    try:
+                        prepared_election = self._entitlement_service.prepare_birthing_election(
+                            command=command,
+                            actor=actor,
+                            organism=organism,
+                            role_refs=role_refs,
+                            snapshot_uuid=snapshot_uuid,
+                            request_reference=request_reference,
+                            idempotency_key=idempotency_key,
+                            actor_membership=actor_membership,
+                            occurred_at=effective_at,
+                            effective_at=effective_at,
+                            received_at=received_at,
+                        )
+                    except S015AuthorityDenied as exc:
+                        # F3-01 (DEC-F3 (i)): the text states the current effects and the
+                        # binding; codes and decision reference are kept, and authority_atomic
+                        # still defers the denial and commits the block, as before.
+                        raise S015AuthorityDenied(
+                            _intake_tail(
+                                _ELECTION_DENIED_TEMPLATE.replace(
+                                    "{refusal_code}",
+                                    exc.disclosed_refusal_code.value,
+                                ),
+                                bound.received_at,
+                            ),
+                            refusal_code=exc.refusal_code,
+                            disclosed_refusal_code=exc.disclosed_refusal_code,
+                            authority_decision_reference=exc.authority_decision_reference,
+                        ) from exc
                     event_uuid = uuid4()
                     temporal_kind, temporal_reference = _resulting_temporal_basis(
                         payload_fingerprint=fingerprint,
@@ -2953,8 +3321,10 @@ class OrganismBirthingService(_OrganismCommandService):
                         predecessor_commitment = cursor.fetchone()
                         if predecessor_commitment is None or predecessor_commitment[0] is None:
                             raise S015BirthingTechnicalFailure(
-                                "BIRTHING could not be completed because of a technical problem; "
-                                "nothing was saved. Try again; if it persists, report it."
+                                _intake_tail(
+                                    _BIRTHING_TECHNICAL_FAILURE_TEMPLATE,
+                                    bound.received_at,
+                                )
                             )
                         cursor.execute(
                             "SELECT public.s015_0022_digest('s015p1', "
@@ -3012,9 +3382,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     if "BIRTHING_SNAPSHOT_INVALID" not in str(exc):
                         raise
                     raise S015BirthingTechnicalFailure(
-                        "The LO was not born and nothing changed: the constitutional snapshot did not "
-                        "match the LO's settings in effect at this time. This is a record inconsistency, "
-                        "not a decision against the LO. Prepare the snapshot again and retry."
+                        _intake_tail(_SNAPSHOT_MISMATCH_TEMPLATE, bound.received_at)
                     ) from exc
 
                 event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
@@ -3052,6 +3420,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     idempotency_key=idempotency_key,
                     payload_fingerprint=fingerprint,
                     result=result,
+                    received_at=bound.received_at,
                 )
 
     def _authored_refusal_message(
@@ -3060,16 +3429,34 @@ class OrganismBirthingService(_OrganismCommandService):
             organism: LivingOrganism,
             effective_at: datetime,
             received_at: datetime,
+            *,
+            rolled_back: bool = False,
     ) -> str:
             """Return authored text for a remapped Birthing refusal.
 
-            SB_BIRTHING_ELECTORATE_EMPTY returns the shared text.
+            With rolled_back False (the default), every text is the refusal of
+            an admitted request, after qualify recorded the REFUSED decision
+            (class A), and ends with the intake tail naming received_at, the
+            bound request's receipt time (Stop 3 R-FORM-26 to -30f; PKT-CLK-3
+            CLK3-2).
+
+            With rolled_back True (the SB-G guard arm, A3 §7.4, class B), no
+            decision was recorded and only the SB-G texts apply: the opening
+            says nothing from this request was saved except the receipt
+            record and that the LO's governance settings changed after
+            receipt, and the tail says a resend is judged as of the original
+            receipt (R-FORM-31a to -31f). A code without an SB-G text then
+            raises RuntimeError.
+
+            SB_BIRTHING_ELECTORATE_EMPTY opens "The LO was not born." before
+            the shared reason.
             BIRTHING_ALREADY_RECORDED selects the latest Birthing event
             within the effective, received and recorded time cuts,
             ordered by effective time, recorded time, sequence and UUID.
             Report its effective date, or "an earlier date" if absent.
 
-            Delegate SB-G codes with act "The LO was not born".
+            Delegate SB-G codes with act "The LO was not born" and an
+            opening ending in a full stop.
             INV_CQ_ROUTE_REQUIRED explains the unavailable CQ route
             for an electorate with more than one member.
 
@@ -3086,8 +3473,24 @@ class OrganismBirthingService(_OrganismCommandService):
             and the configuration's GOVERNANCE choice is not checked.
             The helper's read and message-building errors propagate.
             """
+            if rolled_back:
+                sbg_message = _sbg_readiness_message(
+                    code=code,
+                    act="The LO was not born",
+                    operation="BIRTHING",
+                    database_alias=self._alias,
+                    organism=organism,
+                    effective_at=effective_at,
+                    recorded_at=received_at,
+                    opening_end=_intake_tail(_ROLLED_BACK_OPENING_END, received_at),
+                    tail=_TAIL_RESEND_ORIGINAL_TIME,
+                )
+                if sbg_message is None:
+                    raise RuntimeError("the SB-G guard arm has no text for this code")
+                return sbg_message
+            tail = _intake_tail(_TAIL_REFUSAL_RECORDED, received_at)
             if code is S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY:
-                return SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE
+                return f"The LO was not born. {SB_BIRTHING_ELECTORATE_EMPTY_REASON} {tail}"
             if code is S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED:
                 event = LivingOrganismEvent.objects.using(self._alias).filter(
                     living_organism=organism,
@@ -3098,16 +3501,19 @@ class OrganismBirthingService(_OrganismCommandService):
                 ).order_by("-effective_at", "-recorded_at", "-sequence", "-event_uuid").first()
                 born_date = "an earlier date" if event is None else event.effective_at.date().isoformat()
                 return (
-                    f"The LO was not born again and nothing changed: it was born on {born_date}. "
-                    "An LO is born once."
+                    f"The LO was not born again: it was born on {born_date}. "
+                    f"An LO is born once. {tail}"
                 )
             sbg_message = _sbg_readiness_message(
                 code=code,
                 act="The LO was not born",
+                operation="BIRTHING",
                 database_alias=self._alias,
                 organism=organism,
                 effective_at=effective_at,
                 recorded_at=received_at,
+                opening_end=".",
+                tail=tail,
             )
             if sbg_message is not None:
                 return sbg_message
@@ -3115,8 +3521,8 @@ class OrganismBirthingService(_OrganismCommandService):
                 return (
                     "This LO's electorate has more than one member, so this act needs the electorate's "
                     "qualified decision, and no CQ route is operative in this release (S3-IL-CQ). "
-                    "Nothing changed. This is a known limit, not a refusal of the act; it lifts when "
-                    "DISCUSSION's CQ is delivered."
+                    "This is a known limit, not a refusal of the act; it lifts when "
+                    f"DISCUSSION's CQ is delivered. {tail}"
                 )
             missing = "a reviewed application question"
             phase = LivingOrganismEvent.objects.using(self._alias).filter(
@@ -3147,6 +3553,6 @@ class OrganismBirthingService(_OrganismCommandService):
                 ):
                     missing = "both application settings chosen"
             return (
-                "The LO was not born and nothing changed. Birthing needs "
-                f"{missing}, which is not yet in place. Complete it, then birth the LO."
+                "The LO was not born. Birthing needs "
+                f"{missing}, which is not yet in place. Complete it, then birth the LO. {tail}"
             )

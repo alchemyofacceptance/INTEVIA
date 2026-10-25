@@ -1198,13 +1198,18 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
     def test_w_sbg_m5_reverse_refuses_when_living_organism_rule_exists(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         from src.intevia.services.command_intake import _resolve_actor
-        from src.intevia.services.organism_formation_service import OrganismFormationService
+        from src.intevia.services.organism_formation_service import (
+            OrganismFormationService,
+            OrganismPhaseAdvanceService,
+        )
         from tests.sb2_route_support import prepare_route
 
         # At 0045 the durable intake table (0049) does not exist, so the public
         # founding entry cannot admit a request. The fixture founds through the
         # executor with a test-only bound request (as W-CLK3-13 does), writing the
-        # rows public founding wrote at 0045 before CLK3-1. No intake row is written.
+        # rows public founding wrote at 0045 before CLK3-1. Since CLK3-2 the phase
+        # advance is admitted too and goes through its executor the same way. No
+        # intake row is written.
         def found_without_intake(service, command):
             actor = _resolve_actor(service._alias, command.credential)
             with override_settings(INTEVIA_TEST_CONTEXT=True):
@@ -1216,10 +1221,28 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
                 )
                 return service._execute_found_living_organism(command, bound)
 
-        with patch.object(
-            OrganismFormationService,
-            "found_living_organism",
-            new=found_without_intake,
+        def advance_without_intake(service, command):
+            actor = _resolve_actor(service._alias, command.credential)
+            with override_settings(INTEVIA_TEST_CONTEXT=True):
+                bound = BoundRequest.for_test(
+                    IntakeEntry.ADVANCE_PHASE,
+                    command,
+                    received_at=database_now(),
+                    actor=actor,
+                )
+                return service._execute_advance_phase(command, bound)
+
+        with (
+            patch.object(
+                OrganismFormationService,
+                "found_living_organism",
+                new=found_without_intake,
+            ),
+            patch.object(
+                OrganismPhaseAdvanceService,
+                "advance_phase",
+                new=advance_without_intake,
+            ),
         ):
             route = prepare_route(
                 governance_enabled=None,
@@ -2413,9 +2436,13 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
             f"sbg:phase:{missing_circle.tag}:missing-circle",
-            "The phase was not advanced and nothing changed. GOVERNANCE is on for this LO, so it "
-            "needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then try again. "
-            "Creating the Circle early in formation avoids this.",
+            "The phase was not advanced. GOVERNANCE is on for this LO, so it "
+            "needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then make a new "
+            "request to advance the phase. Creating the Circle early in formation avoids this. "
+            "INTEVIA recorded this refusal and that the request was received at <T>; "
+            "nothing else was saved.",
+            intake_action=OrganismAction.TRANSITION_LIVING_ORGANISM,
+            intake_key=f"sbg:phase:key:{missing_circle.tag}:missing-circle",
         )
 
         no_arrangement = prepare_route(
@@ -2439,10 +2466,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
             f"sbg:phase:{no_arrangement.tag}:missing-arrangement",
-            "The phase was not advanced and nothing changed. GOVERNANCE needs an adopted "
+            "The phase was not advanced. GOVERNANCE needs an adopted "
             "arrangement saying which seats exist, how each is filled and who decides, and this "
-            "LO has none in effect. Adopt an arrangement, then try again. Adopting it before "
-            "creating the Circle avoids this.",
+            "LO has none in effect. Adopt an arrangement, then make a new request to advance the "
+            "phase. Adopting it before creating the Circle avoids this. "
+            "INTEVIA recorded this refusal and that the request was received at <T>; "
+            "nothing else was saved.",
+            intake_action=OrganismAction.TRANSITION_LIVING_ORGANISM,
+            intake_key=f"sbg:phase:key:{no_arrangement.tag}:missing-arrangement",
         )
 
         election_body = governance_arrangement_body(
@@ -2477,11 +2508,16 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             lambda: birth(election_only.route, suffix="no-initial-route"),
             S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
             f"sb2:no-initial-route:{election_only.route.tag}",
-            "The LO was not born and nothing changed. Nobody holds a GOVERNANCE seat yet, and no "
+            "The LO was not born. Nobody holds a GOVERNANCE seat yet, and no "
             "seat in the arrangement can be filled in this release: election seats wait for "
             "elections, co-option seats wait for an active GOVERNANCE, and ex officio seats are "
             "not yet available. Take a seat before the LO is born, or adopt a version with a seat "
-            "the LO Coordinators appoint. The arrangement you adopted stays recorded and in effect.",
+            "the LO Coordinators appoint. Then make a new Birthing request. The arrangement you "
+            "adopted stays recorded and in effect. "
+            "INTEVIA recorded this refusal and that the request was received at <T>; "
+            "nothing else was saved.",
+            intake_action=OrganismAction.TRANSITION_LIVING_ORGANISM,
+            intake_key=f"sb2:no-initial-route:key:{election_only.route.tag}",
         )
 
         external_seat = prepare_governance_route(
@@ -2595,7 +2631,10 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         with patch.object(QuerySet, "create", create_mismatched_snapshot):
             with self.assertRaises(S015BirthingTechnicalFailure) as refused:
                 birth(route.route, suffix="snapshot-mismatch")
-        self.assertIn("constitutional snapshot did not match", str(refused.exception))
+        self.assertIn(
+            "the constitutional snapshot prepared for it no longer matches them",
+            str(refused.exception),
+        )
         self.assertEqual(governance_route_state(route), before)
 
     def test_w_f7_founding_participation_is_current_at_birthing_coordinates(self):
@@ -2832,9 +2871,9 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "circle-missing-a",
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
-            "GOVERNANCE was not switched on. GOVERNANCE is on for this LO, "
-            "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this. "
+            "GOVERNANCE was not switched on. Switching GOVERNANCE on needs the LO's GOVERNANCE "
+            "Circle first. Create the LO's GOVERNANCE Circle, then make a new request to switch "
+            "GOVERNANCE on. Creating the Circle early in formation avoids this. "
             "INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
@@ -2848,10 +2887,13 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "circle-missing-b",
             S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
-            "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE is on for this LO, "
-            "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this. "
-            "INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
+            "GOVERNANCE was not switched on, and nothing from this request was saved except a record "
+            "that it was received at ⟨T⟩. Something changed for this LO after the request was received "
+            "(for example, its Birthing completed), and GOVERNANCE is not ready to be switched on yet. "
+            "Switching GOVERNANCE on needs the LO's GOVERNANCE Circle first. Create the LO's GOVERNANCE "
+            "Circle, then make a new request to switch GOVERNANCE on. Creating the Circle early in "
+            "formation avoids this. "
+            "Sending this same request again is still judged as of when it was first received, before the change.",
         )
 
         arrangement_missing = self._prepare_post_birthing_governance_route(
@@ -2870,7 +2912,8 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
             "GOVERNANCE was not switched on. GOVERNANCE needs an adopted "
             "arrangement saying which seats exist, how each is filled and who decides, and this "
-            "LO has none in effect. Adopt an arrangement, then try again. Adopting it before "
+            "LO has none in effect. Adopt an arrangement, then make a new request to switch "
+            "GOVERNANCE on. Adopting it before "
             "creating the Circle avoids this. INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
@@ -2888,10 +2931,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-missing-b",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
-            "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE needs an adopted "
+            "GOVERNANCE was not switched on, and nothing from this request was saved except a record "
+            "that it was received at ⟨T⟩. Something changed for this LO after the request was received "
+            "(for example, its Birthing completed), and GOVERNANCE is not ready to be switched on yet. "
+            "GOVERNANCE needs an adopted "
             "arrangement saying which seats exist, how each is filled and who decides, and this "
-            "LO has none in effect. Adopt an arrangement, then try again. Adopting it before "
-            "creating the Circle avoids this. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
+            "LO has none in effect. Adopt an arrangement, then make a new request to switch "
+            "GOVERNANCE on. Adopting it before creating the Circle avoids this. "
+            "Sending this same request again is still judged as of when it was first received, before the change.",
         )
 
         incomplete_body = governance_arrangement_body(
@@ -2913,7 +2960,8 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             "arrangement-incomplete-a",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
             "GOVERNANCE was not switched on. The arrangement is incomplete: "
-            "it has no seat in effect at this time. Adopt a corrected version, then try again. Every seat needs an "
+            "it has no seat in effect at this time. Adopt a corrected version, then make a new request "
+            "to switch GOVERNANCE on. Every seat needs an "
             "admission route and a deciding body that matches it. INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
@@ -2932,9 +2980,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "arrangement-incomplete-b",
             S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
-            "GOVERNANCE was not switched on; no governed record was written. The arrangement is incomplete: "
-            "it has no seat in effect at this time. Adopt a corrected version, then try again. Every seat needs an "
-            "admission route and a deciding body that matches it. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
+            "GOVERNANCE was not switched on, and nothing from this request was saved except a record "
+            "that it was received at ⟨T⟩. Something changed for this LO after the request was received "
+            "(for example, its Birthing completed), and GOVERNANCE is not ready to be switched on yet. "
+            "The arrangement is incomplete: "
+            "it has no seat in effect at this time. Adopt a corrected version, then make a new request "
+            "to switch GOVERNANCE on. Every seat needs an admission route and a deciding body that "
+            "matches it. "
+            "Sending this same request again is still judged as of when it was first received, before the change.",
         )
 
         no_route = self._prepare_post_birthing_governance_route(
@@ -2952,7 +3005,8 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             "yet, and no seat in the arrangement can be filled in this release: election seats "
             "wait for elections, co-option seats wait for an active GOVERNANCE, and ex officio "
             "seats are not yet available. Adopt a version with a seat the LO Coordinators appoint, "
-            "then try again. The arrangement you adopted stays recorded and in effect. "
+            "then make a new request to switch GOVERNANCE on. The arrangement you adopted stays "
+            "recorded and in effect. "
             "INTEVIA recorded this refusal and that the request was received at ⟨T⟩; nothing else was saved.",
         )
 
@@ -2967,12 +3021,16 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "no-route-b",
             S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
-            "GOVERNANCE was not switched on; no governed record was written. Nobody holds a GOVERNANCE seat "
+            "GOVERNANCE was not switched on, and nothing from this request was saved except a record "
+            "that it was received at ⟨T⟩. Something changed for this LO after the request was received "
+            "(for example, its Birthing completed), and GOVERNANCE is not ready to be switched on yet. "
+            "Nobody holds a GOVERNANCE seat "
             "yet, and no seat in the arrangement can be filled in this release: election seats "
             "wait for elections, co-option seats wait for an active GOVERNANCE, and ex officio "
             "seats are not yet available. Adopt a version with a seat the LO Coordinators appoint, "
-            "then try again. The arrangement you adopted stays recorded and in effect. "
-            "INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
+            "then make a new request to switch GOVERNANCE on. The arrangement you adopted stays "
+            "recorded and in effect. "
+            "Sending this same request again is still judged as of when it was first received, before the change.",
         )
 
         ready = self._prepare_post_birthing_governance_route("p3-ready")
@@ -3045,11 +3103,14 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             draft,
             "dormant-b",
             S015AuthorityRefusalCode.SBG_IL_GRESD,
-            "GOVERNANCE was not switched on; no governed record was written. This LO's GOVERNANCE Circle "
+            "GOVERNANCE was not switched on, and nothing from this request was saved except a record "
+            "that it was received at ⟨T⟩. Something changed for this LO after the request was received "
+            "(for example, its Birthing completed), and GOVERNANCE is not ready to be switched on yet. "
+            "This LO's GOVERNANCE Circle "
             "was active before and is now dormant; its next step is the restoration route for a "
             "dormant GOVERNANCE, which is not yet available in this release. This is a limit of "
             "the current build, not a refusal of the LO's choice. The LO's Coordinators continue "
-            "to govern until that route is delivered. INTEVIA kept a record that this request was received at ⟨T⟩; sent again unchanged, it is answered as of that time.",
+            "to govern until that route is delivered.",
         )
 
     def test_w_d1_disabling_preserves_governance_establishment(self):

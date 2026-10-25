@@ -496,6 +496,9 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.FOUND_LIVING_ORGANISM,
         IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
         IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
+        IntakeEntry.ADVANCE_PHASE,
+        IntakeEntry.BIRTHING,
+        IntakeEntry.ACTIVATE_BETA,
     }
 )
 

@@ -52,6 +52,14 @@ from src.intevia.services.organism_role_service import (
     ProposeAssignmentCommand,
     TransitionAssignmentCommand,
 )
+from src.intevia.services.organism_formation_service import (
+    BirthingCommand,
+    PhaseAdvanceCommand,
+)
+from src.intevia.services.organism_entitlement_service import (
+    EntitlementElectionCommand,
+    OrganismEntitlementService,
+)
 from src.intevia.services.organism_authority import (
     S015Authority,
     S015OwnApplicantAuthorityRequest,
@@ -757,11 +765,40 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             request_reference="h100:bound:circle",
             idempotency_key="h100:bound:circle:key",
         )
+        phase_command = PhaseAdvanceCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            from_phase="GERMINATING",
+            to_phase="BIRTHING",
+            request_reference="h100:bound:phase",
+            idempotency_key="h100:bound:phase:key",
+        )
+        birthing_command = BirthingCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            request_reference="h100:bound:birthing",
+            idempotency_key="h100:bound:birthing:key",
+            offering_choice="FREE",
+            policy_version=1,
+            policy_text_sha256="0" * 64,
+        )
+        beta_command = EntitlementElectionCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            request_reference="h100:bound:beta",
+            idempotency_key="h100:bound:beta:key",
+            occurred_at=route_test_now(self.route),
+            policy_version=1,
+            policy_text_sha256="0" * 64,
+        )
         commands.update(
             {
                 IntakeEntry.FOUND_LIVING_ORGANISM: founding_command,
                 IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: adoption_command,
                 IntakeEntry.CREATE_GOVERNANCE_CIRCLE: circle_command,
+                IntakeEntry.ADVANCE_PHASE: phase_command,
+                IntakeEntry.BIRTHING: birthing_command,
+                IntakeEntry.ACTIVATE_BETA: beta_command,
             }
         )
         commands[IntakeEntry.CLAIM_APPLICATION] = replace(
@@ -785,8 +822,15 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.FOUND_LIVING_ORGANISM: self.route.founder,
             IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: self.route.founder,
             IntakeEntry.CREATE_GOVERNANCE_CIRCLE: self.route.founder,
+            IntakeEntry.ADVANCE_PHASE: self.route.founder,
+            IntakeEntry.BIRTHING: self.route.founder,
+            IntakeEntry.ACTIVATE_BETA: self.route.founder,
         }
         governance = OrganismGovernanceService(clock=database_now)
+        entitlement = OrganismEntitlementService(
+            authority=self.route.birthing_service._authority,
+            clock=database_now,
+        )
         executor_by_entry = {
             IntakeEntry.SUBMIT_APPLICATION: self.service._execute_submit_application,
             IntakeEntry.WITHDRAW_APPLICATION: self.service._execute_withdraw_application,
@@ -796,6 +840,9 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.FOUND_LIVING_ORGANISM: self.route.formation_service._execute_found_living_organism,
             IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: governance._execute_adopt_governing_instrument,
             IntakeEntry.CREATE_GOVERNANCE_CIRCLE: governance._execute_create_governance_circle,
+            IntakeEntry.ADVANCE_PHASE: self.route.phase_service._execute_advance_phase,
+            IntakeEntry.BIRTHING: self.route.birthing_service._execute_birth_living_organism,
+            IntakeEntry.ACTIVATE_BETA: entitlement._execute_activate_beta,
         }
         before = self._counts()
         for entry in executor_by_entry:
@@ -837,6 +884,10 @@ class BoundRequestDatabaseTests(TransactionTestCase):
         from tests.sbg_route_support import governance_arrangement_body
 
         governance = OrganismGovernanceService(clock=database_now)
+        entitlement = OrganismEntitlementService(
+            authority=self.route.birthing_service._authority,
+            clock=database_now,
+        )
         effective_at = route_test_now(self.route)
         commands = (
             (
@@ -873,6 +924,44 @@ class BoundRequestDatabaseTests(TransactionTestCase):
                     living_organism_uuid=self.organism_uuid,
                     request_reference="h100:bound-kw:circle",
                     idempotency_key="h100:bound-kw:circle:key",
+                ),
+            ),
+            (
+                self.route.phase_service.advance_phase,
+                IntakeEntry.ADVANCE_PHASE,
+                PhaseAdvanceCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    from_phase="GERMINATING",
+                    to_phase="BIRTHING",
+                    request_reference="h100:bound-kw:phase",
+                    idempotency_key="h100:bound-kw:phase:key",
+                ),
+            ),
+            (
+                self.route.birthing_service.birth_living_organism,
+                IntakeEntry.BIRTHING,
+                BirthingCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    request_reference="h100:bound-kw:birthing",
+                    idempotency_key="h100:bound-kw:birthing:key",
+                    offering_choice="FREE",
+                    policy_version=1,
+                    policy_text_sha256="0" * 64,
+                ),
+            ),
+            (
+                entitlement.activate_beta,
+                IntakeEntry.ACTIVATE_BETA,
+                EntitlementElectionCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    request_reference="h100:bound-kw:beta",
+                    idempotency_key="h100:bound-kw:beta:key",
+                    occurred_at=effective_at,
+                    policy_version=1,
+                    policy_text_sha256="0" * 64,
                 ),
             ),
         )

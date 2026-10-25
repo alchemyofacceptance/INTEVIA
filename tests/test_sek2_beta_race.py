@@ -11,6 +11,7 @@ from django.test import TransactionTestCase
 
 from core.models import (
     AuthorityDecision,
+    CommandIntake,
     GovernedRule,
     LivingOrganism,
     LivingOrganismEvent,
@@ -26,6 +27,7 @@ from src.intevia.services.organism_application_authority import (
 from src.intevia.services.organism_authority import (
     S015Authority,
     S015AuthorityRefusalCode,
+    canonical_timestamp,
 )
 from src.intevia.services.organism_entitlement_service import (
     EntitlementElectionCommand,
@@ -41,6 +43,55 @@ from tests.se_route_support import (
     declared_event_less_entitlement_rows,
     ensure_test_policy_text,
 )
+
+
+class _StopAfterAdmission(Exception):
+    """Test-only sentinel: the executor is not entered (PKT-CLK-3 CLK3-2, Advisor F1)."""
+
+
+def _already_beta_text(received_at):
+    """R-ENT-04's adopted text with the intake's receipt time (Stop 3)."""
+    return (
+        "Your organism already has beta access; no governed record was written. INTEVIA "
+        f"kept a record that this request was received at {canonical_timestamp(received_at)}; "
+        "sent again unchanged, it is answered as of that time."
+    )
+
+
+def _intake(actor, command):
+    """Return the one intake row of command, read back by (actor, entry, key)."""
+    return CommandIntake.objects.get(
+        actor=actor,
+        entry="ACTIVATE_BETA",
+        idempotency_key=command.idempotency_key,
+    )
+
+
+def _later_than(test_case, value):
+    """A database reading later than value: a bounded fixture precondition (D §7.1a)."""
+    for _ in range(3):
+        observed = database_now()
+        if observed > value:
+            return observed
+    test_case.fail("database clock did not advance; the witness cannot discriminate")
+
+
+def _admit_only(test_case, service, actor, command):
+    """Admit command through the public entry and stop before the executor writes.
+
+    Since CLK3-2 the opt-in runs as of the intake's received_at, not the service
+    clock, so a witness that needs a row recorded after the request admits the
+    request first, reads its persisted time T, then writes the row and retries
+    the identical command, which runs at T. Asserts +1 intake and nothing else.
+    """
+    before = _state()
+    intake_before = CommandIntake.objects.count()
+    with patch.object(service, "_execute_activate_beta", side_effect=_StopAfterAdmission):
+        with test_case.assertRaises(_StopAfterAdmission):
+            service.activate_beta(command)
+    test_case.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+    test_case.assertEqual(_state(), before)
+    return _intake(actor, command).received_at
 
 
 def _free_route():
@@ -153,7 +204,7 @@ class BetaOptInRaceTests(TransactionTestCase):
     reset_sequences = True
 
     def _assert_ordered_collision(self, *, winner_is_coordinator):
-        """Commit the winner before trying the loser with an earlier receipt time."""
+        """Commit the winner after the loser's admission; the loser's retry at its T collides."""
         route = _free_route()
         coordinator = add_test_coordinator(
             route,
@@ -174,8 +225,10 @@ class BetaOptInRaceTests(TransactionTestCase):
             loser_actor,
             tag=f"loser-{uuid4().hex}",
         )
-        loser_received_at = database_now()
         before = _state()
+        loser_service = _service()
+        loser_received_at = _admit_only(self, loser_service, loser_actor, loser_command)
+        _later_than(self, loser_received_at)
 
         winner_result = _service().activate_beta(winner_command)
         self.assertIsNotNone(winner_result.entitlement_uuid)
@@ -184,14 +237,17 @@ class BetaOptInRaceTests(TransactionTestCase):
         )
         self.assertLess(loser_received_at, winner_grant.recorded_at)
         after_winner = _state()
+        intake_after_winner = CommandIntake.objects.count()
 
         with self.assertRaises(S015EntitlementRefused) as refusal:
-            _service(clock=lambda: loser_received_at).activate_beta(loser_command)
+            loser_service.activate_beta(loser_command)
         self.assertIs(
             refusal.exception.refusal_code,
             S015AuthorityRefusalCode.SE_ALREADY_BETA,
         )
+        self.assertEqual(str(refusal.exception), _already_beta_text(loser_received_at))
         self.assertEqual(_state(), after_winner)
+        self.assertEqual(CommandIntake.objects.count(), intake_after_winner)
         self._assert_single_winner_state(
             route,
             winner_result,
@@ -200,7 +256,7 @@ class BetaOptInRaceTests(TransactionTestCase):
         )
 
     def _assert_single_winner_state(self, route, winner_result, loser_command, before):
-        """Assert one grant and that the refused command left no records."""
+        """Assert one grant and that the refused command left no governed record."""
         self.assertIsNotNone(winner_result.entitlement_uuid)
         self.assertEqual(
             OrganismEntitlement.objects.filter(
@@ -225,6 +281,11 @@ class BetaOptInRaceTests(TransactionTestCase):
             OrganismCommandReceipt.objects.filter(
                 request_reference=loser_command.request_reference,
             ).exists()
+        )
+        # Stop 3 T-08n: the loser's request was admitted; exactly its intake row persists.
+        self.assertEqual(
+            CommandIntake.objects.filter(idempotency_key=loser_command.idempotency_key).count(),
+            1,
         )
 
         after = _state()
@@ -326,8 +387,14 @@ class BetaOptInRaceTests(TransactionTestCase):
     def test_w_k2_c3_prior_beta_row_collides_outside_effective_and_recorded_view(self):
         """W-K2.C3: collide on a beta row even when its recorded/effective times are later."""
         route = _free_route()
-        received_at = database_now()
-        grant_effective_at = database_now()
+        service = _service()
+        command = _command(
+            route,
+            route.founder,
+            tag=f"prior-row-{uuid4().hex}",
+        )
+        received_at = _admit_only(self, service, route.founder, command)
+        grant_effective_at = _later_than(self, received_at)
         existing = _seed_beta_row(
             route,
             effective_at=grant_effective_at,
@@ -341,13 +408,7 @@ class BetaOptInRaceTests(TransactionTestCase):
         )
         self.assertGreater(grant_event.received_at, existing.effective_at)
         before = _state()
-        service = _service(clock=lambda: received_at)
-        command = _command(
-            route,
-            route.founder,
-            tag=f"prior-row-{uuid4().hex}",
-            occurred_at=received_at,
-        )
+        intake_before = CommandIntake.objects.count()
 
         with patch.object(
             service,
@@ -362,12 +423,21 @@ class BetaOptInRaceTests(TransactionTestCase):
             S015AuthorityRefusalCode.SE_ALREADY_BETA,
         )
         compose.assert_not_called()
+        self.assertEqual(str(refusal.exception), _already_beta_text(received_at))
         self.assertEqual(_state(), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_before)
 
     def test_w_k2_c3_extension_effective_at_receipt_recorded_later_collides(self):
         """W-K2.C3: a visible extension collides even when recorded after receipt."""
         route = _free_route()
-        received_at = database_now()
+        service = _service()
+        command = _command(
+            route,
+            route.founder,
+            tag=f"late-recorded-extension-{uuid4().hex}",
+        )
+        received_at = _admit_only(self, service, route.founder, command)
+        _later_than(self, received_at)
         extension = _seed_extension(
             route,
             effective_at=received_at,
@@ -375,38 +445,32 @@ class BetaOptInRaceTests(TransactionTestCase):
         self.assertGreater(extension.recorded_at, received_at)
         self.assertEqual(extension.effective_at, received_at)
         before = _state()
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015EntitlementRefused) as refusal:
-            _service(clock=lambda: received_at).activate_beta(
-                _command(
-                    route,
-                    route.founder,
-                    tag=f"late-recorded-extension-{uuid4().hex}",
-                    occurred_at=received_at,
-                )
-            )
+            service.activate_beta(command)
         self.assertIs(
             refusal.exception.refusal_code,
             S015AuthorityRefusalCode.SE_ALREADY_BETA,
         )
+        self.assertEqual(str(refusal.exception), _already_beta_text(received_at))
         self.assertEqual(_state(), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_before)
 
     def test_w_k2_c3_future_extension_does_not_collide(self):
         """W-K2.C3: an extension effective after receipt does not block beta."""
         route = _free_route()
-        received_at = database_now()
         future_extension = _seed_extension(
             route,
-            effective_at=received_at + timedelta(days=1),
+            effective_at=database_now() + timedelta(days=1),
         )
+        command = _command(
+            route,
+            route.founder,
+            tag=f"future-extension-{uuid4().hex}",
+        )
+        result = _service().activate_beta(command)
+        received_at = _intake(route.founder, command).received_at
         self.assertGreater(future_extension.effective_at, received_at)
-        result = _service(clock=lambda: received_at).activate_beta(
-            _command(
-                route,
-                route.founder,
-                tag=f"future-extension-{uuid4().hex}",
-                occurred_at=received_at,
-            )
-        )
         self.assertIsNotNone(result.entitlement_uuid)
         self.assertEqual(
             OrganismEntitlement.objects.filter(
@@ -419,7 +483,13 @@ class BetaOptInRaceTests(TransactionTestCase):
     def test_w_k2_c3_expired_extension_does_not_collide(self):
         """W-K2.C3: an extension ended at receipt does not block beta."""
         route = _free_route()
-        received_at = database_now()
+        service = _service()
+        command = _command(
+            route,
+            route.founder,
+            tag=f"expired-extension-{uuid4().hex}",
+        )
+        received_at = _admit_only(self, service, route.founder, command)
         expired_extension = _seed_extension(
             route,
             effective_at=received_at - timedelta(days=1),
@@ -427,14 +497,9 @@ class BetaOptInRaceTests(TransactionTestCase):
         )
         self.assertLess(expired_extension.effective_at, received_at)
         self.assertEqual(expired_extension.effective_until, received_at)
-        result = _service(clock=lambda: received_at).activate_beta(
-            _command(
-                route,
-                route.founder,
-                tag=f"expired-extension-{uuid4().hex}",
-                occurred_at=received_at,
-            )
-        )
+        intake_before = CommandIntake.objects.count()
+        result = service.activate_beta(command)
+        self.assertEqual(CommandIntake.objects.count(), intake_before)
         self.assertIsNotNone(result.entitlement_uuid)
         self.assertEqual(
             OrganismEntitlement.objects.filter(
@@ -447,8 +512,14 @@ class BetaOptInRaceTests(TransactionTestCase):
     def test_w_k2_c4_unique_index_collision_translates_to_already_beta(self):
         """W-K2.C4: translate the named unique-index race and roll back all writes."""
         route = _free_route()
-        received_at = database_now()
-        grant_effective_at = database_now()
+        service = _service()
+        command = _command(
+            route,
+            route.founder,
+            tag=f"unique-collision-{uuid4().hex}",
+        )
+        received_at = _admit_only(self, service, route.founder, command)
+        grant_effective_at = _later_than(self, received_at)
         existing = _seed_beta_row(
             route,
             effective_at=grant_effective_at,
@@ -462,13 +533,7 @@ class BetaOptInRaceTests(TransactionTestCase):
         )
         self.assertGreater(grant_event.received_at, existing.effective_at)
         before = _state()
-        service = _service(clock=lambda: received_at)
-        command = _command(
-            route,
-            route.founder,
-            tag=f"unique-collision-{uuid4().hex}",
-            occurred_at=received_at,
-        )
+        intake_before = CommandIntake.objects.count()
 
         with patch.object(service, "_beta_grant_collision", return_value=None):
             with self.assertRaises(S015EntitlementRefused) as refusal:
@@ -478,7 +543,9 @@ class BetaOptInRaceTests(TransactionTestCase):
             refusal.exception.refusal_code,
             S015AuthorityRefusalCode.SE_ALREADY_BETA,
         )
+        self.assertEqual(str(refusal.exception), _already_beta_text(received_at))
         self.assertEqual(_state(), before)
+        self.assertEqual(CommandIntake.objects.count(), intake_before)
 
     def test_w_k2_c5_unrelated_integrity_error_is_not_translated(self):
         """W-K2.C5: propagate a different insert integrity fault unchanged."""

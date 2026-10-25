@@ -213,10 +213,15 @@ C_FOUNDER_PROTECTED_MESSAGE = (
     "under the LO's ordinary governed rules."
 )
 
+# R-FORM-29: the reason is shared; Birthing, once admitted (PKT-CLK-3 CLK3-2), opens it
+# with "The LO was not born." and the intake tail. The full message is unchanged.
+SB_BIRTHING_ELECTORATE_EMPTY_REASON = (
+    "On this sole-founder route, Birthing needs exactly one active member of the LO's "
+    "electorate at the moment of Birthing, and this LO has none. This is a governed "
+    "requirement of the route, not a technical fault."
+)
 SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE = (
-    "The LO was not born, and nothing changed. On this sole-founder route, Birthing needs exactly "
-    "one active member of the LO's electorate at the moment of Birthing, and this LO has none. "
-    "This is a governed requirement of the route, not a technical fault."
+    "The LO was not born, and nothing changed. " + SB_BIRTHING_ELECTORATE_EMPTY_REASON
 )
 
 
@@ -1484,6 +1489,7 @@ class S015Authority:
 __all__ = [
     "C_FOUNDER_PROTECTED_MESSAGE",
     "SB_BIRTHING_ELECTORATE_EMPTY_MESSAGE",
+    "SB_BIRTHING_ELECTORATE_EMPTY_REASON",
     "QualifiedS015AuthorityDecision",
     "S015Authority",
     "S015AuthorityDenied",

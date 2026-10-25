@@ -396,8 +396,8 @@ class GatewayShapeTests(SimpleTestCase):
     def _fingerprint(self, entry, command):
         return BoundRequest.for_test(entry, command, received_at=T0, actor=self.actor).request_fingerprint
 
-    def test_ch_33_active_entries_are_the_twelve_and_g3_is_the_pair(self):
-        """CH-33: ACTIVE_ENTRIES includes the prior twelve plus step A and the G3 pair."""
+    def test_ch_33_active_entries_are_the_eighteen_and_g3_is_the_pair(self):
+        """CH-33: ACTIVE_ENTRIES includes the prior twelve, steps A and B, and the G3 pair."""
         self.assertEqual(
             ACTIVE_ENTRIES,
             frozenset(
@@ -417,6 +417,9 @@ class GatewayShapeTests(SimpleTestCase):
                     IntakeEntry.FOUND_LIVING_ORGANISM,
                     IntakeEntry.ADOPT_GOVERNING_INSTRUMENT,
                     IntakeEntry.CREATE_GOVERNANCE_CIRCLE,
+                    IntakeEntry.ADVANCE_PHASE,
+                    IntakeEntry.BIRTHING,
+                    IntakeEntry.ACTIVATE_BETA,
                 }
             ),
         )
@@ -424,8 +427,8 @@ class GatewayShapeTests(SimpleTestCase):
             ACTIVATION_GROUPS["G3"],
             frozenset({IntakeEntry.SAVE_GATEWAY_DRAFT, IntakeEntry.EFFECT_GATEWAY_VERSION}),
         )
-        for group in ("G1", "G2"):
-            self.assertFalse(ACTIVATION_GROUPS[group] & ACTIVE_ENTRIES, group)
+        self.assertTrue(ACTIVATION_GROUPS["G1"] <= ACTIVE_ENTRIES)
+        self.assertFalse(ACTIVATION_GROUPS["G2"] & ACTIVE_ENTRIES)
 
     def test_each_g3_projection_matches_the_commissioned_shape(self):
         """C4 §F2.2 (CH-35): target, command, omitted, target_organism_id and action per entry."""
@@ -605,7 +608,7 @@ class GatewayWriterCensusTests(SimpleTestCase):
         (APP, "OrganismApplicationService._execute_save_gateway_draft", "create"),
         (ENT, "OrganismEntitlementService._new_settings_version", "create"),
         (ENT, "OrganismEntitlementService.prepare_birthing_election", "delete"),
-        (ENT, "OrganismEntitlementService.activate_beta", "delete"),
+        (ENT, "OrganismEntitlementService._execute_activate_beta", "delete"),
     }
 
     @staticmethod

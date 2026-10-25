@@ -22,6 +22,7 @@ from core.models import (
     OrganismEntitlementEvent,
     OrganismEntitlementPolicyText,
 )
+from src.intevia.services.organism_command_support import canonical_timestamp
 from src.intevia.services.organism_entitlement_service import (
     OrganismEntitlementService,
     S015EntitlementTechnicalFailure,
@@ -51,16 +52,35 @@ MIGRATION = ("core", "0048_se_entitlement_granted_event_guard")
 PREVIOUS = ("core", "0047_sek1_platform_rule_statement_start")
 TRIGGER_NAME = "s015_organismentitlement_granted_guard"
 FUNCTION_NAME = "s015_guard_entitlement_granted"
-T1 = (
-    "Beta access could not be activated because the system could not confirm "
-    "the required record of the grant. This attempt made no changes. This is a "
-    "system recording fault, not a refusal of your organisation’s eligibility "
-    "for beta access. The fault needs to be checked before you retry."
-)
-BIRTHING_FAILURE = (
-    "BIRTHING could not be completed because of a technical problem; "
-    "nothing was saved. Try again; if it persists, report it."
-)
+def _t1(received_at):
+    """R-ENT-08 (PKT-CLK-3 CLK3-2), with the intake's receipt time."""
+    return (
+        "Beta access could not be activated because the system could not confirm "
+        "the required record of the grant. This attempt wrote no governed record; "
+        "INTEVIA kept a record that this request was received at "
+        f"{canonical_timestamp(received_at)}, and the same request can be sent again "
+        "once the fault is checked; it is judged as of that time. This is a system "
+        "recording fault, not a refusal of your organisation’s eligibility for beta access."
+    )
+
+
+def _birthing_failure(received_at):
+    """R-FORM-24 (PKT-CLK-3 CLK3-2), with the intake's receipt time."""
+    return (
+        "BIRTHING could not be completed because of a technical problem; no governed "
+        "record was written. INTEVIA kept a record that this request was received at "
+        f"{canonical_timestamp(received_at)}; the same request can be sent again and is "
+        "judged as of that time. If it persists, report it."
+    )
+
+
+def _intake(route, entry, command):
+    """The command's one intake row, read back by (actor, entry, key)."""
+    return CommandIntake.objects.get(
+        actor=route.founder,
+        entry=entry,
+        idempotency_key=command.idempotency_key,
+    )
 EVENT_STATE_MODELS = (
     OrganismEntitlementPolicyText,
     OrganismEntitlement,
@@ -201,6 +221,38 @@ def _founding_without_intake():
 
 
 @contextmanager
+def _phase_advance_without_intake():
+    """Advance prepare_route's phase through the executor with a test-only bound request.
+
+    Since CLK3-2, the public phase advance admits through the durable intake and writes
+    a core_commandintake row, which 0049's reverse refuses. As for founding, the fixture
+    calls the phase-advance executor directly, so no intake row is written.
+    """
+    from django.test import override_settings
+
+    from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
+    from src.intevia.services.organism_formation_service import OrganismPhaseAdvanceService
+
+    def advance_without_intake(service, command):
+        actor = _resolve_actor(service._alias, command.credential)
+        with override_settings(INTEVIA_TEST_CONTEXT=True):
+            bound = BoundRequest.for_test(
+                IntakeEntry.ADVANCE_PHASE,
+                command,
+                received_at=database_now(),
+                actor=actor,
+            )
+            return service._execute_advance_phase(command, bound)
+
+    with patch.object(
+        OrganismPhaseAdvanceService,
+        "advance_phase",
+        new=advance_without_intake,
+    ):
+        yield
+
+
+@contextmanager
 def _rollback_migration_work(test_case):
     class _Rollback(Exception):
         pass
@@ -220,9 +272,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
         # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
         # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
         # intake entry that writes an intake row, so the fixture founds through the executor with a
-        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). The phase
-        # advance is not an admitted entry and the route has no gateway effect.
-        with _founding_without_intake():
+        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). Since CLK3-2
+        # the phase advance is admitted too, so it goes through its executor the same way
+        # (_phase_advance_without_intake). The route has no gateway effect.
+        with _founding_without_intake(), _phase_advance_without_intake():
             route = prepare_route(
                 tag=f"k3-migration-valid-{uuid4().hex}",
                 governance_enabled=None,
@@ -299,9 +352,10 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
         # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
         # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
         # intake entry that writes an intake row, so the fixture founds through the executor with a
-        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). The phase
-        # advance is not an admitted entry and the route has no gateway effect.
-        with _founding_without_intake():
+        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). Since CLK3-2
+        # the phase advance is admitted too, so it goes through its executor the same way
+        # (_phase_advance_without_intake). The route has no gateway effect.
+        with _founding_without_intake(), _phase_advance_without_intake():
             route = prepare_route(
                 tag=f"k3-migration-obstructed-{uuid4().hex}",
                 governance_enabled=None,
@@ -433,9 +487,14 @@ class SEGrantedGuardBehaviorTests(TransactionTestCase):
         before = _records_state()
         service = _EventlessComposer(route)
         command = _election_command(route, suffix="k3-guard")
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015EntitlementTechnicalFailure) as failure:
             service.activate_beta(command)
-        self.assertEqual(str(failure.exception), T1)
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        self.assertEqual(
+            str(failure.exception),
+            _t1(_intake(route, "ACTIVATE_BETA", command).received_at),
+        )
         self.assertIsInstance(failure.exception.__cause__, IntegrityError)
         self.assertTrue(_is_entitlement_granted_guard_failure(failure.exception.__cause__))
         self.assertEqual(_records_state(), before)
@@ -445,15 +504,19 @@ class SEGrantedGuardBehaviorTests(TransactionTestCase):
         ensure_test_policy_text()
         before = _records_state()
         route.birthing_service._entitlement_service = _EventlessComposer(route)
+        command = _birthing_command(
+            route,
+            offering_choice="COMPLIMENTARY_BETA",
+            suffix="k3-guard",
+        )
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015BirthingTechnicalFailure) as failure:
-            route.birthing_service.birth_living_organism(
-                _birthing_command(
-                    route,
-                    offering_choice="COMPLIMENTARY_BETA",
-                    suffix="k3-guard",
-                )
-            )
-        self.assertEqual(str(failure.exception), BIRTHING_FAILURE)
+            route.birthing_service.birth_living_organism(command)
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        self.assertEqual(
+            str(failure.exception),
+            _birthing_failure(_intake(route, "BIRTHING", command).received_at),
+        )
         self.assertIsInstance(failure.exception.__cause__, IntegrityError)
         self.assertTrue(_is_entitlement_granted_guard_failure(failure.exception.__cause__))
         self.assertEqual(_records_state(), before)

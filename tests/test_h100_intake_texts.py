@@ -541,9 +541,12 @@ class H100IntakeTextTests(TransactionTestCase):
             ),
             (
                 "class B",
-                "; no governed record was written.",
-                f"INTEVIA kept a record that this request was received at "
-                f"{canonical_timestamp(NOW)}; sent again unchanged, it is answered as of that time.",
+                ", and nothing from this request was saved except a record that it was received "
+                f"at {canonical_timestamp(NOW)}. Something changed for this LO after the request "
+                "was received (for example, its Birthing completed), and GOVERNANCE is not ready "
+                "to be switched on yet.",
+                "Sending this same request again is still judged as of when it was first "
+                "received, before the change.",
             ),
         )
 
@@ -560,18 +563,21 @@ class H100IntakeTextTests(TransactionTestCase):
                         if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
                             body = (
                                 f"The arrangement includes {condition}, which this release "
-                                "cannot yet act on. Leave it out for now; it can be added by a "
-                                "later version once the release that acts on it is delivered."
+                                "cannot yet act on. Adopt a version that leaves it out for now, "
+                                "then make a new request to switch GOVERNANCE on; it can be "
+                                "added by a later version once the release that acts on it is "
+                                "delivered."
                             )
                         else:
                             body = (
                                 f"Seat {condition} names an eligibility rule this release "
                                 "cannot check; it can check only \"an active member of the LO\". "
-                                "Use that rule for now; other eligibility rules arrive with "
-                                "the slices that can check them."
+                                "Adopt a version that uses that rule for now, then make a new "
+                                "request to switch GOVERNANCE on; other eligibility rules arrive "
+                                "with the slices that can check them."
                             )
                         expected = (
-                            f"No arrangement was adopted{opening_end} {body} {tail}"
+                            f"GOVERNANCE was not switched on{opening_end} {body} {tail}"
                         )
                         actual = _governance_enabling_refusal_message(
                             database_alias="default",
@@ -585,8 +591,85 @@ class H100IntakeTextTests(TransactionTestCase):
                         self.assertEqual(actual, expected)
         self.assertEqual(condition_reader.call_count, 4)
 
-    def test_nw7_default_readiness_forms_match_all_formation_callers(self):
-        """Default readiness text stays byte-identical through the clock-path callers."""
+    def test_a3_guard_matchers_match_only_their_state_and_diagnostic(self):
+        """A3's two matchers translate only their own SQLSTATE and diagnostic, on the same cause."""
+        from types import SimpleNamespace
+
+        from src.intevia.services.organism_entitlement_service import _is_constraint_violation
+        from src.intevia.services.organism_formation_service import (
+            _SBG_BIRTHING_GUARD_CODES,
+            _SBG_PHASE_GUARD_CODES,
+            _sbg_guard_refusal_code,
+        )
+
+        def chained(*causes):
+            error = IntegrityError("guard")
+            current = error
+            for cause in causes:
+                current.__cause__ = cause
+                current = cause
+            return error
+
+        def database_error(*, sqlstate=None, pgcode=None, primary=None, constraint=None):
+            error = Exception("database")
+            error.sqlstate = sqlstate
+            error.pgcode = pgcode
+            error.diag = SimpleNamespace(message_primary=primary, constraint_name=constraint)
+            return error
+
+        circle = S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING
+        participation = S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE
+        snapshot = "core_lobirthingsnapshot_living_organism_id_uniq"
+        self.assertIs(
+            _sbg_guard_refusal_code(
+                chained(database_error(sqlstate="23000", primary=circle.value)),
+                _SBG_PHASE_GUARD_CODES,
+            ),
+            circle,
+        )
+        self.assertIs(
+            _sbg_guard_refusal_code(
+                chained(Exception("wrapper"), database_error(pgcode="23000", primary=circle.value)),
+                _SBG_BIRTHING_GUARD_CODES,
+            ),
+            circle,
+        )
+        for error, codes in (
+            (chained(database_error(sqlstate="23505", primary=circle.value)), _SBG_BIRTHING_GUARD_CODES),
+            (chained(database_error(sqlstate="23000", primary="SB_BIRTHING_ELECTORATE_EMPTY")), _SBG_BIRTHING_GUARD_CODES),
+            (chained(database_error(sqlstate="23000", primary=participation.value)), _SBG_PHASE_GUARD_CODES),
+            (chained(database_error(sqlstate="23000"), database_error(primary=circle.value)), _SBG_BIRTHING_GUARD_CODES),
+            (IntegrityError(circle.value), _SBG_BIRTHING_GUARD_CODES),
+        ):
+            with self.subTest(error=repr(error.__cause__)):
+                self.assertIsNone(_sbg_guard_refusal_code(error, codes))
+        self.assertTrue(
+            _is_constraint_violation(
+                chained(database_error(sqlstate="23505", constraint=snapshot)),
+                sqlstate="23505",
+                constraint_name=snapshot,
+            )
+        )
+        for error in (
+            chained(database_error(sqlstate="23000", constraint=snapshot)),
+            chained(database_error(sqlstate="23505", constraint="core_lobirthingsnapshot_snapshot_uuid_key")),
+            chained(database_error(sqlstate="23505"), database_error(constraint=snapshot)),
+            IntegrityError(snapshot),
+        ):
+            with self.subTest(error=repr(error.__cause__)):
+                self.assertFalse(
+                    _is_constraint_violation(error, sqlstate="23505", constraint_name=snapshot)
+                )
+
+    def test_nw7_default_readiness_forms_hold_and_formation_callers_render_the_restated_form(self):
+        """The SB-G texts render the adopted per-operation forms through every caller.
+
+        The direct builder, given an operation (Birthing, phase advance or switching GOVERNANCE
+        on), renders the default form with that operation's corrective step (adopted 25 Oct
+        2026). The formation callers render the restated class A form (the opening ends at "."
+        and Stop 3's tail names the receipt time) and, with rolled_back, the class B form of
+        amendment A3; the application caller renders the direct form unchanged.
+        """
         organism = object()
         effective_at = NOW
         recorded_at = NOW
@@ -603,60 +686,99 @@ class H100IntakeTextTests(TransactionTestCase):
             S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
             S015AuthorityRefusalCode.SBG_NO_INITIAL_PARTICIPATION_ROUTE,
         )
-        acts = (
-            "The LO was not born",
-            "The phase was not advanced",
-            "GOVERNANCE was not switched on",
-        )
+        acts = {
+            "The LO was not born": "BIRTHING",
+            "The phase was not advanced": "PHASE_ADVANCE",
+            "GOVERNANCE was not switched on": "ENABLING",
+        }
+        new_requests = {
+            "BIRTHING": "make a new Birthing request",
+            "PHASE_ADVANCE": "make a new request to advance the phase",
+            "ENABLING": "make a new request to switch GOVERNANCE on",
+        }
 
         def condition_reader(*, code, **_kwargs):
             return conditions[code]
 
         def expected_default(code, act):
+            # The adopted wording of 25 Oct 2026 (A3): each corrective step names a new request.
+            new_request = new_requests[acts[act]]
             if code is S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING:
+                reason = (
+                    "Switching GOVERNANCE on needs the LO's GOVERNANCE Circle first."
+                    if acts[act] == "ENABLING"
+                    else "GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first."
+                )
                 return (
-                    f"{act} and nothing changed. GOVERNANCE is on for this LO, so it needs its "
-                    "GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then try again. "
-                    "Creating the Circle early in formation avoids this."
+                    f"{act} and nothing changed. {reason} Create the LO's GOVERNANCE Circle, then "
+                    f"{new_request}. Creating the Circle early in formation avoids this."
                 )
             if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING:
                 return (
                     f"{act} and nothing changed. GOVERNANCE needs an adopted arrangement saying "
                     "which seats exist, how each is filled and who decides, and this LO has none in "
-                    "effect. Adopt an arrangement, then try again. Adopting it before creating the "
-                    "Circle avoids this."
+                    f"effect. Adopt an arrangement, then {new_request}. Adopting it before creating "
+                    "the Circle avoids this."
                 )
             if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE:
                 return (
                     f"{act} and nothing changed. The arrangement is incomplete: "
-                    f"{conditions[code]}. Adopt a corrected version, then try again. Every seat "
-                    "needs an admission route and a deciding body that matches it."
+                    f"{conditions[code]}. Adopt a corrected version, then {new_request}. Every "
+                    "seat needs an admission route and a deciding body that matches it."
                 )
             if code is S015AuthorityRefusalCode.SBG_ARRANGEMENT_FIELD_UNSUPPORTED:
                 return (
-                    "No arrangement was adopted and nothing changed. The arrangement includes "
-                    f"{conditions[code]}, which this release cannot yet act on. Leave it out for "
-                    "now; it can be added by a later version once the release that acts on it is "
-                    "delivered."
+                    f"{act} and nothing changed. The arrangement includes "
+                    f"{conditions[code]}, which this release cannot yet act on. Adopt a version "
+                    f"that leaves it out for now, then {new_request}; it can be added by a later "
+                    "version once the release that acts on it is delivered."
                 )
             if code is S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED:
                 return (
-                    "No arrangement was adopted and nothing changed. Seat "
+                    f"{act} and nothing changed. Seat "
                     f"{conditions[code]} names an eligibility rule this release cannot check; it "
-                    "can check only \"an active member of the LO\". Use that rule for now; other "
-                    "eligibility rules arrive with the slices that can check them."
+                    "can check only \"an active member of the LO\". Adopt a version that uses "
+                    f"that rule for now, then {new_request}; other eligibility rules arrive with "
+                    "the slices that can check them."
                 )
             next_step = (
                 "Take a seat before the LO is born, or adopt a version with a seat the "
-                "LO Coordinators appoint."
+                "LO Coordinators appoint. Then make a new Birthing request."
                 if act == "The LO was not born"
-                else "Adopt a version with a seat the LO Coordinators appoint, then try again."
+                else f"Adopt a version with a seat the LO Coordinators appoint, then {new_request}."
             )
             return (
                 f"{act} and nothing changed. Nobody holds a GOVERNANCE seat yet, and no seat in "
                 "the arrangement can be filled in this release: election seats wait for elections, "
                 "co-option seats wait for an active GOVERNANCE, and ex officio seats are not yet "
                 f"available. {next_step} The arrangement you adopted stays recorded and in effect."
+            )
+
+        received_at = NOW
+
+        def expected_restated(code, act):
+            default = expected_default(code, act)
+            self.assertEqual(default.count(" and nothing changed."), 1)
+            return (
+                default.replace(" and nothing changed.", ".", 1)
+                + " INTEVIA recorded this refusal and that the request was received at "
+                + f"{canonical_timestamp(received_at)}; nothing else was saved."
+            )
+
+        def expected_rolled_back(code, act):
+            # R-FORM-31a-f and R-FORM-32a, -32b, -32c, -32e, -32f (A3, class B), as adopted 25 Oct 2026.
+            default = expected_default(code, act)
+            self.assertEqual(default.count(" and nothing changed."), 1)
+            return (
+                default.replace(
+                    " and nothing changed.",
+                    ", and nothing from this request was saved except a record that it was "
+                    f"received at {canonical_timestamp(received_at)}. The LO's governance "
+                    "settings changed after the request was received.",
+                    1,
+                )
+                + " Sending this same request again is still judged as of when it was first "
+                + "received, before the change."
             )
 
         phase_service = OrganismPhaseAdvanceService(clock=lambda: NOW)
@@ -672,6 +794,7 @@ class H100IntakeTextTests(TransactionTestCase):
                             direct = _sbg_readiness_message(
                                 code=code,
                                 act=act,
+                                operation=acts[act],
                                 database_alias="default",
                                 organism=organism,
                                 effective_at=effective_at,
@@ -685,21 +808,48 @@ class H100IntakeTextTests(TransactionTestCase):
                                     "BIRTHING",
                                     effective_at,
                                     recorded_at,
+                                    received_at=received_at,
                                 )
+                                self.assertNotEqual(via_formation, direct)
                                 self.assertEqual(
                                     via_formation.encode("utf-8"),
-                                    direct.encode("utf-8"),
+                                    expected_restated(code, act).encode("utf-8"),
+                                )
+                                rolled_back = phase_service._authored_refusal_message(
+                                    code,
+                                    organism,
+                                    "BIRTHING",
+                                    effective_at,
+                                    recorded_at,
+                                    received_at=received_at,
+                                    rolled_back=True,
+                                )
+                                self.assertEqual(
+                                    rolled_back.encode("utf-8"),
+                                    expected_rolled_back(code, act).encode("utf-8"),
                                 )
                             elif act == "The LO was not born":
                                 via_formation = birthing_service._authored_refusal_message(
                                     code,
                                     organism,
                                     effective_at,
-                                    recorded_at,
+                                    received_at,
                                 )
+                                self.assertNotEqual(via_formation, direct)
                                 self.assertEqual(
                                     via_formation.encode("utf-8"),
-                                    direct.encode("utf-8"),
+                                    expected_restated(code, act).encode("utf-8"),
+                                )
+                                rolled_back = birthing_service._authored_refusal_message(
+                                    code,
+                                    organism,
+                                    effective_at,
+                                    received_at,
+                                    rolled_back=True,
+                                )
+                                self.assertEqual(
+                                    rolled_back.encode("utf-8"),
+                                    expected_rolled_back(code, act).encode("utf-8"),
                                 )
                             else:
                                 via_application = _governance_enabling_refusal_message(
@@ -739,6 +889,9 @@ class H100IntakeTextTests(TransactionTestCase):
                 "_finalise",
                 "_sbg_readiness_message",
                 "_execute_found_living_organism",
+                "_execute_advance_phase",
+                "_execute_birth_living_organism",
+                "_birthing_guard_atomic",
             },
             "src/intevia/services/organism_governance_service.py": {
                 "authority_atomic",
@@ -747,6 +900,8 @@ class H100IntakeTextTests(TransactionTestCase):
             "src/intevia/services/organism_entitlement_service.py": {
                 "authority_atomic",
                 "_finalise",
+                "_execute_activate_beta",
+                "_entitlement_guard_atomic",
             },
         }
         forbidden_keywords = {
@@ -759,10 +914,45 @@ class H100IntakeTextTests(TransactionTestCase):
                 "src/intevia/services/organism_formation_service.py",
                 "_execute_found_living_organism",
             ),
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "_execute_advance_phase",
+            ),
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "_execute_birth_living_organism",
+            ),
+            (
+                "src/intevia/services/organism_entitlement_service.py",
+                "_execute_activate_beta",
+            ),
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "_birthing_guard_atomic",
+            ),
+            (
+                "src/intevia/services/organism_entitlement_service.py",
+                "_entitlement_guard_atomic",
+            ),
             ("src/intevia/services/organism_governance_service.py", "_execute"),
+        }
+        # CENSUS-G1-N2 (PKT-CLK-3 CLK3-2): the builders an activated executor reaches render
+        # the restated form, so opening_end= and tail= must be present there, by class.
+        restated_builders = {
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "OrganismPhaseAdvanceService",
+                "_authored_refusal_message",
+            ),
+            (
+                "src/intevia/services/organism_formation_service.py",
+                "OrganismBirthingService",
+                "_authored_refusal_message",
+            ),
         }
         offenders = []
         positive_calls = set()
+        restated_calls = set()
         for relative_path, names in census.items():
             source = (root / Path(relative_path)).read_text(encoding="utf-8")
             tree = ast.parse(source, filename=relative_path)
@@ -776,6 +966,14 @@ class H100IntakeTextTests(TransactionTestCase):
                 parent = parents.get(node)
                 while parent is not None:
                     if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        return parent.name
+                    parent = parents.get(parent)
+                return None
+
+            def enclosing_class(node):
+                parent = parents.get(node)
+                while parent is not None:
+                    if isinstance(parent, ast.ClassDef):
                         return parent.name
                     parent = parents.get(parent)
                 return None
@@ -817,19 +1015,42 @@ class H100IntakeTextTests(TransactionTestCase):
                     continue
                 scope = enclosing_function(node)
                 if (
-                    called_name == "authority_atomic"
+                    called_name
+                    in {
+                        "authority_atomic",
+                        "_birthing_guard_atomic",
+                        "_entitlement_guard_atomic",
+                        "_finalise",
+                    }
                     and (relative_path, scope) in bound_time_executors
                 ):
                     received_at = next(
                         (keyword.value for keyword in node.keywords if keyword.arg == "received_at"),
                         None,
                     )
-                    if received_at is None or ast.unparse(received_at) != "bound.received_at":
+                    expected_time = (
+                        "received_at"
+                        if scope in {"_birthing_guard_atomic", "_entitlement_guard_atomic"}
+                        else "bound.received_at"
+                    )
+                    if received_at is None or ast.unparse(received_at) != expected_time:
                         offenders.append(
                             f"{relative_path}:{node.lineno}:authority_atomic:missing-bound-time"
                         )
                     else:
                         positive_calls.add((relative_path, scope))
+                    continue
+                if (
+                    called_name == "_sbg_readiness_message"
+                    and (relative_path, enclosing_class(node), scope) in restated_builders
+                ):
+                    keywords = {keyword.arg for keyword in node.keywords}
+                    if {"opening_end", "tail"} <= keywords and not keywords & {None, "received_at"}:
+                        restated_calls.add((relative_path, enclosing_class(node), scope))
+                    else:
+                        offenders.append(
+                            f"{relative_path}:{node.lineno}:{called_name}:restated-form-missing"
+                        )
                     continue
                 forbidden = forbidden_keywords.get(called_name, {"received_at"})
                 for keyword in node.keywords:
@@ -838,6 +1059,7 @@ class H100IntakeTextTests(TransactionTestCase):
                             f"{relative_path}:{node.lineno}:{called_name}:{keyword.arg or '**'}"
                         )
         self.assertEqual(positive_calls, bound_time_executors)
+        self.assertEqual(restated_calls, restated_builders)
         self.assertEqual(offenders, [])
 
     def test_nw8_ep17_public_opening_refusal_keeps_only_the_intake_binding(self):

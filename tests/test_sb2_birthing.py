@@ -191,6 +191,28 @@ def _assert_birthing_refusal_record(testcase, route, suffix, refusal, expected_c
             idempotency_key=idempotency_key,
         ).exists()
     )
+    # PKT-CLK-3 CLK3-2 (WS-01): Birthing is admitted, so the refused request leaves exactly
+    # its one intake row.
+    _birthing_intake(route, suffix)
+
+
+def _birthing_intake(route, suffix):
+    """The Birthing's one intake row, read back by (actor, entry, key) (PKT-CLK-3 CLK3-2)."""
+    return CommandIntake.objects.get(
+        actor=route.founder,
+        entry="BIRTHING",
+        idempotency_key=f"sb2:{suffix}:key:{route.tag}",
+    )
+
+
+def _refusal_recorded(text, intake):
+    """Stop 3's class A tail, with the intake's persisted receipt time."""
+    from src.intevia.services.organism_authority import canonical_timestamp
+
+    return (
+        f"{text} INTEVIA recorded this refusal and that the request was received at "
+        f"{canonical_timestamp(intake.received_at)}; nothing else was saved."
+    )
 
 
 def _set_empty_electorate(route):
@@ -392,6 +414,28 @@ class _PausedProductionProvider:
         return result
 
 
+def _database_cause(error):
+    """Return the first cause in error's __cause__ chain that carries a diagnostic."""
+    cause = error.__cause__
+    while cause is not None:
+        if getattr(cause, "diag", None) is not None:
+            return cause
+        cause = cause.__cause__
+    return None
+
+
+def _a3_rolled_back_text(act, reason, received_at):
+    """Assemble an adopted A3 class B text (P-A3-1 as amended 25 Oct 2026) from its literal parts."""
+    from src.intevia.services.organism_authority import canonical_timestamp
+
+    return (
+        f"{act}, and nothing from this request was saved except a record that it was received at "
+        f"{canonical_timestamp(received_at)}. The LO's governance settings changed after the request "
+        f"was received. {reason} Sending this same request again is still judged as of when it was "
+        "first received, before the change."
+    )
+
+
 def _start_worker(call):
     results = Queue()
     pids = Queue()
@@ -573,7 +617,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         route = prepare_route()
         intake_count_before_birth = CommandIntake.objects.count()
         result = birth(route)
-        self.assertEqual(CommandIntake.objects.count(), intake_count_before_birth)
+        # PKT-CLK-3 CLK3-2: Birthing is admitted; one intake row, read back by key.
+        self.assertEqual(CommandIntake.objects.count(), intake_count_before_birth + 1)
+        self.assertEqual(
+            _birthing_intake(route, "birth").received_at,
+            LivingOrganismEvent.objects.get(event_uuid=result.event_uuid).received_at,
+        )
         event = LivingOrganismEvent.objects.get(event_uuid=result.event_uuid)
         self.assertEqual((event.action, event.prior_state, event.resulting_state), ("BIRTHING", "ACTIVE", "ACTIVE"))
         with connection.cursor() as cursor:
@@ -1017,7 +1066,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             before,
         )
 
-    def test_empty_electorate_is_refused_at_guard_without_writes(self):
+    def test_empty_electorate_is_refused_at_guard_without_governed_writes(self):
         """The database guard rejects the attempted Birthing insert; all transaction writes roll back."""
         route = prepare_route()
         ensure_test_policy_text()
@@ -1055,7 +1104,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(IntegrityError) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
-        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
+        # PKT-CLK-3 CLK3-2: the admission commits before the executor; its row stays.
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count + 1)
+        _birthing_intake(route, "empty-electorate-guard")
         guard_error = str(refused.exception)
         self.assertIn("SB_BIRTHING_ELECTORATE_EMPTY", guard_error)
         self.assertNotIn("INV_CQ_ROUTE_REQUIRED", guard_error)
@@ -1111,16 +1162,19 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(S015AuthorityDenied) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
-        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count + 1)
         self.assertIs(
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.SB_BIRTHING_ELECTORATE_EMPTY,
         )
         self.assertEqual(
             str(refused.exception),
-            "The LO was not born, and nothing changed. On this sole-founder route, Birthing needs "
-            "exactly one active member of the LO's electorate at the moment of Birthing, and this "
-            "LO has none. This is a governed requirement of the route, not a technical fault.",
+            _refusal_recorded(
+                "The LO was not born. On this sole-founder route, Birthing needs "
+                "exactly one active member of the LO's electorate at the moment of Birthing, and this "
+                "LO has none. This is a governed requirement of the route, not a technical fault.",
+                _birthing_intake(route, "empty-electorate"),
+            ),
         )
         _assert_birthing_refusal_record(
             self,
@@ -1170,7 +1224,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             with self.assertRaises(S015AuthorityDenied) as refused:
                 with disclose_authority_refusal_code():
                     route.birthing_service.birth_living_organism(command)
-        self.assertEqual(CommandIntake.objects.count(), before_intake_count)
+        self.assertEqual(CommandIntake.objects.count(), before_intake_count + 1)
         request = provider.request
         if request is None:
             self.fail("controlled provider did not capture the qualification request")
@@ -1215,8 +1269,11 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.assertIn("the phase to read Birthing", str(phase_refusal.exception))
         self.assertEqual(
             str(phase_refusal.exception),
-            "The LO was not born and nothing changed. Birthing needs the phase to read Birthing, "
-            "which is not yet in place. Complete it, then birth the LO.",
+            _refusal_recorded(
+                "The LO was not born. Birthing needs the phase to read Birthing, "
+                "which is not yet in place. Complete it, then birth the LO.",
+                _birthing_intake(no_phase, "missing-phase"),
+            ),
         )
         _assert_birthing_refusal_record(
             self,
@@ -1238,8 +1295,11 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.assertIn("both application settings chosen", str(settings_refusal.exception))
         self.assertEqual(
             str(settings_refusal.exception),
-            "The LO was not born and nothing changed. Birthing needs both application settings "
-            "chosen, which is not yet in place. Complete it, then birth the LO.",
+            _refusal_recorded(
+                "The LO was not born. Birthing needs both application settings "
+                "chosen, which is not yet in place. Complete it, then birth the LO.",
+                _birthing_intake(no_settings, "missing-settings"),
+            ),
         )
         _assert_birthing_refusal_record(
             self,
@@ -1261,8 +1321,11 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         self.assertIn("a reviewed application question", str(question_refusal.exception))
         self.assertEqual(
             str(question_refusal.exception),
-            "The LO was not born and nothing changed. Birthing needs a reviewed application "
-            "question, which is not yet in place. Complete it, then birth the LO.",
+            _refusal_recorded(
+                "The LO was not born. Birthing needs a reviewed application "
+                "question, which is not yet in place. Complete it, then birth the LO.",
+                _birthing_intake(no_question, "missing-question"),
+            ),
         )
         _assert_birthing_refusal_record(
             self,
@@ -1306,9 +1369,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
         self.assertEqual(
             str(refused.exception),
-            "The LO was not born and nothing changed. GOVERNANCE is on for this LO, so it needs "
-            "its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then try again. "
-            "Creating the Circle early in formation avoids this.",
+            _refusal_recorded(
+                "The LO was not born. GOVERNANCE is on for this LO, so it needs "
+                "its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then make a new "
+                "Birthing request. Creating the Circle early in formation avoids this.",
+                _birthing_intake(route, "governance-yes"),
+            ),
         )
         self.assertTrue(
             LivingOrganismEvent.objects.filter(
@@ -1330,7 +1396,10 @@ class BirthingAfterWitnessTests(TransactionTestCase):
 
     def test_second_birth_is_refused_without_changing_the_active_organism(self):
         route = prepare_route()
-        birth(route)
+        first = birth(route)
+        born_on = LivingOrganismEvent.objects.get(
+            event_uuid=first.event_uuid,
+        ).effective_at.date().isoformat()
         route.organism.refresh_from_db()
         before_state = route.organism.state
         before = _counts()
@@ -1340,10 +1409,12 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             refused.exception.refusal_code,
             S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
         )
-        self.assertRegex(
+        self.assertEqual(
             str(refused.exception),
-            r"^The LO was not born again and nothing changed: it was born on \d{4}-\d{2}-\d{2}\. "
-            r"An LO is born once\.$",
+            _refusal_recorded(
+                f"The LO was not born again: it was born on {born_on}. An LO is born once.",
+                _birthing_intake(route, "second-birth"),
+            ),
         )
         _assert_birthing_refusal_record(
             self,
@@ -1451,17 +1522,28 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             queryset.create = create_with_wrong_setting
             return queryset
 
+        intake_before = CommandIntake.objects.count()
         with patch(
             "src.intevia.services.organism_formation_service.LOBirthingSnapshot.objects.using",
             side_effect=using_with_invalid_snapshot,
         ):
             with self.assertRaises(S015BirthingTechnicalFailure) as technical:
                 birth(route, suffix="wrong-snapshot-setting")
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        from src.intevia.services.organism_authority import canonical_timestamp
+
+        received_at = canonical_timestamp(
+            _birthing_intake(route, "wrong-snapshot-setting").received_at
+        )
         self.assertEqual(
             str(technical.exception),
-            "The LO was not born and nothing changed: the constitutional snapshot did not match "
-            "the LO's settings in effect at this time. This is a record inconsistency, not a "
-            "decision against the LO. Prepare the snapshot again and retry.",
+            "The LO was not born, and nothing from this request was saved except a record that "
+            f"it was received at {received_at}. The LO's settings may have changed after the "
+            "request was received, so the constitutional snapshot prepared for it no longer "
+            "matches them. This is a record inconsistency, not a decision against the LO. To try "
+            "again, make a new Birthing request: sending this same request again is still judged "
+            "as of when it was first received. If a new request fails the same way, please "
+            "report this problem.",
         )
         self.assertFalse(hasattr(technical.exception, "refusal_code"))
         self.assertEqual(_counts(), before)
@@ -1610,9 +1692,9 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         )
         self.assertEqual(
             str(refused.exception),
-            "GOVERNANCE was not switched on. GOVERNANCE is on for this LO, "
-            "so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, then "
-            "try again. Creating the Circle early in formation avoids this. "
+            "GOVERNANCE was not switched on. Switching GOVERNANCE on needs the LO's GOVERNANCE "
+            "Circle first. Create the LO's GOVERNANCE Circle, then make a new request to switch "
+            "GOVERNANCE on. Creating the Circle early in formation avoids this. "
             "INTEVIA recorded this refusal and that the request was received at "
             f"{canonical_timestamp(intake.received_at)}; nothing else was saved.",
         )
@@ -1754,11 +1836,15 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         # passes 0049 only while core_commandintake has no rows (0049's reverse refuses while
         # intake rows exist, and the table refuses DELETE and TRUNCATE). Since CLK3-1 public
         # founding is an admitted intake entry that writes an intake row, so the fixture founds
-        # through the executor with a test-only bound request (as W-SBG-M5 does). The phase
-        # advance is not an admitted entry and the route has no gateway effect, so no intake
-        # row is written and the reverse reaches the 0044 guard.
+        # through the executor with a test-only bound request (as W-SBG-M5 does). Since CLK3-2
+        # the phase advance is admitted too and goes through its executor the same way. The
+        # route has no gateway effect, so no intake row is written and the reverse reaches the
+        # 0044 guard.
         from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
-        from src.intevia.services.organism_formation_service import OrganismFormationService
+        from src.intevia.services.organism_formation_service import (
+            OrganismFormationService,
+            OrganismPhaseAdvanceService,
+        )
 
         def found_without_intake(service, command):
             actor = _resolve_actor(service._alias, command.credential)
@@ -1771,10 +1857,28 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 )
                 return service._execute_found_living_organism(command, bound)
 
-        with patch.object(
-            OrganismFormationService,
-            "found_living_organism",
-            new=found_without_intake,
+        def advance_without_intake(service, command):
+            actor = _resolve_actor(service._alias, command.credential)
+            with override_settings(INTEVIA_TEST_CONTEXT=True):
+                bound = BoundRequest.for_test(
+                    IntakeEntry.ADVANCE_PHASE,
+                    command,
+                    received_at=database_now(),
+                    actor=actor,
+                )
+                return service._execute_advance_phase(command, bound)
+
+        with (
+            patch.object(
+                OrganismFormationService,
+                "found_living_organism",
+                new=found_without_intake,
+            ),
+            patch.object(
+                OrganismPhaseAdvanceService,
+                "advance_phase",
+                new=advance_without_intake,
+            ),
         ):
             route = prepare_route(
                 governance_enabled=None,
@@ -1840,6 +1944,56 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 LivingOrganismEvent.objects.filter(
                     living_organism=first.organism,
                     action="BIRTHING",
+                ).exists()
+            )
+            # W-A3-1 (A3 §7.4): the guard's refusal after rollback is class B.
+            first_key = f"sb2:concurrent-after-effect:key:{first.tag}"
+            self.assertIsNone(first_refusal.exception.authority_decision_reference)
+            self.assertIsInstance(first_refusal.exception.__cause__, IntegrityError)
+            first_cause = _database_cause(first_refusal.exception.__cause__)
+            self.assertIsNotNone(first_cause)
+            self.assertEqual(
+                getattr(first_cause, "sqlstate", None) or getattr(first_cause, "pgcode", None),
+                "23000",
+            )
+            self.assertEqual(first_cause.diag.message_primary, "SBG_GOVERNANCE_CIRCLE_MISSING")
+            first_intakes = CommandIntake.objects.filter(
+                actor=first.founder,
+                idempotency_key=first_key,
+            )
+            self.assertEqual(first_intakes.count(), 1)
+            self.assertEqual(
+                str(first_refusal.exception),
+                _a3_rolled_back_text(
+                    "The LO was not born",
+                    "GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first. Create "
+                    "the LO's GOVERNANCE Circle, then make a new Birthing request. Creating the "
+                    "Circle early in formation avoids this.",
+                    first_intakes.get().received_at,
+                ),
+            )
+            self.assertFalse(
+                AuthorityDecision.objects.filter(
+                    actor=first.founder,
+                    idempotency_key=first_key,
+                ).exists()
+            )
+            self.assertFalse(
+                OrganismCommandReceipt.objects.filter(
+                    actor=first.founder,
+                    idempotency_key=first_key,
+                ).exists()
+            )
+            self.assertFalse(
+                LOBirthingSnapshot.objects.filter(living_organism=first.organism).exists()
+            )
+            self.assertTrue(
+                LivingOrganismEvent.objects.filter(
+                    living_organism=first.organism,
+                    action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION.value,
+                    evidence_reference=(
+                        f"governance-configuration-version:{first_draft.version_uuid}"
+                    ),
                 ).exists()
             )
 
@@ -1913,11 +2067,14 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             )
             self.assertEqual(
                 str(second_refusal.exception),
-                "GOVERNANCE was not switched on; no governed record was written. GOVERNANCE is on for this "
-                "LO, so it needs its GOVERNANCE Circle first. Create the LO's GOVERNANCE Circle, "
-                "then try again. Creating the Circle early in formation avoids this. "
-                "INTEVIA kept a record that this request was received at "
-                f"{canonical_timestamp(intake.received_at)}; sent again unchanged, it is answered as of that time.",
+                "GOVERNANCE was not switched on, and nothing from this request was saved except a "
+                f"record that it was received at {canonical_timestamp(intake.received_at)}. "
+                "Something changed for this LO after the request was received (for example, its "
+                "Birthing completed), and GOVERNANCE is not ready to be switched on yet. Switching "
+                "GOVERNANCE on needs the LO's GOVERNANCE Circle first. Create the LO's GOVERNANCE "
+                "Circle, then make a new request to switch GOVERNANCE on. Creating the Circle "
+                "early in formation avoids this. Sending this same request again is still judged "
+                "as of when it was first received, before the change.",
             )
             self.assertEqual(_counts(), before_second_effect)
             self.assertFalse(
@@ -1945,3 +2102,268 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             ):
                 event.set()
             _join_workers(workers)
+
+    def test_w_a3_2_phase_advance_refused_at_the_guard_is_class_b(self):
+        """W-A3-2: a phase advance admitted before GOVERNANCE was switched on is refused at the guard (class B)."""
+        from src.intevia.services.organism_formation_service import (
+            OrganismPhaseAdvanceService,
+            PhaseAdvanceCommand,
+        )
+
+        workers = []
+        effect_entered, release_effect = Event(), Event()
+        try:
+            route = prepare_route(governance_enabled=False, to_birthing_phase=False)
+            draft = _governance_draft(route, True, "a3-phase")
+            effect_service = OrganismApplicationService(
+                authority=S015Authority(
+                    provider=_PausedProductionProvider(effect_entered, release_effect),
+                ),
+                clock=database_now,
+            )
+            effect_thread, effect_results, effect_pids = _start_worker(
+                lambda: effect_service.effect_gateway_version(
+                    _governance_effect_command(route, draft.version_uuid, "a3-phase")
+                )
+            )
+            workers.append(effect_thread)
+            self.assertTrue(effect_entered.wait(10))
+            effect_pid = effect_pids.get(timeout=10)
+            phase_key = f"sb2:a3-phase:key:{route.tag}"
+
+            def call_phase():
+                with disclose_authority_refusal_code():
+                    return OrganismPhaseAdvanceService(clock=database_now).advance_phase(
+                        PhaseAdvanceCommand(
+                            credential=route.founder.credential,
+                            living_organism_uuid=route.organism.organism_id,
+                            from_phase="GERMINATING",
+                            to_phase="BIRTHING",
+                            request_reference=f"sb2:a3-phase:{route.tag}",
+                            idempotency_key=phase_key,
+                            effective_at=database_now(),
+                        )
+                    )
+
+            phase_thread, phase_results, phase_pids = _start_worker(call_phase)
+            workers.append(phase_thread)
+            phase_pid = phase_pids.get(timeout=10)
+            with connection.cursor() as cursor:
+                wait_until_blocked(cursor, phase_pid, effect_pid, "core_identity")
+            release_effect.set()
+            _worker_result(effect_thread, effect_results)
+            with self.assertRaises(S015AuthorityDenied) as refused:
+                _worker_result(phase_thread, phase_results)
+            self.assertIs(
+                refused.exception.refusal_code,
+                S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
+            )
+            self.assertIsNone(refused.exception.authority_decision_reference)
+            self.assertIsInstance(refused.exception.__cause__, IntegrityError)
+            cause = _database_cause(refused.exception.__cause__)
+            self.assertIsNotNone(cause)
+            self.assertEqual(getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None), "23000")
+            self.assertEqual(cause.diag.message_primary, "SBG_GOVERNANCE_CIRCLE_MISSING")
+            intakes = CommandIntake.objects.filter(actor=route.founder, idempotency_key=phase_key)
+            self.assertEqual(intakes.count(), 1)
+            self.assertEqual(
+                str(refused.exception),
+                _a3_rolled_back_text(
+                    "The phase was not advanced",
+                    "GOVERNANCE is on for this LO, so it needs its GOVERNANCE Circle first. Create "
+                    "the LO's GOVERNANCE Circle, then make a new request to advance the phase. "
+                    "Creating the Circle early in formation avoids this.",
+                    intakes.get().received_at,
+                ),
+            )
+            self.assertFalse(
+                AuthorityDecision.objects.filter(
+                    actor=route.founder,
+                    idempotency_key=phase_key,
+                ).exists()
+            )
+            self.assertFalse(
+                OrganismCommandReceipt.objects.filter(
+                    actor=route.founder,
+                    idempotency_key=phase_key,
+                ).exists()
+            )
+            self.assertFalse(
+                LivingOrganismEvent.objects.filter(
+                    living_organism=route.organism,
+                    action="PHASE_ADVANCE",
+                    evidence_reference="formation-phase:GERMINATING->BIRTHING",
+                ).exists()
+            )
+        finally:
+            for event in (effect_entered, release_effect):
+                event.set()
+            _join_workers(workers)
+
+    def test_w_a3_4_birthing_overtaken_by_another_birthing_is_class_b(self):
+        """W-A3-4: a Birthing admitted before another Birthing of the LO completed is refused (class B)."""
+        from src.intevia.services.organism_authority import canonical_timestamp
+
+        workers = []
+        first_entered, release_first = Event(), Event()
+        try:
+            route = prepare_route(governance_enabled=False)
+            policy_version, policy_text_sha256 = ensure_test_policy_text()
+            first_service = OrganismBirthingService(
+                authority=S015Authority(
+                    provider=_PausedProductionProvider(first_entered, release_first),
+                ),
+                clock=database_now,
+            )
+
+            def call_first():
+                return first_service.birth_living_organism(BirthingCommand(
+                    credential=route.founder.credential,
+                    living_organism_uuid=route.organism.organism_id,
+                    request_reference=f"sb2:a3-overtake-first:{route.tag}",
+                    idempotency_key=f"sb2:a3-overtake-first:key:{route.tag}",
+                    effective_at=None,
+                    offering_choice="FREE",
+                    policy_version=policy_version,
+                    policy_text_sha256=policy_text_sha256,
+                ))
+
+            first_thread, first_results, first_pids = _start_worker(call_first)
+            workers.append(first_thread)
+            self.assertTrue(first_entered.wait(10))
+            first_pid = first_pids.get(timeout=10)
+            second_key = f"sb2:a3-overtake-second:key:{route.tag}"
+
+            def call_second():
+                with disclose_authority_refusal_code():
+                    return route.birthing_service.birth_living_organism(BirthingCommand(
+                        credential=route.founder.credential,
+                        living_organism_uuid=route.organism.organism_id,
+                        request_reference=f"sb2:a3-overtake-second:{route.tag}",
+                        idempotency_key=second_key,
+                        effective_at=None,
+                        offering_choice="FREE",
+                        policy_version=policy_version,
+                        policy_text_sha256=policy_text_sha256,
+                    ))
+
+            second_thread, second_results, second_pids = _start_worker(call_second)
+            workers.append(second_thread)
+            second_pid = second_pids.get(timeout=10)
+            with connection.cursor() as cursor:
+                wait_until_blocked(cursor, second_pid, first_pid, "core_identity")
+            release_first.set()
+            first_result = _worker_result(first_thread, first_results)
+            with self.assertRaises(S015AuthorityDenied) as refused:
+                _worker_result(second_thread, second_results)
+            births = LivingOrganismEvent.objects.filter(
+                living_organism=route.organism,
+                action="BIRTHING",
+            )
+            self.assertEqual(births.count(), 1)
+            self.assertEqual(births.get().event_uuid, first_result.event_uuid)
+            self.assertIs(
+                refused.exception.refusal_code,
+                S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
+            )
+            self.assertIsNone(refused.exception.authority_decision_reference)
+            self.assertIsInstance(refused.exception.__cause__, IntegrityError)
+            cause = _database_cause(refused.exception.__cause__)
+            self.assertIsNotNone(cause)
+            self.assertEqual(getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None), "23505")
+            self.assertEqual(
+                cause.diag.constraint_name,
+                "core_lobirthingsnapshot_living_organism_id_uniq",
+            )
+            intakes = CommandIntake.objects.filter(actor=route.founder, idempotency_key=second_key)
+            self.assertEqual(intakes.count(), 1)
+            self.assertEqual(
+                str(refused.exception),
+                "The LO was not born again: it was born on "
+                f"{births.get().effective_at.date().isoformat()}. An LO is born once, so nothing "
+                "more is needed. Nothing from this request was saved except a record that it was "
+                f"received at {canonical_timestamp(intakes.get().received_at)}.",
+            )
+            self.assertFalse(
+                AuthorityDecision.objects.filter(
+                    actor=route.founder,
+                    idempotency_key=second_key,
+                ).exists()
+            )
+            self.assertFalse(
+                OrganismCommandReceipt.objects.filter(
+                    actor=route.founder,
+                    idempotency_key=second_key,
+                ).exists()
+            )
+            self.assertEqual(
+                LOBirthingSnapshot.objects.filter(living_organism=route.organism).count(),
+                1,
+            )
+        finally:
+            for event in (first_entered, release_first):
+                event.set()
+            _join_workers(workers)
+
+    def test_w_a3_5_birthing_naming_an_earlier_date_than_an_existing_birthing_is_class_b(self):
+        """W-A3-5: a Birthing received after the LO was born, naming an earlier effective time, is refused (class B)."""
+        from src.intevia.services.organism_authority import canonical_timestamp
+
+        route = prepare_route(governance_enabled=False)
+        birth(route, suffix="a3-earlier-first")
+        first = LivingOrganismEvent.objects.get(living_organism=route.organism, action="BIRTHING")
+        phase = LivingOrganismEvent.objects.get(
+            living_organism=route.organism,
+            action="PHASE_ADVANCE",
+            evidence_reference="formation-phase:GERMINATING->BIRTHING",
+        )
+        earlier = phase.effective_at + (first.effective_at - phase.effective_at) / 2
+        self.assertLess(earlier, first.effective_at)
+        policy_version, policy_text_sha256 = ensure_test_policy_text()
+        key = f"sb2:a3-earlier:key:{route.tag}"
+        with self.assertRaises(S015AuthorityDenied) as refused:
+            with disclose_authority_refusal_code():
+                route.birthing_service.birth_living_organism(BirthingCommand(
+                    credential=route.founder.credential,
+                    living_organism_uuid=route.organism.organism_id,
+                    request_reference=f"sb2:a3-earlier:{route.tag}",
+                    idempotency_key=key,
+                    effective_at=earlier,
+                    offering_choice="FREE",
+                    policy_version=policy_version,
+                    policy_text_sha256=policy_text_sha256,
+                ))
+        self.assertIs(
+            refused.exception.refusal_code,
+            S015AuthorityRefusalCode.BIRTHING_ALREADY_RECORDED,
+        )
+        self.assertIsNone(refused.exception.authority_decision_reference)
+        cause = _database_cause(refused.exception.__cause__)
+        self.assertIsNotNone(cause)
+        self.assertEqual(getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None), "23505")
+        self.assertEqual(cause.diag.constraint_name, "core_lobirthingsnapshot_living_organism_id_uniq")
+        intake = CommandIntake.objects.get(actor=route.founder, idempotency_key=key)
+        self.assertLess(first.recorded_at, intake.received_at)
+        self.assertEqual(
+            str(refused.exception),
+            f"The LO was not born again: it was born on {first.effective_at.date().isoformat()}. "
+            "An LO is born once, so nothing more is needed. Nothing from this request was saved "
+            f"except a record that it was received at {canonical_timestamp(intake.received_at)}.",
+        )
+        self.assertFalse(
+            AuthorityDecision.objects.filter(actor=route.founder, idempotency_key=key).exists()
+        )
+        self.assertFalse(
+            OrganismCommandReceipt.objects.filter(actor=route.founder, idempotency_key=key).exists()
+        )
+        self.assertEqual(
+            LOBirthingSnapshot.objects.filter(living_organism=route.organism).count(),
+            1,
+        )
+        self.assertEqual(
+            LivingOrganismEvent.objects.filter(
+                living_organism=route.organism,
+                action="BIRTHING",
+            ).count(),
+            1,
+        )

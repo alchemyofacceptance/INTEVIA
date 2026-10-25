@@ -117,11 +117,14 @@ def _governance_enabling_refusal_message(
     conditions itself.
 
     Other codes are passed to _sbg_readiness_message with act set to
-    "GOVERNANCE was not switched on" and with the supplied LO, database alias
-    and temporal coordinates. The incomplete-arrangement, unsupported-field
-    and unsupported-eligibility branches read arrangement diagnostics; the
-    field and eligibility messages use their own opening. Diagnostic errors
-    propagate. Raises RuntimeError if the delegated helper returns None.
+    "GOVERNANCE was not switched on", operation "ENABLING" and the supplied
+    LO, database alias and temporal coordinates, so each corrective step ends
+    "then make a new request to switch GOVERNANCE on" and the missing-Circle
+    reason says switching GOVERNANCE on needs the Circle (adopted 25 Oct
+    2026). The incomplete-arrangement, unsupported-field and
+    unsupported-eligibility branches read arrangement diagnostics. Diagnostic
+    errors propagate. Raises RuntimeError if the delegated helper returns
+    None.
 
     opening_end and tail are passed to _sbg_readiness_message and applied in
     the same way to the SBG_IL_GRESD message. effect_gateway_version passes
@@ -140,6 +143,7 @@ def _governance_enabling_refusal_message(
     message = _sbg_readiness_message(
         code=code,
         act="GOVERNANCE was not switched on",
+        operation="ENABLING",
         database_alias=database_alias,
         organism=organism,
         effective_at=effective_at,
@@ -1761,9 +1765,12 @@ class OrganismApplicationService:
           opening ends "." and its tail says the refusal and the request's
           receipt time were recorded and nothing else was saved.
         - IntegrityError whose cause's diagnostic primary message equals
-          such a code's value: the opening ends "; no governed record was
-          written." and the tail says the receipt time was kept and an
-          unchanged retry is answered as of that time.
+          such a code's value: the opening says nothing from this request
+          was saved except the record of its receipt time, and that the LO
+          changed after receipt so GOVERNANCE is not ready to be switched
+          on; the tail says a resend is judged as of the original receipt,
+          except for SBG_IL_GRESD, which has no tail (R-APP-05, R-APP-06a
+          to -06f as adopted 25 Oct 2026).
 
         Every other failure propagates unchanged.
         """
@@ -1821,11 +1828,18 @@ class OrganismApplicationService:
                 effective_at=command.effective_at,
                 recorded_at=bound.received_at,
                 code=refusal_code,
-                opening_end="; no governed record was written.",
-                tail=_intake_tail(
-                    "INTEVIA kept a record that this request was received at {received_at}; "
-                    "sent again unchanged, it is answered as of that time.",
+                opening_end=_intake_tail(
+                    ", and nothing from this request was saved except a record that it was "
+                    "received at {received_at}. Something changed for this LO after the request "
+                    "was received (for example, its Birthing completed), and GOVERNANCE is not "
+                    "ready to be switched on yet.",
                     bound.received_at,
+                ),
+                tail=(
+                    ""
+                    if refusal_code is S015AuthorityRefusalCode.SBG_IL_GRESD
+                    else "Sending this same request again is still judged as of when it was "
+                    "first received, before the change."
                 ),
             )
             raise S015ApplicationRefused(
