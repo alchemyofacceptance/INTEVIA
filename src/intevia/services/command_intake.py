@@ -499,6 +499,10 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.ADVANCE_PHASE,
         IntakeEntry.BIRTHING,
         IntakeEntry.ACTIVATE_BETA,
+        IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+        IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+        IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+        IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
     }
 )
 

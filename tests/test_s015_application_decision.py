@@ -121,7 +121,7 @@ def _assert_catalog_restored(test_case, reference):
         "table set not restored",
     )
     head = current_applied_core_head(connection)[0][1]
-    test_case.assertEqual(head, "0049_h100_command_intake")
+    test_case.assertEqual(head, "0050_clk_mono_1_cache_coordinate_detail")
     test_case.assertEqual(
         len(after["triggers"]),
         isolation_state.REQUIRED_TRIGGER_COUNT[head],
@@ -132,7 +132,7 @@ def _assert_catalog_restored(test_case, reference):
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
     head = current_applied_core_head(connection)[0][1]
-    test_case.assertEqual(head, "0049_h100_command_intake")
+    test_case.assertEqual(head, "0050_clk_mono_1_cache_coordinate_detail")
     test_case.assertEqual(
         len(reference["triggers"]),
         isolation_state.REQUIRED_TRIGGER_COUNT[head],
@@ -370,7 +370,7 @@ class ApplicationDecisionTests(TransactionTestCase):
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
         head = current_applied_core_head(connection)[0][1]
-        self.assertEqual(head, "0049_h100_command_intake")
+        self.assertEqual(head, "0050_clk_mono_1_cache_coordinate_detail")
         self.assertEqual(
             len(reference["triggers"]),
             isolation_state.REQUIRED_TRIGGER_COUNT[head],

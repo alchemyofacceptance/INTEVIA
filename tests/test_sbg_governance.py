@@ -108,6 +108,13 @@ from tests.sbg_route_support import (
 )
 
 
+def _intake_time(actor, entry, key):
+    """⟨T⟩ of a governed call: the canonical received_at of its own intake row (PKT-CLK-3 CLK3-3)."""
+    return canonical_timestamp(
+        CommandIntake.objects.get(actor=actor, entry=entry.value, idempotency_key=key).received_at
+    )
+
+
 def _atomic_with_integrity_error_on_exit(
     error,
     *,
@@ -117,7 +124,8 @@ def _atomic_with_integrity_error_on_exit(
     exit_count = 0
 
     @contextmanager
-    def fail_at_exit(database_alias, *, received_at=None):
+    def fail_at_exit(database_alias, *, received_at=None, stage_phase=None):
+        # Not evidence of a real COMMIT rejection: it never sets EXIT, so the cell stays BODY.
         nonlocal exit_count
         exit_count += 1
         with transaction.atomic(using=database_alias):
@@ -500,6 +508,12 @@ class GovernanceArrangementBodyValidationTests(unittest.TestCase):
         )
 
 
+_V1_TAIL = (
+    " INTEVIA kept a record that this request was received at 2026-01-01T00:00:01.000000Z; "
+    "sent again unchanged, it is answered as of that time."
+)
+
+
 class GovernanceControlledRefusalMappingTests(unittest.TestCase):
     @staticmethod
     def _integrity_error(primary, function):
@@ -612,6 +626,7 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
 
     def test_request_guard_maps_exact_primary_and_reraises_unrelated_primary(self):
         service = object.__new__(OrganismGovernanceService)
+        received_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=datetime_timezone.utc)
         command = RequestGovernanceSeatCommand(
             credential=None,
             living_organism_uuid=uuid4(),
@@ -621,19 +636,32 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
             request_reference="request-ref",
             idempotency_key="request-key",
         )
+        # V-1 (PKT-CLK-3 CLK3-3): the mapping is the request executor's; it is driven with a test binding.
+        actor = ActorRef(pk=1, identity_id=uuid4(), access_epoch=0)
+        with override_settings(INTEVIA_TEST_CONTEXT=True):
+            bound = BoundRequest.for_test(
+                IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+                command,
+                received_at=received_at,
+                actor=actor,
+            )
 
         cases = (
             (
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
-                "Nobody was seated and nothing changed. A GOVERNANCE seat needs an active member of "
-                "this LO at that time, and this person is not an active member at that time. Seat "
-                "someone who is an active member of this LO.",
+                "Nobody was seated; no governed record was written. A GOVERNANCE seat needs an active "
+                "member of this LO at that time, and this person is not an active member at that time. "
+                "Seat someone who is an active member of this LO. INTEVIA kept a record that this request "
+                "was received at 2026-01-01T00:00:01.000000Z; sent again unchanged, it is answered as of "
+                "that time.",
             ),
             (
                 S015AuthorityRefusalCode.SBG_SEAT_ABSENT,
-                "Your own request for seat founder was not recorded and nothing changed. The arrangement "
-                "in effect has no seat founder. Choose a seat the arrangement in effect names. Check the "
-                "seats in the current version before requesting one.",
+                "Your own request for seat founder was not recorded; no governed record was written. The "
+                "arrangement in effect has no seat founder. Choose a seat the arrangement in effect names. "
+                "Check the seats in the current version before requesting one. INTEVIA kept a record that "
+                "this request was received at 2026-01-01T00:00:01.000000Z; sent again unchanged, it is "
+                "answered as of that time.",
             ),
         )
         for code, expected_text in cases:
@@ -642,25 +670,27 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
                     code.value,
                     "sbg_guard_circlejoinrequest",
                 )
-                with patch.object(service, "_request_governance_seat", side_effect=controlled):
+                with patch.object(service, "_request_governance_seat_at", side_effect=controlled):
                     with self.assertRaises(SBGGovernanceRefused) as refused:
-                        service.request_governance_seat(command)
+                        service._execute_request_governance_seat(command, bound)
                 self.assertIs(refused.exception.refusal_code, code)
                 self.assertEqual(str(refused.exception), expected_text)
+                self.assertIs(refused.exception.__cause__, controlled)
                 self.assertIn("CONTEXT:", str(controlled))
 
         unrelated = self._integrity_error(
             "OTHER_CONSTRAINT",
             "sbg_guard_circlejoinrequest",
         )
-        with patch.object(service, "_request_governance_seat", side_effect=unrelated):
+        with patch.object(service, "_request_governance_seat_at", side_effect=unrelated):
             with self.assertRaises(IntegrityError) as raised:
-                service.request_governance_seat(command)
+                service._execute_request_governance_seat(command, bound)
         self.assertIs(raised.exception, unrelated)
 
     def test_admission_guard_maps_context_wrapped_primary_and_keeps_request_open(self):
         service = object.__new__(OrganismGovernanceService)
         request_uuid = uuid4()
+        received_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=datetime_timezone.utc)
         command = DecideGovernanceSeatCommand(
             credential=None,
             living_organism_uuid=uuid4(),
@@ -669,6 +699,16 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
             outcome="ACCEPT",
             request_uuid=request_uuid,
         )
+        # V-1 (PKT-CLK-3 CLK3-3): the translation is the standalone wrapper's (V-C1), driven with a test
+        # binding; the request is OPEN and its seat is read by the narrow lookup (N1, G-O2).
+        actor = ActorRef(pk=1, identity_id=uuid4(), access_epoch=0)
+        with override_settings(INTEVIA_TEST_CONTEXT=True):
+            bound = BoundRequest.for_test(
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                command,
+                received_at=received_at,
+                actor=actor,
+            )
         controlled = self._integrity_error(
             S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED.value,
             "sbg_guard_circleparticipation_occupancy",
@@ -677,27 +717,27 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
         cases = (
             (
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
-                "Nobody was seated and nothing changed. A GOVERNANCE seat needs an active member of "
-                "this LO at that time, and this person is not an active member at that time. Seat "
-                "someone who is an active member of this LO.",
+                "Nobody was seated; no governed record was written. A GOVERNANCE seat needs an active "
+                "member of this LO at that time, and this person is not an active member at that time. "
+                "Seat someone who is an active member of this LO." + _V1_TAIL,
             ),
             (
                 S015AuthorityRefusalCode.SBG_SEAT_ABSENT,
-                "Nobody was seated and nothing changed. The arrangement in effect has no seat founder. "
-                "Choose a seat the arrangement in effect names. Check the seats in the current version "
-                "before requesting one.",
+                "Nobody was seated; no governed record was written. The arrangement in effect has no seat "
+                "founder. Choose a seat the arrangement in effect names. Check the seats in the current "
+                "version before requesting one." + _V1_TAIL,
             ),
             (
                 S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED,
-                "Nobody was seated and nothing changed. Seat founder is already held at that time, and "
-                "each seat holds one person. Choose a vacant seat, or wait until this seat becomes "
-                "vacant. A seat becomes vacant when its holder's seat ends.",
+                "Nobody was seated; no governed record was written. Seat founder is already held at that "
+                "time, and each seat holds one person. Choose a vacant seat, or wait until this seat "
+                "becomes vacant. A seat becomes vacant when its holder's seat ends." + _V1_TAIL,
             ),
             (
                 S015AuthorityRefusalCode.SBG_ALREADY_SEATED,
-                "Nobody was seated and nothing changed. This person already holds a seat in this "
-                "GOVERNANCE Circle, and a person holds at most one. No further action is needed for this "
-                "person.",
+                "Nobody was seated; no governed record was written. This person already holds a seat in "
+                "this GOVERNANCE Circle, and a person holds at most one. No further action is needed for "
+                "this person." + _V1_TAIL,
             ),
         )
         for code, authored_text in cases:
@@ -708,16 +748,19 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
                 )
                 with patch.object(
                     service,
-                    "_decide_governance_seat",
+                    "_execute_decide_governance_seat",
                     side_effect=controlled,
+                ), patch.object(
+                    service,
+                    "_request_open_state",
+                    return_value="OPEN",
+                ), patch.object(
+                    service,
+                    "_request_seat_id",
+                    return_value="founder",
                 ):
-                    with patch.object(
-                        service,
-                        "_request_open_context",
-                        return_value=("founder", open_request),
-                    ):
-                        with self.assertRaises(SBGGovernanceRefused) as refused:
-                            service.decide_governance_seat(command)
+                    with self.assertRaises(SBGGovernanceRefused) as refused:
+                        service._execute_standalone_decision(command, bound)
                 self.assertIs(refused.exception.refusal_code, code)
                 self.assertEqual(refused.exception.request_uuid, request_uuid)
                 self.assertEqual(
@@ -730,14 +773,21 @@ class GovernanceControlledRefusalMappingTests(unittest.TestCase):
             "OTHER_CONSTRAINT",
             "sbg_guard_circleparticipation_occupancy",
         )
-        with patch.object(service, "_decide_governance_seat", side_effect=unrelated):
-            with patch.object(
-                service,
-                "_request_open_context",
-                return_value=("founder", open_request),
-            ):
-                with self.assertRaises(IntegrityError) as raised:
-                    service.decide_governance_seat(command)
+        with patch.object(
+            service,
+            "_execute_decide_governance_seat",
+            side_effect=unrelated,
+        ), patch.object(
+            service,
+            "_request_open_state",
+            return_value="OPEN",
+        ), patch.object(
+            service,
+            "_request_seat_id",
+            return_value="founder",
+        ):
+            with self.assertRaises(IntegrityError) as raised:
+                service._execute_standalone_decision(command, bound)
         self.assertIs(raised.exception, unrelated)
 
 
@@ -1424,13 +1474,27 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         code,
         authored_message,
         *,
+        key,
         request_recorded,
     ):
         before = governance_route_state(route)
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(SBGGovernanceRefused) as refused:
             call()
         self.assertIs(refused.exception.refusal_code, code)
-        self.assertEqual(str(refused.exception), authored_message)
+        # WS-01: ⟨T⟩ from this call's own intake row, by key; +1 intake on its first arrival.
+        intake = CommandIntake.objects.get(
+            actor=route.founder,
+            entry=IntakeEntry.SEAT_GOVERNANCE_CIRCLE.value,
+            idempotency_key=key,
+        )
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
+        self.assertEqual(
+            str(refused.exception),
+            authored_message.replace("<T>", canonical_timestamp(intake.received_at)).replace(
+                "<R>", str(refused.exception.request_uuid),
+            ),
+        )
         expected = before.copy()
         if request_recorded:
             expected["authority_decisions"] += 1
@@ -2325,6 +2389,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         advance_to_birthing(unseated.route, tag=unseated.route.tag)
         birth(unseated.route, suffix="sbg-founding-test")
         before = governance_route_state(unseated)
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(S015AuthorityDenied) as refused:
             seat_governance_founder(
                 unseated.route,
@@ -2339,10 +2404,19 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
         )
         self.assertEqual(
             str(refused.exception),
-            "Nobody was seated and nothing changed. Seat founder is filled by the founding "
+            "Nobody was seated. Seat founder is filled by the founding "
             "route, which ends when the LO is born. Use a seat the LO Coordinators appoint, "
-            "or wait for that route. Your own request for seat founder is recorded and remains open.",
+            "or wait for that route. Your own request for seat founder is recorded and remains open. "
+            "INTEVIA recorded this decision-stage refusal and that the request was received at "
+            + _intake_time(
+                unseated.founder,
+                IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
+                f"sbg:seat:key:{unseated.route.tag}:after-birthing",
+            )
+            + "; the decision stage saved nothing else.",
         )
+        # WS-01: +1 intake, this call's own row.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
         expected = before.copy()
         expected["authority_decisions"] += 2
         expected["receipts"] += 1
@@ -2712,18 +2786,27 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
                 rule_uuid=disabled.rule_uuid,
             ),
             S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED,
-            "Nobody was seated and nothing changed. GOVERNANCE is switched off for this LO, so "
-            "no one can be seated. Switch GOVERNANCE on through the LO's settings first, if the "
-            "LO chooses to. Your own request for seat founder is recorded and remains open.",
+            # M2-01 (EP-09's decision stage)
+            "Nobody was seated; no governed record was written by the decision stage. GOVERNANCE is "
+            "switched off for this LO, so no one can be seated. Switch GOVERNANCE on through the LO's "
+            "settings first, if the LO chooses to. Your own request for seat founder is recorded and "
+            "remains open. INTEVIA kept a record that this request was received at <T>; sent again "
+            "unchanged, it is answered as of that time. Once GOVERNANCE is on, decide the open request "
+            "as a new request: decide_governance_seat with request_uuid <R>, a new request reference "
+            "and a new idempotency key. The open request keeps its recorded time; this request, sent "
+            "again unchanged, is refused again as of <T>.",
+            key=f"sbg:seat:key:{disabled.route.tag}:disabled",
             request_recorded=True,
         )
 
         route = prepare_governance_route()
         absent_message = (
-            "Your own request for seat missing-seat was not recorded and nothing changed. "
+            # R-GOV-01f (the request stage, standalone form)
+            "Your own request for seat missing-seat was not recorded; no governed record was written. "
             "The arrangement in effect has no seat "
             "missing-seat. Choose a seat the arrangement in effect names. Check the seats in "
-            "the current version before requesting one."
+            "the current version before requesting one. INTEVIA kept a record that this request was "
+            "received at <T>; sent again unchanged, it is answered as of that time."
         )
         self._assert_founding_seating_refusal(
             route,
@@ -2737,14 +2820,17 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_SEAT_ABSENT,
             absent_message,
+            key=f"sbg:seat:key:{route.route.tag}:absent-seat",
             request_recorded=False,
         )
 
         occupied_message = (
-            "Nobody was seated and nothing changed. Seat founder is already held at that time, "
-            "and each seat holds one person. Choose a vacant seat, or wait until this seat becomes "
-            "vacant. A seat becomes vacant when its holder's seat ends. Your own request for seat "
-            "founder is recorded and remains open."
+            # R-GOV-05-S2
+            "Nobody was seated; no governed record was written by the decision stage. Seat founder is "
+            "already held at that time, and each seat holds one person. Choose a vacant seat, or wait "
+            "until this seat becomes vacant. A seat becomes vacant when its holder's seat ends. Your own "
+            "request for seat founder is recorded and remains open. INTEVIA kept a record that this "
+            "request was received at <T>; sent again unchanged, it is answered as of that time."
         )
         self._assert_founding_seating_refusal(
             route,
@@ -2757,6 +2843,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED,
             occupied_message,
+            key=f"sbg:seat:key:{route.route.tag}:occupied-seat",
             request_recorded=True,
         )
 
@@ -2785,9 +2872,12 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             version=2,
         )
         already_seated_message = (
-            "Nobody was seated and nothing changed. This person already holds a seat in this "
-            "GOVERNANCE Circle, and a person holds at most one. No further action is needed for "
-            "this person. Your own request for seat second is recorded and remains open."
+            # R-GOV-06-S2
+            "Nobody was seated; no governed record was written by the decision stage. This person "
+            "already holds a seat in this GOVERNANCE Circle, and a person holds at most one. No further "
+            "action is needed for this person. Your own request for seat second is recorded and remains "
+            "open. INTEVIA kept a record that this request was received at <T>; sent again unchanged, it "
+            "is answered as of that time."
         )
         self._assert_founding_seating_refusal(
             route,
@@ -2801,6 +2891,7 @@ class SBGGovernanceFormationTests(SBGGovernanceRequestTestMixin, TransactionTest
             ),
             S015AuthorityRefusalCode.SBG_ALREADY_SEATED,
             already_seated_message,
+            key=f"sbg:seat:key:{route.route.tag}:same-person-second-seat",
             request_recorded=True,
         )
 
@@ -3293,6 +3384,7 @@ class SBGGovernancePostBirthingSeatingTests(
             interaction_key,
         )
         combined_before = governance_route_state(combined)
+        combined_intake_before = CommandIntake.objects.count()
         error = GovernanceControlledRefusalMappingTests._integrity_error(
             S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED.value,
             "sbg_guard_circleparticipation_occupancy",
@@ -3308,11 +3400,23 @@ class SBGGovernancePostBirthingSeatingTests(
             S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED,
         )
         self.assertEqual(refused.exception.request_uuid is not None, True)
-        self.assertTrue(
-            str(refused.exception).endswith(
-                "Your own request for seat founder is recorded and remains open."
+        # T-10: R-GOV-05-S2, complete; +1 intake for the compound request's first arrival (WS-01).
+        self.assertEqual(
+            str(refused.exception),
+            "Nobody was seated; no governed record was written by the decision stage. Seat founder is "
+            "already held at that time, and each seat holds one person. Choose a vacant seat, or wait "
+            "until this seat becomes vacant. A seat becomes vacant when its holder's seat ends. Your own "
+            "request for seat founder is recorded and remains open. INTEVIA kept a record that this "
+            "request was received at "
+            + _intake_time(
+                combined.founder,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+                interaction_key,
             )
+            + "; sent again unchanged, it is answered as of that time.",
         )
+        self.assertEqual(CommandIntake.objects.filter(idempotency_key=interaction_key).count(), 1)
+        self.assertEqual(CommandIntake.objects.count(), combined_intake_before + 1)
         expected = combined_before.copy()
         expected["authority_decisions"] += 1
         expected["receipts"] += 1
@@ -3684,6 +3788,7 @@ class SBGGovernancePostBirthingSeatingTests(
 
         combined_disabled = self._prepare_route("p4-combined-disabled", enable=False)
         before_combined = governance_route_state(combined_disabled.route)
+        combined_intake_before = CommandIntake.objects.count()
         combined_effective_at = route_test_now(combined_disabled.route)
         for retry in range(2):
             with self.assertRaises(SBGGovernanceRefused) as combined_refusal:
@@ -3696,12 +3801,31 @@ class SBGGovernancePostBirthingSeatingTests(
                 combined_refusal.exception.refusal_code,
                 S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED,
             )
+            combined_t = _intake_time(
+                combined_disabled.founder,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+                "sbg:g4b:decision:key:p4-combined-disabled",
+            )
             self.assertEqual(
                 str(combined_refusal.exception),
-                "Nobody was seated and nothing changed. GOVERNANCE is switched off for this LO, "
-                "so no one can be seated. Switch GOVERNANCE on through the LO's settings first, "
-                "if the LO chooses to. Your own request for seat founder is recorded and remains open.",
+                "Nobody was seated; no governed record was written by the decision stage. GOVERNANCE "
+                "is switched off for this LO, so no one can be seated. Switch GOVERNANCE on through the "
+                "LO's settings first, if the LO chooses to. Your own request for seat founder is recorded "
+                f"and remains open. INTEVIA kept a record that this request was received at {combined_t}; "
+                "sent again unchanged, it is answered as of that time. Once GOVERNANCE is on, decide the "
+                "open request as a new request: decide_governance_seat with request_uuid "
+                f"{combined_refusal.exception.request_uuid}, a new request reference and a new idempotency "
+                "key. The open request keeps its recorded time; this request, sent again unchanged, is "
+                f"refused again as of {combined_t}.",
             )
+            # WS-01: +1 intake on the first arrival, +0 on the unchanged retry.
+            self.assertEqual(
+                CommandIntake.objects.filter(
+                    idempotency_key="sbg:g4b:decision:key:p4-combined-disabled",
+                ).count(),
+                1,
+            )
+            self.assertEqual(CommandIntake.objects.count(), combined_intake_before + 1)
             self.assertIsNotNone(combined_refusal.exception.request_uuid)
             expected_combined = before_combined.copy()
             expected_combined["authority_decisions"] += 1
@@ -3785,6 +3909,7 @@ class SBGGovernancePostBirthingSeatingTests(
             "p4-disabled-request",
         )
         before_decision = self._record_counts()
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(SBGGovernanceRefused) as disabled_refusal:
             self._decide(
                 disabled,
@@ -3797,11 +3922,20 @@ class SBGGovernancePostBirthingSeatingTests(
         )
         self.assertEqual(
             str(disabled_refusal.exception),
-            "Nobody was seated and nothing changed. GOVERNANCE is switched off for this LO, so no one "
-            "can be seated. Switch GOVERNANCE on through the LO's settings first, if the LO chooses to. "
+            "Nobody was seated; no governed record was written. GOVERNANCE is switched off for this LO, "
+            "so no one can be seated. Switch GOVERNANCE on through the LO's settings first, if the LO "
+            "chooses to. INTEVIA kept a record that this request was received at "
+            + _intake_time(
+                disabled.founder,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                "sbg:g4b:decision:key:p4-disabled-decision",
+            )
+            + "; sent again unchanged, it is answered as of that time. "
             "Your own request for seat founder is recorded and remains open.",
         )
         self.assertEqual(self._record_counts(), before_decision)
+        # WS-01: +1 intake, this call's own row.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
 
         unavailable_routes = (
             (
@@ -3851,6 +3985,7 @@ class SBGGovernancePostBirthingSeatingTests(
                     f"p4-unavailable-{index}",
                 )
                 before_decision = governance_route_state(unavailable.route)
+                intake_before = CommandIntake.objects.count()
                 with self.assertRaises(SBGGovernanceRefused) as unavailable_refusal:
                     self._decide(
                         unavailable,
@@ -3863,11 +3998,20 @@ class SBGGovernancePostBirthingSeatingTests(
                 )
                 self.assertEqual(
                     str(unavailable_refusal.exception),
-                    f"Nobody was seated and nothing changed. Seat founder is filled by {route_detail}. "
-                    "Use a seat the LO Coordinators appoint, or wait for that route. "
+                    f"Nobody was seated; no governed record was written. Seat founder is filled by "
+                    f"{route_detail}. Use a seat the LO Coordinators appoint, or wait for that route. "
+                    "INTEVIA kept a record that this request was received at "
+                    + _intake_time(
+                        unavailable.founder,
+                        IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                        f"sbg:g4b:decision:key:p4-unavailable-{index}-decision",
+                    )
+                    + "; sent again unchanged, it is answered as of that time. "
                     "Your own request for seat founder is recorded and remains open.",
                 )
                 self.assertEqual(governance_route_state(unavailable.route), before_decision)
+                # WS-01: +1 intake, this call's own row.
+                self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
                 self.assertTrue(
                     CircleJoinRequest.objects.filter(
                         request_uuid=unavailable_request.request_uuid,
@@ -3980,6 +4124,7 @@ class SBGGovernancePostBirthingSeatingTests(
         )
         before_inactive = governance_route_state(route)
         before_inactive_records = self._record_counts()
+        intake_before = CommandIntake.objects.count()
         with self.assertRaises(SBGGovernanceRefused) as inactive_refusal:
             self._request(route, inactive, "r3-inactive-member")
         self.assertIs(
@@ -3988,12 +4133,21 @@ class SBGGovernancePostBirthingSeatingTests(
         )
         self.assertEqual(
             str(inactive_refusal.exception),
-            "Nobody was seated and nothing changed. A GOVERNANCE seat needs an active member "
+            "Nobody was seated; no governed record was written. A GOVERNANCE seat needs an active member "
             "of this LO at that time, and this person is not an active member at that time. "
-            "Seat someone who is an active member of this LO.",
+            "Seat someone who is an active member of this LO. INTEVIA kept a record that this request "
+            "was received at "
+            + _intake_time(
+                inactive,
+                IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+                "sbg:g4b:request:key:r3-inactive-member",
+            )
+            + "; sent again unchanged, it is answered as of that time.",
         )
         self.assertEqual(governance_route_state(route), before_inactive)
         self.assertEqual(self._record_counts(), before_inactive_records)
+        # WS-01: +1 intake, this call's own row.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 1)
 
         other_route = prepare_route(
             tag=f"sbg-g4b-r3-other-lo-{uuid4().hex}",
@@ -4285,6 +4439,7 @@ class SBGGovernancePostBirthingSeatingTests(
             for index, applicant in enumerate(applicants)
         )
         before_admissions = governance_route_state(route)
+        intake_before = CommandIntake.objects.count()
         barrier = Barrier(2)
 
         def decide(request_uuid, tag):
@@ -4339,12 +4494,24 @@ class SBGGovernancePostBirthingSeatingTests(
             msg=f"Observed losing-admission refusal layer: {refusal[3]}",
         )
         self.assertEqual(refusal[5], refusal[1])
+        loser_tag = (
+            "r3-service-concurrent-a"
+            if refusal[1] == requests[0].request_uuid
+            else "r3-service-concurrent-b"
+        )
         self.assertEqual(
             refusal[4],
-            "Nobody was seated and nothing changed. Seat founder is already held at that time, and "
-            "each seat holds one person. Choose a vacant seat, or wait until this seat becomes vacant. "
-            "A seat becomes vacant when its holder's seat ends. Your own request for seat founder "
-            "is recorded and remains open.",
+            "Nobody was seated; no governed record was written. Seat founder is already held at that "
+            "time, and each seat holds one person. Choose a vacant seat, or wait until this seat becomes "
+            "vacant. A seat becomes vacant when its holder's seat ends. INTEVIA kept a record that this "
+            "request was received at "
+            + _intake_time(
+                route.founder,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                f"sbg:g4b:decision:key:{loser_tag}",
+            )
+            + "; sent again unchanged, it is answered as of that time. Your own request for seat "
+            "founder is recorded and remains open.",
         )
         expected_state = before_admissions.copy()
         expected_state["authority_decisions"] += 1
@@ -4352,6 +4519,17 @@ class SBGGovernancePostBirthingSeatingTests(
         expected_state["admission_decisions"] += 1
         expected_state["participations"] += 1
         self.assertEqual(governance_route_state(route), expected_state)
+        # WS-01: both deliberately admitted decisions keep an intake row each: +2.
+        self.assertEqual(CommandIntake.objects.count(), intake_before + 2)
+        for tag in ("r3-service-concurrent-a", "r3-service-concurrent-b"):
+            self.assertEqual(
+                CommandIntake.objects.filter(
+                    actor=route.founder,
+                    entry=IntakeEntry.DECIDE_GOVERNANCE_SEAT.value,
+                    idempotency_key=f"sbg:g4b:decision:key:{tag}",
+                ).count(),
+                1,
+            )
         self.assertTrue(
             CircleJoinRequest.objects.filter(request_uuid=refusal[1]).exists()
         )

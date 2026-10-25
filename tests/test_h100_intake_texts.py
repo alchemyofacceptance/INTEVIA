@@ -881,7 +881,7 @@ class H100IntakeTextTests(TransactionTestCase):
             "request; it needs to be checked before the request is retried.",
         )
 
-    def test_nw7_static_clock_path_census_has_no_received_at_keyword(self):
+    def test_nw7_static_clock_path_census_has_bound_received_at_and_stage_phase(self):
         root = Path(__file__).resolve().parents[1]
         census = {
             "src/intevia/services/organism_formation_service.py": {
@@ -935,6 +935,8 @@ class H100IntakeTextTests(TransactionTestCase):
                 "_entitlement_guard_atomic",
             ),
             ("src/intevia/services/organism_governance_service.py", "_execute"),
+            ("src/intevia/services/organism_governance_service.py", "_request_governance_seat_at"),
+            ("src/intevia/services/organism_governance_service.py", "_decide_governance_seat_at"),
         }
         # CENSUS-G1-N2 (PKT-CLK-3 CLK3-2): the builders an activated executor reaches render
         # the restated form, so opening_end= and tail= must be present there, by class.
@@ -1030,7 +1032,12 @@ class H100IntakeTextTests(TransactionTestCase):
                     )
                     expected_time = (
                         "received_at"
-                        if scope in {"_birthing_guard_atomic", "_entitlement_guard_atomic"}
+                        if scope in {
+                            "_birthing_guard_atomic",
+                            "_entitlement_guard_atomic",
+                            "_request_governance_seat_at",
+                            "_decide_governance_seat_at",
+                        }
                         else "bound.received_at"
                     )
                     if received_at is None or ast.unparse(received_at) != expected_time:
@@ -1039,6 +1046,22 @@ class H100IntakeTextTests(TransactionTestCase):
                         )
                     else:
                         positive_calls.add((relative_path, scope))
+                    if (
+                        relative_path == "src/intevia/services/organism_governance_service.py"
+                        and scope == "_decide_governance_seat_at"
+                    ):
+                        stage_phase = next(
+                            (keyword.value for keyword in node.keywords if keyword.arg == "stage_phase"),
+                            None,
+                        )
+                        if stage_phase is None or ast.unparse(stage_phase) != "stage_phase":
+                            offenders.append(
+                                f"{relative_path}:{node.lineno}:authority_atomic:missing-stage-phase"
+                            )
+                    elif "stage_phase" in {keyword.arg for keyword in node.keywords}:
+                        offenders.append(
+                            f"{relative_path}:{node.lineno}:authority_atomic:unexpected-stage-phase"
+                        )
                     continue
                 if (
                     called_name == "_sbg_readiness_message"

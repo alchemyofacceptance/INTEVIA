@@ -5,9 +5,13 @@ and records seat requests and admission decisions. SB-G does not activate
 GOVERNANCE or transfer governing authority from the LO's Coordinators
 (SB-G build commission v1.0, section 0, HD-1 A and HD-2 A).
 
-Adoption, Circle creation, seat requests and admission decisions each use
-an authority_atomic scope and a receipt. Compound seating calls compose
-the request and decision stages without an enclosing transaction here.
+Adoption, Circle creation, seat requests and admission decisions are each
+admitted through the shared intake (one committed record of the request,
+outside the command's transaction) and then use an authority_atomic scope
+and a receipt. Compound seating calls admit once, under one binding for
+both stages, and compose the request and decision stages through their
+executors without an enclosing transaction here; the stage receipts are
+the binding's child records.
 
 Receipt replay requires a matching request reference and payload fingerprint
 and is served through serve_replay. Where database IntegrityError refusals
@@ -23,11 +27,11 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, NoReturn
+from typing import Callable, Literal, NoReturn
 from uuid import UUID, uuid4, uuid5
 
 from django.contrib.auth.models import User
-from django.db import IntegrityError, connections, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 
 from core.models import (
     Circle,
@@ -62,6 +66,7 @@ from src.intevia.services.organism_authority import (
 from src.intevia.services.organism_command_support import (
     ReplayResultType,
     ReplayViewer,
+    S015CommandContended,
     _intake_tail,
     _authority_request,
     _canonical_key,
@@ -89,6 +94,41 @@ _TAIL_REFUSAL_RECORDED = (
     "INTEVIA recorded this refusal and that the request was received at {received_at}; "
     "nothing else was saved."
 )
+# PKT-CLK-3 CLK3-3 part 2: the seat routes' texts after admission (Stop 3 rows of G2; D §9.1-§9.2).
+# A standalone refusal states that no governed record was written; on the compound decision stage the
+# clause is scoped to that stage, because the request stage's records stand (Stop 3 rule 11).
+_OPENING_NOT_WRITTEN = "; no governed record was written."
+_OPENING_DECISION_STAGE = "; no governed record was written by the decision stage."
+_TAIL_DECISION_STAGE_REFUSAL_RECORDED = (
+    "INTEVIA recorded this decision-stage refusal and that the request was received at "
+    "{received_at}; the decision stage saved nothing else."
+)
+_DECISION_STAGE_LO_RECORDS = "This decision stage did not change the LO's records."
+_M2_01_REMEDY = (
+    "Once GOVERNANCE is on, decide the open request as a new request: decide_governance_seat "
+    "with request_uuid {request_uuid}, a new request reference and a new idempotency key. "
+    "The open request keeps its recorded time; this request, sent again unchanged, is refused "
+    "again as of {received_at}."
+)
+_R_FIX_01_S2 = (
+    "Your request could not be completed because it conflicted with another database operation. "
+    "The decision stage of this attempt wrote no governed record; your own request for seat "
+    "{seat_id} is recorded and remains open, and INTEVIA kept a record that your request was "
+    "received at {received_at}. Please wait a moment before sending the same request again; it "
+    "is judged as of that time. If this keeps happening, note the time it occurred; it needs to "
+    "be checked."
+)
+_B_09_S2_OPENING = (
+    "{action} could not be completed because of a technical problem; no governed record was "
+    "written by the decision stage."
+)
+_B_09_S2_TAIL = (
+    "INTEVIA kept a record that this request was received at {received_at}; the same request can "
+    "be sent again and is judged as of that time. If it persists, report it."
+)
+# D §9.2 [A2] (R2-1): commit rejections the server is known to have refused; extended only by a named
+# code with carried evidence. 23503 is a deferred foreign-key violation at COMMIT (NW-10, IW-05).
+_COMMIT_REJECTION_SQLSTATES = frozenset({"23503"})
 _SEAT_ID = re.compile(r"[a-z0-9_-]{1,64}\Z")
 _ROUTE_BODIES = {
     "ELECTION": {"body:LO_MEMBERSHIP"},
@@ -153,6 +193,7 @@ def _authored_refusal_message(
     organism_state: str | None = None,
     opening_end: str = " and nothing changed.",
     tail: str = "",
+    lo_records_sentence: str = "Nothing about the LO's records changed.",
 ) -> str | None:
     """Return an authored refusal explanation, or None if none is selected.
 
@@ -174,6 +215,9 @@ def _authored_refusal_message(
     validate that the text satisfies that form. opening_end replaces
     " and nothing changed." in every branch that has it, and a non-empty tail
     is appended after one space; the defaults give the text unchanged.
+    lo_records_sentence closes the SBG_LO_NOT_ACTIVE explanation; the compound
+    decision stage passes "This decision stage did not change the LO's records."
+    (Stop 3 R-GOV-01e-S2, the Human Governor's A1 of 19 October 2026).
     """
     def with_tail(message: str) -> str:
         return f"{message} {tail}" if tail else message
@@ -239,7 +283,7 @@ def _authored_refusal_message(
         )
         return with_tail(
             f"{act}{opening_end} This LO is {organism_state.lower()}, so it can take no new "
-            f"act of this kind. {remedy} Nothing about the LO's records changed."
+            f"act of this kind. {remedy} {lo_records_sentence}"
         )
     if code is S015AuthorityRefusalCode.SBG_SEAT_ABSENT:
         seat_id = detail or "the requested seat"
@@ -338,7 +382,12 @@ def _controlled_integrity_refusal(
     return SBGGovernanceRefused(code, message)
 
 
-def _active_governance_circle_seating_refusal(seat_id: str) -> str:
+def _active_governance_circle_seating_refusal(
+    seat_id: str,
+    *,
+    opening_end: str = " and nothing changed.",
+    tail: str = "",
+) -> str:
     """Build the explanation referring to a previously active GOVERNANCE Circle.
 
     The text says that LO-Coordinator appointment is available in this release
@@ -351,14 +400,19 @@ def _active_governance_circle_seating_refusal(seat_id: str) -> str:
     history or determine authority.
 
     Related requirement: SB-G build commission v1.0, section 0, LD-5.
+
+    opening_end replaces " and nothing changed." and a non-empty tail is
+    appended after one space, as in _authored_refusal_message; once admitted,
+    the decision passes "." and the intake tail (Stop 3 R-GOV-13, R-GOV-13-S2).
     """
-    return (
-        f"Nobody was seated and nothing changed. Seat {seat_id} is filled by appointment by the LO "
+    message = (
+        f"Nobody was seated{opening_end} Seat {seat_id} is filled by appointment by the LO "
         "Coordinators, which this release can use only while the LO's GOVERNANCE Circle has never "
         "been active, and this Circle has been active before. A Circle that has been active admits "
         "new participants through its own GOVERNANCE route, which arrives with a later release. "
         "The LO's Coordinators continue to govern until then."
     )
+    return f"{message} {tail}" if tail else message
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,7 +454,10 @@ class SeatFoundingGovernanceCircleCommand:
     section 6). Records the person's own request first, then attempts an
     ACCEPT decision through CIRCLE_FOUNDING, with separate authorisations.
 
-    A successful request stage can remain recorded if admission is refused.
+    A successful request stage remains recorded if admission is refused; both
+    stages run under the one intake binding admitted for the compound request,
+    so an unchanged retry re-enters at that binding's time, replays the request
+    stage and runs or replays the decision stage.
     """
     credential: User
     living_organism_uuid: UUID
@@ -438,10 +495,12 @@ class DecideGovernanceSeatCommand:
     GOVERNANCE_CONSTITUTIONAL from the Birthing record visible at the
     decision's effective_at and received_at.
 
-    Without request_uuid, first records the caller's own request, then attempts
-    the decision through GOVERNANCE_CONSTITUTIONAL. This branch does not use
-    the supplied route. The two stages retain separate authorisations and
-    receipts; a successful request can remain recorded if admission is refused.
+    Without request_uuid, admits one binding for the compound request, then
+    records the caller's own request and attempts the decision through
+    GOVERNANCE_CONSTITUTIONAL, each stage in its own transaction. This branch
+    does not use the supplied route. The two stages retain separate
+    authorisations and receipts; a successful request stage remains recorded
+    if admission is refused.
     """
     credential: User
     living_organism_uuid: UUID
@@ -616,12 +675,33 @@ class GovernanceSeatDecisionResult:
         return {}
 
 
+@dataclass(frozen=True, slots=True)
+class _AuthoredParts:
+    """The inputs an authored seat refusal was built from.
+
+    _refuse and the decision stage's reworded denials attach it to the raised
+    exception as authored_parts, so that the compound orchestrator can render
+    the complete decision-stage text (the -S2 rows) from the same inputs:
+    the decision-stage opening, the code's body, the open-request sentence
+    when the request is open, then the intake sentence, once (Stop 3 rule 11;
+    PKT-CLK-3 D §9.1). kind is "BUILDER" for _authored_refusal_message and
+    "ACTIVE_CIRCLE" for _active_governance_circle_seating_refusal.
+    """
+    kind: str
+    code: S015AuthorityRefusalCode
+    detail: str | None
+    act: str
+    organism_state: str | None = None
+
+
 class SBGGovernanceRefused(Exception):
     """An SB-G refusal this service explains with authored text.
 
     Carries refusal_code and the explanation as its message. request_uuid is
     set where the raising path supplies one: the seat-decision paths set it
-    when a request was recorded before the refusal.
+    when a request was recorded before the refusal, whether that request is
+    still open or already decided. A refusal raised after admission leaves
+    the intake record of the request in place; the explanation says so.
     """
     def __init__(
         self,
@@ -793,10 +873,9 @@ class SBGGovernanceUnavailable(Exception):
 class OrganismGovernanceService:
     """Governed service for SB-G arrangements, Circle creation and seating.
 
-    Requires an injected clock. Adoption and Circle creation take received_at
-    from the durable intake; seat routes read it from the clock until
-    PKT-CLK-3's chunk CLK3-3. When a route serves a result through ReplayViewer,
-    it reads the injected clock for the present-time access check.
+    Requires an injected clock. Every governed act takes received_at from the
+    durable intake (PKT-CLK-3). When a route serves a result through
+    ReplayViewer, it reads the injected clock for the present-time access check.
 
     The founding-seating method and the decision method's no-request branch
     compose separately authorised request and admission-decision stages
@@ -990,60 +1069,37 @@ class OrganismGovernanceService:
         route CIRCLE_FOUNDING and outcome ACCEPT. Each stage has its own
         authorisation, receipt, derived key and request reference.
 
-        The stages are called separately; a successful request can remain recorded
-        if admission is refused (controlled-refusal ruling, 10 October 2026).
+        The compound request is admitted once, under one binding; the stages are
+        then run separately by their executors, and a successful request stage
+        remains recorded if admission is refused (controlled-refusal ruling,
+        10 October 2026).
 
-        Derived identifiers are stable for the LO and interaction key. Replay
-        also requires matching stage fingerprints, including effective_at;
-        reusing the interaction key alone does not guarantee replay.
+        Derived identifiers are stable for the LO and interaction key. A retry
+        under the interaction key with changed content, including a changed
+        effective_at, is refused at the intake and inherits nothing; an unchanged
+        retry is bound to the original received_at and replays or completes the
+        stages.
 
         This is the founding route specified for formation before Birthing
         (SB-G build commission v1.0, section 6).
         """
-        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
-        circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
-        rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
-        if type(command.seat_id) is not str or _SEAT_ID.fullmatch(command.seat_id) is None:
-            raise ValueError("seat_id is invalid")
-        idempotency_key = _canonical_key(
-            command.idempotency_key,
-            "idempotency_key",
-            120,
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
         )
-        request_key, request_reference, admission_key, admission_reference = (
-            _compound_stage_identifiers(organism_uuid, idempotency_key)
-        )
-        request_result = self.request_governance_seat(RequestGovernanceSeatCommand(
-            credential=command.credential,
-            living_organism_uuid=organism_uuid,
-            circle_uuid=circle_uuid,
-            seat_rule_uuid=rule_uuid,
-            seat_id=command.seat_id,
-            request_reference=request_reference,
-            idempotency_key=request_key,
-            effective_at=command.effective_at,
-        ))
-        result = self.decide_governance_seat(DecideGovernanceSeatCommand(
-            credential=command.credential,
-            living_organism_uuid=organism_uuid,
-            request_reference=admission_reference,
-            idempotency_key=admission_key,
-            outcome="ACCEPT",
-            route="CIRCLE_FOUNDING",
-            request_uuid=request_result.request_uuid,
-            effective_at=command.effective_at,
-        ))
-        if result.participation_uuid is None:
-            raise RuntimeError("founding acceptance returned no participation")
-        return GovernanceSeatingResult(
-            living_organism_uuid=result.living_organism_uuid,
-            request_uuid=result.request_uuid,
-            decision_uuid=result.decision_uuid,
-            participation_uuid=result.participation_uuid,
-            lineage_reference=result.lineage_reference,
-            authority_reference=result.authority_reference,
-            authority_decision_reference=result.authority_decision_reference,
-        )
+
+        entry = IntakeEntry.SEAT_GOVERNANCE_CIRCLE
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("SEAT_GOVERNANCE_CIRCLE is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._orchestrate_compound_seating(command, bound, _RECIPE_SEAT_FOUNDING)
 
     def request_governance_seat(
         self,
@@ -1055,76 +1111,33 @@ class OrganismGovernanceService:
         (HD-3 amendment, 10 October 2026). The request neither admits the member
         nor reserves the seat; admission requires a separate authorised decision.
 
-        Passes the injected clock's received_at to authority qualification.
-        Local membership validation folds state at effective_at using
-        received_at as the knowledge bound.
+        Admits the request through the durable intake before running its
+        executor. Passes the bound request's received_at (the intake's
+        server-assigned time, the original one on a retry) to authority
+        qualification. Local membership validation folds state at effective_at
+        using received_at as the knowledge bound.
 
         Database guard refusals translated on an exact primary-message match:
         SBG_MEMBER_NOT_ELIGIBLE and SBG_SEAT_ABSENT.
         Other IntegrityError exceptions propagate.
         """
-        try:
-            return self._request_governance_seat(command)
-        except IntegrityError as exc:
-            refusal = _controlled_integrity_refusal(
-                exc,
-                _REQUEST_GUARD_REFUSAL_CODES,
-                detail=command.seat_id,
-                act=f"Your own request for seat {command.seat_id} was not recorded",
-            )
-            if refusal is None:
-                raise
-            raise refusal from exc
-
-    def _request_governance_seat(
-        self,
-        command: RequestGovernanceSeatCommand,
-    ) -> GovernanceSeatRequestResult:
-        """Record a member's own GOVERNANCE seat request in one authority_atomic scope.
-
-        Before the scope: validates the command (canonical UUIDs, the seat_id
-        pattern, the keys, and an effective_at no later than the clock's
-        received_at, defaulting to received_at), derives request_uuid from the LO
-        and idempotency key, and fingerprints the request
-        (schema sbg-governance-seat-request-v1).
-
-        Within the scope, in this order: locks the actor and takes the per-actor
-        command mutex; serves a matching receipt through serve_replay, raising
-        ValueError for a mismatched one; locks the registered LO and its row
-        (LookupError if absent); locks the actor's membership context, refusing
-        SBG_MEMBER_NOT_ELIGIBLE when that helper reports that active membership is
-        required; validates the seat through _validate_constitutional_seating in
-        request mode (no enabled, occupancy, Birthing or route requirement); asks
-        the authority to qualify REQUEST_GOVERNANCE_SEAT, rewording a denial where
-        an authored text exists; then writes the CircleJoinRequest (initiated by the
-        applicant, consent_reference set to request_reference) and a receipt citing
-        the authority decision.
-        """
-        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
-        circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
-        rule_uuid = _canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid")
-        if type(command.seat_id) is not str or _SEAT_ID.fullmatch(command.seat_id) is None:
-            raise ValueError("seat_id is invalid")
-        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
-        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-        received_at = _timestamp(self._clock(), "received_at")
-        effective_at = (
-            received_at if command.effective_at is None
-            else _timestamp(command.effective_at, "effective_at")
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
         )
-        if effective_at > received_at:
-            raise ValueError("effective_at must not be later than received_at")
-        return self._request_governance_seat_at(
-            command,
-            organism_uuid=organism_uuid,
-            circle_uuid=circle_uuid,
-            rule_uuid=rule_uuid,
-            request_reference=request_reference,
-            idempotency_key=idempotency_key,
-            received_at=received_at,
-            effective_at=effective_at,
-            verify_after_actor_lock=None,
-        )
+
+        entry = IntakeEntry.REQUEST_GOVERNANCE_SEAT
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure("REQUEST_GOVERNANCE_SEAT is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        return self._execute_request_governance_seat(command, bound)
 
     def _request_governance_seat_at(
         self,
@@ -1139,11 +1152,18 @@ class OrganismGovernanceService:
         effective_at: datetime,
         verify_after_actor_lock: Callable[[Identity], None] | None,
     ) -> GovernanceSeatRequestResult:
-        """Run the shared request-stage body at an explicit time.
+        """Run the shared request-stage body at the bound request's receive time.
 
-        The public clock route passes no verifier; its existing route remains
-        unchanged until PKT-CLK-3. Bound stage executors supply a verifier and
-        their governed receive time without consulting the clock.
+        Every caller is a bound executor: the public entry's executor
+        (REQUEST_GOVERNANCE_SEAT) or the compound orchestrator's request stage
+        (REQUEST_STAGE); each supplies a verifier and the binding's received_at.
+        The governed request time comes from the binding; replay-access
+        assessment retains its fresh clock read.
+
+        Refusals after admission state that no governed record was written, or,
+        for a reworded authority denial, that the refusal was recorded; each
+        ends with the intake sentence for received_at (Stop 3 R-GOV-01a to -01f,
+        R-GOV-07, R-GOV-11).
         """
 
         action = OrganismAction.REQUEST_GOVERNANCE_SEAT
@@ -1162,7 +1182,7 @@ class OrganismGovernanceService:
             "request_reference": request_reference,
             "schema": "sbg-governance-seat-request-v1",
         })).hexdigest()
-        with authority_atomic(self._alias):
+        with authority_atomic(self._alias, received_at=received_at):
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
@@ -1195,6 +1215,7 @@ class OrganismGovernanceService:
                 )
                 return serve_replay(
                     result,
+                    # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
                     viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
                     result_type=ReplayResultType(GovernanceSeatRequestResult, self._alias),
                 )
@@ -1223,6 +1244,8 @@ class OrganismGovernanceService:
                 self._refuse(
                     S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                     "is not an active member at that time",
+                    opening_end=_OPENING_NOT_WRITTEN,
+                    tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
                 )
             circle, rule = self._validate_constitutional_seating(
                 organism=organism,
@@ -1235,6 +1258,8 @@ class OrganismGovernanceService:
                 require_birthing=False,
                 require_supported_route=False,
                 act=f"Your own request for seat {command.seat_id} was not recorded",
+                opening_end=_OPENING_NOT_WRITTEN,
+                tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
             )
             target = _authority_target(
                 action,
@@ -1266,6 +1291,8 @@ class OrganismGovernanceService:
                     exc.refusal_code,
                     None,
                     act=f"Your own request for seat {command.seat_id} was not recorded",
+                    opening_end=".",
+                    tail=_intake_tail(_TAIL_REFUSAL_RECORDED, received_at),
                 )
                 if message is None:
                     raise
@@ -1318,8 +1345,14 @@ class OrganismGovernanceService:
     ) -> GovernanceSeatRequestResult:
         """Execute a verified request stage at its bound receive time.
 
-        This private executor serves REQUEST_GOVERNANCE_SEAT and REQUEST_STAGE;
-        the public clock route remains unchanged until PKT-CLK-3.
+        This private executor serves REQUEST_GOVERNANCE_SEAT (the public entry,
+        after admission) and REQUEST_STAGE (a child of a compound request).
+
+        Before the scope, the public method validates the command's shape and
+        admits it through the intake; the executor receives the bound request,
+        derives request_uuid from the LO and idempotency key, verifies the
+        command against the binding and fingerprints the request (schema
+        sbg-governance-seat-request-v1).
         """
         organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
         circle_uuid = _canonical_uuid(command.circle_uuid, "circle_uuid")
@@ -1363,6 +1396,8 @@ class OrganismGovernanceService:
                 _REQUEST_GUARD_REFUSAL_CODES,
                 detail=command.seat_id,
                 act=f"Your own request for seat {command.seat_id} was not recorded",
+                opening_end=_OPENING_NOT_WRITTEN,
+                tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
             )
             if refusal is None:
                 raise
@@ -1377,7 +1412,8 @@ class OrganismGovernanceService:
         """Return the sentence saying the caller's request for seat_id is recorded
         and remains open.
 
-        The sentence is fixed text; this method does not check the request's status.
+        The sentence is fixed text; callers append it only when the request stage
+        is established committed and the decision stage is not completed (O-01).
         The optional stage context identifies the chunk-3 hand-off and does not
         alter the public route's wording. Any stage context other than
         ADMIT_STAGE raises ValueError.
@@ -1386,21 +1422,51 @@ class OrganismGovernanceService:
             raise ValueError("open-request sentence requires the admission stage")
         return f"Your own request for seat {seat_id} is recorded and remains open."
 
-    def _request_open_context(self, request_uuid: UUID) -> tuple[str, str] | None:
-        """Return (seat_id, the open-request sentence) for request_uuid, or None.
+    def _request_open_state(
+        self,
+        *,
+        compound: bool,
+        request_uuid: UUID,
+        actor_pk: int,
+        request_key: str | None,
+        admission_key: str,
+    ) -> Literal["OPEN", "COMPLETED", "NOT_ESTABLISHED", "UNKNOWN"]:
+        """Classify whether a request is open without replacing the original error (D §5.4)."""
+        try:
+            if compound:
+                stage_one_exists = OrganismCommandReceipt.objects.using(self._alias).filter(
+                    actor_id=actor_pk,
+                    action=OrganismAction.REQUEST_GOVERNANCE_SEAT.value,
+                    idempotency_key=request_key,
+                ).exists()
+            else:
+                stage_one_exists = CircleJoinRequest.objects.using(self._alias).filter(
+                    request_uuid=request_uuid,
+                ).exists()
+            if not stage_one_exists:
+                return "NOT_ESTABLISHED"
+            if OrganismCommandReceipt.objects.using(self._alias).filter(
+                actor_id=actor_pk,
+                action=OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value,
+                idempotency_key=admission_key,
+            ).exists():
+                return "COMPLETED"
+            if CircleAdmissionDecision.objects.using(self._alias).filter(
+                request__request_uuid=request_uuid,
+            ).exists():
+                return "COMPLETED"
+            return "OPEN"
+        except DatabaseError:
+            return "UNKNOWN"
 
-        Returns None when no CircleJoinRequest with request_uuid is recorded. It
-        checks only that the request exists, not whether it has been decided.
-        """
-        seat_id = (
+    def _request_seat_id(self, request_uuid: UUID) -> str | None:
+        """Read the request's seat solely for refusal detail rendering (D §5.4)."""
+        return (
             CircleJoinRequest.objects.using(self._alias)
             .filter(request_uuid=request_uuid)
             .values_list("seat_id", flat=True)
             .first()
         )
-        if seat_id is None:
-            return None
-        return seat_id, self._request_open_sentence(seat_id)
 
     def decide_governance_seat(
         self,
@@ -1412,228 +1478,169 @@ class OrganismGovernanceService:
         the admission decision, participation on ACCEPT, and its receipt
         within one authority_atomic scope.
 
-        Without request_uuid, first records the caller's own request in a
-        separate stage, then attempts a GOVERNANCE_CONSTITUTIONAL decision.
-        A successful request stage can survive refusal of the decision stage
-        (HD-3 amendment and controlled-refusal ruling, 10 October 2026).
+        Without request_uuid, admits one binding and hands it to the compound
+        orchestrator, which derives a child bound request per stage and calls
+        the stage executors in turn, each in its own authority_atomic scope:
+        first the caller's own request, then a GOVERNANCE_CONSTITUTIONAL decision.
+        It requires circle_uuid, seat_rule_uuid and a valid seat_id; the
+        orchestrator derives the stage identifiers with _compound_stage_identifiers
+        and calls _execute_request_governance_seat, then
+        _execute_decide_governance_seat through GOVERNANCE_CONSTITUTIONAL, with
+        the derived children. A successful request stage can survive refusal of
+        the decision stage (HD-3 amendment and controlled-refusal ruling,
+        10 October 2026).
 
         Database admission-guard refusals translated on an exact primary-message
         match: SBG_MEMBER_NOT_ELIGIBLE, SBG_SEAT_ABSENT, SBG_SEAT_OCCUPIED and
         SBG_ALREADY_SEATED. Unmatched IntegrityError exceptions propagate.
 
-        Handled admission refusals with available request context include text
-        saying the request remains open and carry request_uuid on the exception.
+        Handled admission refusals whose request stage is recorded and undecided
+        include text saying the request remains open and carry request_uuid on
+        the exception; a request already decided is never called open.
         """
-        if command.request_uuid is None:
-            return self._decide_governance_seat(command)
+        from src.intevia.services.command_intake import (
+            ACTIVE_ENTRIES,
+            IntakeAdmissionTechnicalFailure,
+            _require_admission_state,
+            _resolve_actor,
+            admit_request,
+            intake_shape,
+        )
 
+        entry = (
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND
+            if command.request_uuid is None
+            else IntakeEntry.DECIDE_GOVERNANCE_SEAT
+        )
+        _require_admission_state(self._alias, entry)
+        if entry not in ACTIVE_ENTRIES:
+            raise IntakeAdmissionTechnicalFailure(f"{entry.value} is not active")
+        shape = intake_shape(entry, command)
+        actor_ref = _resolve_actor(self._alias, command.credential)
+        bound = admit_request(self._alias, entry, actor_ref, shape)
+        if command.request_uuid is None:
+            return self._orchestrate_compound_seating(
+                command,
+                bound,
+                _RECIPE_DECIDE_COMPOUND,
+            )
+        return self._execute_standalone_decision(command, bound)
+
+    def _execute_standalone_decision(
+        self,
+        command: DecideGovernanceSeatCommand,
+        bound: BoundRequest,
+    ) -> GovernanceSeatDecisionResult:
+        """Execute and translate one admitted standalone decision (D §5.4).
+
+        The request-state predicate controls whether the existing open-request
+        sentence is appended; completed requests still receive governed
+        translations without that sentence.
+        """
         request_uuid = _canonical_uuid(command.request_uuid, "request_uuid")
+        admission_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         try:
-            return self._decide_governance_seat(command)
+            return self._execute_decide_governance_seat(command, bound)
         except IntegrityError as exc:
-            request_context = self._request_open_context(request_uuid)
-            if request_context is None:
+            state = self._request_open_state(
+                compound=False,
+                request_uuid=request_uuid,
+                actor_pk=bound.actor_pk,
+                request_key=None,
+                admission_key=admission_key,
+            )
+            if state not in {"OPEN", "COMPLETED"}:
                 raise
-            seat_id, open_request = request_context
+            try:
+                seat_id = self._request_seat_id(request_uuid)
+            except DatabaseError:
+                raise exc
+            if seat_id is None:
+                raise
             refusal = _controlled_integrity_refusal(
                 exc,
                 _ADMISSION_GUARD_REFUSAL_CODES,
                 detail=seat_id,
                 act="Nobody was seated",
+                opening_end=_OPENING_NOT_WRITTEN,
+                tail=_intake_tail(_TAIL_NOT_WRITTEN, bound.received_at),
             )
             if refusal is None:
                 raise
+            suffix = (
+                f" {self._request_open_sentence(seat_id)}"
+                if state == "OPEN"
+                else ""
+            )
             raise SBGGovernanceRefused(
                 refusal.refusal_code,
-                f"{refusal} {open_request}",
+                f"{refusal}{suffix}",
                 request_uuid=request_uuid,
             ) from exc
         except SBGGovernanceRefused as exc:
-            request_context = self._request_open_context(request_uuid)
-            if request_context is None:
+            state, seat_id = self._standalone_request_context(request_uuid, bound, command)
+            if state not in {"OPEN", "COMPLETED"} or seat_id is None:
                 raise
-            _, open_request = request_context
+            suffix = f" {self._request_open_sentence(seat_id)}" if state == "OPEN" else ""
             raise SBGGovernanceRefused(
                 exc.refusal_code,
-                f"{exc} {open_request}",
+                f"{exc}{suffix}",
                 request_uuid=request_uuid,
             ) from exc
         except S015AuthorityDenied as exc:
-            request_context = self._request_open_context(request_uuid)
-            if request_context is None:
+            state, seat_id = self._standalone_request_context(request_uuid, bound, command)
+            if state not in {"OPEN", "COMPLETED"} or seat_id is None:
                 raise
-            _, open_request = request_context
+            suffix = f" {self._request_open_sentence(seat_id)}" if state == "OPEN" else ""
             raise S015AuthorityDenied(
-                f"{exc} {open_request}",
+                f"{exc}{suffix}",
                 refusal_code=exc.refusal_code,
                 disclosed_refusal_code=exc.disclosed_refusal_code,
                 authority_decision_reference=exc.authority_decision_reference,
                 request_uuid=request_uuid,
             ) from exc
 
-    def _decide_governance_seat(
+    def _standalone_request_context(
         self,
+        request_uuid: UUID,
+        bound: BoundRequest,
         command: DecideGovernanceSeatCommand,
-    ) -> GovernanceSeatDecisionResult:
-        """Record an ACCEPT or DECLINE decision on a GOVERNANCE seat request.
+    ) -> tuple[str, str | None]:
+        """Return standalone request state and seat detail when readable (D §5.4).
 
-        Without request_uuid, requires circle_uuid, seat_rule_uuid and a valid
-        seat_id. Uses _compound_stage_identifiers to record the caller's own
-        request through request_governance_seat, then recursively decides that
-        request through GOVERNANCE_CONSTITUTIONAL. The two stages have separate
-        authority_atomic scopes. Handled decision-stage refusals carry the
-        request UUID and the open-request sentence.
-
-        With request_uuid, rejects supplied circle_uuid, seat_rule_uuid or
-        seat_id. Validates outcome, route and times, then fingerprints the
-        decision using schema sbg-governance-seat-decision-v1.
-
-        Within authority_atomic, calls the actor lock helper, takes the command
-        mutex and checks for a receipt. A matching receipt is reconstructed and
-        passed to serve_replay; a reference or fingerprint mismatch raises
-        ValueError. Otherwise, calls the registered-LO lock helper, locks the LO
-        row, obtains the actor's membership context and locks the request.
-
-        Refuses SBG_MEMBER_NOT_ELIGIBLE if the request is missing, belongs to
-        another LO, was not applicant-initiated, or takes effect after the
-        decision.
-
-        Uses the supplied route, or selects GOVERNANCE_CONSTITUTIONAL when a
-        BIRTHING event is effective by effective_at and both received and
-        recorded by received_at; otherwise selects CIRCLE_FOUNDING.
-
-        For CIRCLE_FOUNDING before Birthing, requires the applicant's identity
-        to match the actor, refusing a mismatch as SBGGovernanceRefused with
-        E_NOT_APPLICANT and its authored message before anything is written,
-        then calls _validate_seating, including its occupancy checks for
-        either outcome.
-
-        For GOVERNANCE_CONSTITUTIONAL after Birthing, calls
-        _validate_constitutional_seating with governance required to be enabled
-        and occupancy checked only for ACCEPT.
-
-        Calls authority qualification after these branch checks. Rewords
-        SBG_SEAT_ROUTE_UNAVAILABLE denials. If qualification succeeds without a
-        validated seating context, raises RuntimeError.
-
-        Writes the admission decision with the LO as institutional actor in
-        TRANSPORT mode, the actor as deciding and entering identity,
-        self_decision from the applicant/actor identity comparison, and
-        settings_basis rule:<uuid>@<version>#<seat>. Creates a participation only
-        for ACCEPT, then records a receipt citing the authority decision and
-        returns GovernanceSeatDecisionResult.
+        A failed detail lookup is UNKNOWN so the caller can preserve its original
+        exception rather than replace it with a database error.
         """
-        if command.request_uuid is None:
-            if (
-                command.circle_uuid is None
-                or command.seat_rule_uuid is None
-                or type(command.seat_id) is not str
-                or _SEAT_ID.fullmatch(command.seat_id) is None
-            ):
-                raise ValueError("self-appointment requires a circle and seat")
-            organism_uuid = _canonical_uuid(
-                command.living_organism_uuid,
-                "living_organism_uuid",
-            )
-            interaction_key = _canonical_key(
-                command.idempotency_key,
-                "idempotency_key",
-                120,
-            )
-            request_key, request_reference, admission_key, admission_reference = (
-                _compound_stage_identifiers(organism_uuid, interaction_key)
-            )
-            request_result = self.request_governance_seat(RequestGovernanceSeatCommand(
-                credential=command.credential,
-                living_organism_uuid=organism_uuid,
-                circle_uuid=_canonical_uuid(command.circle_uuid, "circle_uuid"),
-                seat_rule_uuid=_canonical_uuid(command.seat_rule_uuid, "seat_rule_uuid"),
-                seat_id=command.seat_id,
-                request_reference=request_reference,
-                idempotency_key=request_key,
-                effective_at=command.effective_at,
-            ))
-            try:
-                return self._decide_governance_seat(DecideGovernanceSeatCommand(
-                    credential=command.credential,
-                    living_organism_uuid=organism_uuid,
-                    request_reference=admission_reference,
-                    idempotency_key=admission_key,
-                    outcome=command.outcome,
-                    route="GOVERNANCE_CONSTITUTIONAL",
-                    request_uuid=request_result.request_uuid,
-                    effective_at=command.effective_at,
-                ))
-            except SBGGovernanceRefused as exc:
-                raise SBGGovernanceRefused(
-                    exc.refusal_code,
-                    f"{exc} {self._request_open_sentence(command.seat_id)}",
-                    request_uuid=request_result.request_uuid,
-                ) from exc
-            except S015AuthorityDenied as exc:
-                raise S015AuthorityDenied(
-                    f"{exc} {self._request_open_sentence(command.seat_id)}",
-                    refusal_code=exc.refusal_code,
-                    disclosed_refusal_code=exc.disclosed_refusal_code,
-                    authority_decision_reference=exc.authority_decision_reference,
-                    request_uuid=request_result.request_uuid,
-                ) from exc
-            except IntegrityError as exc:
-                refusal = _controlled_integrity_refusal(
-                    exc,
-                    _ADMISSION_GUARD_REFUSAL_CODES,
-                    detail=command.seat_id,
-                    act="Nobody was seated",
-                )
-                if refusal is None:
-                    raise
-                raise SBGGovernanceRefused(
-                    refusal.refusal_code,
-                    f"{refusal} {self._request_open_sentence(command.seat_id)}",
-                    request_uuid=request_result.request_uuid,
-                ) from exc
-
-        organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
-        request_reference = _canonical_key(command.request_reference, "request_reference", 128)
-        idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
-        if type(command.outcome) is not str or command.outcome not in {"ACCEPT", "DECLINE"}:
-            raise ValueError("outcome must be ACCEPT or DECLINE")
-        if command.route not in {None, "CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL"}:
-            raise ValueError("route is invalid")
-        request_uuid = _canonical_uuid(command.request_uuid, "request_uuid")
-        if (
-            command.circle_uuid is not None
-            or command.seat_rule_uuid is not None
-            or command.seat_id is not None
-        ):
-            raise ValueError("an existing request supplies its own circle and seat")
-        received_at = _timestamp(self._clock(), "received_at")
-        effective_at = (
-            received_at if command.effective_at is None
-            else _timestamp(command.effective_at, "effective_at")
-        )
-        if effective_at > received_at:
-            raise ValueError("effective_at must not be later than received_at")
-        return self._decide_governance_seat_at(
-            command,
-            organism_uuid=organism_uuid,
-            request_reference=request_reference,
-            idempotency_key=idempotency_key,
+        state = self._request_open_state(
+            compound=False,
             request_uuid=request_uuid,
-            received_at=received_at,
-            effective_at=effective_at,
-            verify_after_actor_lock=None,
+            actor_pk=bound.actor_pk,
+            request_key=None,
+            admission_key=_canonical_key(command.idempotency_key, "idempotency_key", 120),
         )
+        if state not in {"OPEN", "COMPLETED"}:
+            return state, None
+        try:
+            seat_id = self._request_seat_id(request_uuid)
+        except DatabaseError:
+            return "UNKNOWN", None
+        if seat_id is None:
+            return "UNKNOWN", None
+        return state, seat_id
 
     def _execute_decide_governance_seat(
         self,
         command: DecideGovernanceSeatCommand,
         bound: BoundRequest,
+        *,
+        stage_phase: dict | None = None,
     ) -> GovernanceSeatDecisionResult:
         """Execute a verified decision stage at its bound receive time.
 
-        This private executor serves DECIDE_GOVERNANCE_SEAT and ADMIT_STAGE;
-        the public clock route remains unchanged until PKT-CLK-3.
+        This private executor serves DECIDE_GOVERNANCE_SEAT (the public entry
+        with request_uuid, after admission) and ADMIT_STAGE (a child of a
+        compound request). The optional phase cell classifies stage exit
+        failures for the compound route (PKT-CLK-3 CLK3-3, D §9.2).
         """
         if command.request_uuid is None:
             raise ValueError("an existing request is required for the decision stage")
@@ -1666,6 +1673,7 @@ class OrganismGovernanceService:
             request_uuid=request_uuid,
             received_at=received_at,
             effective_at=effective_at,
+            stage_phase=stage_phase,
             verify_after_actor_lock=lambda actor: bound.verify(
                 command,
                 actor,
@@ -1688,8 +1696,12 @@ class OrganismGovernanceService:
         """Execute two verified stages without enclosing their transactions.
 
         The parent is verified once, and each child is independently verified
-        by its stage executor. The public clock routes remain unchanged until
-        PKT-CLK-3 redirects them.
+        by its stage executor. Both public compound entries
+        (decide_governance_seat without request_uuid; seat_governance_circle)
+        admit one binding and hand it here with their recipe.
+
+        A failure of the decision stage, including its post_check and
+        result_from, is classified by _decision_stage_outcome (D §9.2).
         """
         from src.intevia.services.command_intake import _require_not_in_atomic_block
 
@@ -1724,73 +1736,275 @@ class OrganismGovernanceService:
             stage_context,
             command=decision_command,
         )
+        stage_phase = {"phase": "BEFORE"}
         try:
             decision_result = self._execute_decide_governance_seat(
                 decision_command,
                 decision_bound,
+                stage_phase=stage_phase,
             )
-        except SBGGovernanceUnavailable as exc:
-            open_request = self._request_open_sentence(
-                command.seat_id,
-                stage_context=stage_context,
-            )
-            raised = SBGGovernanceUnavailable(f"{exc} {open_request}")
-            setattr(raised, "request_uuid", request_result.request_uuid)
-            setattr(raised, "stage_context", stage_context)
-            raise raised from exc
-        except SBGGovernanceRefused as exc:
-            open_request = self._request_open_sentence(
-                command.seat_id,
-                stage_context=stage_context,
-            )
-            raised = SBGGovernanceRefused(
-                exc.refusal_code,
-                f"{exc} {open_request}",
+            if recipe.post_check is not None:
+                recipe.post_check(decision_result)
+            return recipe.result_from(decision_result)
+        except Exception as exc:
+            replacement = self._decision_stage_outcome(
+                exc,
+                stage_phase=stage_phase,
+                seat_id=command.seat_id,
                 request_uuid=request_result.request_uuid,
+                actor_pk=bound.actor_pk,
+                request_key=request_key,
+                admission_key=admission_key,
+                received_at=bound.received_at,
             )
-            setattr(raised, "stage_context", stage_context)
-            raise raised from exc
-        except S015AuthorityDenied as exc:
-            open_request = self._request_open_sentence(
-                command.seat_id,
-                stage_context=stage_context,
+            if replacement is None:
+                raise
+            raise replacement from exc
+
+    def _decision_stage_outcome(
+        self,
+        exc: Exception,
+        *,
+        stage_phase: dict,
+        seat_id: str,
+        request_uuid: UUID,
+        actor_pk: int,
+        request_key: str,
+        admission_key: str,
+        received_at: datetime,
+    ) -> Exception | None:
+        """Classify a failure of the compound decision stage (D §9.2 [A2]).
+
+        Attaches stage_context (ADMIT_STAGE) to exc and returns the exception to
+        raise from it, or None to re-raise exc itself unchanged. The order is
+        D's dispatch precedence, stopping at the first match:
+
+        1. S015CommandContended, in any phase: R-FIX-01-S2.
+        2. SBGGovernanceRefused and S015AuthorityDenied keep their class, codes
+           and references, with the complete decision-stage text; the
+           open-request predicate decides the open-request sentence, and a
+           NOT_ESTABLISHED or UNKNOWN request leaves exc unchanged.
+        3. An IntegrityError that _controlled_integrity_refusal maps: its
+           decision-stage text, as 2.
+        4. Every other exception, by the stage-phase cell. RETURNED (after the
+           stage's scope returned, including post_check and result_from) and
+           EXIT without a listed commit rejection are not known rollbacks: exc
+           is re-raised unchanged with outcome_uncertain = True, and no
+           rollback or open-request claim is made. BEFORE, BODY, and EXIT with
+           an IntegrityError whose cause carries a SQLSTATE in
+           _COMMIT_REJECTION_SQLSTATES are known rollbacks: a technical failure
+           of the stage body's kinds is re-raised as the same class with
+           B-09-S2's text, the open-request sentence only when the request is
+           OPEN; an UNKNOWN request, or any other exception, leaves exc
+           unchanged.
+
+        The classification reads only the cell and the exception; the
+        predicate runs only for 2, 3 and a known rollback, and never replaces
+        exc (its UNKNOWN state renders nothing).
+        """
+        from src.intevia.services.command_intake import IntakeAdmissionTechnicalFailure
+
+        stage_context = ChildEntry.ADMIT_STAGE
+        setattr(exc, "stage_context", stage_context)
+
+        def request_state() -> str:
+            return self._request_open_state(
+                compound=True,
+                request_uuid=request_uuid,
+                actor_pk=actor_pk,
+                request_key=request_key,
+                admission_key=admission_key,
             )
-            raised = S015AuthorityDenied(
-                f"{exc} {open_request}",
-                refusal_code=exc.refusal_code,
-                disclosed_refusal_code=exc.disclosed_refusal_code,
-                authority_decision_reference=exc.authority_decision_reference,
-                request_uuid=request_result.request_uuid,
+
+        def open_sentence(state: str) -> str:
+            return (
+                self._request_open_sentence(seat_id, stage_context=stage_context)
+                if state == "OPEN"
+                else ""
             )
-            setattr(raised, "stage_context", stage_context)
-            raise raised from exc
-        except IntegrityError as exc:
+
+        def joined(*parts: str) -> str:
+            return " ".join(part for part in parts if part)
+
+        def finish(replacement: Exception) -> Exception:
+            setattr(replacement, "request_uuid", request_uuid)
+            setattr(replacement, "stage_context", stage_context)
+            return replacement
+
+        if isinstance(exc, S015CommandContended):
+            replacement = S015CommandContended(
+                exc.diagnostic_sqlstate,
+                received_at=received_at,
+            )
+            replacement.args = (
+                _intake_tail(_R_FIX_01_S2.replace("{seat_id}", seat_id), received_at),
+            )
+            return finish(replacement)
+        if isinstance(exc, (SBGGovernanceRefused, S015AuthorityDenied)):
+            state = request_state()
+            if state not in {"OPEN", "COMPLETED"}:
+                return None
+            message = self._decision_stage_refusal_text(
+                exc,
+                state=state,
+                sentence=open_sentence(state),
+                request_uuid=request_uuid,
+                received_at=received_at,
+            )
+            if isinstance(exc, SBGGovernanceRefused):
+                return finish(
+                    SBGGovernanceRefused(
+                        exc.refusal_code,
+                        message,
+                        request_uuid=request_uuid,
+                    )
+                )
+            return finish(
+                S015AuthorityDenied(
+                    message,
+                    refusal_code=exc.refusal_code,
+                    disclosed_refusal_code=exc.disclosed_refusal_code,
+                    authority_decision_reference=exc.authority_decision_reference,
+                    request_uuid=request_uuid,
+                )
+            )
+        if (
+            isinstance(exc, IntegrityError)
+            and _controlled_integrity_refusal(
+                exc,
+                _ADMISSION_GUARD_REFUSAL_CODES,
+                detail=seat_id,
+                act="Nobody was seated",
+            )
+            is not None
+        ):
+            state = request_state()
+            if state not in {"OPEN", "COMPLETED"}:
+                return None
             refusal = _controlled_integrity_refusal(
                 exc,
                 _ADMISSION_GUARD_REFUSAL_CODES,
-                detail=command.seat_id,
+                detail=seat_id,
                 act="Nobody was seated",
+                opening_end=_OPENING_DECISION_STAGE,
+                tail=joined(
+                    open_sentence(state),
+                    _intake_tail(_TAIL_NOT_WRITTEN, received_at),
+                ),
             )
-            if refusal is None:
-                setattr(exc, "stage_context", stage_context)
-                raise
-            open_request = self._request_open_sentence(
-                command.seat_id,
-                stage_context=stage_context,
+            return finish(
+                SBGGovernanceRefused(
+                    refusal.refusal_code,
+                    str(refusal),
+                    request_uuid=request_uuid,
+                )
             )
-            raised = SBGGovernanceRefused(
-                refusal.refusal_code,
-                f"{refusal} {open_request}",
-                request_uuid=request_result.request_uuid,
+        phase = stage_phase["phase"]
+        if phase == "RETURNED":
+            setattr(exc, "outcome_uncertain", True)
+            return None
+        commit_rejected = (
+            isinstance(exc, IntegrityError)
+            and getattr(getattr(exc, "__cause__", None), "sqlstate", None)
+            in _COMMIT_REJECTION_SQLSTATES
+        )
+        if phase == "EXIT" and not commit_rejected:
+            setattr(exc, "outcome_uncertain", True)
+            return None
+        if not isinstance(
+            exc,
+            (
+                SBGGovernanceUnavailable,
+                LookupError,
+                RuntimeError,
+                DatabaseError,
+                IntakeAdmissionTechnicalFailure,
+            ),
+        ):
+            return None
+        state = request_state()
+        if state == "UNKNOWN":
+            return None
+        message = joined(
+            _B_09_S2_OPENING.replace(
+                "{action}",
+                OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value,
+            ),
+            open_sentence(state),
+            _intake_tail(_B_09_S2_TAIL, received_at),
+        )
+        return finish(type(exc)(message))
+
+    @staticmethod
+    def _decision_stage_refusal_text(
+        exc: SBGGovernanceRefused | S015AuthorityDenied,
+        *,
+        state: str,
+        sentence: str,
+        request_uuid: UUID,
+        received_at: datetime,
+    ) -> str:
+        """Return the complete decision-stage text of a governed refusal (Stop 3 rule 11).
+
+        From exc.authored_parts: the decision-stage opening, the code's body, the
+        open-request sentence (sentence, empty unless the request is OPEN), then
+        the intake sentence, once. A refusal the decision stage refused with a
+        recorded REFUSED decision (a reworded S015AuthorityDenied, class A) takes
+        the decision-stage tail of R-GOV-12-S2 and R-GOV-13-S2; a rolled-back
+        refusal (classes B and C) takes "no governed record was written by the
+        decision stage" and the intake tail of the -S2 rows. SBG_SEATING_WHILE_DISABLED
+        on an open request is M2-01, with its remedy sentences. A refusal without
+        authored parts (an unreworded authority denial) keeps its text, followed
+        by the sentence when the request is open, as before.
+        """
+        parts = getattr(exc, "authored_parts", None)
+        if parts is None or parts.code in _AUTHORED_REFUSALS:
+            return f"{exc} {sentence}" if sentence else str(exc)
+        if isinstance(exc, S015AuthorityDenied):
+            tail = " ".join(
+                part
+                for part in (
+                    sentence,
+                    _intake_tail(_TAIL_DECISION_STAGE_REFUSAL_RECORDED, received_at),
+                )
+                if part
             )
-            setattr(raised, "stage_context", stage_context)
-            raise raised from exc
-        except Exception as exc:
-            setattr(exc, "stage_context", stage_context)
-            raise
-        if recipe.post_check is not None:
-            recipe.post_check(decision_result)
-        return recipe.result_from(decision_result)
+            if parts.kind == "ACTIVE_CIRCLE":
+                return _active_governance_circle_seating_refusal(
+                    parts.detail,
+                    opening_end=".",
+                    tail=tail,
+                )
+            message = _authored_refusal_message(
+                parts.code,
+                parts.detail,
+                act=parts.act,
+                organism_state=parts.organism_state,
+                opening_end=".",
+                tail=tail,
+            )
+            return message if message is not None else str(exc)
+        tail_parts = [sentence, _intake_tail(_TAIL_NOT_WRITTEN, received_at)]
+        if (
+            parts.code is S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED
+            and state == "OPEN"
+        ):
+            tail_parts.append(
+                _intake_tail(
+                    _M2_01_REMEDY.replace("{request_uuid}", str(request_uuid)),
+                    received_at,
+                )
+            )
+        message = _authored_refusal_message(
+            parts.code,
+            parts.detail,
+            act=parts.act,
+            organism_state=parts.organism_state,
+            opening_end=_OPENING_DECISION_STAGE,
+            tail=" ".join(part for part in tail_parts if part),
+            lo_records_sentence=_DECISION_STAGE_LO_RECORDS,
+        )
+        return message if message is not None else str(exc)
 
     def _decide_governance_seat_at(
         self,
@@ -1803,12 +2017,19 @@ class OrganismGovernanceService:
         received_at: datetime,
         effective_at: datetime,
         verify_after_actor_lock: Callable[[Identity], None] | None,
+        stage_phase: dict | None = None,
     ) -> GovernanceSeatDecisionResult:
-        """Run the shared decision-stage body at an explicit time.
+        """Run the shared decision-stage body at an explicit time (D §9.2).
 
-        The public clock route supplies no verifier and retains its existing
-        compound branch. Bound stage executors supply the verified request time;
-        replay viewers still use their independent present-time clock read.
+        Every caller is a bound executor and supplies a verifier; replay viewers
+        still use their independent present-time clock read. The stage-phase
+        cell, when given, marks BODY before governed statements.
+
+        Refusals are rendered in their standalone form (Stop 3 R-GOV-01a to
+        -01f, R-GOV-03 to -09, R-GOV-12, R-GOV-13): no governed record was
+        written, or the refusal was recorded, then the intake sentence for
+        received_at. Each carries authored_parts, from which the compound
+        orchestrator renders the decision-stage text (the -S2 rows).
         """
         action = OrganismAction.ADMIT_CIRCLE_PARTICIPANT
         fingerprint = hashlib.sha256(canonical_json_bytes({
@@ -1821,7 +2042,13 @@ class OrganismGovernanceService:
             "request_uuid": request_uuid,
             "schema": "sbg-governance-seat-decision-v1",
         })).hexdigest()
-        with authority_atomic(self._alias):
+        with authority_atomic(
+            self._alias,
+            received_at=received_at,
+            stage_phase=stage_phase,
+        ):
+            if stage_phase is not None:
+                stage_phase["phase"] = "BODY"
             actor = _lock_actor(
                 database_alias=self._alias,
                 credential=command.credential,
@@ -1862,6 +2089,7 @@ class OrganismGovernanceService:
                 )
                 return serve_replay(
                     result,
+                    # This clock read supplies the present-time access check when serving the result; it does not replace the bound request's receipt time.
                     viewer=ReplayViewer(actor.pk, actor.identity_id, self._clock()),
                     result_type=ReplayResultType(GovernanceSeatDecisionResult, self._alias),
                 )
@@ -1900,6 +2128,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                     "is not an active member at that time",
                     act="Nobody was seated",
+                    opening_end=_OPENING_NOT_WRITTEN,
+                    tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
                 )
             applicant_membership = join_request.membership
             payload = {
@@ -1934,6 +2164,8 @@ class OrganismGovernanceService:
                     payload=payload,
                     effective_at=effective_at,
                     received_at=received_at,
+                    opening_end=_OPENING_NOT_WRITTEN,
+                    tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
                 )
             elif route == "GOVERNANCE_CONSTITUTIONAL" and has_birthing:
                 seating_context = self._validate_constitutional_seating(
@@ -1944,6 +2176,8 @@ class OrganismGovernanceService:
                     received_at=received_at,
                     require_enabled=True,
                     check_occupancy=command.outcome == "ACCEPT",
+                    opening_end=_OPENING_NOT_WRITTEN,
+                    tail=_intake_tail(_TAIL_NOT_WRITTEN, received_at),
                 )
             target = _authority_target(
                 action,
@@ -1987,21 +2221,40 @@ class OrganismGovernanceService:
             except S015AuthorityDenied as exc:
                 if exc.refusal_code is not S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE:
                     raise
-                refusal_message = (
-                    _authored_refusal_message(
-                        exc.refusal_code,
-                        f"{payload['seat_id']}:the founding route, which ends when the LO is born",
+                if route == "CIRCLE_FOUNDING":
+                    parts = _AuthoredParts(
+                        kind="BUILDER",
+                        code=exc.refusal_code,
+                        detail=f"{payload['seat_id']}:the founding route, which ends when the LO is born",
                         act="Nobody was seated",
                     )
-                    if route == "CIRCLE_FOUNDING"
-                    else _active_governance_circle_seating_refusal(payload["seat_id"])
-                )
-                raise S015AuthorityDenied(
+                    refusal_message = _authored_refusal_message(
+                        parts.code,
+                        parts.detail,
+                        act=parts.act,
+                        opening_end=".",
+                        tail=_intake_tail(_TAIL_REFUSAL_RECORDED, received_at),
+                    )
+                else:
+                    parts = _AuthoredParts(
+                        kind="ACTIVE_CIRCLE",
+                        code=exc.refusal_code,
+                        detail=payload["seat_id"],
+                        act="Nobody was seated",
+                    )
+                    refusal_message = _active_governance_circle_seating_refusal(
+                        payload["seat_id"],
+                        opening_end=".",
+                        tail=_intake_tail(_TAIL_REFUSAL_RECORDED, received_at),
+                    )
+                denied = S015AuthorityDenied(
                     refusal_message or str(exc),
                     refusal_code=exc.refusal_code,
                     disclosed_refusal_code=exc.disclosed_refusal_code,
                     authority_decision_reference=exc.authority_decision_reference,
-                ) from exc
+                )
+                denied.authored_parts = parts
+                raise denied from exc
             if seating_context is None:
                 raise RuntimeError("the selected governance seating route was not validated")
             circle, rule = seating_context
@@ -2111,8 +2364,8 @@ class OrganismGovernanceService:
         """Run an adoption or a GOVERNANCE Circle creation in one authority_atomic scope.
 
         Before the scope, shape validation and admission are performed by the
-        public caller; the seat routes acquire the same intake boundary when
-        CLK3-3 activates them. For Circle creation, derives circle_uuid from
+        public caller; the seat routes use the same intake boundary (PKT-CLK-3
+        CLK3-3). For Circle creation, derives circle_uuid from
         the LO and idempotency key; fingerprints the act (schema
         sbg-governance-act-v1).
 
@@ -2413,10 +2666,15 @@ class OrganismGovernanceService:
         payload: dict[str, object],
         effective_at: datetime,
         received_at: datetime,
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> tuple[Circle, GovernedRule]:
         """Validate seating conditions used by the CIRCLE_FOUNDING branch.
 
         Returns (circle, rule). Passes "Nobody was seated" as act to refusals.
+        opening_end and tail are passed to every refusal (_refuse); after
+        admission the caller supplies "; no governed record was written." and
+        the intake tail (PKT-CLK-3 CLK3-3).
 
         Refuses SBG_MEMBER_NOT_ELIGIBLE when membership is missing, belongs to
         another LO, or does not fold to ACTIVE at effective_at with received_at
@@ -2457,6 +2715,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is not an active member at that time",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         organism_state = self._organism_state(organism, effective_at, received_at)
         if organism_state in {"DORMANT", "CLOSED"}:
@@ -2464,6 +2724,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE,
                 organism_state,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
                 organism_state=organism_state,
             )
         if organism_state is None:
@@ -2488,6 +2750,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED,
                     None,
                     act=act,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
         circle = (
             Circle.objects.using(self._alias)
@@ -2500,6 +2764,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if not CircleStateEvent.objects.using(self._alias).filter(
             circle=circle,
@@ -2511,6 +2777,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
 
         if membership.living_organism_id != organism.pk:
@@ -2518,6 +2786,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is a member of another LO",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
@@ -2533,6 +2803,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is not an active member at that time",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
 
         arrangement_versions = GovernedRule.objects.using(self._alias).filter(
@@ -2546,6 +2818,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         rule = arrangement_versions.filter(
             rule_uuid=payload["seat_rule_uuid"],
@@ -2553,7 +2827,7 @@ class OrganismGovernanceService:
         ).order_by("-effective_from", "-recorded_at", "-version").first()
         seat_id = payload["seat_id"]
         if rule is None:
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         body = rule.body
         seats = body.get("seats") if type(body) is dict else None
         if type(seats) is not list:
@@ -2561,6 +2835,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "the arrangement does not contain a valid seat list",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         seat = next(
             (
@@ -2570,7 +2846,7 @@ class OrganismGovernanceService:
             None,
         )
         if seat is None:
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         try:
             seat_effective_from = datetime.fromisoformat(
                 seat["effective_from"].replace("Z", "+00:00")
@@ -2580,13 +2856,15 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 f"seat {seat_id} has no valid start date",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if (
             seat_effective_from.tzinfo is None
             or seat_effective_from.utcoffset() is None
             or seat_effective_from > effective_at
         ):
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
 
         for future_rule in arrangement_versions.filter(
             rule_uuid=rule.rule_uuid,
@@ -2598,7 +2876,7 @@ class OrganismGovernanceService:
                 type(item) is dict and item.get("seat_id") == seat_id
                 for item in future_seats
             ):
-                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
 
         for participation in CircleParticipation.objects.using(self._alias).filter(
             circle=circle,
@@ -2611,7 +2889,7 @@ class OrganismGovernanceService:
                 recorded_at__lte=received_at,
             ).first()
             if ending is None or ending.effective_at > effective_at:
-                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED, seat_id, act=act)
+                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED, seat_id, act=act, opening_end=opening_end, tail=tail)
 
         for participation in CircleParticipation.objects.using(self._alias).filter(
             circle=circle,
@@ -2623,7 +2901,7 @@ class OrganismGovernanceService:
                 recorded_at__lte=received_at,
             ).first()
             if ending is None or ending.effective_at > effective_at:
-                self._refuse(S015AuthorityRefusalCode.SBG_ALREADY_SEATED, None, act=act)
+                self._refuse(S015AuthorityRefusalCode.SBG_ALREADY_SEATED, None, act=act, opening_end=opening_end, tail=tail)
         return circle, rule
 
     def _validate_constitutional_seating(
@@ -2639,6 +2917,8 @@ class OrganismGovernanceService:
         require_birthing: bool = True,
         require_supported_route: bool = True,
         act: str = "Nobody was seated",
+        opening_end: str = " and nothing changed.",
+        tail: str = "",
     ) -> tuple[Circle, GovernedRule]:
         """Validate a seat for a request or GOVERNANCE_CONSTITUTIONAL decision.
 
@@ -2672,6 +2952,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is not an active member at that time",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         organism_state = self._organism_state(organism, effective_at, received_at)
         if organism_state in {"DORMANT", "CLOSED"}:
@@ -2679,6 +2961,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE,
                 organism_state,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
                 organism_state=organism_state,
             )
         if organism_state is None:
@@ -2694,6 +2978,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE,
                 f"{payload['seat_id']}:the founding route, which ends when the LO is born",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if require_enabled:
             configuration = _effective_version(
@@ -2708,6 +2994,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED,
                     None,
                     act=act,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
         circle = (
             Circle.objects.using(self._alias)
@@ -2720,6 +3008,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if not CircleStateEvent.objects.using(self._alias).filter(
             circle=circle,
@@ -2731,12 +3021,16 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_GOVERNANCE_CIRCLE_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if membership.living_organism_id != organism.pk:
             self._refuse(
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is a member of another LO",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
@@ -2752,6 +3046,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_MEMBER_NOT_ELIGIBLE,
                 "is not an active member at that time",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         arrangement_versions = GovernedRule.objects.using(self._alias).filter(
             scope_kind="LIVING_ORGANISM",
@@ -2764,6 +3060,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_MISSING,
                 None,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         rule = arrangement_versions.filter(
             rule_uuid=payload["seat_rule_uuid"],
@@ -2771,7 +3069,7 @@ class OrganismGovernanceService:
         ).order_by("-effective_from", "-recorded_at", "-version").first()
         seat_id = payload["seat_id"]
         if rule is None:
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         body = rule.body
         seats = body.get("seats") if type(body) is dict else None
         if type(seats) is not list:
@@ -2779,6 +3077,8 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 "the arrangement does not contain a valid seat list",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         seat = next(
             (
@@ -2788,12 +3088,14 @@ class OrganismGovernanceService:
             None,
         )
         if seat is None:
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         if seat.get("eligibility") != "LO_MEMBER":
             self._refuse(
                 S015AuthorityRefusalCode.SBG_ELIGIBILITY_UNSUPPORTED,
                 seat_id,
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if require_supported_route:
             admission_route = seat.get("admission_route")
@@ -2803,6 +3105,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id} names no admission route",
                     act=act,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
             if admission_route == "APPOINTMENT":
                 valid_deciding_body = deciding_body == "office:LO_COORDINATOR" or (
@@ -2827,6 +3131,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                     f"seat {seat_id}'s deciding body does not match its admission route",
                     act=act,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
             if admission_route != "APPOINTMENT" or deciding_body != "office:LO_COORDINATOR":
                 unavailable_routes = {
@@ -2842,6 +3148,8 @@ class OrganismGovernanceService:
                     S015AuthorityRefusalCode.SBG_SEAT_ROUTE_UNAVAILABLE,
                     f"{seat_id}:{route_detail}",
                     act=act,
+                    opening_end=opening_end,
+                    tail=tail,
                 )
         try:
             seat_effective_from = datetime.fromisoformat(
@@ -2852,13 +3160,15 @@ class OrganismGovernanceService:
                 S015AuthorityRefusalCode.SBG_ARRANGEMENT_INCOMPLETE,
                 f"seat {seat_id} has no valid start date",
                 act=act,
+                opening_end=opening_end,
+                tail=tail,
             )
         if (
             seat_effective_from.tzinfo is None
             or seat_effective_from.utcoffset() is None
             or seat_effective_from > effective_at
         ):
-            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+            self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         for future_rule in arrangement_versions.filter(
             rule_uuid=rule.rule_uuid,
             effective_from__gt=effective_at,
@@ -2869,7 +3179,7 @@ class OrganismGovernanceService:
                 type(item) is dict and item.get("seat_id") == seat_id
                 for item in future_seats
             ):
-                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act)
+                self._refuse(S015AuthorityRefusalCode.SBG_SEAT_ABSENT, seat_id, act=act, opening_end=opening_end, tail=tail)
         if check_occupancy:
             for participation in CircleParticipation.objects.using(self._alias).filter(
                 circle=circle,
@@ -2886,6 +3196,8 @@ class OrganismGovernanceService:
                         S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED,
                         seat_id,
                         act=act,
+                        opening_end=opening_end,
+                        tail=tail,
                     )
             for participation in CircleParticipation.objects.using(self._alias).filter(
                 circle=circle,
@@ -2901,6 +3213,8 @@ class OrganismGovernanceService:
                         S015AuthorityRefusalCode.SBG_ALREADY_SEATED,
                         None,
                         act=act,
+                        opening_end=opening_end,
+                        tail=tail,
                     )
         return circle, rule
 
@@ -3236,7 +3550,9 @@ class OrganismGovernanceService:
         act defaults to "No arrangement was adopted".
 
         Raise RuntimeError if the message builder returns None for the supplied
-        code and context; otherwise raise SBGGovernanceRefused with that message.
+        code and context; otherwise raise SBGGovernanceRefused with that message,
+        carrying the inputs as authored_parts (_AuthoredParts, kind BUILDER) so
+        that the compound decision stage can render its own complete text.
         """
         message = _authored_refusal_message(
             code,
@@ -3248,7 +3564,15 @@ class OrganismGovernanceService:
         )
         if message is None:
             raise RuntimeError(f"no authored message for governance refusal {code.value}")
-        raise SBGGovernanceRefused(code, message)
+        refusal = SBGGovernanceRefused(code, message)
+        refusal.authored_parts = _AuthoredParts(
+            kind="BUILDER",
+            code=code,
+            detail=detail,
+            act=act,
+            organism_state=organism_state,
+        )
+        raise refusal
 
     def _write_adoption(
         self,

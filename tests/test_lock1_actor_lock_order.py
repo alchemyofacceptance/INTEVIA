@@ -1389,7 +1389,15 @@ class Lock1ActorLockOrderTests(TransactionTestCase):
                 effective_at=database_now(),
             )
         )
-        self.assertFalse(CommandIntake.objects.filter(idempotency_key=request_key).exists())
+        # PKT-CLK-3 CLK3-3: REQUEST_GOVERNANCE_SEAT is admitted; exactly one binding for this key.
+        self.assertEqual(
+            list(
+                CommandIntake.objects.filter(idempotency_key=request_key).values_list(
+                    "actor_id", "entry",
+                )
+            ),
+            [(requester.pk, "REQUEST_GOVERNANCE_SEAT")],
+        )
         entitlement_service = OrganismEntitlementService(
             authority=governance_route.route.birthing_service._authority,
             clock=database_now,

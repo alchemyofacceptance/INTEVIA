@@ -396,8 +396,8 @@ class GatewayShapeTests(SimpleTestCase):
     def _fingerprint(self, entry, command):
         return BoundRequest.for_test(entry, command, received_at=T0, actor=self.actor).request_fingerprint
 
-    def test_ch_33_active_entries_are_the_eighteen_and_g3_is_the_pair(self):
-        """CH-33: ACTIVE_ENTRIES includes the prior twelve, steps A and B, and the G3 pair."""
+    def test_ch_33_active_entries_are_the_twenty_two_and_the_groups_are_whole(self):
+        """CH-33: ACTIVE_ENTRIES contains the prior twelve and all five activation groups."""
         self.assertEqual(
             ACTIVE_ENTRIES,
             frozenset(
@@ -420,6 +420,10 @@ class GatewayShapeTests(SimpleTestCase):
                     IntakeEntry.ADVANCE_PHASE,
                     IntakeEntry.BIRTHING,
                     IntakeEntry.ACTIVATE_BETA,
+                    IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+                    IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                    IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+                    IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
                 }
             ),
         )
@@ -428,7 +432,7 @@ class GatewayShapeTests(SimpleTestCase):
             frozenset({IntakeEntry.SAVE_GATEWAY_DRAFT, IntakeEntry.EFFECT_GATEWAY_VERSION}),
         )
         self.assertTrue(ACTIVATION_GROUPS["G1"] <= ACTIVE_ENTRIES)
-        self.assertFalse(ACTIVATION_GROUPS["G2"] & ACTIVE_ENTRIES)
+        self.assertTrue(ACTIVATION_GROUPS["G2"] <= ACTIVE_ENTRIES)
 
     def test_each_g3_projection_matches_the_commissioned_shape(self):
         """C4 §F2.2 (CH-35): target, command, omitted, target_organism_id and action per entry."""

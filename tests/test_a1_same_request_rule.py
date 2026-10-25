@@ -45,13 +45,15 @@ are not claims that this module was run.
 There is no secret to discover in INTEVIA. Test values that mimic credentials
 are not secrets.
 """
+import hashlib
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4, uuid5
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.test import TransactionTestCase
 import unittest
 
@@ -83,8 +85,9 @@ from src.intevia.services.organism_application_authority import (
 from src.intevia.services.organism_authority import (
     S015AuthorityDenied,
     S015AuthorityRefusalCode,
+    canonical_json_bytes,
 )
-from src.intevia.services.organism_command_support import _authority_request
+from src.intevia.services.organism_command_support import _authority_request, canonical_timestamp
 from src.intevia.services.organism_governance_service import (
     DecideGovernanceSeatCommand,
     GovernanceSeatDecisionResult,
@@ -114,6 +117,22 @@ from tests.sbg_route_support import (
 )
 
 ALIAS = "default"
+
+
+def _public_table_counts():
+    """Row counts of every public table (D §7.1a: +0 is asserted over every table)."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT c.relname FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY c.relname"
+        )
+        tables = [row[0] for row in cursor.fetchall()]
+        counts = {}
+        for table in tables:
+            cursor.execute(f"SELECT count(*) FROM public.{connection.ops.quote_name(table)}")
+            counts[table] = cursor.fetchone()[0]
+    return counts
 ADMIT = OrganismAction.ADMIT_CIRCLE_PARTICIPANT.value
 REQUEST = OrganismAction.REQUEST_GOVERNANCE_SEAT.value
 
@@ -132,7 +151,7 @@ def _atomic_failing_on_exit(error, *, fail_on=1, injection_reached=None):
     exit_count = 0
 
     @contextmanager
-    def fail_at_exit(database_alias):
+    def fail_at_exit(database_alias, *, received_at=None, stage_phase=None):
         nonlocal exit_count
         exit_count += 1
         with transaction.atomic(using=database_alias):
@@ -314,9 +333,9 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
         command = _decide_compound_command(route, tag)
         stage = _stage_rows(route, command.idempotency_key)
         before = governance_route_state(route)
+        result = route.service.decide_governance_seat(command)
         bound = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
-        self.assertTrue(bound.first)
-        result = route.service._orchestrate_compound_seating(command, bound, _RECIPE_DECIDE_COMPOUND)
+        self.assertFalse(bound.first)
         self.assertIsInstance(result, GovernanceSeatDecisionResult)
         self._assert_success_rows(route, stage, bound, result)
         after = governance_route_state(route)
@@ -345,9 +364,9 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
         )
         stage = _stage_rows(route, command.idempotency_key)
         before = governance_route_state(route)
+        result = route.service.seat_governance_circle(command)
         bound = _admit(IntakeEntry.SEAT_GOVERNANCE_CIRCLE, route.founder, command)
-        self.assertTrue(bound.first)
-        result = route.service._orchestrate_compound_seating(command, bound, _RECIPE_SEAT_FOUNDING)
+        self.assertFalse(bound.first)
         self.assertIsInstance(result, GovernanceSeatingResult)
         self._assert_success_rows(route, stage, bound, result)
         after = governance_route_state(route)
@@ -362,30 +381,93 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
         first call has completed on BUILT: the identical request admits
         first=False at the same T, stage 1 and stage 2 replay by receipt, the
         same result is returned, no counted row is written, and the provider
-        is not consulted: a guard on its qualify raises if it is called."""
+        is not consulted: a guard on its qualify raises if it is called.
+
+        D §7.1a: effective_at is unstated so that T enters both stage fingerprints; before the replay a
+        later database reading is a bounded precondition; the replay is +0 over every table, both receipts'
+        fingerprints equal recomputations with the intake row's T, and the replay viewers read fresh."""
         route = _post_birthing_route("w07")
         tag = f"w07-{uuid4().hex}"
-        command = _decide_compound_command(route, tag)
+        command = replace(_decide_compound_command(route, tag), effective_at=None)
+        first = route.service.decide_governance_seat(command)
         bound = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
-        first = route.service._orchestrate_compound_seating(command, bound, _RECIPE_DECIDE_COMPOUND)
+        self.assertFalse(bound.first)
         after_first = governance_route_state(route)
         intake_count = CommandIntake.objects.count()
         again = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
         self.assertFalse(again.first)
         self.assertEqual(again.received_at, bound.received_at)
         self.assertEqual(again.intake_id, bound.intake_id)
-        with patch.object(
-            route.service._authority,
-            "qualify",
-            side_effect=AssertionError("completed replay must not requalify"),
-        ) as qualify_guard:
-            replay = route.service._orchestrate_compound_seating(command, again, _RECIPE_DECIDE_COMPOUND)
+        request_key, request_reference, admission_key, admission_reference = (
+            _compound_stage_identifiers(route.organism.organism_id, command.idempotency_key)
+        )
+        self.assertEqual(
+            OrganismCommandReceipt.objects.get(
+                actor=route.founder, action=REQUEST, idempotency_key=request_key,
+            ).payload_fingerprint,
+            hashlib.sha256(canonical_json_bytes({
+                "action": REQUEST,
+                "effective_at": bound.received_at,
+                "idempotency_key": request_key,
+                "organism_uuid": route.organism.organism_id,
+                "payload": {
+                    "circle_uuid": str(route.circle_uuid),
+                    "seat_rule_uuid": str(route.rule_uuid),
+                    "seat_id": command.seat_id,
+                },
+                "request_reference": request_reference,
+                "schema": "sbg-governance-seat-request-v1",
+            })).hexdigest(),
+        )
+        self.assertEqual(
+            OrganismCommandReceipt.objects.get(
+                actor=route.founder, action=ADMIT, idempotency_key=admission_key,
+            ).payload_fingerprint,
+            hashlib.sha256(canonical_json_bytes({
+                "action": ADMIT,
+                "effective_at": bound.received_at,
+                "idempotency_key": admission_key,
+                "organism_uuid": route.organism.organism_id,
+                "outcome": command.outcome,
+                "route": "GOVERNANCE_CONSTITUTIONAL",
+                "request_uuid": first.request_uuid,
+                "schema": "sbg-governance-seat-decision-v1",
+            })).hexdigest(),
+        )
+        later = None
+        for _ in range(3):
+            observation = database_now()
+            if observation > bound.received_at:
+                later = observation
+                break
+        self.assertIsNotNone(later, "database clock did not advance; the witness cannot discriminate")
+        viewer_times = []
+
+        def viewer_clock():
+            value = database_now()
+            viewer_times.append(value)
+            return value
+
+        before_replay = _public_table_counts()
+        with (
+            patch.object(
+                route.service._authority,
+                "qualify",
+                side_effect=AssertionError("completed replay must not requalify"),
+            ) as qualify_guard,
+            patch.object(route.service, "_clock", side_effect=viewer_clock),
+        ):
+            replay = route.service.decide_governance_seat(command)
         qualify_guard.assert_not_called()
         self.assertEqual(replay.request_uuid, first.request_uuid)
         self.assertEqual(replay.decision_uuid, first.decision_uuid)
         self.assertEqual(replay.participation_uuid, first.participation_uuid)
         self.assertEqual(governance_route_state(route), after_first)
         self.assertEqual(CommandIntake.objects.count(), intake_count)
+        self.assertEqual(_public_table_counts(), before_replay)
+        self.assertEqual(len(viewer_times), 2)
+        for reading in viewer_times:
+            self.assertGreater(reading, bound.received_at)
 
     def test_w_a1_08_iw16d_technical_failure_at_stage_2_exit_then_retry_at_t(self):
         """IW-16 (d) (D:1647; deferred by CH-32). A technical failure injected
@@ -402,7 +484,7 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
         command = _decide_compound_command(route, tag)
         stage = _stage_rows(route, command.idempotency_key)
         before = governance_route_state(route)
-        bound = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
+        before_intake = CommandIntake.objects.count()
         reached = []
         with patch(
             "src.intevia.services.organism_governance_service.authority_atomic",
@@ -413,8 +495,22 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
             ),
         ):
             with self.assertRaises(_StageExitTechnicalFailure) as raised:
-                route.service._orchestrate_compound_seating(command, bound, _RECIPE_DECIDE_COMPOUND)
+                route.service.decide_governance_seat(command)
         self.assertEqual(reached, [True])
+        bound = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
+        self.assertFalse(bound.first)
+        # PKT-CLK-3 CLK3-3: the substitute replaces authority_atomic, so the cell is BODY (a known
+        # rollback, D §9.2); the failure keeps its class and is re-raised with B-09-S2's text.
+        self.assertEqual(raised.exception.__cause__.args, ("injected at stage 2's exit",))
+        self.assertEqual(
+            str(raised.exception),
+            "ADMIT_CIRCLE_PARTICIPANT could not be completed because of a technical problem; no "
+            "governed record was written by the decision stage. Your own request for seat founder is "
+            "recorded and remains open. INTEVIA kept a record that this request was received at "
+            f"{canonical_timestamp(bound.received_at)}; the same request can be sent again and is "
+            "judged as of that time. If it persists, report it.",
+        )
+        self.assertEqual(CommandIntake.objects.count(), before_intake + 1)
         self.assertEqual(getattr(raised.exception, "stage_context", None), ChildEntry.ADMIT_STAGE)
         expected = before.copy()
         expected["authority_decisions"] += 1
@@ -428,7 +524,7 @@ class A1SameRequestRuleCompoundTests(TransactionTestCase):
         retry = _admit(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, route.founder, command)
         self.assertFalse(retry.first)
         self.assertEqual(retry.received_at, bound.received_at)
-        result = route.service._orchestrate_compound_seating(command, retry, _RECIPE_DECIDE_COMPOUND)
+        result = route.service.decide_governance_seat(command)
         self.assertIsInstance(result, GovernanceSeatDecisionResult)
         self._assert_success_rows(route, stage, retry, result)
         self.assertEqual(stage.request_decisions().count(), 1)

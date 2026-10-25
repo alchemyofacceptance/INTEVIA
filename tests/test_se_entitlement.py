@@ -263,7 +263,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
 
     def _assert_received_head_state(self):
         self._assert_se_schema_state(
-            ("core", "0049_h100_command_intake")
+            ("core", "0050_clk_mono_1_cache_coordinate_detail")
         )
 
     def _assert_se_schema_state(self, expected_head):
@@ -308,6 +308,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             "0047_sek1_platform_rule_statement_start",
             "0048_se_entitlement_granted_event_guard",
             "0049_h100_command_intake",
+            "0050_clk_mono_1_cache_coordinate_detail",
         }:
             sek1_migration = importlib.import_module(
                 "core.migrations.0047_sek1_platform_rule_statement_start"
@@ -318,6 +319,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         if expected_head[1] in {
             "0048_se_entitlement_granted_event_guard",
             "0049_h100_command_intake",
+            "0050_clk_mono_1_cache_coordinate_detail",
         }:
             guard_migration = importlib.import_module(
                 "core.migrations.0048_se_entitlement_granted_event_guard"

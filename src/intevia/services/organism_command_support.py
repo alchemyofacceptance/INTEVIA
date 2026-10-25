@@ -470,7 +470,12 @@ def serve_replay(payload: object, *, viewer: ReplayViewer, result_type: type):
 
 
 @contextmanager
-def authority_atomic(database_alias: str, *, received_at: datetime | None = None):
+def authority_atomic(
+    database_alias: str,
+    *,
+    received_at: datetime | None = None,
+    stage_phase: dict | None = None,
+):
     """Run an atomic block that defers S015AuthorityDenied, inside contention translation.
 
     Uses transaction.atomic on database_alias. Catches S015AuthorityDenied
@@ -495,7 +500,8 @@ def authority_atomic(database_alias: str, *, received_at: datetime | None = None
 
     received_at, when given, is the bound request's receipt time and is
     passed to contention_translated. The executors of entries the intake
-    serves pass it; other callers omit it.
+    serves pass it; other callers omit it. With a stage-phase cell, EXIT is
+    set immediately before atomic exit and RETURNED after it (D §9.2).
     """
     with contention_translated(database_alias, received_at=received_at):
         refusal = None
@@ -504,6 +510,10 @@ def authority_atomic(database_alias: str, *, received_at: datetime | None = None
                 yield
             except S015AuthorityDenied as exc:
                 refusal = exc
+            if stage_phase is not None:
+                stage_phase["phase"] = "EXIT"
+        if stage_phase is not None:
+            stage_phase["phase"] = "RETURNED"
         if refusal is not None:
             raise refusal
 

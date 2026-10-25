@@ -733,7 +733,9 @@ class BoundRequestDatabaseTests(TransactionTestCase):
         from src.intevia.services.organism_governance_service import (
             AdoptGoverningInstrumentCommand,
             CreateGovernanceCircleCommand,
+            DecideGovernanceSeatCommand,
             OrganismGovernanceService,
+            RequestGovernanceSeatCommand,
         )
         from tests.sbg_route_support import governance_arrangement_body
 
@@ -801,6 +803,30 @@ class BoundRequestDatabaseTests(TransactionTestCase):
                 IntakeEntry.ACTIVATE_BETA: beta_command,
             }
         )
+        request_command = RequestGovernanceSeatCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            circle_uuid=uuid4(),
+            seat_rule_uuid=uuid4(),
+            seat_id="founder",
+            request_reference="h100:bound:request",
+            idempotency_key="h100:bound:request:key",
+        )
+        decision_command = DecideGovernanceSeatCommand(
+            credential=self.route.founder.credential,
+            living_organism_uuid=self.organism_uuid,
+            request_reference="h100:bound:decision",
+            idempotency_key="h100:bound:decision:key",
+            outcome="ACCEPT",
+            route="CIRCLE_FOUNDING",
+            request_uuid=uuid4(),
+        )
+        commands.update(
+            {
+                IntakeEntry.REQUEST_GOVERNANCE_SEAT: request_command,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT: decision_command,
+            }
+        )
         commands[IntakeEntry.CLAIM_APPLICATION] = replace(
             commands[IntakeEntry.CLAIM_APPLICATION],
             credential=self.route.founder.credential,
@@ -825,6 +851,8 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.ADVANCE_PHASE: self.route.founder,
             IntakeEntry.BIRTHING: self.route.founder,
             IntakeEntry.ACTIVATE_BETA: self.route.founder,
+            IntakeEntry.REQUEST_GOVERNANCE_SEAT: self.route.founder,
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT: self.route.founder,
         }
         governance = OrganismGovernanceService(clock=database_now)
         entitlement = OrganismEntitlementService(
@@ -843,6 +871,8 @@ class BoundRequestDatabaseTests(TransactionTestCase):
             IntakeEntry.ADVANCE_PHASE: self.route.phase_service._execute_advance_phase,
             IntakeEntry.BIRTHING: self.route.birthing_service._execute_birth_living_organism,
             IntakeEntry.ACTIVATE_BETA: entitlement._execute_activate_beta,
+            IntakeEntry.REQUEST_GOVERNANCE_SEAT: governance._execute_request_governance_seat,
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT: governance._execute_decide_governance_seat,
         }
         before = self._counts()
         for entry in executor_by_entry:
@@ -879,7 +909,10 @@ class BoundRequestDatabaseTests(TransactionTestCase):
         from src.intevia.services.organism_governance_service import (
             AdoptGoverningInstrumentCommand,
             CreateGovernanceCircleCommand,
+            DecideGovernanceSeatCommand,
             OrganismGovernanceService,
+            RequestGovernanceSeatCommand,
+            SeatFoundingGovernanceCircleCommand,
         )
         from tests.sbg_route_support import governance_arrangement_body
 
@@ -964,6 +997,45 @@ class BoundRequestDatabaseTests(TransactionTestCase):
                     policy_text_sha256="0" * 64,
                 ),
             ),
+            (
+                governance.request_governance_seat,
+                IntakeEntry.REQUEST_GOVERNANCE_SEAT,
+                RequestGovernanceSeatCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    circle_uuid=uuid4(),
+                    seat_rule_uuid=uuid4(),
+                    seat_id="founder",
+                    request_reference="h100:bound-kw:request",
+                    idempotency_key="h100:bound-kw:request:key",
+                ),
+            ),
+            (
+                governance.decide_governance_seat,
+                IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+                DecideGovernanceSeatCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    request_reference="h100:bound-kw:decision",
+                    idempotency_key="h100:bound-kw:decision:key",
+                    outcome="ACCEPT",
+                    route="CIRCLE_FOUNDING",
+                    request_uuid=uuid4(),
+                ),
+            ),
+            (
+                governance.seat_governance_circle,
+                IntakeEntry.SEAT_GOVERNANCE_CIRCLE,
+                SeatFoundingGovernanceCircleCommand(
+                    credential=self.route.founder.credential,
+                    living_organism_uuid=self.organism_uuid,
+                    circle_uuid=uuid4(),
+                    seat_rule_uuid=uuid4(),
+                    seat_id="founder",
+                    request_reference="h100:bound-kw:seat",
+                    idempotency_key="h100:bound-kw:seat:key",
+                ),
+            ),
         )
         for public_entry, entry, family_command in commands:
             with self.subTest(method=public_entry.__name__):
@@ -972,7 +1044,7 @@ class BoundRequestDatabaseTests(TransactionTestCase):
                 self.assertFalse(
                     CommandIntake.objects.filter(
                         actor_id=self.route.founder.pk,
-                        action=entry.value,
+                        entry=entry.value,
                         idempotency_key=family_command.idempotency_key,
                     ).exists()
                 )

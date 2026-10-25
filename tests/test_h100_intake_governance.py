@@ -1,5 +1,6 @@
 """Chunk-3 governance stage and compound-intake witnesses."""
 
+import hashlib
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from core.models import (
     OrganismCommandReceipt,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.organism_command_support import canonical_timestamp
 from src.intevia.services.command_intake import (
     _CONSTRUCTOR_SENTINEL,
     ActorRef,
@@ -29,7 +31,11 @@ from src.intevia.services.command_intake import (
     intake_fingerprint,
     intake_shape,
 )
-from src.intevia.services.organism_authority import S015AuthorityDenied, S015AuthorityRefusalCode
+from src.intevia.services.organism_authority import (
+    S015AuthorityDenied,
+    S015AuthorityRefusalCode,
+    canonical_json_bytes,
+)
 from src.intevia.services.organism_governance_service import (
     DecideGovernanceSeatCommand,
     GovernanceSeatDecisionResult,
@@ -794,10 +800,11 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
 
     def test_stage_one_uses_bound_time_and_replay_keeps_the_original_coordinates(self):
         route = self._route(governance_enabled=False, birthing=True)
-        command, bound = self._parent(
+        command = _parent_command(
             route,
             IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
-            suffix="iw16-replay",
+            tag=f"{route.route.tag}:iw16-replay",
+            effective_at=None,
         )
         before = _public_row_counts()
         verify_calls = []
@@ -833,11 +840,12 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             patch.object(route.service, "_clock", side_effect=AssertionError("clock read")),
         ):
             with self.assertRaises(SBGGovernanceRefused) as first:
-                route.service._orchestrate_compound_seating(
-                    command,
-                    bound,
-                    _RECIPE_DECIDE_COMPOUND,
-                )
+                route.service.decide_governance_seat(command)
+        bound = self._parent(
+            route,
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+            suffix="iw16-replay",
+        )[1]
         self.assertEqual(first.exception.refusal_code, S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED)
         self.assertEqual(first.exception.request_uuid, CircleJoinRequest.objects.latest("pk").request_uuid)
         self.assertIs(first.exception.stage_context, ChildEntry.ADMIT_STAGE)
@@ -851,12 +859,21 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
         self.assertEqual(
             _row_delta(before, _public_row_counts()),
             {
+                "core_commandintake": 1,
                 "core_authoritydecision": 1,
                 "core_circlejoinrequest": 1,
                 "core_organismcommandreceipt": 1,
             },
         )
         after_first = _public_row_counts()
+        # D §7.1a (i): a later database reading is a bounded fixture precondition, never a sleep.
+        later = None
+        for _ in range(3):
+            observation = database_now()
+            if observation > bound.received_at:
+                later = observation
+                break
+        self.assertIsNotNone(later, "database clock did not advance; the witness cannot discriminate")
         viewer_times = []
 
         def viewer_clock():
@@ -866,11 +883,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
 
         with patch.object(route.service, "_clock", side_effect=viewer_clock):
             with self.assertRaises(SBGGovernanceRefused) as retry:
-                route.service._orchestrate_compound_seating(
-                    command,
-                    bound,
-                    _RECIPE_DECIDE_COMPOUND,
-                )
+                route.service.decide_governance_seat(command)
         self.assertEqual(retry.exception.refusal_code, S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED)
         self.assertIs(retry.exception.stage_context, ChildEntry.ADMIT_STAGE)
         self.assertEqual(len(viewer_times), 1)
@@ -918,6 +931,29 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             ).count(),
             1,
         )
+        # D §7.1a (ii): the stage-1 receipt's fingerprint, recomputed from the request projection with
+        # the intake row's T (effective_at unstated), never with a reading of the test's own.
+        self.assertIsNone(command.effective_at)
+        self.assertEqual(
+            OrganismCommandReceipt.objects.get(
+                actor=route.founder,
+                action=OrganismAction.REQUEST_GOVERNANCE_SEAT.value,
+                idempotency_key=request_key,
+            ).payload_fingerprint,
+            hashlib.sha256(canonical_json_bytes({
+                "action": OrganismAction.REQUEST_GOVERNANCE_SEAT.value,
+                "effective_at": bound.received_at,
+                "idempotency_key": request_key,
+                "organism_uuid": route.organism.organism_id,
+                "payload": {
+                    "circle_uuid": str(route.circle_uuid),
+                    "seat_rule_uuid": str(route.rule_uuid),
+                    "seat_id": "founder",
+                },
+                "request_reference": request_reference,
+                "schema": "sbg-governance-seat-request-v1",
+            })).hexdigest(),
+        )
         decision_command = DecideGovernanceSeatCommand(
             credential=command.credential,
             living_organism_uuid=command.living_organism_uuid,
@@ -950,20 +986,20 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             (IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, "ep08-before", True),
         ):
             route = self._route(governance_enabled=governance_enabled)
-            command, bound = self._parent(route, entry, suffix=suffix)
+            command = _parent_command(
+                route,
+                entry,
+                tag=f"{route.route.tag}:{suffix}",
+                effective_at=None,
+            )
             before = _public_row_counts()
             before_decision_pks = set(AuthorityDecision.objects.values_list("pk", flat=True))
             with self.subTest(entry=entry):
                 with self.assertRaises((S015AuthorityDenied, SBGGovernanceRefused)) as refused:
-                    route.service._orchestrate_compound_seating(
-                        command,
-                        bound,
-                        (
-                            _RECIPE_SEAT_FOUNDING
-                            if entry is IntakeEntry.SEAT_GOVERNANCE_CIRCLE
-                            else _RECIPE_DECIDE_COMPOUND
-                        ),
-                    )
+                    if entry is IntakeEntry.SEAT_GOVERNANCE_CIRCLE:
+                        route.service.seat_governance_circle(command)
+                    else:
+                        route.service.decide_governance_seat(command)
                 self.assertIs(refused.exception.stage_context, ChildEntry.ADMIT_STAGE)
                 self.assertIsNotNone(refused.exception.request_uuid)
                 self.assertIn(
@@ -991,6 +1027,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
                 self.assertEqual(
                     delta,
                     {
+                        "core_commandintake": 1,
                         "core_authoritydecision": expected_authority_decision_delta,
                         "core_circlejoinrequest": 1,
                         "core_organismcommandreceipt": 1,
@@ -1053,21 +1090,19 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             ),
             credential=applicant.credential,
         )
-        bound = admit_request(
-            "default",
-            IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
-            _actor_ref(applicant),
-            intake_shape(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, command),
-        )
         before_first = _public_row_counts()
         decision_coordinates = []
         original_decision_executor = route.service._execute_decide_governance_seat
 
-        def record_decision_coordinates(stage_command, stage_bound):
+        def record_decision_coordinates(stage_command, stage_bound, *, stage_phase=None):
             decision_coordinates.append(
                 (stage_bound.received_at, stage_command.effective_at)
             )
-            return original_decision_executor(stage_command, stage_bound)
+            return original_decision_executor(
+                stage_command,
+                stage_bound,
+                stage_phase=stage_phase,
+            )
 
         with patch.object(
             route.service,
@@ -1075,11 +1110,13 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             record_decision_coordinates,
         ):
             with self.assertRaises(SBGGovernanceRefused) as first:
-                route.service._orchestrate_compound_seating(
-                    command,
-                    bound,
-                    _RECIPE_DECIDE_COMPOUND,
-                )
+                route.service.decide_governance_seat(command)
+        bound = admit_request(
+            "default",
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND,
+            _actor_ref(applicant),
+            intake_shape(IntakeEntry.DECIDE_GOVERNANCE_SEAT_COMPOUND, command),
+        )
         self.assertIs(
             first.exception.refusal_code,
             S015AuthorityRefusalCode.SBG_SEATING_WHILE_DISABLED,
@@ -1090,6 +1127,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
         self.assertEqual(
             _row_delta(before_first, _public_row_counts()),
             {
+                "core_commandintake": 1,
                 "core_authoritydecision": 1,
                 "core_circlejoinrequest": 1,
                 "core_organismcommandreceipt": 1,
@@ -1117,11 +1155,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             record_decision_coordinates,
         ):
             with self.assertRaises((S015AuthorityDenied, SBGGovernanceRefused)) as retry:
-                route.service._orchestrate_compound_seating(
-                    command,
-                    bound,
-                    _RECIPE_DECIDE_COMPOUND,
-                )
+                route.service.decide_governance_seat(command)
         self.assertIs(retry.exception.stage_context, ChildEntry.ADMIT_STAGE)
         self.assertEqual(
             decision_coordinates,
@@ -1154,17 +1188,15 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
             request_uuid=request.request_uuid,
             effective_at=decision_time,
         )
-        decision_bound = BoundRequest.for_test(
-            IntakeEntry.DECIDE_GOVERNANCE_SEAT,
-            decision_command,
-            received_at=decision_time,
-            actor=_actor_ref(route.founder),
-        )
         before_ep07 = _public_row_counts()
-        result = route.service._execute_decide_governance_seat(
-            decision_command,
-            decision_bound,
+        result = route.service.decide_governance_seat(decision_command)
+        decision_bound = admit_request(
+            "default",
+            IntakeEntry.DECIDE_GOVERNANCE_SEAT,
+            _actor_ref(route.founder),
+            intake_shape(IntakeEntry.DECIDE_GOVERNANCE_SEAT, decision_command),
         )
+        self.assertFalse(decision_bound.first)
         self.assertIsInstance(result, GovernanceSeatDecisionResult)
         self.assertIsNotNone(result.participation_uuid)
         self.assertEqual(
@@ -1183,6 +1215,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
         self.assertEqual(
             decision_delta,
             {
+                "core_commandintake": 1,
                 "core_authoritydecision": 1,
                 "core_circleadmissiondecision": 1,
                 "core_circleparticipation": 1,
@@ -1199,10 +1232,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
 
         after_ep07 = _public_row_counts()
         with patch.object(route.service, "_clock", side_effect=viewer_clock):
-            replay = route.service._execute_decide_governance_seat(
-                decision_command,
-                decision_bound,
-            )
+            replay =             route.service.decide_governance_seat(decision_command)
         self.assertEqual(replay, result)
         self.assertEqual(len(viewer_times), 1)
         self.assertGreaterEqual(viewer_times[0], decision_bound.received_at)
@@ -1326,14 +1356,21 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
                             _RECIPE_DECIDE_COMPOUND,
                         )
             self.assertIs(raised.exception.stage_context, ChildEntry.ADMIT_STAGE)
-            if isinstance(injected, RuntimeError) or (
-                isinstance(injected, IntegrityError) and str(injected) == "unmapped integrity failure"
-            ):
-                self.assertIs(raised.exception, injected)
-            self.assertIs(
-                raised.exception.__cause__,
-                prior_cause if raised.exception is injected else injected,
-            )
+            # PKT-CLK-3 CLK3-3 part 2: every case is re-raised from the injected error, which keeps
+            # its prior cause; a technical failure in the body (a known rollback) takes B-09-S2.
+            self.assertIsNot(raised.exception, injected)
+            self.assertIs(raised.exception.__cause__, injected)
+            self.assertIs(injected.__cause__, prior_cause)
+            if isinstance(injected, (RuntimeError, IntegrityError)):
+                self.assertFalse(getattr(raised.exception, "outcome_uncertain", False))
+                self.assertEqual(
+                    str(raised.exception),
+                    "ADMIT_CIRCLE_PARTICIPANT could not be completed because of a technical problem; "
+                    "no governed record was written by the decision stage. Your own request for seat "
+                    "founder is recorded and remains open. INTEVIA kept a record that this request was "
+                    f"received at {canonical_timestamp(bound.received_at)}; the same request can be sent "
+                    "again and is judged as of that time. If it persists, report it.",
+                )
             self.assertEqual(
                 _row_delta(before, _public_row_counts()),
                 {
@@ -1376,7 +1413,7 @@ class GovernanceStageDatabaseTests(TransactionTestCase):
         )
 
         @contextmanager
-        def fail_on_exit(alias):
+        def fail_on_exit(alias, *, received_at=None):
             with transaction.atomic(using=alias):
                 yield
                 raise injected
