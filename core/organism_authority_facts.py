@@ -235,22 +235,35 @@ class FactsSelectionError(ValueError):
 
 
 def _freeze(mapping: dict) -> Mapping:
+    """Return a shallow, read-only copy of mapping."""
     return MappingProxyType(dict(mapping))
 
 
 def _ref(relation: str, prefix: str | None = None, *, required: bool = False) -> FactKey:
+    """Return a REF FactKey for relation, with an optional prefix and
+    the producer-only required flag.
+    """
     return FactKey(FactKind.REF, relation, prefix, required)
 
 
 def _ref_or_null(relation: str, *, required: bool = False) -> FactKey:
+    """Return a REF_OR_NULL FactKey for relation, without a prefix,
+    with the producer-only required flag.
+    """
     return FactKey(FactKind.REF_OR_NULL, relation, None, required)
 
 
 def _literal(*values: str, required: bool = False) -> FactKey:
+    """Return a LITERAL FactKey whose admissible values are values, with
+    the producer-only required flag; it names no relation.
+    """
     return FactKey(FactKind.LITERAL, None, None, required, frozenset(values))
 
 
 def _text(*, required: bool = False) -> FactKey:
+    """Return a TEXT FactKey, with the producer-only required flag; it
+    names no relation.
+    """
     return FactKey(FactKind.TEXT, None, None, required)
 
 
@@ -281,6 +294,13 @@ def _entry(
     keys: dict[str, FactKey],
     **flags,
 ) -> FactsEntry:
+    """Return a FactsEntry for form with the given discriminators and
+    keys, each frozen.
+
+    flags pass on to FactsEntry. required_when, if given, is frozen
+    two levels deep: each key's literals map to frozensets of the keys
+    they require.
+    """
     required_when = flags.pop("required_when", {})
     return FactsEntry(
         form,
@@ -295,10 +315,21 @@ def _entry(
 
 
 def _refusal(keys: dict[str, FactKey], *, exact: bool = False) -> RefusalShape:
+    """Return a RefusalShape with a read-only copy of keys.
+
+    exact is passed through and defaults to False. True declares an
+    x-only refusal, even if auxiliary keys were supplied.
+    """
     return RefusalShape(_freeze(keys), exact)
 
 
 def _undiscriminated(keys: dict[str, FactKey], refusal_keys: dict[str, FactKey] | None = None, **flags) -> ActionFacts:
+    """Return the ActionFacts of an action with one form: Selector.NONE,
+    one entry with no discriminators, and one refusal shape under form
+    None whose keys are refusal_keys (none when omitted).
+
+    flags pass on to the entry.
+    """
     return ActionFacts(
         Selector.NONE,
         (_entry(None, {}, keys, **flags),),
@@ -691,6 +722,23 @@ def propose_role_reference(request) -> str | None:
 
 
 def _value_is_lawful(key: str, spec: FactKey, value: object) -> bool:
+    """Check a producer value's declared kind and literals.
+
+    REF and ENGAGEMENT accept values equal to "-" when literals is
+    None. ENGAGEMENT also accepts any exact int, regardless of
+    literals; bool is excluded. Otherwise REF, ENGAGEMENT, POLICY_K,
+    TEXT and LITERAL require an exact str, restricted to literals
+    when supplied.
+    REF_OR_NULL accepts None, values equal to "-", or an exact str.
+    CONSENT_U requires an exact str starting "c:" or "e:";
+    CONSENT_W accepts any exact str. Other kinds are accepted only
+    when founding_value_form returns something other than None,
+    including an empty extracted component.
+
+    key is unused. No row existence or UUID syntax is checked here;
+    spec.prefix is not validated. The caller turns a False result
+    into S015AuthorityFactsUndeclared.
+    """
     kind = spec.kind
     if kind in {FactKind.REF, FactKind.ENGAGEMENT, FactKind.POLICY_K, FactKind.TEXT, FactKind.LITERAL}:
         if value == REFERENCE_SENTINEL and kind in {FactKind.REF, FactKind.ENGAGEMENT} and spec.literals is None:

@@ -19,6 +19,14 @@ GENESIS_BOOTSTRAP_REASON: Final = (
 
 
 class OrganismAction(str, Enum):
+    """The actions an S015 organism command may record.
+
+    Each member's value is its own name. An authority request names one
+    (organism_authority checks its type), and its command subtype must
+    begin with that value. S015_AUTHORITY_FACTS declares the structured
+    reference vocabulary per action; an action with no row there admits
+    only the x-only refusal.
+    """
     REGISTER_AUTHORITY_PRINCIPAL = "REGISTER_AUTHORITY_PRINCIPAL"
     RECORD_AUTHORITY_BASIS = "RECORD_AUTHORITY_BASIS"
     FOUND_LIVING_ORGANISM = "FOUND_LIVING_ORGANISM"
@@ -59,6 +67,10 @@ class OrganismAction(str, Enum):
 
 
 class QualificationPlane(str, Enum):
+    """The four qualification planes a command subtype is bound on:
+    LEGAL ("L"), CONSTITUTIONAL ("C"), EXECUTION ("E") and PROPAGATION
+    ("P").
+    """
     LEGAL = "L"
     CONSTITUTIONAL = "C"
     EXECUTION = "E"
@@ -66,6 +78,10 @@ class QualificationPlane(str, Enum):
 
 
 class QualificationPlaneState(str, Enum):
+    """How a command subtype stands on one qualification plane:
+    PREREQUISITE_REQUIRED, OUTPUT_PRODUCED, REFERENCE_ONLY, FORBIDDEN,
+    or NOT_APPLICABLE_WITH_REASON (which carries a reason).
+    """
     PREREQUISITE_REQUIRED = "PREREQUISITE_REQUIRED"
     OUTPUT_PRODUCED = "OUTPUT_PRODUCED"
     REFERENCE_ONLY = "REFERENCE_ONLY"
@@ -75,10 +91,29 @@ class QualificationPlaneState(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class QualificationPlaneBinding:
+    """A frozen plane state with its optional reason.
+
+    state must be exactly a QualificationPlaneState. A
+    NOT_APPLICABLE_WITH_REASON state requires a non-empty exact str.
+    Other states reject only such a reason; None, empty strings and
+    values of other types are accepted.
+
+    Construction raises TypeError for an invalid state, or
+    ValueError for an invalid state/reason pairing.
+    """
     state: QualificationPlaneState
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        """Validate the exact state type and reason pairing.
+
+        Raise TypeError unless state has the exact
+        QualificationPlaneState type.
+        For NOT_APPLICABLE_WITH_REASON, require a non-empty exact str;
+        whitespace is accepted. For every other state, reject only such
+        a reason and accept all other values.
+        Raise ValueError when the pairing fails.
+        """
         if type(self.state) is not QualificationPlaneState:
             raise TypeError("state must be a QualificationPlaneState")
         requires_reason = (
@@ -89,26 +124,34 @@ class QualificationPlaneBinding:
 
 
 class QualificationApplicabilityUnknown(ValueError):
+    """Raised by qualification_planes for a command subtype the matrix
+    does not declare; a ValueError.
+    """
     pass
 
 
 def _required() -> QualificationPlaneBinding:
+    """Return a PREREQUISITE_REQUIRED binding."""
     return QualificationPlaneBinding(QualificationPlaneState.PREREQUISITE_REQUIRED)
 
 
 def _output() -> QualificationPlaneBinding:
+    """Return an OUTPUT_PRODUCED binding."""
     return QualificationPlaneBinding(QualificationPlaneState.OUTPUT_PRODUCED)
 
 
 def _reference() -> QualificationPlaneBinding:
+    """Return a REFERENCE_ONLY binding."""
     return QualificationPlaneBinding(QualificationPlaneState.REFERENCE_ONLY)
 
 
 def _forbidden() -> QualificationPlaneBinding:
+    """Return a FORBIDDEN binding."""
     return QualificationPlaneBinding(QualificationPlaneState.FORBIDDEN)
 
 
 def _not_applicable(reason: str) -> QualificationPlaneBinding:
+    """Return a NOT_APPLICABLE_WITH_REASON binding carrying reason."""
     return QualificationPlaneBinding(
         QualificationPlaneState.NOT_APPLICABLE_WITH_REASON,
         reason,
@@ -121,6 +164,10 @@ def _planes(
     execution: QualificationPlaneBinding,
     propagation: QualificationPlaneBinding,
 ) -> Mapping[QualificationPlane, QualificationPlaneBinding]:
+    """Return a read-only mapping of the four planes to the given
+    bindings, in the order legal, constitutional, execution,
+    propagation.
+    """
     return MappingProxyType(
         {
             QualificationPlane.LEGAL: legal,
@@ -141,6 +188,12 @@ def _ordinary_planes(
     legal: QualificationPlaneBinding = _NO_LEGAL,
     constitutional: QualificationPlaneBinding = _C_REQUIRED,
 ) -> Mapping[QualificationPlane, QualificationPlaneBinding]:
+    """Return the planes of an ordinary command subtype.
+
+    legal defaults to not applicable ("NO_LEGAL_CONCLUSION") and
+    constitutional to required; execution is required and propagation
+    forbidden in every case.
+    """
     return _planes(legal, constitutional, _E_REQUIRED, _P_FORBIDDEN)
 
 
@@ -264,6 +317,17 @@ QUALIFICATION_PLANE_MATRIX: Final = MappingProxyType(_plane_rows)
 def qualification_planes(
     command_subtype: str,
 ) -> Mapping[QualificationPlane, QualificationPlaneBinding]:
+    """Return the declared bindings from QUALIFICATION_PLANE_MATRIX.
+
+    Look up command_subtype without a separate type check or
+    enforcing the returned plane requirements. Translate lookup
+    KeyError or TypeError to QualificationApplicabilityUnknown,
+    preserving the cause. This includes missing rows and
+    unhashable keys.
+
+    organism_authority._validate_request uses the lookup to reject
+    unknown subtypes and discards the returned bindings.
+    """
     try:
         return QUALIFICATION_PLANE_MATRIX[command_subtype]
     except (KeyError, TypeError) as exc:
