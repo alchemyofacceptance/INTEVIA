@@ -558,6 +558,12 @@ class IdentityFKPredictionTests(TestCase):
         ("commandintake", "actor"),
     }
 
+    # SR C1 (migration 0051): the definition version's enterer (v0.7 section D.1: "one new
+    # Identity foreign key").
+    EXPECTED_SR_FK_ADDITIONS = {
+        ("organismroledefinition", "enterer"),
+    }
+
     EXCLUDED_INTERNAL_FKS = {
         ("identitytransition", "identity"),
         ("identitytransition", "requesting_actor"),
@@ -615,6 +621,7 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_SBG_FK_ADDITIONS,
             self.EXPECTED_SE_FK_ADDITIONS,
             self.EXPECTED_H100_FK_ADDITIONS,
+            self.EXPECTED_SR_FK_ADDITIONS,
         )
         for expected in later_sets:
             self.assertEqual(scoped_fks & expected, expected)
@@ -637,6 +644,7 @@ class IdentityFKPredictionTests(TestCase):
             | self.EXPECTED_SBG_FK_ADDITIONS
             | self.EXPECTED_SE_FK_ADDITIONS
             | self.EXPECTED_H100_FK_ADDITIONS
+            | self.EXPECTED_SR_FK_ADDITIONS
         )
         historical_scoped = scoped_fks - later_additions
         self.assertEqual(len(historical_scoped), 56)
@@ -654,7 +662,7 @@ class IdentityFKPredictionTests(TestCase):
             | later_additions
         )
         self.assertEqual(scoped_fks, expected_scoped)
-        self.assertEqual(len(scoped_fks), 114)
+        self.assertEqual(len(scoped_fks), 115)
 
     def test_se_identity_fk_slice_has_five_references(self):
         self.assertEqual(len(self.EXPECTED_SE_FK_ADDITIONS), 5)
@@ -713,6 +721,7 @@ class IdentityFKPredictionTests(TestCase):
             - self.EXPECTED_SBG_FK_ADDITIONS
             - self.EXPECTED_SE_FK_ADDITIONS
             - self.EXPECTED_H100_FK_ADDITIONS
+            - self.EXPECTED_SR_FK_ADDITIONS
         )
         self.assertEqual(len(pre_s012), 34)
 

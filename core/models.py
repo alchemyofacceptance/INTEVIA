@@ -4495,6 +4495,31 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
         LIVING_ORGANISM = "LIVING_ORGANISM"
         CIRCLE = "CIRCLE"
 
+    # SR (migration 0051): the HD-EG-2 classification, the constitutional
+    # relationships and the attribution of every LO-scoped definition version.
+    # Nullable at install for the rows founding wrote before SR; the insert
+    # guard sr_00_definition_insert requires them on every LO-scoped row written
+    # after it. Written only by _write_definition_version (the one writer).
+    class Kind(models.TextChoices):
+        COORDINATOR = "COORDINATOR"
+        BOARD_OFFICE = "BOARD_OFFICE"
+        CUSTOM = "CUSTOM"
+
+    class AppointingAuthority(models.TextChoices):
+        LO_COORDINATOR_BODY = "LO_COORDINATOR_BODY"
+        NAMED_BODY = "NAMED_BODY"
+
+    class NominationBasis(models.TextChoices):
+        CONSTITUTION = "CONSTITUTION"
+        SILENT = "SILENT"
+        CUSTOM = "CUSTOM"
+
+    class NominationPolicy(models.TextChoices):
+        A = "A"
+        B = "B"
+        C = "C"
+        UNSUPPORTED = "UNSUPPORTED"
+
     role_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     living_organism = models.ForeignKey(
         LivingOrganism,
@@ -4506,13 +4531,74 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
     definition_version = models.PositiveIntegerField()
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices, null=True, blank=True)
+    appointing_authority = models.CharField(
+        max_length=20, choices=AppointingAuthority.choices, null=True, blank=True
+    )
+    appointing_body_reference = models.TextField(null=True, blank=True)
+    alternative_route_reference = models.TextField(null=True, blank=True)
+    nomination_basis = models.CharField(
+        max_length=12, choices=NominationBasis.choices, null=True, blank=True
+    )
+    nomination_policy = models.CharField(
+        max_length=11, choices=NominationPolicy.choices, null=True, blank=True
+    )
+    nomination_dependency = models.TextField(null=True, blank=True)
+    participation_required = models.BooleanField(null=True, blank=True)
+    ex_officio_seat_reference = models.TextField(null=True, blank=True)
+    supersedes = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="superseded_by",
+        null=True,
+        blank=True,
+    )
+    enterer = models.ForeignKey(
+        Identity,
+        on_delete=models.PROTECT,
+        related_name="entered_role_definitions",
+        null=True,
+        blank=True,
+    )
+    enterer_access_epoch = models.BigIntegerField(null=True, blank=True)
+    authority_decision_reference = models.CharField(max_length=71, null=True, blank=True)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    effective_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+    retired_by_decision_reference = models.CharField(max_length=71, null=True, blank=True)
+    retired_effective_at = models.DateTimeField(null=True, blank=True)
+    retired_received_at = models.DateTimeField(null=True, blank=True)
+    retired_recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+    retirement_reason = models.TextField(null=True, blank=True)
 
+    # The five installed immutable fields plus SR's content and attribution
+    # columns (v0.7 section C: immutable after insert except the retirement
+    # transition, which the writer records by QuerySet.update under
+    # sr_10_definition_update). `active` and the retirement columns are not
+    # listed: deactivation is the one permitted change.
     S015_IMMUTABLE_FIELDS = (
         "role_uuid",
         "living_organism_id",
         "code",
         "scope",
         "definition_version",
+        "kind",
+        "appointing_authority",
+        "appointing_body_reference",
+        "alternative_route_reference",
+        "nomination_basis",
+        "nomination_policy",
+        "nomination_dependency",
+        "participation_required",
+        "ex_officio_seat_reference",
+        "supersedes_id",
+        "enterer_id",
+        "enterer_access_epoch",
+        "authority_decision_reference",
+        "occurred_at",
+        "effective_at",
+        "received_at",
     )
 
     def clean(self):
@@ -4540,6 +4626,97 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
             models.CheckConstraint(
                 condition=Q(scope__in=["LIVING_ORGANISM", "CIRCLE"]),
                 name="s015_0021_role_scope_domain_ck",
+            ),
+            # SR (0051): the closed domains of v0.7 section D.1, null allowed for pre-SR rows
+            models.CheckConstraint(
+                condition=Q(kind__isnull=True) | Q(kind__in=["COORDINATOR", "BOARD_OFFICE", "CUSTOM"]),
+                name="sr_definition_kind_domain_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(appointing_authority__isnull=True)
+                    | Q(appointing_authority__in=["LO_COORDINATOR_BODY", "NAMED_BODY"])
+                ),
+                name="sr_definition_appointing_authority_domain_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(nomination_basis__isnull=True)
+                    | Q(nomination_basis__in=["CONSTITUTION", "SILENT", "CUSTOM"])
+                ),
+                name="sr_definition_nomination_basis_domain_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(nomination_policy__isnull=True)
+                    | Q(nomination_policy__in=["A", "B", "C", "UNSUPPORTED"])
+                ),
+                name="sr_definition_nomination_policy_domain_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(authority_decision_reference__isnull=True)
+                    | Q(authority_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$")
+                ),
+                name="sr_definition_decision_ref_shape_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(retired_by_decision_reference__isnull=True)
+                    | Q(retired_by_decision_reference__regex=r"^s015d1:[0-9a-f]{64}$")
+                ),
+                name="sr_definition_retired_ref_shape_ck",
+            ),
+        ]
+
+
+class OrganismRoleDefinitionProvision(_S015AppendOnly):
+    """SR (0051, v0.7 section D.2): one constitutional citation of one
+    definition version - the office basis or a GOVERNANCE relationship.
+
+    Append-only; written by _write_definition_version in the same
+    transaction as its version row; the deferred guard
+    sr_30_definition_citations requires exactly the rows the version's
+    columns call for. recorded_at is database-assigned.
+    """
+
+    class Relationship(models.TextChoices):
+        OFFICE_BASIS = "OFFICE_BASIS"
+        APPOINTING_AUTHORITY = "APPOINTING_AUTHORITY"
+        ALTERNATIVE_ROUTE = "ALTERNATIVE_ROUTE"
+        NOMINATION_ROUTE = "NOMINATION_ROUTE"
+        PARTICIPATION_REQUIRED = "PARTICIPATION_REQUIRED"
+        EX_OFFICIO_SEAT = "EX_OFFICIO_SEAT"
+
+    provision_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    definition = models.ForeignKey(
+        OrganismRoleDefinition,
+        on_delete=models.PROTECT,
+        related_name="provisions",
+    )
+    relationship = models.CharField(max_length=24, choices=Relationship.choices)
+    provision_reference = models.TextField()
+    provision_version = models.TextField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("definition", "relationship"),
+                name="sr_provision_relationship_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    relationship__in=[
+                        "OFFICE_BASIS",
+                        "APPOINTING_AUTHORITY",
+                        "ALTERNATIVE_ROUTE",
+                        "NOMINATION_ROUTE",
+                        "PARTICIPATION_REQUIRED",
+                        "EX_OFFICIO_SEAT",
+                    ]
+                ),
+                name="sr_provision_relationship_domain_ck",
             ),
         ]
 
@@ -4719,6 +4896,10 @@ class IntakeEntry(models.TextChoices):
     TRANSITION_ASSIGNMENT = "TRANSITION_ASSIGNMENT", "Transition assignment"
     RECORD_OFFICE_CONSENT = "RECORD_OFFICE_CONSENT", "Record office consent"
     ACTIVATE_BETA = "ACTIVATE_BETA", "Activate beta"
+    # SR (0051): the definition act's entry. Admitted (ENTRY_ACTIONS, ACTIVE_ENTRIES,
+    # intake_shape) from chunk C3; until then the entry exists in the enum and the
+    # intake CHECK only.
+    RECORD_ROLE_DEFINITION = "RECORD_ROLE_DEFINITION", "Record role definition"
 
 
 _H100_COMPOUND_ENTRIES = (

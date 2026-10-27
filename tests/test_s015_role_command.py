@@ -41,7 +41,8 @@ from core.models import (
 )
 from core.organism_contract import OrganismAction
 from s015_0021_support import (
-    T0, append_event, drop_unset_check, empty_fp, found_nonroot, fresh, refresh, seed_identity, u,
+    T0, append_event, drop_unset_check, empty_fp, found_nonroot, fresh, refresh, seed_identity,
+    sr_definition_guard_suspended, u,
 )
 from src.intevia.services.organism_authority import (
     S015Authority,
@@ -673,14 +674,18 @@ def _add_member(cur, ids, tag, state="ACTIVE"):
 
 
 def _add_role_definition(cur, ids, tag, code, scope="LIVING_ORGANISM"):
-    """An active role definition on the LO. Test-only fixture; definition governance is not S2's."""
+    """An active role definition on the LO. Test-only fixture; definition governance is not S2's.
+    SR C1: written pre-SR-shaped under the labelled latitude (sr_definition_guard_suspended);
+    the office-chain guards this suite examines are untouched by it."""
     r_uuid = u(f"role:{tag}:{code}")
-    cur.execute(
-        "INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
-        "VALUES (%s, %s, %s, 1, true, now(), %s) RETURNING id",
-        (r_uuid, code, scope, ids["lo"]),
-    )
-    return cur.fetchone()[0], UUID(r_uuid)
+    with sr_definition_guard_suspended(cur):
+        cur.execute(
+            "INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+            "VALUES (%s, %s, %s, 1, true, now(), %s) RETURNING id",
+            (r_uuid, code, scope, ids["lo"]),
+        )
+        definition_id = cur.fetchone()[0]
+    return definition_id, UUID(r_uuid)
 
 
 def _assignment_at_state(test_case, ids, membership_id, role_definition_id, tag):
@@ -5209,7 +5214,7 @@ class S015RoleCommandTests(TransactionTestCase):
     def test_non_coordinator_office_transition_refused_il8(self):
         ids, founder = self._setup_organism("otheroffice")
         membership_id, member, _ = self._add_active_member(ids, "otheroffice")
-        with connection.cursor() as cur:
+        with transaction.atomic(), connection.cursor() as cur:
             archivist_id, _ = _add_role_definition(cur, ids, "otheroffice", "TEST_ONLY_ARCHIVIST")
         _, office_uuid = _assignment_at_state(
             self, ids, membership_id, archivist_id, "otheroffice:fixture",

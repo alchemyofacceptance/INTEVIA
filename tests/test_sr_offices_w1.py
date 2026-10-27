@@ -1,20 +1,28 @@
 """SR chunk C0 - W-1: how the system answers valid non-COORDINATOR office acts today, on the
-pre-widening base. PostgreSQL, disposable test database. Module v1.3 (v1.1: the Advisor's A-2 and
+pre-widening base. PostgreSQL, disposable test database. Module v1.5 (v1.1: the Advisor's A-2 and
 A-11; v1.2: Grok's Q2, Q3 and Q4 - the role suite's NOW bound to the route time and restored, the
 consent receipt asserted, each driver checked against ROUTE_MAP; v1.3: attempt 87's raw-cursor
-JSON receipt rows decoded before field access).
+JSON receipt rows decoded before field access; v1.4: staged for chunk C1 - the fixture definitions
+written through C1's one writer, the fixture target in the production shape, test 14's pins at
+0051 - the W-1 evolution table's C1 row, the Advisor's A-4; v1.5: the Advisor's C1 review,
+the complete D.4 definition target includes the recorded basis and citations).
 
 Design: SR_COMMISSION_OTHER_OFFICES_v0_7.md (adopted 15 October 2026) section H W-1 and section K
 condition 3; the Human Governor's ruling of 14 October 2026 (W-1 runs before the gate is widened).
 Commissions: 00_COMMISSION_LD_SR_C0_v1_0.md, 00_COMMISSION_LD_SR_ADVISOR_CORRECTIONS_v1_0.md,
-00_COMMISSION_LD_SR_C0_v1_2_v1_0.md and 00_COMMISSION_ADVISOR_SR_C0_A87_FIX_v1_0.md
-(US015-B-35, 26 October 2026). Recorded at main
+00_COMMISSION_LD_SR_C0_v1_2_v1_0.md, 00_COMMISSION_ADVISOR_SR_C0_A87_FIX_v1_0.md and
+00_COMMISSION_LD_SR_C1_v1_0.md (US015-B-35, 26 October 2026). Recorded at main
 1d2c341aa8e0f02889ffaab091c0f28be4e196a4 before SR changes anything; the line numbers below are at that
-commit. No product change travels with this module.
+commit. No product change travels with this module; C1's schema (migration 0051) is the base it
+now runs on, and the office acts still answer as recorded.
 
-What is recorded. Two LO-scoped, non-COORDINATOR role definitions are written by the fixture as
-today's schema allows (code, scope, version, active - the pre-SR columns): one shaped as a board
-office (TEST_ONLY_TREASURER) and one shaped as a custom role (TEST_ONLY_ADJUNCT). Six routes are
+What is recorded. Two LO-scoped, non-COORDINATOR role definitions are written by the fixture
+through C1's one writer, _write_definition_version, each under a canonical test-only
+RECORD_ROLE_DEFINITION-shaped decision built with the production digest rules (0034's insert
+guard recomputes the target fingerprint and the s015d1 reference; chunk C3 brings the command
+and the provider's own decisions): one board office (TEST_ONLY_TREASURER, kind BOARD_OFFICE, with
+its OFFICE_BASIS citation) and one custom role (TEST_ONLY_ADJUNCT, kind CUSTOM, on an LO opted into
+beta after Birthing so that CUSTOM_ROLES is effective at receipt - sr_00's gate). Six routes are
 attempted on each shape through the real services - the durable intake, authority_atomic, the service
 and the provider: PROPOSE, the nominee's CONSENT, ASSIGN (on a consented nomination), END by an
 effective Coordinator, REASSIGN, and the holder's own END (R-7). Today's answer is asserted:
@@ -48,11 +56,12 @@ success conversion at C5 - never skipped or disabled to make an intermediate sui
 needs deleting.
 
 Fixtures are the office-appointment suite's own (tests/test_s015_role_command.py: the service-founded
-route, the test-only member and definition inserts, the governed ACTIVE office, the exact test
-provider), so today's answer is recorded against the same set-up that R18 and R18b use. The fixture
-nomination's authority target follows that suite's shape (seven keys), which is narrower than the
-production target _execute_propose builds (organism_role_service.py:1160-1176 adds circle, the term
-and the tolling keys); the difference is recorded in the C0 SCC record, not hidden. Every time value
+route, the test-only member inserts, the governed ACTIVE office, the exact test provider), so
+today's answer is recorded against the same set-up that R18 and R18b use. The fixture nomination's
+authority target is built in the production shape _execute_propose builds
+(organism_role_service.py:1160-1176: the seven keys plus circle, effective_until,
+effective_until_state and the two tolling keys), closing the divergence the C0 SCC record carried
+(the suite's own _assignment_at_state, used for the ACTIVE-office fixture, keeps its shape). Every time value
 is taken from the database (clock_timestamp(), the route's recorded times); every label is visibly
 test-only. The suite's member and office helpers read that suite's module-global NOW
 (known_at = max(NOW, times.latest_recorded_at), test_s015_role_command.py:657 and :690), which the
@@ -75,6 +84,7 @@ from core.models import (
     ContextualRoleAssignmentStateEvent,
     Identity,
     IntakeEntry,
+    LivingOrganism,
     OfficeAppointmentConsent,
     OrganismMembership,
     OrganismRoleDefinition,
@@ -92,12 +102,23 @@ from src.intevia.services.organism_command_support import (
     _authority_request,
     authority_target_fingerprint,
 )
+from src.intevia.services.organism_entitlement_service import (
+    EntitlementElectionCommand,
+    OrganismEntitlementService,
+)
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
+from src.intevia.services.organism_role_definition_service import (
+    DefinitionProvision,
+    _write_definition_version,
+)
 from src.intevia.services.organism_office_consent_service import (
     OfficeAppointmentConsentService,
     RecordOfficeConsentCommand,
 )
 from src.intevia.services.organism_role_service import (
+    _TARGET_SCHEMA,
+    _TOLLING_SOURCE,
+    _TOLLING_VALUE,
     OrganismRoleService,
     ProposeAssignmentCommand,
     TransitionAssignmentCommand,
@@ -105,21 +126,23 @@ from src.intevia.services.organism_role_service import (
 import tests.test_s015_role_command as _role_suite  # its module-global NOW is bound per test (Grok Q2)
 from tests.s015_0021_support import append_event, current_applied_core_head, empty_fp, refresh, u
 from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
+from tests.se_route_support import ensure_test_policy_text
 from tests.test_s015_role_command import (
     _ExactProvider,
     _add_member,
-    _add_role_definition,
     _assignment_at_state,
     _snapshot_tables,
 )
+from tests.test_sr_definition_guards import _definition_target, _test_only_definition_decision
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "SR W-1 records PostgreSQL behaviour")
 
-# The two non-COORDINATOR shapes SR will classify (v0.7 section D.1 `kind`). Today's schema has no
-# `kind` column: the shape is the fixture's label only, and the system answers both alike.
+# The two non-COORDINATOR shapes SR classifies (v0.7 section D.1 `kind`). From C1 the `kind` column
+# is installed and the fixture records it; the system still answers both shapes alike until C4.
 BOARD_OFFICE = "BOARD_OFFICE"
 CUSTOM = "CUSTOM"
 SHAPE_CODES = {BOARD_OFFICE: "TEST_ONLY_TREASURER", CUSTOM: "TEST_ONLY_ADJUNCT"}
+SHAPE_BASIS = {BOARD_OFFICE: "SILENT", CUSTOM: "CUSTOM"}
 
 # The six routes recorded, under the two providers, on the two shapes.
 PROPOSE, CONSENT, ASSIGN, END, REASSIGN, HOLDER_END = (
@@ -156,12 +179,13 @@ ROUTE_MAP = {
     (HOLDER_END, TEST, CUSTOM): "test_sr_w1_25_custom_role_holder_own_end_test_provider_il8",
 }
 
-# Today's census, as the pinned sites hold it (SR moves each: v0.7 sections B, I, K).
+# The census at C1, as the pinned sites hold it (SR moves each: v0.7 sections B, I, K). The action
+# enum and the matrix move at C3 (35 / 42 stay); C1 adds the intake entry, the enterer FK and the head.
 ACTION_MEMBERS_TODAY = 35
 MATRIX_ROWS_TODAY = 42
-INTAKE_ENTRIES_TODAY = 22
-IDENTITY_FKS_TODAY = 114  # tests/test_service_activity_models.py IdentityFKPredictionTests, scoped
-CORE_HEAD_TODAY = "0050_clk_mono_1_cache_coordinate_detail"
+INTAKE_ENTRIES_TODAY = 23
+IDENTITY_FKS_TODAY = 115  # tests/test_service_activity_models.py IdentityFKPredictionTests, scoped
+CORE_HEAD_TODAY = "0051_sr_role_definitions"
 
 # Today's refusal site for each (route class, provider), at 1d2c341a - a record, read by the return.
 REFUSAL_SITES = {
@@ -209,6 +233,7 @@ class SROfficesW1Tests(TransactionTestCase):
         """A service-founded, born LO with the founder's Coordinator appointment (the SB-2 route)."""
         route = prepare_route(tag=label)
         birth(route)
+        self._route = route  # kept for the beta opt-in a CUSTOM fixture needs (C1)
         ids, _gateway = route_fixture_state(route)
         self.now = route_test_now(route)
         # Grok Q2: _add_member and _assignment_at_state read the role suite's module-global NOW
@@ -226,12 +251,50 @@ class SROfficesW1Tests(TransactionTestCase):
         return membership_id, Identity.objects.get(pk=member_pk), member_membership_uuid
 
     def _add_definition(self, ids, label, shape):
-        """An active LO-scoped definition under the shape's test-only code, written as today's
-        schema allows (the suite's pre-SR insert)."""
+        """An active LO-scoped definition under the shape's test-only code, written through C1's one
+        writer under a canonical test-only RECORD_ROLE_DEFINITION-shaped decision (C1 row of the W-1
+        evolution table). A CUSTOM definition first opts the born LO into beta through the real
+        entitlement route, so that CUSTOM_ROLES is effective at the definition's received_at."""
+        organism = LivingOrganism.objects.get(pk=ids["lo"])
+        founder = Identity.objects.get(pk=ids["identity"])
+        kind = shape
+        if kind == CUSTOM:
+            policy_version, policy_text_sha256 = ensure_test_policy_text()
+            OrganismEntitlementService(
+                authority=self._route.birthing_service._authority, clock=_database_now,
+            ).activate_beta(EntitlementElectionCommand(
+                credential=founder.credential,
+                living_organism_uuid=organism.organism_id,
+                request_reference=f"request:{label}:beta",
+                idempotency_key=f"idem:{label}:beta",
+                occurred_at=_database_now(),
+                policy_version=policy_version,
+                policy_text_sha256=policy_text_sha256,
+            ))
+        at = _database_now()
+        provisions = (
+            (DefinitionProvision("OFFICE_BASIS", f"library:{label}:constitution#test-only", "v1"),)
+            if kind == BOARD_OFFICE else ()
+        )
         with transaction.atomic():
-            with connection.cursor() as cur:
-                definition_id, role_uuid = _add_role_definition(cur, ids, label, SHAPE_CODES[shape])
-        return definition_id, role_uuid
+            decision = _test_only_definition_decision(
+                actor=founder, evaluated_at=at, label=f"{label}:definition",
+                target=_definition_target(
+                    organism_uuid=organism.organism_id, code=SHAPE_CODES[shape], definition_version=1,
+                    kind=kind, nomination_policy="C", appointing_authority="LO_COORDINATOR_BODY",
+                    nomination_basis=SHAPE_BASIS[shape], provisions=provisions,
+                ),
+            )
+            row = _write_definition_version(
+                database_alias="default", organism=organism, code=SHAPE_CODES[shape], kind=kind,
+                appointing_authority="LO_COORDINATOR_BODY", appointing_body_reference=None,
+                alternative_route_reference=None, nomination_basis=SHAPE_BASIS[shape], nomination_policy="C",
+                nomination_dependency=None, participation_required=False, ex_officio_seat_reference=None,
+                supersedes=None, enterer=founder, authority_decision_reference=decision.decision_reference,
+                occurred_at=at, effective_at=at, received_at=at, provisions=provisions,
+                role_uuid=UUID(u(f"role:{label}:{SHAPE_CODES[shape]}")),
+            )
+        return row.pk, row.role_uuid
 
     def _nomination(self, ids, membership_id, definition_id, label):
         """A PROPOSED nomination by the founder on a non-COORDINATOR definition, written as a governed
@@ -265,14 +328,20 @@ class SROfficesW1Tests(TransactionTestCase):
                     (definition_id, membership_id),
                 )
                 organism_uuid, role_uuid = cur.fetchone()
+                # the production shape (_execute_propose, organism_role_service.py:1160-1176) - C1
                 propose_target = {
                     "action": OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
+                    "circle": None,
                     "event_action": "PROPOSE",
+                    "effective_until": None,
+                    "effective_until_state": "NONE",
                     "living_organism_id": str(organism_uuid),
                     "membership_uuid": str(nominee.membership_uuid),
                     "resulting_state": "PROPOSED",
                     "role_definition_uuid": str(role_uuid),
-                    "schema": "intevia.s015.organism-role-target.v1",
+                    "schema": _TARGET_SCHEMA,
+                    "suspension_tolls_term": _TOLLING_VALUE,
+                    "suspension_tolls_term_source": _TOLLING_SOURCE,
                 }
                 decision = S015Authority(provider=_ExactProvider(), database_alias="default").qualify(
                     _authority_request(
@@ -630,15 +699,16 @@ class SROfficesW1Tests(TransactionTestCase):
     # ---- the census SR moves, as it stands today ----
 
     def test_sr_w1_14_census_pins_today(self):
-        """The figures SR's chunks move, recorded at the pre-widening base: the action enum, the
-        permission matrix, the intake entries, the Identity-FK catalogue, the migration head, and
-        the definition table without SR's columns or its provision table."""
+        """The figures SR's chunks move, as they stand at C1: the action enum and the permission
+        matrix unmoved (35 / 42 until C3), the intake entries at 23 with RECORD_ROLE_DEFINITION, the
+        Identity-FK catalogue at 115 with the definition's enterer, the migration head at 0051, and
+        the definition table with SR's columns and its provision model present."""
         self.assertEqual(len(OrganismAction), ACTION_MEMBERS_TODAY)
         self.assertNotIn("RECORD_ROLE_DEFINITION", OrganismAction.__members__)
         self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), MATRIX_ROWS_TODAY)
         self.assertNotIn("RECORD_ROLE_DEFINITION", QUALIFICATION_PLANE_MATRIX)
         self.assertEqual(len(IntakeEntry), INTAKE_ENTRIES_TODAY)
-        self.assertNotIn("RECORD_ROLE_DEFINITION", IntakeEntry.__members__)
+        self.assertIn("RECORD_ROLE_DEFINITION", IntakeEntry.__members__)
 
         from django.apps import apps
         from tests.test_service_activity_models import IdentityFKPredictionTests
@@ -657,17 +727,17 @@ class SROfficesW1Tests(TransactionTestCase):
                     identity_fks.add((model._meta.model_name, field.name))
         scoped = identity_fks - IdentityFKPredictionTests.EXCLUDED_INTERNAL_FKS
         self.assertEqual(len(scoped), IDENTITY_FKS_TODAY)
-        self.assertNotIn(("organismroledefinition", "enterer"), scoped)
+        self.assertIn(("organismroledefinition", "enterer"), scoped)
 
         definition_columns = {field.name for field in OrganismRoleDefinition._meta.get_fields()}
-        self.assertFalse(
+        self.assertTrue(
             {"kind", "appointing_authority", "nomination_basis", "nomination_policy", "enterer", "supersedes"}
-            & definition_columns,
-            "SR's definition columns are not installed on the pre-widening base",
+            <= definition_columns,
+            "SR's definition columns are installed at C1",
         )
-        self.assertFalse(
+        self.assertTrue(
             any(model._meta.model_name == "organismroledefinitionprovision" for model in apps.get_models()),
-            "SR's provision table is not installed on the pre-widening base",
+            "SR's provision table is installed at C1",
         )
         self.assertEqual(current_applied_core_head(connection)[0][1], CORE_HEAD_TODAY)
 

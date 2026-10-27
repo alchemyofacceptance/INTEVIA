@@ -17,6 +17,7 @@ from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, database_now,
     drop_unset_check,
     empty_fp, found_nonroot, found_root, fresh, refresh, restore_unset_check, seed_authority, seed_identity,
+    sr_definition_guard_suspended,
 )
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 0021 guardians are PostgreSQL triggers")
@@ -318,7 +319,8 @@ class FoundingCompleteness(_S015PositiveBase):
         ids = self.commits(lambda cur: found_root(cur))
         def supersede(cur):
             cur.execute("UPDATE core_organismroledefinition SET active = FALSE WHERE id = %s", (ids["roles"]["COORDINATOR"],))
-            cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 2, TRUE, now(), %s)", (str(uuid.uuid4()), ids["lo"]))
+            with sr_definition_guard_suspended(cur):  # SR C1: pre-SR-shaped fixture row, labelled latitude
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 2, TRUE, now(), %s)", (str(uuid.uuid4()), ids["lo"]))
         self.commits(supersede)
 
 
@@ -326,12 +328,16 @@ class ReservedRoleCodes(_S015PositiveBase):
     def test_pos_control_root_defines_each_reserved_name_and_non_root_defines_custom_names(self):
         r = self.commits(lambda cur: found_root(cur))
         n = self.commits(lambda cur: found_nonroot(cur))
+        # SR C1: these pre-SR-shaped rows examine 0021's reserved-code guard; written under the labelled latitude.
+        def insert_pre_sr(cur, code, lo):
+            with sr_definition_guard_suspended(cur):
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)", (str(uuid.uuid4()), code, lo))
         for code in FIVE_RESERVED:
             with self.subTest(code=code, organism="root"):
-                self.commits(lambda cur: cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)", (str(uuid.uuid4()), code, r["lo"])))
+                self.commits(lambda cur: insert_pre_sr(cur, code, r["lo"]))
         for code in ["COORDINATOR", "TREASURER", "LEAD_STEWARD", "COORDINATOR_FINANCE"]:
             with self.subTest(code=code, organism="non-root"):
-                self.commits(lambda cur: cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)", (str(uuid.uuid4()), code, n["lo"])))
+                self.commits(lambda cur: insert_pre_sr(cur, code, n["lo"]))
 
 
 class PlatformRoot(_S015PositiveBase):
@@ -346,7 +352,10 @@ class RoleDefinitionImmutability(_S015PositiveBase):
         ids = self.commits(lambda cur: found_root(cur))
         # documented: 0021 does not refuse UPDATE of `active` (FND-2 is PKT-B's)
         self.commits(lambda cur: cur.execute("UPDATE core_organismroledefinition SET active = false WHERE id = %s", (ids["roles"]["COORDINATOR"],)))
-        self.commits(lambda cur: cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 2, true, now(), %s)", (str(uuid.uuid4()), ids["lo"])))
+        def insert_pre_sr(cur):  # SR C1: pre-SR-shaped fixture row, labelled latitude
+            with sr_definition_guard_suspended(cur):
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 2, true, now(), %s)", (str(uuid.uuid4()), ids["lo"]))
+        self.commits(insert_pre_sr)
 
 
 class LockOrder(_S015PositiveBase):

@@ -20,7 +20,7 @@ from unittest import skipUnless
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 
-from tests.s015_0021_support import create_test_identity
+from tests.s015_0021_support import create_test_identity, sr_definition_guard_suspended
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 commitment preimages are PostgreSQL functions")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -274,8 +274,9 @@ class LawfulRecordWithParts(TransactionTestCase):
                         "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, T0, T0, self._empty_fp(cur, "core_organismmembership", m_uuid), actor, lo))
             membership = cur.fetchone()[0]
             self._event(cur, "core_organismmembershiptransition", "membership_id", membership, 1, "JOIN", None, "ACTIVE", actor, basis, tag, extra={"reason_class": "FOUNDING"})
-            cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 1, true, now(), %s) RETURNING id", (str(uuid.uuid4()), lo))
-            role = cur.fetchone()[0]
+            with sr_definition_guard_suspended(cur):  # SR C1: pre-SR-shaped fixture row, labelled latitude
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 1, true, now(), %s) RETURNING id", (str(uuid.uuid4()), lo))
+                role = cur.fetchone()[0]
             a_uuid = str(uuid.uuid4())
             cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
                         "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, T0, T0, self._empty_fp(cur, "core_contextualroleassignment", a_uuid), membership, role))

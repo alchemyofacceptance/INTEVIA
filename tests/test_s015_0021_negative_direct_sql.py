@@ -15,7 +15,7 @@ from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
     database_now,
     drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_organism, found_root, fresh, predecessor_l1,
-    refresh, restore_unset_check, seed_authority, seed_identity, u,
+    refresh, restore_unset_check, seed_authority, seed_identity, sr_definition_guard_suspended, u,
 )
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 0021 guardians are PostgreSQL triggers")
@@ -405,13 +405,15 @@ class Structure(_S015NegativeBase):
         return cur.fetchone()[0]
 
     def _non_coordinator_role(self, cur, organism_id):
-        cur.execute(
-            "INSERT INTO core_organismroledefinition "
-            "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
-            "VALUES (%s, %s, 'LIVING_ORGANISM', 1, TRUE, now(), %s) RETURNING id",
-            (str(uuid.uuid4()), f"STRUCTURAL_TEST_{fresh()}", organism_id),
-        )
-        return cur.fetchone()[0]
+        with sr_definition_guard_suspended(cur):  # SR C1: pre-SR-shaped fixture row, labelled latitude
+            cur.execute(
+                "INSERT INTO core_organismroledefinition "
+                "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                "VALUES (%s, %s, 'LIVING_ORGANISM', 1, TRUE, now(), %s) RETURNING id",
+                (str(uuid.uuid4()), f"STRUCTURAL_TEST_{fresh()}", organism_id),
+            )
+            role_id = cur.fetchone()[0]
+        return role_id
 
     def test_neg_membership_and_role_in_different_organisms(self):
         a, b = self._two()
@@ -629,10 +631,15 @@ class ReservedRoleCodes(_S015NegativeBase):
 
     def test_neg_each_reserved_name_on_non_root(self):
         b = self.commits(lambda cur: found_nonroot(cur))
+        # SR C1: the pre-SR-shaped row is written under the labelled latitude so that 0021's deferred
+        # reserved-code guard, the one under examination, answers rather than sr_00's insert guard.
+        def insert_pre_sr(cur, code):
+            with sr_definition_guard_suspended(cur):
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)",
+                            (str(uuid.uuid4()), code, b["lo"]))
         for code in FIVE_RESERVED:
             with self.subTest(code=code):
-                self.refuses(lambda cur: cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)",
-                                                     (str(uuid.uuid4()), code, b["lo"])), contains="may be defined only by the platform root")
+                self.refuses(lambda cur: insert_pre_sr(cur, code), contains="may be defined only by the platform root")
 
     def test_neg_non_root_founding_with_founder_steward_defined(self):
         from s015_0021_support import found_organism

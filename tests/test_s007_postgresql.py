@@ -280,6 +280,7 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             ("core_organismentitlementevent", "deciding_identity_id"),
             ("core_organismentitlementevent", "enterer_identity_id"),
             ("core_commandintake", "actor_id"),
+            ("core_organismroledefinition", "enterer_id"),  # SR C1 (0051)
         }
         with connection.cursor() as cursor:
             cursor.execute(
@@ -305,7 +306,7 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
             )
             observed = set(cursor.fetchall())
         self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 142)
+        self.assertEqual(len(observed), 143)
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")

@@ -65,6 +65,9 @@ from django.db import connection
 #         0048: 470 + 1 = 471 - deferred first-GRANTED-event constraint trigger [D]
 #         0049: 471 + 4 = 475 - intake insert-time, update, delete, and truncate triggers [D]
 #         0050: 475 + 0 = 475 - two cache functions replaced in place (CREATE OR REPLACE); no trigger created or dropped [D]
+#         0051: 475 + 8 = 483 - SR definition guards sr_00/sr_10/sr_20/sr_30 (insert, update, deferred superseded
+#               and citations) on core_organismroledefinition; s015_sr_provision_* record-time insert, update,
+#               delete and truncate on core_organismroledefinitionprovision [D]
 # REQ-G1  the fifteen required truncate guardians of the standard backend are present and enabled [D]
 # REQ-C1  every constraint named s015_* is validated
 #         ground: no migration 0001-0025 creates a constraint NOT VALID [D]
@@ -93,6 +96,7 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0048_se_entitlement_granted_event_guard": {"core_governedrule": 3},
     "0049_h100_command_intake": {"core_governedrule": 3},
     "0050_clk_mono_1_cache_coordinate_detail": {"core_governedrule": 3},
+    "0051_sr_role_definitions": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -121,7 +125,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0047_sek1_platform_rule_statement_start": 470,
                           "0048_se_entitlement_granted_event_guard": 471,
                           "0049_h100_command_intake": 475,
-                          "0050_clk_mono_1_cache_coordinate_detail": 475}
+                          "0050_clk_mono_1_cache_coordinate_detail": 475,
+                          "0051_sr_role_definitions": 483}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 OBSERVATION_KEYS = ("sequence_discipline",)
 

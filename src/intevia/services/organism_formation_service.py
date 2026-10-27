@@ -49,11 +49,11 @@ from core.models import (
     LOGovernanceConfigurationVersion,
     OrganismCommandReceipt,
     OrganismMembership,
-    OrganismRoleDefinition,
     PlatformTermsAcceptance,
     PlatformTermsVersion,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.organism_role_definition_service import _write_definition_version
 from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
     _effective_version,
@@ -849,7 +849,8 @@ class OrganismFormationService:
         - the founder's ACTIVE membership; the LO's founding basis and founder
           are then set; then the membership's OPEN (to PROPOSED) and ACTIVATE
           (to ACTIVE) transitions, reason FOUNDING;
-        - the active LO-scope COORDINATOR role (version 1), the founder's
+        - the active LO-scope COORDINATOR role (version 1) through the SR
+          definition writer, citing this founding decision, the founder's
           ACTIVE assignment to it with no Circle, and its ASSIGN event;
         - the GOVERNANCE coverage requirement (COORDINATOR, at least one
           occupant, from effective_at), its case, and a SATISFIED assessment;
@@ -1065,13 +1066,32 @@ class OrganismFormationService:
             **transition_common,
         )
 
-        role = OrganismRoleDefinition.objects.using(self._alias).create(
-            role_uuid=uuid4(),
-            living_organism=organism,
+        # SR (0051): version 1 of the LO's COORDINATOR definition through the one definition
+        # writer, attributed to the founding decision, the founder as enterer and the founding
+        # act's coordinates (v0.7 section C; the Advisor's A-3). kind COORDINATOR; the
+        # appointing authority is the LO Coordinator body; the nomination basis and policy
+        # recorded here are not read for COORDINATOR, whose nomination route stays 0038's
+        # setting; no provision rows. The insert guard's founding branch checks the decision.
+        role = _write_definition_version(
+            database_alias=self._alias,
+            organism=organism,
             code="COORDINATOR",
-            scope=OrganismRoleDefinition.Scope.LIVING_ORGANISM,
-            definition_version=1,
-            active=True,
+            kind="COORDINATOR",
+            appointing_authority="LO_COORDINATOR_BODY",
+            appointing_body_reference=None,
+            alternative_route_reference=None,
+            nomination_basis="SILENT",
+            nomination_policy="C",
+            nomination_dependency=None,
+            participation_required=False,
+            ex_officio_seat_reference=None,
+            supersedes=None,
+            enterer=actor,
+            authority_decision_reference=decision.authority_decision_reference,
+            occurred_at=effective_at,
+            effective_at=effective_at,
+            received_at=received_at,
+            provisions=(),
         )
         assignment_uuid = uuid4()
         assignment = ContextualRoleAssignment.objects.using(self._alias).create(

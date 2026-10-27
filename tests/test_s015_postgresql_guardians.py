@@ -39,6 +39,7 @@ from s015_0021_support import (
     found_nonroot,
     fresh,
     refresh,
+    sr_definition_guard_suspended,
 )
 from tests.s015_0021_support import create_test_identity
 
@@ -217,12 +218,13 @@ class S015PostgreSQLGuardianTests(TransactionTestCase):
         with transaction.atomic():
             with connection.cursor() as cur:
                 ids = found_nonroot(cur, label, codes=["GUARDIAN_FIXTURE"])
-                cur.execute(
-                    "INSERT INTO core_organismroledefinition "
-                    "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
-                    "VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 1, TRUE, now(), %s)",
-                    (str(uuid4()), ids["lo"]),
-                )
+                with sr_definition_guard_suspended(cur):  # SR C1: pre-SR-shaped fixture row, labelled latitude
+                    cur.execute(
+                        "INSERT INTO core_organismroledefinition "
+                        "(role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                        "VALUES (%s, 'COORDINATOR', 'LIVING_ORGANISM', 1, TRUE, now(), %s)",
+                        (str(uuid4()), ids["lo"]),
+                    )
                 # Founding requires the Coordinator definition; these anchor witnesses do not require its office event.
                 ids = add_remaining_aggregates(cur, ids, f"{label}-aggregates")
                 role_uuid = str(uuid4())

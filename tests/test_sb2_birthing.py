@@ -1796,6 +1796,7 @@ class BirthingAfterWitnessTests(TransactionTestCase):
                 ("core", "0048_se_entitlement_granted_event_guard"),
                 ("core", "0049_h100_command_intake"),
                 ("core", "0050_clk_mono_1_cache_coordinate_detail"),
+                ("core", "0051_sr_role_definitions"),
             }
         ]
         lower_targets.append(("core", "0043_p1_governed_registration"))
@@ -1835,58 +1836,19 @@ class BirthingAfterWitnessTests(TransactionTestCase):
         MigrationExecutor(connection).migrate(list(original_targets))
         # H100 chunk 4 tests v1.4 (R-1): the snapshot needs only an organism. The reverse
         # passes 0049 only while core_commandintake has no rows (0049's reverse refuses while
-        # intake rows exist, and the table refuses DELETE and TRUNCATE). Since CLK3-1 public
-        # founding is an admitted intake entry that writes an intake row, so the fixture founds
-        # through the executor with a test-only bound request (as W-SBG-M5 does). Since CLK3-2
-        # the phase advance is admitted too and goes through its executor the same way. The
-        # route has no gateway effect, so no intake row is written and the reverse reaches the
-        # 0044 guard.
-        from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
-        from src.intevia.services.organism_formation_service import (
-            OrganismFormationService,
-            OrganismPhaseAdvanceService,
-        )
+        # intake rows exist, and the table refuses DELETE and TRUNCATE), and since SR chunk C1
+        # it passes 0051 only while no definition row carries SR attribution (0051's reverse
+        # refuses a populated state - the Advisor's A-9 - and the rows are immutable). Today's
+        # founding executor writes the COORDINATOR definition through the SR writer with its
+        # attribution, so founding through the executor would stop the reverse at 0051. The
+        # fixture therefore founds with the historical-schema fixture (found_nonroot: the rows
+        # founding wrote before SR, the definition pre-SR-shaped under the labelled latitude),
+        # writes no intake row, and the reverse reaches the 0044 guard.
+        from tests.s015_0021_support import found_nonroot, fresh
 
-        def found_without_intake(service, command):
-            actor = _resolve_actor(service._alias, command.credential)
-            with override_settings(INTEVIA_TEST_CONTEXT=True):
-                bound = BoundRequest.for_test(
-                    IntakeEntry.FOUND_LIVING_ORGANISM,
-                    command,
-                    received_at=database_now(),
-                    actor=actor,
-                )
-                return service._execute_found_living_organism(command, bound)
-
-        def advance_without_intake(service, command):
-            actor = _resolve_actor(service._alias, command.credential)
-            with override_settings(INTEVIA_TEST_CONTEXT=True):
-                bound = BoundRequest.for_test(
-                    IntakeEntry.ADVANCE_PHASE,
-                    command,
-                    received_at=database_now(),
-                    actor=actor,
-                )
-                return service._execute_advance_phase(command, bound)
-
-        with (
-            patch.object(
-                OrganismFormationService,
-                "found_living_organism",
-                new=found_without_intake,
-            ),
-            patch.object(
-                OrganismPhaseAdvanceService,
-                "advance_phase",
-                new=advance_without_intake,
-            ),
-        ):
-            route = prepare_route(
-                governance_enabled=None,
-                include_settings=False,
-                include_question=False,
-                to_birthing_phase=False,
-            )
+        with transaction.atomic(), connection.cursor() as cursor:
+            ids = found_nonroot(cursor, f"sb2-reverse-guard:{fresh()}")
+        route = SimpleNamespace(organism=LivingOrganism.objects.get(pk=ids["lo"]))
         self.assertFalse(CommandIntake.objects.exists())
         snapshot_at = database_now()
         LOBirthingSnapshot.objects.create(

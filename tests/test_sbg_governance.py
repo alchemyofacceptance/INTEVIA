@@ -31,6 +31,7 @@ from core.models import (
     Identity,
     LOBirthingSnapshot,
     LOGovernanceConfigurationVersion,
+    LivingOrganism,
     LivingOrganismEvent,
     OrganismMembership,
     OrganismMembershipTransition,
@@ -82,6 +83,7 @@ from tests.s015_0021_support import (
     current_applied_core_head,
     current_core_leaf,
     empty_fp,
+    found_nonroot,
     fresh,
     migrate_to_target_with_restore,
     refresh,
@@ -1247,59 +1249,20 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
 
     def test_w_sbg_m5_reverse_refuses_when_living_organism_rule_exists(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
-        from src.intevia.services.command_intake import _resolve_actor
-        from src.intevia.services.organism_formation_service import (
-            OrganismFormationService,
-            OrganismPhaseAdvanceService,
-        )
-        from tests.sb2_route_support import prepare_route
-
         # At 0045 the durable intake table (0049) does not exist, so the public
-        # founding entry cannot admit a request. The fixture founds through the
-        # executor with a test-only bound request (as W-CLK3-13 does), writing the
-        # rows public founding wrote at 0045 before CLK3-1. Since CLK3-2 the phase
-        # advance is admitted too and goes through its executor the same way. No
-        # intake row is written.
-        def found_without_intake(service, command):
-            actor = _resolve_actor(service._alias, command.credential)
-            with override_settings(INTEVIA_TEST_CONTEXT=True):
-                bound = BoundRequest.for_test(
-                    IntakeEntry.FOUND_LIVING_ORGANISM,
-                    command,
-                    received_at=database_now(),
-                    actor=actor,
-                )
-                return service._execute_found_living_organism(command, bound)
-
-        def advance_without_intake(service, command):
-            actor = _resolve_actor(service._alias, command.credential)
-            with override_settings(INTEVIA_TEST_CONTEXT=True):
-                bound = BoundRequest.for_test(
-                    IntakeEntry.ADVANCE_PHASE,
-                    command,
-                    received_at=database_now(),
-                    actor=actor,
-                )
-                return service._execute_advance_phase(command, bound)
-
-        with (
-            patch.object(
-                OrganismFormationService,
-                "found_living_organism",
-                new=found_without_intake,
-            ),
-            patch.object(
-                OrganismPhaseAdvanceService,
-                "advance_phase",
-                new=advance_without_intake,
-            ),
-        ):
-            route = prepare_route(
-                governance_enabled=None,
-                include_settings=False,
-                include_question=False,
-                to_birthing_phase=False,
-            )
+        # founding entry cannot admit a request; and since SR chunk C1 (migration
+        # 0051) today's founding executor writes the definition version through the
+        # SR writer, whose columns do not exist at 0045 either. The LO is therefore
+        # founded with the historical-schema fixture (found_nonroot: the rows
+        # founding wrote at 0045, with the founder and the founding basis set), and
+        # the governance arrangement is recorded on it as before. No intake row is
+        # written.
+        with transaction.atomic(), connection.cursor() as cursor:
+            ids = found_nonroot(cursor, "sbg-m5-at-0045")
+        route = SimpleNamespace(
+            organism=LivingOrganism.objects.get(pk=ids["lo"]),
+            founder=Identity.objects.get(pk=ids["identity"]),
+        )
         rule_uuid = self._record_governance_arrangement(route)
         with self.assertRaisesRegex(
             RuntimeError,

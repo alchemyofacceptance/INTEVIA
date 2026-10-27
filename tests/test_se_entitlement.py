@@ -85,7 +85,10 @@ NEW_TABLES = {
     "core_organismentitlementevent",
     "core_organismentitlementpolicytext",
 }
-LATER_TABLES = {"core_commandintake"}  # created after 0046 (by 0049)
+LATER_TABLES = {
+    "core_commandintake",  # created after 0046 (by 0049)
+    "core_organismroledefinitionprovision",  # created after 0046 (by 0051, SR C1)
+}
 
 
 class SEEntitlementModelContractTests(SimpleTestCase):
@@ -263,7 +266,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
 
     def _assert_received_head_state(self):
         self._assert_se_schema_state(
-            ("core", "0050_clk_mono_1_cache_coordinate_detail")
+            ("core", "0051_sr_role_definitions")
         )
 
     def _assert_se_schema_state(self, expected_head):
@@ -309,6 +312,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             "0048_se_entitlement_granted_event_guard",
             "0049_h100_command_intake",
             "0050_clk_mono_1_cache_coordinate_detail",
+            "0051_sr_role_definitions",
         }:
             sek1_migration = importlib.import_module(
                 "core.migrations.0047_sek1_platform_rule_statement_start"
@@ -320,6 +324,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             "0048_se_entitlement_granted_event_guard",
             "0049_h100_command_intake",
             "0050_clk_mono_1_cache_coordinate_detail",
+            "0051_sr_role_definitions",
         }:
             guard_migration = importlib.import_module(
                 "core.migrations.0048_se_entitlement_granted_event_guard"

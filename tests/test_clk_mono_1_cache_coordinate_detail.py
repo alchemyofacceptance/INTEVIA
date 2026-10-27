@@ -45,6 +45,8 @@ import verification.isolation.state as isolation_state
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "0050 replaces PostgreSQL functions")
 MIGRATION = ("core", "0050_clk_mono_1_cache_coordinate_detail")
 PREVIOUS = ("core", "0049_h100_command_intake")
+# SR C1: the received head is 0051; 0050's bodies, bindings and trigger counts are checked as before.
+RECEIVED_HEAD = ("core", "0051_sr_role_definitions")
 LABEL = "S015 cache coordinate diagnostic: anchor="
 TRIGGER_MESSAGE = "S015 cache coordinates must satisfy state_at <= known_at <= now"
 REFRESH_MESSAGE = "S015 refresh: coordinates must satisfy state_at <= known_at <= now"
@@ -158,8 +160,8 @@ class ForwardInstallation(TransactionTestCase):
             self.assertTrue(prosecdef, proname)
             self.assertEqual(proconfig, [SEARCH_PATH], proname)
             self.assertEqual(lanname, "plpgsql", proname)
-        self.assertEqual(current_applied_core_head(connection), [MIGRATION])
-        self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]])
+        self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])
+        self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[RECEIVED_HEAD[1]])
 
 
 @POSTGRESQL_ONLY
@@ -330,6 +332,8 @@ class ReverseThenForward(TransactionTestCase):
                 self.assertEqual(current_applied_core_head(connection), [MIGRATION])
                 _assert_0050_installed(self, bindings_before, security_before)
                 self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]])
+                MigrationExecutor(connection).migrate([RECEIVED_HEAD])  # SR C1: back to the received head
+                self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])
                 raise _Rollback()
         _assert_0050_installed(self, bindings_before, security_before)
-        self.assertEqual(current_applied_core_head(connection), [MIGRATION])
+        self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])

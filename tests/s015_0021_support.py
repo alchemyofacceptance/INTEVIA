@@ -6,6 +6,7 @@ here by the published s015p1 rule; the predecessor's l1_commitment is read from 
 chain properties (it establishes nothing about L1 correctness, which test_s015_0024_commitment_preimages checks
 independently); l1_commitment itself is never supplied - the database assigns it.
 """
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -535,6 +536,71 @@ def restore_unset_check(cur):
     cur.execute("ALTER TABLE public.core_livingorganism ADD CONSTRAINT s015_platform_root_unset_ck CHECK (NOT platform_root)")
 
 
+SR_DEFINITION_INSERT_GUARD = "sr_00_definition_insert"
+
+
+def _deferrable_constraints(cur, table):
+    """The deferrable constraints on a table and those referencing it (foreign keys both ways and
+    constraint triggers), as a SET CONSTRAINTS list: every deferred event that can be pending on
+    the table."""
+    cur.execute(
+        "SELECT quote_ident(conname) FROM pg_catalog.pg_constraint "
+        "WHERE (conrelid = %s::regclass OR confrelid = %s::regclass) AND condeferrable ORDER BY conname",
+        (f"public.{table}", f"public.{table}"),
+    )
+    return ", ".join(row[0] for row in cur.fetchall())
+
+
+def _settle_deferred(cur, constraints):
+    """Fire the pending deferred events of the named constraints now, then defer them again."""
+    cur.execute(f"SET CONSTRAINTS {constraints} IMMEDIATE")
+    cur.execute(f"SET CONSTRAINTS {constraints} DEFERRED")
+
+
+@contextlib.contextmanager
+def sr_definition_guard_suspended(cur):
+    """Construct historical pre-SR fixture rows, never an act under examination.
+
+    This is a test-only compatibility seam, not a general-purpose guard switch.
+    The caller must already own an atomic fixture transaction, with the relevant
+    constraints in their normal deferred mode. The successful postcondition is
+    those constraints DEFERRED and sr_00 enabled. Do not call inside a partially
+    built SR act or after deliberately changing constraint timing. Commit fixture
+    setup before starting concurrent contenders: ENABLE does not release the
+    SHARE ROW EXCLUSIVE table lock, which lasts until the outer transaction ends.
+
+    A savepoint encloses both ALTERs and the fixture writes. Any exception,
+    including a Python exception in an otherwise healthy transaction, rolls that
+    savepoint back before control returns to the caller. We never try to ENABLE
+    through an aborted SQL transaction. A pre-disabled trigger or nested use is
+    refused. Below 0051 there is no guard to suspend.
+    """
+    database = cur.db
+    if not database.in_atomic_block:
+        raise RuntimeError("historical SR fixture latitude requires an outer atomic transaction")
+    with transaction.atomic(using=database.alias):
+        cur.execute(
+            "SELECT t.tgenabled FROM pg_catalog.pg_trigger t "
+            "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'core_organismroledefinition' "
+            "AND t.tgname = %s AND NOT t.tgisinternal",
+            (SR_DEFINITION_INSERT_GUARD,),
+        )
+        row = cur.fetchone()
+        installed = row is not None
+        if installed:
+            if row[0] != "O":
+                raise RuntimeError("historical SR fixture latitude requires sr_00 enabled; nested use is refused")
+            deferrable = _deferrable_constraints(cur, "core_organismroledefinition")
+            _settle_deferred(cur, deferrable)
+            cur.execute(f"ALTER TABLE public.core_organismroledefinition DISABLE TRIGGER {SR_DEFINITION_INSERT_GUARD}")
+        yield
+        if installed:
+            _settle_deferred(cur, deferrable)
+            cur.execute(f"ALTER TABLE public.core_organismroledefinition ENABLE TRIGGER {SR_DEFINITION_INSERT_GUARD}")
+
+
 def found_organism(
     cur,
     tag,
@@ -645,13 +711,16 @@ def found_organism(
         )[0]
     inventory = active_versions or {c: [(1, True)] for c in (codes if codes is not None else (SIX_CODES if root else ["COORDINATOR"]))}
     ids["roles"] = {}
-    for code, versions in inventory.items():
-        if code in skip:
-            continue
-        for version, active in versions:
-            cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
-                        "VALUES (%s, %s, 'LIVING_ORGANISM', %s, %s, now(), %s) RETURNING id", (u(f"role:{tag}:{code}:{version}"), code, version, active, lo))
-            ids["roles"].setdefault(code, cur.fetchone()[0])
+    # SR C1: the fixture's pre-SR-shaped definition rows (the root's reserved codes and the
+    # plain COORDINATOR) under the labelled latitude; the guard is restored before anything else.
+    with sr_definition_guard_suspended(cur):
+        for code, versions in inventory.items():
+            if code in skip:
+                continue
+            for version, active in versions:
+                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
+                            "VALUES (%s, %s, 'LIVING_ORGANISM', %s, %s, now(), %s) RETURNING id", (u(f"role:{tag}:{code}:{version}"), code, version, active, lo))
+                ids["roles"].setdefault(code, cur.fetchone()[0])
     ids["assignments"] = {}
     if assign_founder is None:
         assign_founder = root
