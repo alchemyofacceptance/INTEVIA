@@ -179,13 +179,20 @@ class S015PostgreSQLFlushLifecycleTests(TransactionTestCase):
 class S015SequenceDisciplineTests(TransactionTestCase):
     reset_sequences = True
 
+    def setUp(self):
+        super().setUp()
+        # Brittle-test repair (27 Oct 2026): "clean" means the rows the test started with (the migrations' seed
+        # rows), counted at the start of the same test, not a frozen seed total that any later seed would break.
+        self._seed_rule_count = GovernedRule.objects.count()
+        self._seed_role_count = Role.objects.count()
+
     def _run_inner_test(self, test_case):
         result = _CapturingTestResult()
         unittest.TestSuite([test_case]).run(result)
         return result
 
     def _assert_clean_rule_counter(self):
-        self.assertEqual(GovernedRule.objects.count(), 3)
+        self.assertEqual(GovernedRule.objects.count(), self._seed_rule_count)
         highest_rule_id = GovernedRule.objects.order_by("-id").values_list(
             "id", flat=True
         ).first()
@@ -216,7 +223,7 @@ class S015SequenceDisciplineTests(TransactionTestCase):
     def test_w_h64_1_by_name_reset_positions_populated_and_empty_tables(self):
         group_sequence_start = _read_sequence_start("auth_group_id_seq")
         TransactionTestCase._reset_sequences("default")
-        self.assertEqual(GovernedRule.objects.count(), 3)
+        self.assertEqual(GovernedRule.objects.count(), self._seed_rule_count)
         highest_rule_id = GovernedRule.objects.order_by("-id").values_list(
             "id", flat=True
         ).first()
@@ -390,7 +397,7 @@ class S015SequenceDisciplineTests(TransactionTestCase):
         self.assertNotIn("post-check passed", message)
         self.assertIn(message, result.errors[0][1])
         self._assert_clean_rule_counter()
-        self.assertEqual(Role.objects.count(), 3)
+        self.assertEqual(Role.objects.count(), self._seed_role_count)
         highest_role_id = Role.objects.order_by("-id").values_list(
             "id", flat=True
         ).first()

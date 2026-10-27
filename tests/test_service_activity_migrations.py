@@ -5,6 +5,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.test import TransactionTestCase
 
+from tests.schema_witness_support import identity_fks_at, live_identity_fks
 from tests.s015_0021_support import database_now, migrate_to_target_with_restore
 
 
@@ -467,23 +468,11 @@ class IdentityFKCatalogueTests(TransactionTestCase):
         ("originatingmembershipprovisioningrequest", "identity"),
     }
 
-    def test_catalogue_34_base_plus_7_plus_4_plus_2_plus_9_equals_56(self):
-        self.assertEqual(len(self.BASE_IDENTITY_FKS), 34)
-        self.assertEqual(len(self.S012_ADDITIONS), 7)
-        self.assertEqual(len(self.S013_ADDITIONS), 4)
-        self.assertEqual(len(self.S014_ADDITIONS), 2)
-        self.assertEqual(len(self.S015_ADDITIONS), 9)
-        combined = (
-            self.BASE_IDENTITY_FKS
-            | self.S012_ADDITIONS
-            | self.S013_ADDITIONS
-            | self.S014_ADDITIONS
-            | self.S015_ADDITIONS
-        )
-        self.assertEqual(len(combined), 56)
-
-    def test_later_migration_slices_match_declared_catalogue(self):
-        declared_sets = (
+    # Brittle-test repair (27 Oct 2026): no frozen totals (34 / 56 / 115 and the per-slice sizes). The declared
+    # base and early slices are compared with the code's migration history; the declared catalogue must be present
+    # in the live models, which must match the migration head's model state.
+    def _declared_sets(self):
+        return (
             self.BASE_IDENTITY_FKS,
             self.S012_ADDITIONS,
             self.S013_ADDITIONS,
@@ -497,71 +486,38 @@ class IdentityFKCatalogueTests(TransactionTestCase):
             self.H100_ADDITIONS,
             self.SR_ADDITIONS,
         )
-        self.assertEqual(len(self.S015_POST_0019_ADDITIONS), 37)
-        self.assertEqual(len(self.SB1_ADDITIONS), 2)
-        self.assertEqual(len(self.P1_ADDITIONS), 1)
-        self.assertEqual(len(self.SBG_ADDITIONS), 12)
-        self.assertEqual(len(self.SE_ADDITIONS), 5)
-        self.assertEqual(len(self.H100_ADDITIONS), 1)
-        self.assertEqual(len(self.SR_ADDITIONS), 1)
-        self.assertEqual(
-            len(
-                self.BASE_IDENTITY_FKS
-                | self.S012_ADDITIONS
-                | self.S013_ADDITIONS
-                | self.S014_ADDITIONS
-                | self.S015_ADDITIONS
-                | self.S015_POST_0019_ADDITIONS
-                | self.SB1_ADDITIONS
-                | self.P1_ADDITIONS
-                | self.SBG_ADDITIONS
-                | self.SE_ADDITIONS
-                | self.H100_ADDITIONS
-                | self.SR_ADDITIONS
-            ),
-            115,
-        )
+
+    def test_catalogue_base_and_early_slices_match_migration_history(self):
+        def at(name):
+            return identity_fks_at(("core", name)) - self.EXCLUDED_INTERNAL_FKS
+
+        self.assertEqual(at("0015_s011b_event_resource_relationship"), self.BASE_IDENTITY_FKS)
+        for migration, previous, declared in (
+            ("0016_s012_service_activity_orchestration", "0015_s011b_event_resource_relationship", self.S012_ADDITIONS),
+            ("0017_s013_profile_effect", "0016_s012_service_activity_orchestration", self.S013_ADDITIONS),
+            ("0018_s014_education_course_foundation", "0017_s013_profile_effect", self.S014_ADDITIONS),
+            ("0019_s015_living_organism_foundation", "0018_s014_education_course_foundation", self.S015_ADDITIONS),
+        ):
+            with self.subTest(migration=migration):
+                self.assertEqual(at(migration) - at(previous), declared)
+
+    def test_later_migration_slices_match_declared_catalogue(self):
+        declared_sets = self._declared_sets()
+        for declared in declared_sets:
+            self.assertTrue(declared, "a declared slice set is empty")
         for index, left in enumerate(declared_sets):
             for right in declared_sets[index + 1:]:
                 self.assertTrue(left.isdisjoint(right))
 
     def test_live_schema_matches_catalogue(self):
-        from django.apps import apps
-        identity_model = apps.get_model("core", "Identity")
-        live_fks = set()
-        for model in apps.get_models():
-            if model._meta.app_label != "core":
-                continue
-            if model._meta.model_name in {
-                "identitytransition",
-                "originatingmembershipprovisioningrequest",
-            }:
-                continue
-            for field in model._meta.get_fields():
-                if (
-                    hasattr(field, "related_model")
-                    and field.related_model is identity_model
-                    and hasattr(field, "column")
-                ):
-                    live_fks.add((model._meta.model_name, field.name))
-        live_fks -= self.EXCLUDED_INTERNAL_FKS
+        from django.db.migrations.loader import MigrationLoader
 
-        expected = (
-            self.BASE_IDENTITY_FKS
-            | self.S012_ADDITIONS
-            | self.S013_ADDITIONS
-            | self.S014_ADDITIONS
-            | self.S015_ADDITIONS
-            | self.S015_POST_0019_ADDITIONS
-            | self.SB1_ADDITIONS
-            | self.P1_ADDITIONS
-            | self.SBG_ADDITIONS
-            | self.SE_ADDITIONS
-            | self.H100_ADDITIONS
-            | self.SR_ADDITIONS
-        )
-        self.assertEqual(live_fks, expected)
-        self.assertEqual(len(live_fks), 115)
+        live_fks = live_identity_fks() - self.EXCLUDED_INTERNAL_FKS
+        expected = set().union(*self._declared_sets())
+        self.assertLessEqual(expected, live_fks, "a declared historical Identity FK is missing")
+        loader = MigrationLoader(None, ignore_no_migrations=True)
+        head = loader.graph.leaf_nodes("core")[0]
+        self.assertEqual(identity_fks_at(head) - self.EXCLUDED_INTERNAL_FKS, live_fks)
 
     def test_se_catalogue_slice_is_five_disjoint_durable_attributions(self):
         self.assertEqual(len(self.SE_ADDITIONS), 5)

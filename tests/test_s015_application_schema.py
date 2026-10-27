@@ -14,11 +14,11 @@ from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
 from tests.s015_0021_support import (
+    ANCHOR_FK,
     T0,
     add_remaining_aggregates,
     append_event,
     append_second_event,
-    current_applied_core_head,
     current_core_leaf,
     empty_fp,
     found_nonroot,
@@ -31,7 +31,7 @@ from tests.s015_0021_support import (
 )
 from tests.test_s015_0024_commitment_preimages import canonical_value, digest, l1_preimage, parts_preimage
 from tests.s015_0034_support import emit_guard_catalogue
-from verification.isolation.state import REQUIRED_TRIGGER_COUNT
+from tests.schema_witness_support import assert_trigger_bound, assert_trigger_delta, trigger_names
 
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S3 guardians require PostgreSQL")
@@ -55,22 +55,17 @@ class ApplicationLineageSchema(TransactionTestCase):
 
     def test_application_chain_map_triggers_and_lock_route(self):
         with connection.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                           "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                           "WHERE n.nspname = current_schema() AND NOT t.tgisinternal")
-            head = current_applied_core_head(connection)[0][1]
-            self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head])
+            # Brittle-test repair (27 Oct 2026): no schema-wide trigger total and no anchor-map size; the
+            # application-lineage anchor and its named, enabled guards are what this witness is about.
             cursor.execute("SELECT anchor_token, event_table, head_col, fk_col, has_cache, empty_chain_permitted "
                            "FROM public.s015_anchor_map() ORDER BY anchor_token")
             anchors = cursor.fetchall()
-            self.assertEqual(len(anchors), 13)
             self.assertIn(("core_applicationlineage", "core_applicationlineageevent", "head_event_id",
                            "application_lineage_id", False, False), anchors)
             cursor.execute("SELECT tgname, p.proname FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid "
                            "WHERE t.tgrelid = 'public.core_applicationlineageevent'::regclass "
                            "AND NOT t.tgisinternal ORDER BY tgname")
             triggers = dict(cursor.fetchall())
-            self.assertEqual(len(triggers), 15)
             for name, function in (
                 ("s015_0021_alineageevent_organism_lock", "s015_acquire_owning_organism_lock"),
                 ("s015_0021_alineageevent_record_time", "s015_assign_event_record_time"),
@@ -80,6 +75,7 @@ class ApplicationLineageSchema(TransactionTestCase):
                 ("s3fu_20_permission", "s3fu_guard_lo_admission_permission"),
             ):
                 self.assertEqual(triggers[name], function)
+                assert_trigger_bound(self, "core_applicationlineageevent", name, function)
             self.assertLess("s015_0021_alineageevent_record_time", "s3fu_00_capacity")
             self.assertLess("s015_0021_alineageevent_record_time", "s3fu_20_permission")
             for function in ("s3fu_guard_lo_capacity", "s3fu_guard_lo_admission_permission"):
@@ -607,6 +603,7 @@ class ApplicationLineageSchema(TransactionTestCase):
 
     def test_0042_reverse_refuses_rows_and_restores_previous_bodies(self):
         head = current_core_leaf(connection)
+        triggers_at_head = trigger_names()
         migration = importlib.import_module("core.migrations.0042_sb1_founding_terms_phases")
 
         class Rollback(Exception):
@@ -646,8 +643,27 @@ class ApplicationLineageSchema(TransactionTestCase):
                 raise Rollback()
 
         try:
+            MigrationExecutor(connection).migrate([("core", "0042_sb1_founding_terms_phases")])
+            triggers_at_0042 = trigger_names()
             MigrationExecutor(connection).migrate(
                 [("core", "0041_r4s2_assign_current_membership")]
+            )
+            assert_trigger_delta(
+                self, triggers_at_0042, trigger_names(),
+                removed={
+                    ("core_platformtermsversion", "sb_platformtermsversion_record_time"),
+                    ("core_platformtermsversion", "sb_platformtermsversion_immutable"),
+                    ("core_platformtermsversion", "s015_platformtermsversion_truncate_immutable"),
+                    ("core_platformtermsacceptance", "sb_platformtermsacceptance_record_time"),
+                    ("core_platformtermsacceptance", "sb_platformtermsacceptance_immutable"),
+                    ("core_platformtermsacceptance", "s015_platformtermsacceptance_truncate_immutable"),
+                    ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_record_time"),
+                    ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_immutable"),
+                    ("core_lofoundingcontentversion", "s015_lofoundingcontentversion_truncate_immutable"),
+                    ("core_lofoundingcontentversion", "sb_lofoundingcontentversion_commitment"),
+                    ("core_livingorganism", "sb_livingorganism_terms_acceptance"),
+                    ("core_livingorganismevent", "sb_livingorganismevent_phase_guard"),
+                },
             )
             expected_bodies = {
                 "s3_guard_lo_actor": migration.PREVIOUS_S3_GUARD_LO_ACTOR_BODY,
@@ -662,38 +678,38 @@ class ApplicationLineageSchema(TransactionTestCase):
                     [list(expected_bodies)],
                 )
                 self.assertEqual(dict(cursor.fetchall()), expected_bodies)
-                cursor.execute(
-                    "SELECT count(*) FROM pg_catalog.pg_trigger t "
-                    "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
-                    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
-                )
-                self.assertEqual(cursor.fetchone()[0], 406)
         finally:
             MigrationExecutor(connection).migrate(head)
+        # The historical reverse delta above catches an unrelated dropped trigger even if reapplication would
+        # recreate it. The round trip also restores the received trigger set.
+        self.assertEqual(trigger_names(), triggers_at_head)
 
     def test_0031_reverse_reapply_only_changes_admission_guard(self):
         head = current_core_leaf(connection)
+        triggers_at_head = trigger_names()
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_get_functiondef('public.s1fu_guard_admission_route()'::regprocedure)")
             expected_function = cursor.fetchone()[0]
         try:
+            MigrationExecutor(connection).migrate([("core", "0031_s1fu_admission_actor_requirement")])
+            triggers_at_0031 = trigger_names()
             MigrationExecutor(connection).migrate([("core", "0030_s015_automatic_application")])
             with connection.cursor() as cursor:
                 cursor.execute("SELECT to_regprocedure('public.s1fu_guard_admission_route()')")
                 self.assertIsNone(cursor.fetchone()[0])
-                cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                               "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                               "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT["0030_s015_automatic_application"])
+            # Brittle-test repair (27 Oct 2026): 0031's reverse removes exactly its one admission trigger and
+            # nothing else, asserted by name instead of a frozen schema-wide total at 0030.
+            assert_trigger_delta(
+                self,
+                triggers_at_0031,
+                trigger_names(),
+                removed={("core_organismmembershiptransition", "s1fu_05_admission_route")},
+            )
             MigrationExecutor(connection).migrate(head)
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_get_functiondef('public.s1fu_guard_admission_route()'::regprocedure)")
                 self.assertEqual(cursor.fetchone()[0], expected_function)
-                cursor.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                               "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                               "WHERE n.nspname = 'public' AND NOT t.tgisinternal")
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head[0][1]])
+            self.assertEqual(trigger_names(), triggers_at_head)
         finally:
             MigrationExecutor(connection).migrate(head)
 
@@ -958,7 +974,13 @@ class ApplicationSchemaGuards(TransactionTestCase):
                            "'core_contextualroleassignmentstateevent', 'core_circlestateevent')", (EVENT_TABLE,))
             tables = [row[0] for row in cursor.fetchall()]
         # The former ten-chain witness included Coordinator and Circle; their LO actor vocabularies are governed separately.
-        self.assertEqual(len(tables), 8)
+        # Brittle-test repair (27 Oct 2026): the eight chains this witness covers are named from 0021's declared
+        # anchor inventory (ANCHOR_FK) and must all be present; a chain added later is tested too, not counted.
+        self.assertLessEqual(
+            set(ANCHOR_FK) - {EVENT_TABLE, "core_livingorganismevent",
+                              "core_contextualroleassignmentstateevent", "core_circlestateevent"},
+            set(tables),
+        )
         for table in tables:
             with self.subTest(table=table):
                 with self.assertRaises((DatabaseError, IntegrityError)) as error:

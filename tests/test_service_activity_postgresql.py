@@ -424,8 +424,10 @@ class S012PostgreSQLCatalogueTests(TransactionTestCase):
                 """
             )
             observed = set(cursor.fetchall())
-        self.assertEqual(observed, expected_fk_pairs)
-        self.assertEqual(len(observed), 7)
+        # Brittle-test repair (27 Oct 2026): exactly the declared FKs on the S012 tables themselves; a later table that
+        # happens to share the core_service prefix is out of scope (no prefix census, no frozen total).
+        s012_tables = {table for table, _ in expected_fk_pairs}
+        self.assertEqual({pair for pair in observed if pair[0] in s012_tables}, expected_fk_pairs)
 
     def test_s012_identity_fk_delete_action_is_protect(self):
         with connection.cursor() as cursor:

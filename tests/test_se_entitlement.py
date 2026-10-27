@@ -66,6 +66,7 @@ from tests.s015_0021_support import (
     seed_identity,
 )
 from tests.sb2_route_support import birth, database_now, prepare_route
+from tests.schema_witness_support import code_core_head, trigger_names
 from tests.se_route_support import (
     TestFixturePaidAvailabilitySource,
     TEST_POLICY_SHA256,
@@ -85,10 +86,36 @@ NEW_TABLES = {
     "core_organismentitlementevent",
     "core_organismentitlementpolicytext",
 }
-LATER_TABLES = {
-    "core_commandintake",  # created after 0046 (by 0049)
-    "core_organismroledefinitionprovision",  # created after 0046 (by 0051, SR C1)
-}
+
+
+def _tables_at(target):
+    """The core tables of the historical schema at a migration, from the code's migration history.
+
+    Brittle-test repair (27 Oct 2026): replaces a hand-kept list of tables created after 0046, which had to grow
+    with every later migration. The expected set comes from the migration state, independently of the database.
+    """
+    from django.db.migrations.loader import MigrationLoader
+
+    apps = MigrationLoader(connection, ignore_no_migrations=True).project_state(target).apps
+    return {
+        model._meta.db_table
+        for model in apps.get_app_config("core").get_models(include_auto_created=True)
+        if model._meta.managed
+    }
+
+
+def _declared_0046_triggers():
+    migration = importlib.import_module("core.migrations.0046_se_entitlement_foundation")
+    return {
+        statement.split("CREATE TRIGGER ", 1)[1].split(" ", 1)[0]
+        for statement in migration.TRIGGER_SQL
+    }
+
+
+def _reaches(head, migration):
+    """Whether the schema at head includes migration, read from the migration graph (no hard-coded later names)."""
+    graph = MigrationExecutor(connection).loader.graph
+    return migration in graph.forwards_plan(head)
 
 
 class SEEntitlementModelContractTests(SimpleTestCase):
@@ -224,25 +251,22 @@ class SEEntitlementMigrationTests(TransactionTestCase):
             if table.startswith("core_")
         }
 
-    def _trigger_count(self):
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT count(*)
-                  FROM pg_trigger t
-                  JOIN pg_class c ON c.oid = t.tgrelid
-                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public'
-                   AND NOT t.tgisinternal
-                """
-            )
-            return cursor.fetchone()[0]
+    def _assert_0045_tables(self, head_tables):
+        """At 0045: every model table of the 0045 model state is present, none of 0046's tables is, and any other
+        table present is one with no Django model (raw-SQL tables such as the governed event parts), which the
+        received head also has. No hand-kept list of later tables."""
+        tables = self._core_tables()
+        model_tables = _tables_at(PREVIOUS_MIGRATION)
+        self.assertLessEqual(model_tables, tables)
+        self.assertFalse(NEW_TABLES & tables)
+        sql_only_at_head = head_tables - _tables_at(code_core_head())
+        self.assertLessEqual(tables - model_tables, sql_only_at_head)
 
-    def _assert_0045_state(self, expected_tables):
+    def _assert_0045_state(self, head_tables):
         migration = importlib.import_module(
             "core.migrations.0045_sbg_governance_formation"
         )
-        self.assertEqual(self._core_tables(), expected_tables)
+        self._assert_0045_tables(head_tables)
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertEqual(current_applied_core_head(connection), [PREVIOUS_MIGRATION])
         self.assertIn(PREVIOUS_MIGRATION, applied)
@@ -259,15 +283,24 @@ class SEEntitlementMigrationTests(TransactionTestCase):
                     [name],
                 )
                 self.assertEqual(cursor.fetchone()[0], expected_body, name)
-        self.assertEqual(self._trigger_count(), 458)
+        # Brittle-test repair (27 Oct 2026): at 0045 none of 0046's declared triggers exists (by name), instead of a
+        # frozen schema-wide total; the round trip back to the received head is checked by the callers.
+        self.assertFalse({name for _, name in trigger_names()} & _declared_0046_triggers())
 
-    def _assert_0046_state(self):
+    def _assert_0046_state(self, *, triggers_at_0045, rules_at_0045):
         self._assert_se_schema_state(SE_MIGRATION)
-
-    def _assert_received_head_state(self):
-        self._assert_se_schema_state(
-            ("core", "0051_sr_role_definitions")
+        self.assertEqual(
+            {name for _, name in trigger_names() - triggers_at_0045},
+            _declared_0046_triggers(),
         )
+        self.assertFalse(triggers_at_0045 - trigger_names())
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.core_governedrule")
+            self.assertEqual(cursor.fetchone()[0], rules_at_0045 + 2)
+
+    def _assert_received_head_state(self, *, triggers_at_head):
+        self._assert_se_schema_state(code_core_head())
+        self.assertEqual(trigger_names(), triggers_at_head)
 
     def _assert_se_schema_state(self, expected_head):
         applied = MigrationRecorder(connection).applied_migrations()
@@ -275,12 +308,6 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertIn(SE_MIGRATION, applied)
         self.assertIn(expected_head, applied)
         self.assertTrue(NEW_TABLES.issubset(self._core_tables()))
-        import verification.isolation.state as isolation_state
-
-        self.assertEqual(
-            self._trigger_count(),
-            isolation_state.REQUIRED_TRIGGER_COUNT[expected_head[1]],
-        )
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -301,31 +328,18 @@ class SEEntitlementMigrationTests(TransactionTestCase):
                     ("FREE_TIER", "c81640de-f776-5b31-a046-0046e0000002", 1),
                 ],
             )
-            cursor.execute("SELECT count(*) FROM public.core_governedrule")
-            self.assertEqual(cursor.fetchone()[0], 3)
         migration = importlib.import_module(
             "core.migrations.0046_se_entitlement_foundation"
         )
         expected_bodies = dict(migration.SE_FUNCTION_BODIES)
-        if expected_head[1] in {
-            "0047_sek1_platform_rule_statement_start",
-            "0048_se_entitlement_granted_event_guard",
-            "0049_h100_command_intake",
-            "0050_clk_mono_1_cache_coordinate_detail",
-            "0051_sr_role_definitions",
-        }:
+        if _reaches(expected_head, SEK1_MIGRATION):
             sek1_migration = importlib.import_module(
                 "core.migrations.0047_sek1_platform_rule_statement_start"
             )
             expected_bodies["s015_entitlement_limit"] = (
                 sek1_migration._ENTITLEMENT_LIMIT_BODY
             )
-        if expected_head[1] in {
-            "0048_se_entitlement_granted_event_guard",
-            "0049_h100_command_intake",
-            "0050_clk_mono_1_cache_coordinate_detail",
-            "0051_sr_role_definitions",
-        }:
+        if _reaches(expected_head, ("core", "0048_se_entitlement_granted_event_guard")):
             guard_migration = importlib.import_module(
                 "core.migrations.0048_se_entitlement_granted_event_guard"
             )
@@ -346,16 +360,17 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         migration = importlib.import_module(
             "core.migrations.0046_se_entitlement_foundation"
         )
-        original_tables = self._core_tables()
         self.assertEqual(migration.PREVIOUS_MIGRATION, PREVIOUS_MIGRATION[1])
         self.assertEqual(migration.DECLARED_TRIGGER_COUNT, len(migration.TRIGGER_SQL))
-        self.assertEqual(migration.EXPECTED_TRIGGER_COUNT, 458 + len(migration.TRIGGER_SQL))
+        head_tables = self._core_tables()
         migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
-        self.assertEqual(
-            self._core_tables(), original_tables - NEW_TABLES - LATER_TABLES
-        )
+        self._assert_0045_tables(head_tables)
+        triggers_at_0045 = trigger_names()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.core_governedrule")
+            rules_at_0045 = cursor.fetchone()[0]
         MigrationExecutor(connection).migrate([SE_MIGRATION])
-        self._assert_0046_state()
+        self._assert_0046_state(triggers_at_0045=triggers_at_0045, rules_at_0045=rules_at_0045)
 
         declared_triggers = set()
         for statement in migration.TRIGGER_SQL:
@@ -410,14 +425,22 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(installed_functions, declared_functions)
 
     def test_w_se_m2_reverse_and_success_cleanup_restore_0045_then_0046(self):
-        original_tables = self._core_tables()
-        migrate_to_target_with_restore(self, PREVIOUS_MIGRATION)
-        self._assert_0045_state(original_tables - NEW_TABLES - LATER_TABLES)
+        triggers_at_head = trigger_names()
+        head_tables = self._core_tables()
+        migrate_to_target_with_restore(self, SE_MIGRATION)
+        tables_at_0046 = self._core_tables()
+        MigrationExecutor(connection).migrate([PREVIOUS_MIGRATION])
+        self._assert_0045_state(head_tables)
+        # Assert the historical reverse delta before reapplication can repair a dropped table.
+        self.assertEqual(tables_at_0046 - self._core_tables(), NEW_TABLES)
+        self.assertEqual(self._core_tables() - tables_at_0046, set())
         self.restore_received_migrations()
-        self._assert_received_head_state()
+        self.assertEqual(self._core_tables(), head_tables)
+        self._assert_received_head_state(triggers_at_head=triggers_at_head)
 
     def test_w_se_m3_setup_failure_cleanup_restores_0046(self):
         original_tables = self._core_tables()
+        triggers_at_head = trigger_names()
         target = PREVIOUS_MIGRATION
 
         class SetupFailure(unittest.TestCase):
@@ -433,7 +456,7 @@ class SEEntitlementMigrationTests(TransactionTestCase):
         self.assertEqual(len(result.errors), 1)
         self.assertIn("intentional SE setup failure", result.errors[0][1])
         self.assertEqual(self._core_tables(), original_tables)
-        self._assert_received_head_state()
+        self._assert_received_head_state(triggers_at_head=triggers_at_head)
 
     def test_w_se_m4_reverse_refuses_when_any_se_record_exists(self):
         migrate_to_target_with_restore(self, SE_MIGRATION)

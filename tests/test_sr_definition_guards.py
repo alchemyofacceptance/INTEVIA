@@ -50,13 +50,13 @@ from uuid import uuid4
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
 from core.models import (
     AuthorityDecision,
     CommandIntake,
     ContextualRoleAssignment,
-    IntakeEntry,
     LivingOrganism,
     OrganismRoleDefinition,
     OrganismRoleDefinitionProvision,
@@ -91,8 +91,6 @@ POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "SR definition g
 
 HEAD_0050 = "0050_clk_mono_1_cache_coordinate_detail"
 HEAD_0051 = "0051_sr_role_definitions"
-TRIGGERS_AT_0050 = 475
-TRIGGERS_AT_0051 = 483
 SR_COLUMNS = {
     "kind", "appointing_authority", "appointing_body_reference", "alternative_route_reference",
     "nomination_basis", "nomination_policy", "nomination_dependency", "participation_required",
@@ -937,7 +935,7 @@ class SRDefinitionGuardTests(TransactionTestCase):
         return {
             "sr_columns": columns,
             "sr_triggers": {name for name in names if name.startswith(("sr_", "s015_sr_"))},
-            "trigger_count": len(names),
+            "trigger_names": frozenset(names),
             "trigger_bindings": bindings,
             "sr_functions": functions,
             "provision_table": provision_table,
@@ -947,32 +945,39 @@ class SRDefinitionGuardTests(TransactionTestCase):
         }
 
     def test_sr_c1_18_migration_0051_reverses_cleanly_and_reapplies(self):
-        """Migration layer. From 0051 on a clean state: reverse to 0050 restores the schema exactly
-        (no SR column, no provision table, no sr_* trigger, 475 triggers, the intake CHECK back at
-        0049's 22 entries); forward to 0051 installs it again (483 triggers, the CHECK at 23)."""
+        """Migration layer, a historical witness of 0051 at the 0050/0051 boundary. From a clean
+        state it establishes 0051 explicitly, then: reverse to 0050 removes exactly what 0051 added
+        (the SR columns, the provision table, the sr_* triggers by name, the intake CHECK's one new
+        entry), leaving the CHECK at 0049's declared entries; restoring returns to the received state
+        exactly. Brittle-test repair (27 Oct 2026): named deltas replace frozen schema totals and the
+        hard-coded head."""
+        at_head = self._schema_facts()
+        self.assertIn(("core", HEAD_0051), MigrationRecorder(connection).applied_migrations())
+        # A pre-SR row founded before this test? None: this test founds nothing; the state is clean.
+        self.assertEqual(OrganismRoleDefinition.objects.filter(kind__isnull=False).count(), 0)
+        migrate_to_target_with_restore(self, ("core", HEAD_0051))
         at_0051 = self._schema_facts()
         self.assertEqual(at_0051["head"], HEAD_0051)
         self.assertEqual(at_0051["sr_columns"], SR_COLUMNS)
         self.assertEqual(at_0051["sr_triggers"], SR_TRIGGER_NAMES)
-        self.assertEqual(at_0051["trigger_count"], TRIGGERS_AT_0051)
         self.assertTrue(at_0051["provision_table"])
         self.assertIn("RECORD_ROLE_DEFINITION", at_0051["intake_literals"])
-        self.assertEqual(len(at_0051["intake_literals"]), len(IntakeEntry))
-        # A pre-SR row founded before this test? None: this test founds nothing; the state is clean.
-        self.assertEqual(OrganismRoleDefinition.objects.filter(kind__isnull=False).count(), 0)
-        migrate_to_target_with_restore(self, ("core", HEAD_0050))
+        MigrationExecutor(connection).migrate([("core", HEAD_0050)])
         at_0050 = self._schema_facts()
         self.assertEqual(at_0050["head"], HEAD_0050)
         self.assertEqual(at_0050["sr_columns"], set())
         self.assertEqual(at_0050["sr_triggers"], set())
         self.assertEqual(at_0050["sr_functions"], [])
-        self.assertEqual(at_0050["trigger_count"], TRIGGERS_AT_0050)
         self.assertFalse(at_0050["provision_table"])
-        self.assertEqual(len(at_0050["intake_literals"]), 22)
-        self.assertNotIn("RECORD_ROLE_DEFINITION", at_0050["intake_literals"])
+        self.assertEqual(at_0051["trigger_names"] - at_0050["trigger_names"], SR_TRIGGER_NAMES)
+        self.assertEqual(at_0050["trigger_names"] - at_0051["trigger_names"], set())
+        self.assertEqual(at_0051["intake_literals"] - at_0050["intake_literals"], {"RECORD_ROLE_DEFINITION"})
+        self.assertEqual(at_0050["intake_literals"] - at_0051["intake_literals"], set())
+        migration_0051 = import_module("core.migrations.0051_sr_role_definitions")
+        self.assertEqual(at_0050["intake_literals"], frozenset(migration_0051.PREVIOUS_ENTRY_VALUES))
         self.restore_received_migrations()
         again = self._schema_facts()
-        self.assertEqual(again, at_0051)
+        self.assertEqual(again, at_head)
 
     def test_sr_c1_19_populated_reverse_refused_naming_the_rows(self):
         """Migration layer (A-9). With one founded LO - whose COORDINATOR version carries SR

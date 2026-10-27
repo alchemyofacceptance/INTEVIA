@@ -18,7 +18,7 @@ from tests.s015_concurrency_support import (
     wait_until_locked,
 )
 from tests.sb2_route_support import birth, prepare_route
-from verification.isolation.state import REQUIRED_TRIGGER_COUNT
+from tests.schema_witness_support import assert_trigger_delta, trigger_names
 
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "register cleanup tests require PostgreSQL")
@@ -400,10 +400,12 @@ class S015RegisterCleanupTests(TransactionTestCase):
         """The reverse restores the previous implementation including its known defect, and restores no operational clearance."""
         cleanup_module = importlib.import_module("core.migrations.0032_s015_register_cleanup_nonblocking")
         head = __import__("s015_0021_support").current_core_leaf(connection)
-        head_name = head[0][1]
         executor = MigrationExecutor(connection)
+        triggers_at_head = trigger_names()
         try:
-            executor.migrate([("core", "0031_s1fu_admission_actor_requirement")])
+            executor.migrate([("core", "0032_s015_register_cleanup_nonblocking")])
+            triggers_at_0032 = trigger_names()
+            MigrationExecutor(connection).migrate([("core", "0031_s1fu_admission_actor_requirement")])
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT md5(pg_get_functiondef('public.s015_register_organism_lock(uuid)'::regprocedure))"
@@ -413,15 +415,9 @@ class S015RegisterCleanupTests(TransactionTestCase):
                     original_md5,
                     _source_function_md5(cursor, cleanup_module.register_sql(False)),
                 )
-                cursor.execute(
-                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
-                )
-                self.assertEqual(
-                    cursor.fetchone()[0],
-                    REQUIRED_TRIGGER_COUNT["0031_s1fu_admission_actor_requirement"],
-                )
+            # Brittle-test repair (27 Oct 2026): 0032 replaces a function only, so its reverse changes no trigger;
+            # asserted as an empty delta, not as a frozen schema-wide total at 0031.
+            assert_trigger_delta(self, triggers_at_0032, trigger_names())
 
             MigrationExecutor(connection).migrate(head)
             with connection.cursor() as cursor:
@@ -432,12 +428,7 @@ class S015RegisterCleanupTests(TransactionTestCase):
                     cursor.fetchone()[0],
                     _source_function_md5(cursor, cleanup_module.register_sql(True)),
                 )
-                cursor.execute(
-                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = 'public' AND NOT t.tgisinternal"
-                )
-                self.assertEqual(cursor.fetchone()[0], REQUIRED_TRIGGER_COUNT[head_name])
+            self.assertEqual(trigger_names(), triggers_at_head)
         finally:
             MigrationExecutor(connection).migrate(head)
 

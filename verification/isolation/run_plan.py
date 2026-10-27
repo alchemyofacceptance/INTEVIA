@@ -666,9 +666,19 @@ def _run_self_test() -> int:
     add("R2 fresh mode", True, "fresh without authority, bad digest, or wrong run",
         "bound authority names fresh mode and this suffix",
         lambda: validate_fresh_authority(None, None, "7"))
-    add("R1 fail-fast", True, "attempt to disable fail-fast",
-        "fail-fast remains on for every supported route",
-        lambda: (_ for _ in ()).throw(ValueError("R1: fail-fast cannot be disabled")))
+    def complete_reporting() -> None:
+        # Exercise the actual isolation result class with controlled checkpoints, without a database.
+        from verification.selftest_route import R1CompleteReportingTests
+        import io
+
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(R1CompleteReportingTests)
+        result = unittest.TextTestRunner(stream=io.StringIO(), failfast=False).run(suite)
+        if not result.wasSuccessful() or result.testsRun == 0:
+            raise AssertionError("R1: ordinary-failure continuation or isolation-stop probe failed")
+
+    add("R1 complete reporting", False, "a run that stops at the first ordinary failure",
+        "ordinary failures are all reported; isolation refusals still stop the run",
+        complete_reporting)
     add("R11 required binding fields", True, "state lacks run_spec_version or run_spec_sha256",
         "every authorized state binds the v1.38 copy by SHA-256",
         lambda: validate_run_spec_binding({}, b"specification"))

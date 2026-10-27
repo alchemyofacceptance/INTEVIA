@@ -1468,7 +1468,7 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
             _runner_print("MODE=" + mode, file=sys.stderr, flush=True)
             _runner_print("FRESH_AUTHORITY=" + getattr(self, "fresh_authority", "NONE"),
                   file=sys.stderr, flush=True)
-            _runner_print("FAILFAST=ON", file=sys.stderr, flush=True)
+            _runner_print("FAILFAST=" + ("ON" if getattr(self, "failfast", False) else "OFF"), file=sys.stderr, flush=True)
             _runner_print("RUN_SPEC_SHA256=" + os.environ.get("INTEVIA_RUN_SPEC_SHA256", "UNAVAILABLE"),
                   file=sys.stderr, flush=True)
             _runner_print("TESTS_EXECUTED=%d" % len(executed_ids), file=sys.stderr, flush=True)

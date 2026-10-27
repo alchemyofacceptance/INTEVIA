@@ -15,6 +15,8 @@ from core.models import (
     AuthorityDecision,
     CommandIntake,
     GovernedRule,
+    Identity,
+    LivingOrganism,
     LivingOrganismEvent,
     LOApplicationSettingsVersion,
     OrganismCommandReceipt,
@@ -29,9 +31,11 @@ from src.intevia.services.organism_entitlement_service import (
     _is_entitlement_granted_guard_failure,
 )
 from src.intevia.services.organism_formation_service import (
+    OrganismBirthingService,
     S015BirthingTechnicalFailure,
 )
-from tests.s015_0021_support import current_applied_core_head, database_now
+from tests.s015_0021_support import current_applied_core_head, database_now, found_nonroot
+from tests.schema_witness_support import assert_at_code_head, assert_trigger_delta, trigger_names
 from tests.sb2_route_support import prepare_route
 from tests.se_route_support import (
     EVENT_LESS_ENTITLEMENT_DECLARATIONS,
@@ -39,7 +43,6 @@ from tests.se_route_support import (
     declared_event_less_entitlement_rows,
     ensure_test_policy_text,
 )
-from verification.isolation import state as isolation_state
 from tests.test_se_entitlement import (
     _birthing_command,
     _election_command,
@@ -96,12 +99,26 @@ def _records_state():
     return tuple(_table_state(model) for model in EVENT_STATE_MODELS)
 
 
-def _trigger_count():
+def _historical_route(tag):
+    """An organism founded at the 0047 schema with the historical-schema fixture (found_nonroot).
+
+    The rows are those founding wrote at that schema: the organism, its founder, the founding basis and the LO's
+    FOUND event (sequence 1). Today's founding executor is not used, because it writes through the durable intake
+    (0049) and the SR definition writer (0051), neither of which exists at 0047.
+
+    Called inside the witness's rolled-back transaction, directly at its top level and not in a savepoint: the
+    founding Coordinator ASSIGN guard (0036) requires the FOUND event to be written by the current top-level
+    transaction, as founding does.
+    """
+    if not connection.in_atomic_block:
+        raise AssertionError("the historical founding fixture runs inside the witness's rolled-back transaction")
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal"
-        )
-        return cursor.fetchone()[0]
+        ids = found_nonroot(cursor, tag)
+    return SimpleNamespace(
+        organism=LivingOrganism.objects.get(pk=ids["lo"]),
+        founder=Identity.objects.get(pk=ids["identity"]),
+        birthing_service=OrganismBirthingService(clock=database_now),
+    )
 
 
 def _function_count():
@@ -189,70 +206,6 @@ class _EventlessComposer(OrganismEntitlementService):
 
 
 @contextmanager
-def _founding_without_intake():
-    """Found prepare_route's LO through the executor with a test-only bound request.
-
-    Since CLK3-1, public founding admits through the durable intake and writes a
-    core_commandintake row, which 0049's reverse refuses. As W-SBG-M5 does, the fixture
-    calls the founding executor directly, so no intake row is written.
-    """
-    from django.test import override_settings
-
-    from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
-    from src.intevia.services.organism_formation_service import OrganismFormationService
-
-    def found_without_intake(service, command):
-        actor = _resolve_actor(service._alias, command.credential)
-        with override_settings(INTEVIA_TEST_CONTEXT=True):
-            bound = BoundRequest.for_test(
-                IntakeEntry.FOUND_LIVING_ORGANISM,
-                command,
-                received_at=database_now(),
-                actor=actor,
-            )
-            return service._execute_found_living_organism(command, bound)
-
-    with patch.object(
-        OrganismFormationService,
-        "found_living_organism",
-        new=found_without_intake,
-    ):
-        yield
-
-
-@contextmanager
-def _phase_advance_without_intake():
-    """Advance prepare_route's phase through the executor with a test-only bound request.
-
-    Since CLK3-2, the public phase advance admits through the durable intake and writes
-    a core_commandintake row, which 0049's reverse refuses. As for founding, the fixture
-    calls the phase-advance executor directly, so no intake row is written.
-    """
-    from django.test import override_settings
-
-    from src.intevia.services.command_intake import BoundRequest, IntakeEntry, _resolve_actor
-    from src.intevia.services.organism_formation_service import OrganismPhaseAdvanceService
-
-    def advance_without_intake(service, command):
-        actor = _resolve_actor(service._alias, command.credential)
-        with override_settings(INTEVIA_TEST_CONTEXT=True):
-            bound = BoundRequest.for_test(
-                IntakeEntry.ADVANCE_PHASE,
-                command,
-                received_at=database_now(),
-                actor=actor,
-            )
-            return service._execute_advance_phase(command, bound)
-
-    with patch.object(
-        OrganismPhaseAdvanceService,
-        "advance_phase",
-        new=advance_without_intake,
-    ):
-        yield
-
-
-@contextmanager
 def _rollback_migration_work(test_case):
     class _Rollback(Exception):
         pass
@@ -268,24 +221,14 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
     reset_sequences = True
 
     def test_w_se_k3_2_f_valid_rows_survive_forward_and_reverse_refuses_data(self):
-        # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
-        # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
-        # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
-        # intake entry that writes an intake row, so the fixture founds through the executor with a
-        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). Since CLK3-2
-        # the phase advance is admitted too, so it goes through its executor the same way
-        # (_phase_advance_without_intake). The route has no gateway effect.
-        with _founding_without_intake(), _phase_advance_without_intake():
-            route = prepare_route(
-                tag=f"k3-migration-valid-{uuid4().hex}",
-                governance_enabled=None,
-                include_settings=False,
-                include_question=False,
-                to_birthing_phase=False,
-            )
-        self.assertFalse(CommandIntake.objects.exists())
+        # Historical witness (brittle-test repair, 27 Oct 2026). The test is about 0048 at the 0047/0048 boundary,
+        # so it establishes that historical state first: from the received (empty) database it migrates down to
+        # 0047, then founds the organism there with the historical-schema fixture (found_nonroot: the rows founding
+        # wrote before the durable intake and the SR definition writer existed), as W-SBG-M5 does at 0045. No
+        # intake row and no SR-attributed definition exist, so the downgrade passes 0049's and 0051's reverse
+        # guards lawfully; those production refusals are unchanged. Everything happens inside a rolled-back block.
         before = _records_state()
-        original_trigger_count = _trigger_count()
+        original_triggers = trigger_names()
         observed = []
 
         def capture(execute, sql, params, many, context):
@@ -298,84 +241,71 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
                 observed.append((normalized, connection.in_atomic_block))
             return execute(sql, params, many, context)
 
+        self.assertFalse(CommandIntake.objects.exists())
         with _rollback_migration_work(self):
+            MigrationExecutor(connection).migrate([PREVIOUS])
+            self.assertFalse(_migration_is_recorded())
+            _assert_applied_core_head(self, PREVIOUS[1])
+            _assert_guard_absent(self)
+            route = _historical_route(f"k3-migration-valid-{uuid4().hex}")
+            ensure_test_policy_text()
+            grant = _seed_beta_entitlement(route, effective_at=database_now())
+            event = OrganismEntitlementEvent.objects.get(
+                entitlement=grant,
+                sequence=1,
+                event_type="GRANTED",
+            )
+            before_forward = _records_state()
+            triggers_at_previous = trigger_names()
             with connection.execute_wrapper(capture):
-                MigrationExecutor(connection).migrate([PREVIOUS])
-                self.assertFalse(_migration_is_recorded())
-                _assert_applied_core_head(self, PREVIOUS[1])
-                previous_trigger_count = _trigger_count()
-                self.assertEqual(
-                    previous_trigger_count,
-                    isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
-                )
-                ensure_test_policy_text()
-                grant = _seed_beta_entitlement(route, effective_at=database_now())
-                event = OrganismEntitlementEvent.objects.get(
-                    entitlement=grant,
-                    sequence=1,
-                    event_type="GRANTED",
-                )
-                before_forward = _records_state()
                 MigrationExecutor(connection).migrate([MIGRATION])
-                self.assertTrue(_migration_is_recorded())
-                _assert_applied_core_head(self, MIGRATION[1])
-                self.assertEqual(_records_state(), before_forward)
-                self.assertEqual(
-                    _trigger_count(),
-                    isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]],
-                )
-                self.assertEqual(_function_count(), 1)
-                _assert_guard_present(self)
-                self.assertEqual(
-                    [sql.split(" ", 2)[0] for sql, _ in observed],
-                    ["LOCK", "SELECT", "CREATE", "CREATE"],
-                )
-                self.assertTrue(all(in_atomic for _, in_atomic in observed))
-                self.assertEqual(
-                    OrganismEntitlementEvent.objects.get(pk=event.pk).event_uuid,
-                    event.event_uuid,
-                )
+            self.assertTrue(_migration_is_recorded())
+            _assert_applied_core_head(self, MIGRATION[1])
+            self.assertEqual(_records_state(), before_forward)
+            assert_trigger_delta(
+                self,
+                triggers_at_previous,
+                trigger_names(),
+                added={("core_organismentitlement", TRIGGER_NAME)},
+            )
+            self.assertEqual(_function_count(), 1)
+            _assert_guard_present(self)
+            self.assertEqual(
+                [sql.split(" ", 2)[0] for sql, _ in observed],
+                ["LOCK", "SELECT", "CREATE", "CREATE"],
+            )
+            self.assertTrue(all(in_atomic for _, in_atomic in observed))
+            self.assertEqual(
+                OrganismEntitlementEvent.objects.get(pk=event.pk).event_uuid,
+                event.event_uuid,
+            )
 
-                with self.assertRaisesRegex(RuntimeError, "reverse refused"):
-                    MigrationExecutor(connection).migrate([PREVIOUS])
-                self.assertTrue(_migration_is_recorded())
-                _assert_applied_core_head(self, MIGRATION[1])
-                self.assertEqual(_records_state(), before_forward)
-                _assert_guard_present(self)
+            with self.assertRaisesRegex(RuntimeError, "reverse refused"):
+                MigrationExecutor(connection).migrate([PREVIOUS])
+            self.assertTrue(_migration_is_recorded())
+            _assert_applied_core_head(self, MIGRATION[1])
+            self.assertEqual(_records_state(), before_forward)
+            _assert_guard_present(self)
 
         self.assertEqual(_records_state(), before)
-        self.assertEqual(_trigger_count(), original_trigger_count)
+        self.assertEqual(trigger_names(), original_triggers)
+        assert_at_code_head(self)
         _assert_guard_present(self)
 
     def test_w_se_k3_2_g_existing_obstruction_refuses_without_partial_install(self):
-        # H100 chunk 4 tests v1.4 (R-1): the entitlement fixtures need only an organism with an LO
-        # event. The migration to 0047 passes 0049's reverse only while core_commandintake has no
-        # rows (the table refuses DELETE and TRUNCATE). Since CLK3-1 public founding is an admitted
-        # intake entry that writes an intake row, so the fixture founds through the executor with a
-        # test-only bound request (_founding_without_intake, the W-SBG-M5 pattern). Since CLK3-2
-        # the phase advance is admitted too, so it goes through its executor the same way
-        # (_phase_advance_without_intake). The route has no gateway effect.
-        with _founding_without_intake(), _phase_advance_without_intake():
-            route = prepare_route(
-                tag=f"k3-migration-obstructed-{uuid4().hex}",
-                governance_enabled=None,
-                include_settings=False,
-                include_question=False,
-                to_birthing_phase=False,
-            )
-        self.assertFalse(CommandIntake.objects.exists())
+        # Historical witness (brittle-test repair, 27 Oct 2026): the 0047 state is established first and the
+        # organism founded there with the historical-schema fixture, as in W-SE-K3-2-F above.
         before = _records_state()
-        original_trigger_count = _trigger_count()
+        original_triggers = trigger_names()
 
+        self.assertFalse(CommandIntake.objects.exists())
         with _rollback_migration_work(self):
             MigrationExecutor(connection).migrate([PREVIOUS])
-            previous_trigger_count = _trigger_count()
-            self.assertEqual(
-                previous_trigger_count,
-                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
-            )
+            _assert_guard_absent(self)
+            route = _historical_route(f"k3-migration-obstructed-{uuid4().hex}")
             row = _create_eventless_beta(route)
             before_forward = _records_state()
+            triggers_at_previous = trigger_names()
             with self.assertRaisesRegex(RuntimeError, "exactly one first GRANTED event") as obstruction:
                 MigrationExecutor(connection).migrate([MIGRATION])
 
@@ -383,34 +313,33 @@ class SEGrantedGuardMigrationTests(TransactionTestCase):
             self.assertFalse(_migration_is_recorded())
             _assert_applied_core_head(self, PREVIOUS[1])
             self.assertEqual(_records_state(), before_forward)
-            self.assertEqual(
-                _trigger_count(),
-                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
-            )
+            self.assertEqual(trigger_names(), triggers_at_previous)
             _assert_guard_absent(self)
 
         self.assertEqual(_records_state(), before)
-        self.assertEqual(_trigger_count(), original_trigger_count)
+        self.assertEqual(trigger_names(), original_triggers)
+        assert_at_code_head(self)
         _assert_guard_present(self)
 
     def test_w_se_k3_2_h_empty_reverse_and_forward_restore_the_guard(self):
-        original_trigger_count = _trigger_count()
+        original_triggers = trigger_names()
         with _rollback_migration_work(self):
             MigrationExecutor(connection).migrate([PREVIOUS])
             self.assertFalse(_migration_is_recorded())
-            self.assertEqual(
-                _trigger_count(),
-                isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]],
-            )
             _assert_guard_absent(self)
+            triggers_at_previous = trigger_names()
 
             MigrationExecutor(connection).migrate([MIGRATION])
             self.assertTrue(_migration_is_recorded())
-            self.assertEqual(
-                _trigger_count(),
-                isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]],
+            assert_trigger_delta(
+                self,
+                triggers_at_previous,
+                trigger_names(),
+                added={("core_organismentitlement", TRIGGER_NAME)},
             )
             _assert_guard_present(self)
+        self.assertEqual(trigger_names(), original_triggers)
+        assert_at_code_head(self)
 
 
 class SEGrantedGuardBehaviorTests(TransactionTestCase):

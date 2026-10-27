@@ -82,6 +82,7 @@ from src.intevia.services.organism_formation_service import (
 )
 from tests.s015_concurrency_support import backend_pid, wait_until_blocked
 from tests.s015_0021_support import append_event, refresh, register_test_learner
+from tests.schema_witness_support import assert_trigger_delta, trigger_names
 from tests.se_route_support import (
     TEST_POLICY_SHA256,
     TEST_POLICY_VERSION,
@@ -1786,21 +1787,14 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             MigrationExecutor(connection).migrate(list(original_targets))
 
         self.addCleanup(restore_migrations)
-        lower_targets = [
-            node for node in original_targets
-            if node
-            not in {
-                ("core", "0045_sbg_governance_formation"),
-                ("core", "0046_se_entitlement_foundation"),
-                ("core", "0047_sek1_platform_rule_statement_start"),
-                ("core", "0048_se_entitlement_granted_event_guard"),
-                ("core", "0049_h100_command_intake"),
-                ("core", "0050_clk_mono_1_cache_coordinate_detail"),
-                ("core", "0051_sr_role_definitions"),
-            }
-        ]
-        lower_targets.append(("core", "0043_p1_governed_registration"))
-        executor.migrate(lower_targets)
+        # Brittle-test repair (27 Oct 2026): the core target is named directly; other apps stay at their leaves.
+        # No hard-coded list of later core migrations, which had to grow with every new one.
+        other_apps = [node for node in original_targets if node[0] != "core"]
+        triggers_at_head = trigger_names()
+        executor.migrate(other_apps + [("core", "0044_sb2_birthing_snapshot")])
+        triggers_at_0044 = trigger_names()
+        lower_targets = other_apps + [("core", "0043_p1_governed_registration")]
+        MigrationExecutor(connection).migrate(lower_targets)
 
         migration = importlib.import_module("core.migrations.0044_sb2_birthing_snapshot")
         with connection.cursor() as cursor:
@@ -1819,21 +1813,27 @@ class BirthingAfterWitnessTests(TransactionTestCase):
             )
             self.assertEqual(cursor.fetchone()[0], migration.PREVIOUS_SB_GUARD_PHASE_EVENT_BODY)
             cursor.execute(
-                "SELECT count(*) FROM pg_trigger t "
-                "JOIN pg_class c ON c.oid = t.tgrelid "
-                "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = 'public' AND NOT t.tgisinternal",
-            )
-            self.assertEqual(cursor.fetchone()[0], 429)
-            cursor.execute(
                 "SELECT count(*) FROM pg_proc p "
                 "JOIN pg_namespace n ON n.oid = p.pronamespace "
                 "WHERE n.nspname = 'public' "
                 "AND p.proname = 'sb_assign_lobirthingsnapshot_commitment'",
             )
             self.assertEqual(cursor.fetchone()[0], 0)
+        # 0044's reverse removes exactly the snapshot table's four triggers, by name (not a frozen total at 0043).
+        assert_trigger_delta(
+            self,
+            triggers_at_0044,
+            trigger_names(),
+            removed={
+                ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_record_time"),
+                ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_immutable"),
+                ("core_lobirthingsnapshot", "s015_lobirthingsnapshot_truncate_immutable"),
+                ("core_lobirthingsnapshot", "sb_lobirthingsnapshot_commitment"),
+            },
+        )
 
         MigrationExecutor(connection).migrate(list(original_targets))
+        self.assertEqual(trigger_names(), triggers_at_head)
         # H100 chunk 4 tests v1.4 (R-1): the snapshot needs only an organism. The reverse
         # passes 0049 only while core_commandintake has no rows (0049's reverse refuses while
         # intake rows exist, and the table refuses DELETE and TRUNCATE), and since SR chunk C1

@@ -136,10 +136,11 @@ class S015AuthorityContractTests(TestCase):
             "SB_BIRTHING_ELECTORATE_EMPTY",
         )
 
-    def test_matrix_has_42_complete_noninheriting_rows(self):
-        # SB-G adds three rows; SE adds the adopted election and grant rows.
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), 42)
-        self.assertTrue(all(len(row) == 4 for row in QUALIFICATION_PLANE_MATRIX.values()))
+    def test_matrix_rows_are_complete_and_noninheriting(self):
+        # Brittle-test repair (27 Oct 2026): no frozen row total; every row covers the four planes, and the
+        # SB-G and SE rows named below exist with their declared states.
+        self.assertTrue(QUALIFICATION_PLANE_MATRIX)
+        self.assertTrue(all(len(row) == len(QualificationPlane) for row in QUALIFICATION_PLANE_MATRIX.values()))
         adoption = QUALIFICATION_PLANE_MATRIX[
             "ADOPT_GOVERNING_INSTRUMENT/GOVERNANCE_CONSTITUTION"
         ]

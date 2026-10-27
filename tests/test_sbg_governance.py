@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import json
+import re
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -88,6 +89,7 @@ from tests.s015_0021_support import (
     migrate_to_target_with_restore,
     refresh,
 )
+from tests.schema_witness_support import assert_trigger_delta, trigger_names
 from tests.sb2_route_support import (
     BirthingRoute,
     birth,
@@ -897,7 +899,11 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
                 expected_digest = hashlib.sha256(expected_body.encode("utf-8")).hexdigest()
                 self.assertEqual(actual_digest, expected_digest, name)
 
-    def _assert_0045_state(self, expected_tables):
+    def _assert_0045_state(self, expected_tables, expected_triggers):
+        """The 0045 state as captured earlier in the same test: tables, head, bodies and the exact trigger set.
+
+        Brittle-test repair (27 Oct 2026): the trigger set captured at 0045 replaces a frozen schema-wide total.
+        """
         migration = importlib.import_module(
             "core.migrations.0045_sbg_governance_formation"
         )
@@ -906,18 +912,18 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         self.assertIn(self.FORMATION_MIGRATION, applied)
         self.assertEqual(current_applied_core_head(connection), [self.FORMATION_MIGRATION])
         self._function_digests(migration.BUILT_FUNCTION_BODIES)
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT count(*)
-                  FROM pg_trigger t
-                  JOIN pg_class c ON c.oid = t.tgrelid
-                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public'
-                   AND NOT t.tgisinternal
-                """
-            )
-            self.assertEqual(cursor.fetchone()[0], 458)
+        self.assertEqual(trigger_names(), expected_triggers)
+
+    @staticmethod
+    def _declared_0045_triggers():
+        """The (table, trigger) pairs 0045's SCHEMA_SQL creates, read from the migration file."""
+        migration = importlib.import_module("core.migrations.0045_sbg_governance_formation")
+        declared = set()
+        for statement in migration.SCHEMA_SQL:
+            match = re.match(r"CREATE (?:CONSTRAINT )?TRIGGER (\w+) .*? ON public\.(\w+)", statement, re.S)
+            if match:
+                declared.add((match.group(2), match.group(1)))
+        return declared
 
     def _record_governance_arrangement(self, route):
         rule_uuid = uuid4()
@@ -1172,6 +1178,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
             "core.migrations.0044_sb2_birthing_snapshot"
         )
         expected_tables = self._core_tables() - self.NEW_TABLES
+        triggers_at_0045 = trigger_names()
         migrate_to_target_with_restore(self, self.PREVIOUS_MIGRATION)
         self.assertEqual(self._core_tables(), expected_tables)
         self.assertNotIn(
@@ -1184,22 +1191,15 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
                 "s3fu_guard_gateway_effect": migration44.NEW_S3FU_GUARD_GATEWAY_EFFECT_BODY,
             }
         )
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT count(*)
-                  FROM pg_trigger t
-                  JOIN pg_class c ON c.oid = t.tgrelid
-                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public'
-                   AND NOT t.tgisinternal
-                """
-            )
-            self.assertEqual(cursor.fetchone()[0], 433)
+        # 0045's reverse removes exactly the triggers its SCHEMA_SQL declares, by name (no frozen total at 0044).
+        assert_trigger_delta(
+            self, triggers_at_0045, trigger_names(), removed=self._declared_0045_triggers()
+        )
 
     def test_w_sbg_m3_restore_returns_to_the_0045_head_and_bodies(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         expected_tables = self._core_tables()
+        expected_triggers = trigger_names()
         original_targets = tuple(
             leaf
             for leaf in MigrationExecutor(connection).loader.graph.leaf_nodes()
@@ -1208,7 +1208,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
 
         def restore():
             MigrationExecutor(connection).migrate(list(original_targets))
-            self._assert_0045_state(expected_tables)
+            self._assert_0045_state(expected_tables, expected_triggers)
 
         self.addCleanup(restore)
         MigrationExecutor(connection).migrate([self.PREVIOUS_MIGRATION])
@@ -1221,6 +1221,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
     def test_w_sbg_m4_setup_failure_restores_the_0045_head_and_bodies(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)
         expected_tables = self._core_tables()
+        expected_triggers = trigger_names()
         target = self.PREVIOUS_MIGRATION
         original_targets = tuple(
             leaf
@@ -1245,7 +1246,7 @@ class SBGGovernanceMigrationTests(TransactionTestCase):
         unittest.defaultTestLoader.loadTestsFromTestCase(SetupFailure).run(result)
         self.assertEqual(len(result.errors), 1)
         self.assertIn("intentional setup failure", result.errors[0][1])
-        self._assert_0045_state(expected_tables)
+        self._assert_0045_state(expected_tables, expected_triggers)
 
     def test_w_sbg_m5_reverse_refuses_when_living_organism_rule_exists(self):
         migrate_to_target_with_restore(self, self.FORMATION_MIGRATION)

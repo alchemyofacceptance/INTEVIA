@@ -44,7 +44,6 @@ from tests.s015_0021_support import (
     T0,
     append_event,
     database_now,
-    current_applied_core_head,
     current_core_leaf,
     empty_fp,
     fresh,
@@ -68,6 +67,7 @@ from tests.test_s015_role_command import (
 )
 from tests.test_s015_0024_commitment_preimages import digest, l1_preimage, parts_preimage
 from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
+from tests.schema_witness_support import assert_at_code_head
 from verification.isolation import state as isolation_state
 
 
@@ -120,23 +120,15 @@ def _assert_catalog_restored(test_case, reference):
         set(reference["row_counts"]),
         "table set not restored",
     )
-    head = current_applied_core_head(connection)[0][1]
-    test_case.assertEqual(head, "0051_sr_role_definitions")
-    test_case.assertEqual(
-        len(after["triggers"]),
-        isolation_state.REQUIRED_TRIGGER_COUNT[head],
-    )
-    test_case.assertEqual(len(after["triggers"]), isolation_state.REQUIRED_TRIGGER_COUNT[head])
+    # Brittle-test repair (27 Oct 2026): restored means the code's head and the same trigger set as the reference,
+    # not a hard-coded migration name or a frozen schema-wide total.
+    assert_at_code_head(test_case)
+    test_case.assertEqual(set(after["triggers"]), set(reference["triggers"]), "trigger set not restored")
 
 
 def _legacy_schema_setup(test_case, *, tag):
     reference = isolation_state.capture()
-    head = current_applied_core_head(connection)[0][1]
-    test_case.assertEqual(head, "0051_sr_role_definitions")
-    test_case.assertEqual(
-        len(reference["triggers"]),
-        isolation_state.REQUIRED_TRIGGER_COUNT[head],
-    )
+    assert_at_code_head(test_case)
     nonempty = isolation_state.unexpected_data_rows(reference)
     test_case.assertEqual(nonempty, {}, "legacy migration downgrade requires empty data tables")
     for table in LEGACY_EMPTY_TABLES:
@@ -369,12 +361,7 @@ class ApplicationDecisionTests(TransactionTestCase):
 
     def test_legacy_schema_setup_failure_restores_head_schema(self):
         reference = isolation_state.capture()
-        head = current_applied_core_head(connection)[0][1]
-        self.assertEqual(head, "0051_sr_role_definitions")
-        self.assertEqual(
-            len(reference["triggers"]),
-            isolation_state.REQUIRED_TRIGGER_COUNT[head],
-        )
+        assert_at_code_head(self)
         nonempty = isolation_state.unexpected_data_rows(reference)
         self.assertEqual(nonempty, {}, "restoration witness must start with empty data tables")
         for table in LEGACY_EMPTY_TABLES:

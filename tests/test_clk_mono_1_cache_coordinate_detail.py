@@ -40,13 +40,13 @@ from django.test import TransactionTestCase
 
 from s015_0021_support import T0, current_applied_core_head, drop_unset_check, first_line, found_root
 
-import verification.isolation.state as isolation_state
+from tests.schema_witness_support import assert_at_code_head, assert_trigger_delta, code_core_head, trigger_names
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "0050 replaces PostgreSQL functions")
 MIGRATION = ("core", "0050_clk_mono_1_cache_coordinate_detail")
 PREVIOUS = ("core", "0049_h100_command_intake")
-# SR C1: the received head is 0051; 0050's bodies, bindings and trigger counts are checked as before.
-RECEIVED_HEAD = ("core", "0051_sr_role_definitions")
+# Brittle-test repair (27 Oct 2026): the received head is the code's latest core migration, read from the migration
+# graph (code_core_head), not a hard-coded name; trigger effects are asserted as named deltas, not frozen totals.
 LABEL = "S015 cache coordinate diagnostic: anchor="
 TRIGGER_MESSAGE = "S015 cache coordinates must satisfy state_at <= known_at <= now"
 REFRESH_MESSAGE = "S015 refresh: coordinates must satisfy state_at <= known_at <= now"
@@ -111,15 +111,6 @@ def _cache_compute_bindings():
         return [tuple(r) for r in cur.fetchall()]
 
 
-def _trigger_count():
-    with connection.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
-            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND NOT t.tgisinternal"
-        )
-        return cur.fetchone()[0]
-
-
 def _expected_cache_compute_bindings():
     migration_0021 = importlib.import_module("core.migrations.0021_s015_recorded_chain_and_bitemporal_fold")
     return sorted(anchor[0] for anchor in migration_0021.CACHE_ANCHORS)
@@ -147,9 +138,13 @@ class ForwardInstallation(TransactionTestCase):
         self.assertIn(LABEL, bodies[COMPUTE])
         self.assertIn(LABEL, bodies[REFRESH])
         bindings = _cache_compute_bindings()
-        self.assertEqual(len(bindings), 5)
-        self.assertEqual(sorted(b[1].replace("public.", "") for b in bindings), _expected_cache_compute_bindings())
-        self.assertEqual(len({b[2] for b in bindings}), 1)  # the five triggers name one function OID
+        # 0021's cache anchors are all bound to the one compute function; a cache-bearing chain added later may add a
+        # binding without breaking this witness.
+        self.assertLessEqual(
+            set(_expected_cache_compute_bindings()),
+            {b[1].replace("public.", "") for b in bindings},
+        )
+        self.assertEqual(len({b[2] for b in bindings}), 1)  # every binding names the one compute function OID
         for tgname, _table, _tgfoid, proname, tgenabled, _tgtype in bindings:
             self.assertTrue(tgname.startswith("s015_0021_") and tgname.endswith("_cache_compute"), tgname)
             self.assertEqual(proname, COMPUTE)
@@ -160,8 +155,7 @@ class ForwardInstallation(TransactionTestCase):
             self.assertTrue(prosecdef, proname)
             self.assertEqual(proconfig, [SEARCH_PATH], proname)
             self.assertEqual(lanname, "plpgsql", proname)
-        self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])
-        self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[RECEIVED_HEAD[1]])
+        assert_at_code_head(self)
 
 
 @POSTGRESQL_ONLY
@@ -312,10 +306,13 @@ class ReverseThenForward(TransactionTestCase):
         module = _module()
         bindings_before = _cache_compute_bindings()
         security_before = _security_attributes()
-        self.assertEqual(len(bindings_before), 5)
+        triggers_at_head = trigger_names()
+        received_head = code_core_head()
         _assert_0050_installed(self, bindings_before, security_before)
         with self.assertRaises(_Rollback):
             with transaction.atomic():
+                MigrationExecutor(connection).migrate([MIGRATION])
+                triggers_at_0050 = trigger_names()
                 MigrationExecutor(connection).migrate([PREVIOUS])
                 self.assertNotIn(MIGRATION, MigrationRecorder(connection).applied_migrations())
                 self.assertEqual(current_applied_core_head(connection), [PREVIOUS])
@@ -326,14 +323,17 @@ class ReverseThenForward(TransactionTestCase):
                 self.assertNotIn(LABEL, bodies[REFRESH])
                 self.assertEqual(_cache_compute_bindings(), bindings_before)
                 self.assertEqual(_security_attributes(), security_before)
-                self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[PREVIOUS[1]])
+                # 0050 replaces two function bodies only: its reverse and forward change no trigger.
+                assert_trigger_delta(self, triggers_at_0050, trigger_names())
                 MigrationExecutor(connection).migrate([MIGRATION])
                 self.assertIn(MIGRATION, MigrationRecorder(connection).applied_migrations())
                 self.assertEqual(current_applied_core_head(connection), [MIGRATION])
                 _assert_0050_installed(self, bindings_before, security_before)
-                self.assertEqual(_trigger_count(), isolation_state.REQUIRED_TRIGGER_COUNT[MIGRATION[1]])
-                MigrationExecutor(connection).migrate([RECEIVED_HEAD])  # SR C1: back to the received head
-                self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])
+                self.assertEqual(trigger_names(), triggers_at_0050)
+                MigrationExecutor(connection).migrate([received_head])
+                self.assertEqual(current_applied_core_head(connection), [received_head])
+                self.assertEqual(trigger_names(), triggers_at_head)
                 raise _Rollback()
         _assert_0050_installed(self, bindings_before, security_before)
-        self.assertEqual(current_applied_core_head(connection), [RECEIVED_HEAD])
+        assert_at_code_head(self)
+        self.assertEqual(trigger_names(), triggers_at_head)

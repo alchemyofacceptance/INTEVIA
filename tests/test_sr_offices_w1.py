@@ -124,7 +124,9 @@ from src.intevia.services.organism_role_service import (
     TransitionAssignmentCommand,
 )
 import tests.test_s015_role_command as _role_suite  # its module-global NOW is bound per test (Grok Q2)
-from tests.s015_0021_support import append_event, current_applied_core_head, empty_fp, refresh, u
+from django.db.migrations.recorder import MigrationRecorder
+
+from tests.s015_0021_support import append_event, empty_fp, refresh, u
 from tests.sb2_route_support import birth, prepare_route, route_fixture_state, route_test_now
 from tests.se_route_support import ensure_test_policy_text
 from tests.test_s015_role_command import (
@@ -179,13 +181,9 @@ ROUTE_MAP = {
     (HOLDER_END, TEST, CUSTOM): "test_sr_w1_25_custom_role_holder_own_end_test_provider_il8",
 }
 
-# The census at C1, as the pinned sites hold it (SR moves each: v0.7 sections B, I, K). The action
-# enum and the matrix move at C3 (35 / 42 stay); C1 adds the intake entry, the enterer FK and the head.
-ACTION_MEMBERS_TODAY = 35
-MATRIX_ROWS_TODAY = 42
-INTAKE_ENTRIES_TODAY = 23
-IDENTITY_FKS_TODAY = 115  # tests/test_service_activity_models.py IdentityFKPredictionTests, scoped
-CORE_HEAD_TODAY = "0051_sr_role_definitions"
+# The SR facts at C1 (v0.7 sections B, I, K), asserted by name. Brittle-test repair (27 Oct 2026): the former
+# census totals (action enum 35, matrix 42, intake entries 23, Identity FKs 115, head 0051 as a literal) are not
+# pinned; each would fail whenever unrelated, legitimate work added a member.
 
 # Today's refusal site for each (route class, provider), at 1d2c341a - a record, read by the return.
 REFUSAL_SITES = {
@@ -699,15 +697,12 @@ class SROfficesW1Tests(TransactionTestCase):
     # ---- the census SR moves, as it stands today ----
 
     def test_sr_w1_14_census_pins_today(self):
-        """The figures SR's chunks move, as they stand at C1: the action enum and the permission
-        matrix unmoved (35 / 42 until C3), the intake entries at 23 with RECORD_ROLE_DEFINITION, the
-        Identity-FK catalogue at 115 with the definition's enterer, the migration head at 0051, and
-        the definition table with SR's columns and its provision model present."""
-        self.assertEqual(len(OrganismAction), ACTION_MEMBERS_TODAY)
+        """What SR's chunks move, as it stands at C1, by name: RECORD_ROLE_DEFINITION is not yet an
+        action or a permission-matrix row (until C3), is an intake entry, the definition's enterer is
+        an Identity FK, migration 0051 is applied, and the definition table has SR's columns and its
+        provision model."""
         self.assertNotIn("RECORD_ROLE_DEFINITION", OrganismAction.__members__)
-        self.assertEqual(len(QUALIFICATION_PLANE_MATRIX), MATRIX_ROWS_TODAY)
         self.assertNotIn("RECORD_ROLE_DEFINITION", QUALIFICATION_PLANE_MATRIX)
-        self.assertEqual(len(IntakeEntry), INTAKE_ENTRIES_TODAY)
         self.assertIn("RECORD_ROLE_DEFINITION", IntakeEntry.__members__)
 
         from django.apps import apps
@@ -726,7 +721,6 @@ class SROfficesW1Tests(TransactionTestCase):
                 ):
                     identity_fks.add((model._meta.model_name, field.name))
         scoped = identity_fks - IdentityFKPredictionTests.EXCLUDED_INTERNAL_FKS
-        self.assertEqual(len(scoped), IDENTITY_FKS_TODAY)
         self.assertIn(("organismroledefinition", "enterer"), scoped)
 
         definition_columns = {field.name for field in OrganismRoleDefinition._meta.get_fields()}
@@ -739,7 +733,7 @@ class SROfficesW1Tests(TransactionTestCase):
             any(model._meta.model_name == "organismroledefinitionprovision" for model in apps.get_models()),
             "SR's provision table is installed at C1",
         )
-        self.assertEqual(current_applied_core_head(connection)[0][1], CORE_HEAD_TODAY)
+        self.assertIn(("core", "0051_sr_role_definitions"), MigrationRecorder(connection).applied_migrations())
 
     # ---- the companions that complete the route x shape map (A-2) ----
 

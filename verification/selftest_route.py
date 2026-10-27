@@ -128,6 +128,7 @@ class B0PycachePrefixEnv(_Tmp):
 
         def fake_run_logged(cmd, log_path, env):
             captured["env"] = dict(env)
+            captured["cmd"] = list(cmd)
             with open(log_path, "w", encoding="utf-8") as f:
                 f.write("offline log\n")
             return 0
@@ -141,6 +142,8 @@ class B0PycachePrefixEnv(_Tmp):
             step = r.step_offline()
 
         self.assertEqual(captured["env"]["PYTHONPYCACHEPREFIX"], expected_prefix)
+        self.assertNotIn("-f", captured["cmd"])
+        self.assertNotIn("--failfast", captured["cmd"])
         self.assertEqual(step["outcome"], "PASS")
 
         captured.clear()
@@ -262,6 +265,43 @@ class CollectionFactTests(_Tmp):
             "`fixture.py`, `fixture_support.py`, `orphan.py`",
             summary,
         )
+
+
+class R1CompleteReportingTests(unittest.TestCase):
+    def test_ordinary_failure_continues_but_checkpoint_refusal_stops(self):
+        visited = []
+
+        class Probe(unittest.TestCase):
+            def test_a_failure(self):
+                visited.append("failure")
+                self.fail("deliberate R1 probe")
+
+            def test_b_later(self):
+                visited.append("later")
+
+        for refuse_later in (False, True):
+            with self.subTest(refuse_later=refuse_later):
+                visited.clear()
+                suite = unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
+                ids = [case.id() for case in suite]
+                runner = BufferedOutputGuard()._runner(ids[1] if refuse_later else None)
+                output = io.StringIO()
+                with mock.patch.dict(os.environ, {"VERIFICATION_RUN_NONCE": "r1-probe"}), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    executor = unittest.TextTestRunner(
+                        stream=output, resultclass=runner.get_resultclass(), failfast=False,
+                    )
+                    if refuse_later:
+                        with self.assertRaises(CheckpointRefused):
+                            executor.run(suite)
+                    else:
+                        result = executor.run(suite)
+                self.assertEqual(visited, ["failure"] if refuse_later else ["failure", "later"])
+                if not refuse_later:
+                    self.assertEqual(result.testsRun, len(ids))
+                    self.assertEqual(len(result.failures), 1)
+                    self.assertFalse(result.wasSuccessful())
+                    self.assertEqual(runner.started_ids, ids)
 
 
 class BufferedOutputGuard(unittest.TestCase):
@@ -466,7 +506,7 @@ class BufferedOutputGuard(unittest.TestCase):
 
 # ------------------------------------------------------------------ B1
 class B1StepGating(_Tmp):
-    def test_every_route_test_command_is_buffered_and_full_steps_fail_fast(self):
+    def test_every_route_test_command_is_buffered_and_full_steps_report_every_failure(self):
         r = self.route()
         r.permitted_skips = []
         commands = []
@@ -502,7 +542,7 @@ class B1StepGating(_Tmp):
 
         self.assertEqual(step["outcome"], "PASS", step)
         self.assertIn("--buffer", commands[0])
-        self.assertIn("--failfast", commands[0])
+        self.assertNotIn("--failfast", commands[0])
         route_source = Path("verification/route.py").read_text(encoding="utf-8")
         self.assertIn('"--noinput", "-v", "2", "--buffer"', route_source)
 

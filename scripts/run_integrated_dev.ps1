@@ -554,7 +554,8 @@ if ($LaunchSelfTest) {
     if ($selfTestExitCode -ne 0) { throw "R9: development launch self-test failed" }
     return
 }
-if (-not $FailFast) { throw "R1: fail-fast is mandatory and cannot be disabled" }
+# R1 (amended 27 Oct 2026): fail-fast is optional; ordinary failures no longer stop a run unless -FailFast is given.
+# Isolation refusals still stop the run inside the isolation runner.
 if ($RunKind -eq "CLOSURE_EXCEPTION" -and
     [string]::IsNullOrWhiteSpace($PlanFile)) {
     throw "R3/R10: a closure exception requires its resolved -PlanFile"
@@ -1236,7 +1237,7 @@ try {
     foreach ($line in @(
         "MODE=$Mode"
         "FRESH_AUTHORITY=$freshAuthorityDigest"
-        "FAILFAST=ON"
+        "FAILFAST=$(if ($FailFast) { 'ON' } else { 'OFF' })"
         "RUN_SPEC_SHA256=$($authorizedState.State.run_spec_sha256)"
         (Get-VerificationKindLine -RunKind $RunKind)
     )) {

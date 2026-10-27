@@ -717,7 +717,7 @@ class Route:
         step = {"id": "OFFLINE", "scope": "verification.selftest_parser, verification.selftest_route, verification.selftest_recording, verification.selftest_bootstrap (no database)"}
         log = self.path("OFFLINE_test_output.log")
         env = _child_python_env(PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-        code = self.run_logged([sys.executable, "-m", "unittest", "-f", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
+        code = self.run_logged([sys.executable, "-m", "unittest", "-v", "verification.selftest_parser", "verification.selftest_route", "verification.selftest_recording", "verification.selftest_bootstrap"], log, env)
         out = parse_results.parse(read_text(log), None, log)
         with open(self.path("OFFLINE_results.json"), "x", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
@@ -770,7 +770,10 @@ class Route:
         runner = MUTATION_RUNNER if mutation else ISOLATION_RUNNER
         log = self.path(sid + "_test_output.log")
         self.attempted.append((sid, db, env[RECEIPT_ENV]))
-        fail_fast = True
+        # R1 as amended by the Human Governor's brittle-test repair direction (27 Oct 2026): ordinary test failures do
+        # not stop a step, so one run reports every failure. The isolation runner still stops at once when an
+        # isolation checkpoint is refused, and cleanup is still judged after the step (route exit status 3).
+        fail_fast = False
         test_command = [
             sys.executable, "manage.py", "test", *labels, "--testrunner", runner,
             "--parallel", "1", "--noinput", "-v", "2", "--buffer",

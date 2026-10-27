@@ -22,6 +22,7 @@ from core.models import (
     ServiceWorkSubmission,
 )
 from tests.s015_0021_support import create_test_identity
+from tests.schema_witness_support import identity_fks_at, live_identity_fks
 
 
 NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=timezone.utc)
@@ -445,7 +446,7 @@ class ConstraintCatalogueTests(TestCase):
 
 
 class IdentityFKPredictionTests(TestCase):
-    """Preserve historical 34/56 checkpoints and account for later slices."""
+    """Preserve named historical Identity references without freezing the live catalogue."""
 
     EXPECTED_S012_FK_ADDITIONS = {
         ("serviceactivity", "created_by"),
@@ -570,51 +571,19 @@ class IdentityFKPredictionTests(TestCase):
         ("originatingmembershipprovisioningrequest", "identity"),
     }
 
-    def test_identity_fk_count_34_to_56(self):
-        from django.apps import apps
-        identity_model = apps.get_model("core", "Identity")
-        fk_fields = []
-        for model in apps.get_models():
-            if model._meta.app_label != "core":
-                continue
-            for field in model._meta.get_fields():
-                if (
-                    hasattr(field, "related_model")
-                    and field.related_model is identity_model
-                    and hasattr(field, "column")
-                ):
-                    fk_fields.append((model._meta.model_name, field.name))
+    # Brittle-test repair (27 Oct 2026): no frozen totals (34 / 56 / 115). Each early slice's declared Identity
+    # FKs are compared with what its migration actually added, read from the code's migration history; every later
+    # declared set must be present. Later migrations may add unrelated Identity references without editing this
+    # historical witness; the companion catalogue test checks current models against the migration graph.
+    EARLY_SLICE_MIGRATIONS = (
+        ("0016_s012_service_activity_orchestration", "0015_s011b_event_resource_relationship", "EXPECTED_S012_FK_ADDITIONS"),
+        ("0017_s013_profile_effect", "0016_s012_service_activity_orchestration", "EXPECTED_S013_FK_ADDITIONS"),
+        ("0018_s014_education_course_foundation", "0017_s013_profile_effect", "EXPECTED_S014_FK_ADDITIONS"),
+        ("0019_s015_living_organism_foundation", "0018_s014_education_course_foundation", "EXPECTED_S015_FK_ADDITIONS"),
+    )
 
-        scoped_fks = set(fk_fields) - self.EXCLUDED_INTERNAL_FKS
-        s012_fks = {
-            (name, fname) for name, fname in scoped_fks
-            if (name, fname) in self.EXPECTED_S012_FK_ADDITIONS
-        }
-        self.assertEqual(s012_fks, self.EXPECTED_S012_FK_ADDITIONS)
-        self.assertEqual(len(s012_fks), 7)
-
-        s013_fks = {
-            (name, fname) for name, fname in scoped_fks
-            if (name, fname) in self.EXPECTED_S013_FK_ADDITIONS
-        }
-        self.assertEqual(s013_fks, self.EXPECTED_S013_FK_ADDITIONS)
-        self.assertEqual(len(s013_fks), 4)
-
-        s014_fks = {
-            (name, fname) for name, fname in scoped_fks
-            if (name, fname) in self.EXPECTED_S014_FK_ADDITIONS
-        }
-        self.assertEqual(s014_fks, self.EXPECTED_S014_FK_ADDITIONS)
-        self.assertEqual(len(s014_fks), 2)
-
-        s015_fks = {
-            (name, fname) for name, fname in scoped_fks
-            if (name, fname) in self.EXPECTED_S015_FK_ADDITIONS
-        }
-        self.assertEqual(s015_fks, self.EXPECTED_S015_FK_ADDITIONS)
-        self.assertEqual(len(s015_fks), 9)
-
-        later_sets = (
+    def _later_sets(self):
+        return (
             self.EXPECTED_S015_POST_0019_FK_ADDITIONS,
             self.EXPECTED_SB1_FK_ADDITIONS,
             self.EXPECTED_P1_FK_ADDITIONS,
@@ -623,7 +592,15 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_H100_FK_ADDITIONS,
             self.EXPECTED_SR_FK_ADDITIONS,
         )
-        for expected in later_sets:
+
+    def test_identity_fk_slices_match_migration_history(self):
+        for migration, previous, attribute in self.EARLY_SLICE_MIGRATIONS:
+            with self.subTest(slice=attribute):
+                added = identity_fks_at(("core", migration)) - identity_fks_at(("core", previous))
+                self.assertEqual(added - self.EXCLUDED_INTERNAL_FKS, getattr(self, attribute))
+
+        scoped_fks = live_identity_fks() - self.EXCLUDED_INTERNAL_FKS
+        for expected in self._later_sets():
             self.assertEqual(scoped_fks & expected, expected)
 
         named_sets = (
@@ -631,38 +608,15 @@ class IdentityFKPredictionTests(TestCase):
             self.EXPECTED_S013_FK_ADDITIONS,
             self.EXPECTED_S014_FK_ADDITIONS,
             self.EXPECTED_S015_FK_ADDITIONS,
-            *later_sets,
+            *self._later_sets(),
         )
         for index, left in enumerate(named_sets):
             for right in named_sets[index + 1:]:
                 self.assertTrue(left.isdisjoint(right))
 
-        later_additions = (
-            self.EXPECTED_S015_POST_0019_FK_ADDITIONS
-            | self.EXPECTED_SB1_FK_ADDITIONS
-            | self.EXPECTED_P1_FK_ADDITIONS
-            | self.EXPECTED_SBG_FK_ADDITIONS
-            | self.EXPECTED_SE_FK_ADDITIONS
-            | self.EXPECTED_H100_FK_ADDITIONS
-            | self.EXPECTED_SR_FK_ADDITIONS
-        )
-        historical_scoped = scoped_fks - later_additions
-        self.assertEqual(len(historical_scoped), 56)
-        historical_additions = (
-            self.EXPECTED_S012_FK_ADDITIONS
-            | self.EXPECTED_S013_FK_ADDITIONS
-            | self.EXPECTED_S014_FK_ADDITIONS
-            | self.EXPECTED_S015_FK_ADDITIONS
-        )
-        base_fks = scoped_fks - historical_additions - later_additions
-        self.assertEqual(len(base_fks), 34)
-        expected_scoped = (
-            base_fks
-            | historical_additions
-            | later_additions
-        )
-        self.assertEqual(scoped_fks, expected_scoped)
-        self.assertEqual(len(scoped_fks), 115)
+        at_0019 = identity_fks_at(("core", "0019_s015_living_organism_foundation")) - self.EXCLUDED_INTERNAL_FKS
+        later_additions = set().union(*self._later_sets())
+        self.assertLessEqual(later_additions, scoped_fks - at_0019, "a declared later Identity FK is missing")
 
     def test_se_identity_fk_slice_has_five_references(self):
         self.assertEqual(len(self.EXPECTED_SE_FK_ADDITIONS), 5)
@@ -694,36 +648,17 @@ class IdentityFKPredictionTests(TestCase):
             )
         )
 
-    def test_pre_s012_base_is_34(self):
-        from django.apps import apps
-        identity_model = apps.get_model("core", "Identity")
-        all_fks = []
-        for model in apps.get_models():
-            if model._meta.app_label != "core":
-                continue
-            for field in model._meta.get_fields():
-                if (
-                    hasattr(field, "related_model")
-                    and field.related_model is identity_model
-                    and hasattr(field, "column")
-                ):
-                    all_fks.append((model._meta.model_name, field.name))
-        scoped_fks = set(all_fks) - self.EXCLUDED_INTERNAL_FKS
-        pre_s012 = (
-            scoped_fks
-            - self.EXPECTED_S012_FK_ADDITIONS
-            - self.EXPECTED_S013_FK_ADDITIONS
-            - self.EXPECTED_S014_FK_ADDITIONS
-            - self.EXPECTED_S015_FK_ADDITIONS
-            - self.EXPECTED_S015_POST_0019_FK_ADDITIONS
-            - self.EXPECTED_SB1_FK_ADDITIONS
-            - self.EXPECTED_P1_FK_ADDITIONS
-            - self.EXPECTED_SBG_FK_ADDITIONS
-            - self.EXPECTED_SE_FK_ADDITIONS
-            - self.EXPECTED_H100_FK_ADDITIONS
-            - self.EXPECTED_SR_FK_ADDITIONS
+    def test_pre_s012_base_matches_migration_history(self):
+        scoped_fks = live_identity_fks() - self.EXCLUDED_INTERNAL_FKS
+        declared = set().union(
+            self.EXPECTED_S012_FK_ADDITIONS,
+            self.EXPECTED_S013_FK_ADDITIONS,
+            self.EXPECTED_S014_FK_ADDITIONS,
+            self.EXPECTED_S015_FK_ADDITIONS,
+            *self._later_sets(),
         )
-        self.assertEqual(len(pre_s012), 34)
+        base_at_0015 = identity_fks_at(("core", "0015_s011b_event_resource_relationship")) - self.EXCLUDED_INTERNAL_FKS
+        self.assertLessEqual(base_at_0015, scoped_fks - declared, "a historical base Identity FK is missing")
 
 
 class ProtectedForeignKeyTests(TestCase):

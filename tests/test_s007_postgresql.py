@@ -305,8 +305,12 @@ class S007PostgreSQLCatalogueTests(TransactionTestCase):
                 """
             )
             observed = set(cursor.fetchall())
-        self.assertEqual(observed, expected)
-        self.assertEqual(len(observed), 143)
+            cursor.execute("SELECT to_regclass('public.core_profile') IS NULL")
+            old_table_gone = cursor.fetchone()[0]
+        # Brittle-test repair (27 Oct 2026): every listed Identity FK targets core_identity; a model added later with
+        # its own Identity FK no longer breaks this S007 rename witness (no exact set, no frozen total of 143).
+        self.assertLessEqual(expected, observed)
+        self.assertTrue(old_table_gone, "the pre-rename core_profile table still exists")
 
     def test_database_rejects_invalid_access_state(self):
         credential = User.objects.create_user(username="invalid-state")
