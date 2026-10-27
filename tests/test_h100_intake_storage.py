@@ -19,7 +19,7 @@ from core.organism_contract import OrganismAction
 from src.intevia.services import command_intake
 from src.intevia.services.command_intake import ActorRef, IntakeShape, admit_request
 from tests.s015_concurrency_support import cleanup_workers, start_worker
-from tests.s015_0021_support import create_test_identity
+from tests.s015_0021_support import create_test_identity, current_applied_core_head
 from verification.isolation.state import REQUIRED_TRIGGER_COUNT
 
 
@@ -167,7 +167,8 @@ class H100IntakeStorageTests(TransactionTestCase):
             self.assertIn(column, update_definition)
         self.assertIsNotNone(decision_index)
         self.assertIn("(actor_id, action, idempotency_key)", decision_index[0])
-        self.assertEqual(trigger_count, REQUIRED_TRIGGER_COUNT["0049_h100_command_intake"])
+        head = current_applied_core_head(connection)[0][1]
+        self.assertEqual(trigger_count, REQUIRED_TRIGGER_COUNT[head])
         self.assertEqual(isolation.lower(), "read committed")
 
     def test_iw_17_both_directions_of_compound_target_check(self):
