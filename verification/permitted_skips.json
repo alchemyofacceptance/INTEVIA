@@ -1,25 +1,4 @@
 {
   "version": 1,
-  "entries": [
-    {
-      "id": "tests.test_s007_authentication_shell.AuthenticationShellTests.test_stale_epoch_and_absolute_age_flush_sessions",
-      "condition": "always",
-      "reason": "H82_HOST_CLOCK_SESSION_AGE: production compares against host time.time(); deferred until Alpha."
-    },
-    {
-      "id": "tests.test_sbg_governance.SBGGovernanceDepartureCascadeTests.test_w_d3_5_departure_vacates_the_seat_for_equal_time_succession",
-      "condition": "always",
-      "reason": "Human Governor ruling 13 Oct 2026: never run again (clock design; ledger H82)."
-    },
-    {
-      "id": "tests.test_s015_application_authority.ProductionApplicationAuthorityTests.test_ap6_non_superuser_application_role_when_present",
-      "condition": "always",
-      "reason": "AP-6 requires the non-superuser application role; both branches skip when it is absent."
-    },
-    {
-      "id": "tests.test_tt1_template_lifecycle.TemplateLifecycleToolingTests.test_template_clone_parity_and_receipt_cleanup",
-      "condition": "fresh-mode",
-      "reason": "Clone parity and receipt cleanup are local development concerns only. CI runs fresh mode and is the sole evidence of record under the Human Governor's 'proven on GitHub only' ruling. The skip is permitted in fresh mode; the property is not claimed as established by any local run."
-    }
-  ]
+  "entries": []
 }
