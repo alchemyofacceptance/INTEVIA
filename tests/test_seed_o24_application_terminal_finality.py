@@ -1,4 +1,9 @@
-"""O-24 application terminal finality; re-application remains unqualified by this slice."""
+"""O-24 application terminal finality; re-application remains unqualified by this slice.
+
+The Coordinator has no identity history, so its visibility of decision results
+(an audience check) is not qualified by this slice; the tests reload stored
+rows directly.
+"""
 
 import hashlib
 import threading
@@ -10,6 +15,7 @@ from queue import Empty, Queue
 from threading import Barrier
 from unittest import skipUnless
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection, connections, transaction
 from django.test import TransactionTestCase
 
@@ -20,6 +26,7 @@ from core.models import (
     ApplicationWithdrawal,
     CSAAssignment,
     Identity,
+    IdentityTransition,
     LivingOrganism,
 )
 from src.intevia.services.organism_application_service import (
@@ -82,6 +89,32 @@ class ApplicationTerminalFinalityTests(TransactionTestCase):
         self.organism = LivingOrganism.objects.get(pk=self.ids["lo"])
         self.coordinator = Identity.objects.get(pk=self.ids["identity"])
         self.applicant = Identity.objects.get(pk=applicant_id)
+        with transaction.atomic():
+            provision = IdentityTransition.objects.create(
+                identity=self.applicant,
+                action=IdentityTransition.Action.PROVISION,
+                prior_state=None,
+                resulting_state=Identity.AccessState.PENDING,
+                authority_reference="o24:test:provision",
+                technical_executor="O24_TEST",
+                evidence_reference="o24:test:history",
+                reason_category=IdentityTransition.ReasonCategory.PROVISIONING,
+                correlation_id=uuid.uuid4(),
+                occurred_at=database_now(),
+            )
+            IdentityTransition.objects.create(
+                identity=self.applicant,
+                action=IdentityTransition.Action.ACTIVATE,
+                prior_state=Identity.AccessState.PENDING,
+                resulting_state=Identity.AccessState.ACTIVE,
+                authority_reference="o24:test:activate",
+                technical_executor="O24_TEST",
+                evidence_reference="o24:test:history",
+                reason_category=IdentityTransition.ReasonCategory.GOVERNED_ACTIVATION,
+                correlation_id=uuid.uuid4(),
+                occurred_at=database_now(),
+                previous_transition=provision,
+            )
         self.service = OrganismApplicationService(
             authority=S015Authority(provider=_O24AuthorityProvider()),
             clock=database_now,
@@ -310,7 +343,7 @@ class ApplicationTerminalFinalityTests(TransactionTestCase):
         )
 
     def test_second_decision_is_refused_by_application_uniqueness(self):
-        """A second decision for one application is refused by its application uniqueness constraint."""
+        """A second decision is refused by the model's uniqueness check and by the application unique key."""
         application = self._new_application()
         claim = self._claim(application)
         first = self._decide(application)
@@ -320,9 +353,13 @@ class ApplicationTerminalFinalityTests(TransactionTestCase):
             first.effective_at,
         )
 
+        with self.assertRaises(ValidationError) as model_refusal:
+            ApplicationDecision.objects.create(**values)
+        self.assertIn("application", model_refusal.exception.message_dict)
+
         try:
             with transaction.atomic():
-                ApplicationDecision.objects.create(**values)
+                ApplicationDecision.objects.bulk_create([ApplicationDecision(**values)])
         except IntegrityError as refused:
             cause = refused.__cause__
             sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
