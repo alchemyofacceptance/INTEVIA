@@ -19,8 +19,8 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
-    # RECURRING: the terminal-conflict test must discriminate the named guardian refusal.
     "o24-terminal-refusal": {
+        # RECURRING: the terminal-conflict test must discriminate the named guardian refusal.
         "follow_up": "O-24 TAR-3 recurring experiment",
         "intended": "S3 terminal exclusion on a conflicting decision/withdrawal write",
         "targets": [
@@ -45,8 +45,8 @@ MUTATIONS = {
                $$""",
         ],
     },
-    # ADMISSION: after-withdrawal engagement must demand the named engagement guardian.
     "o24-engagement-refusal-admission": {
+        # ADMISSION: after-withdrawal engagement must demand the named engagement guardian.
         "follow_up": "O-24 TAR-3 engagement admission evidence",
         "intended": "S3 engagement refused when an engagement is attempted after withdrawal",
         "targets": [
@@ -71,8 +71,8 @@ MUTATIONS = {
                $$""",
         ],
     },
-    # ADMISSION: two decisions must be excluded by the one-to-one application key.
     "o24-decision-uniqueness-admission": {
+        # ADMISSION: two decisions must be excluded by the one-to-one application key.
         "follow_up": "O-24 TAR-3 same-kind admission evidence",
         "intended": "the unique application key on core_applicationdecision.application_id",
         "targets": [
@@ -118,10 +118,10 @@ MUTATIONS = {
                $$""",
         ],
     },
-    # ADMISSION: sensitivity to removal of terminal exclusion under contention.
-    # Decision first fails the loser's refusal-text assertion; withdrawal first fails
-    # the one-commit assertion. This does not guarantee a two-row witness.
     "o24-terminal-race-admission": {
+        # ADMISSION: sensitivity to removal of terminal exclusion under contention.
+        # Decision first fails the loser's refusal-text assertion; withdrawal first fails
+        # the one-commit assertion. This does not guarantee a two-row witness.
         "follow_up": "O-24 TAR-3 threaded admission evidence",
         "intended": (
             "sensitivity to removal of terminal exclusion under contention; "
