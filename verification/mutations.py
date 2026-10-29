@@ -19,6 +19,131 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    # RECURRING: the terminal-conflict test must discriminate the named guardian refusal.
+    "o24-terminal-refusal": {
+        "follow_up": "O-24 TAR-3 recurring experiment",
+        "intended": "S3 terminal exclusion on a conflicting decision/withdrawal write",
+        "targets": [
+            "test_seed_o24_application_terminal_finality.ApplicationTerminalFinalityTests."
+            "test_decision_then_withdrawal_refuses_at_earlier_and_later_effective_times"
+        ],
+        "sql": [
+            """DO $$
+               DECLARE definition text;
+               BEGIN
+                   SELECT pg_get_functiondef('public.s3_terminal_lock()'::regprocedure)
+                     INTO definition;
+                   IF definition IS NULL OR position('S3 terminal exclusion' IN definition) = 0 THEN
+                       RAISE EXCEPTION 'expected terminal-exclusion refusal was not found';
+                   END IF;
+                   EXECUTE replace(
+                       definition,
+                       'S3 terminal exclusion',
+                       'VERIFICATION MUTATION: an unrelated refusal'
+                   );
+               END
+               $$""",
+        ],
+    },
+    # ADMISSION: after-withdrawal engagement must demand the named engagement guardian.
+    "o24-engagement-refusal-admission": {
+        "follow_up": "O-24 TAR-3 engagement admission evidence",
+        "intended": "S3 engagement refused when an engagement is attempted after withdrawal",
+        "targets": [
+            "test_seed_o24_application_terminal_finality.ApplicationTerminalFinalityTests."
+            "test_withdrawal_then_decision_and_engagement_refuse_independently"
+        ],
+        "sql": [
+            """DO $$
+               DECLARE definition text;
+               BEGIN
+                   SELECT pg_get_functiondef('public.s3_engagement_guard()'::regprocedure)
+                     INTO definition;
+                   IF definition IS NULL OR position('S3 engagement refused' IN definition) = 0 THEN
+                       RAISE EXCEPTION 'expected engagement refusal was not found';
+                   END IF;
+                   EXECUTE replace(
+                       definition,
+                       'S3 engagement refused',
+                       'VERIFICATION MUTATION: an unrelated refusal'
+                   );
+               END
+               $$""",
+        ],
+    },
+    # ADMISSION: two decisions must be excluded by the one-to-one application key.
+    "o24-decision-uniqueness-admission": {
+        "follow_up": "O-24 TAR-3 same-kind admission evidence",
+        "intended": "the unique application key on core_applicationdecision.application_id",
+        "targets": [
+            "test_seed_o24_application_terminal_finality.ApplicationTerminalFinalityTests."
+            "test_second_decision_is_refused_by_application_uniqueness"
+        ],
+        "sql": [
+            """DO $$
+               DECLARE
+                   application_att smallint;
+                   unique_constraint text;
+                   unique_index oid;
+               BEGIN
+                   SELECT attnum INTO application_att
+                     FROM pg_catalog.pg_attribute
+                    WHERE attrelid = 'public.core_applicationdecision'::regclass
+                      AND attname = 'application_id'
+                      AND NOT attisdropped;
+                   SELECT conname INTO unique_constraint
+                     FROM pg_catalog.pg_constraint
+                    WHERE conrelid = 'public.core_applicationdecision'::regclass
+                      AND contype = 'u'
+                      AND cardinality(conkey) = 1
+                      AND conkey[1] = application_att;
+                   IF unique_constraint IS NOT NULL THEN
+                       EXECUTE format(
+                           'ALTER TABLE public.core_applicationdecision DROP CONSTRAINT %I',
+                           unique_constraint
+                       );
+                   ELSE
+                       SELECT indexrelid INTO unique_index
+                         FROM pg_catalog.pg_index
+                        WHERE indrelid = 'public.core_applicationdecision'::regclass
+                          AND indisunique
+                          AND indnatts = 1
+                          AND pg_get_indexdef(indexrelid, 1, true) = 'application_id';
+                       IF unique_index IS NULL THEN
+                           RAISE EXCEPTION 'application decision unique key was not found';
+                       END IF;
+                       EXECUTE format('DROP INDEX %s', unique_index::regclass);
+                   END IF;
+               END
+               $$""",
+        ],
+    },
+    # ADMISSION: sensitivity to removal of terminal exclusion under contention.
+    # Decision first fails the loser's refusal-text assertion; withdrawal first fails
+    # the one-commit assertion. This does not guarantee a two-row witness.
+    "o24-terminal-race-admission": {
+        "follow_up": "O-24 TAR-3 threaded admission evidence",
+        "intended": (
+            "sensitivity to removal of terminal exclusion under contention; "
+            "decision first fails the loser's refusal-text assertion, while "
+            "withdrawal first fails the one-commit assertion; it does not "
+            "guarantee a two-row witness"
+        ),
+        "targets": [
+            "test_seed_o24_application_terminal_finality.ApplicationTerminalFinalityTests."
+            "test_threaded_decision_and_withdrawal_leave_one_terminal_row"
+        ],
+        "sql": [
+            """CREATE OR REPLACE FUNCTION public.s3_terminal_lock()
+               RETURNS trigger LANGUAGE plpgsql AS $$
+               BEGIN
+                   PERFORM public.s3_lock_application(NEW.application_id);
+                   NEW.recorded_at := clock_timestamp();
+                   RETURN NEW;
+               END
+               $$""",
+        ],
+    },
     "fu-b2-unrelated-reuse-refusal": {
         "follow_up": "FU-B2 (A1 review O-2)",
         "intended": "the reuse guardian's R-d refusal: R-d as ruled and landed (ILC Datacron section 3, What the packet builds, item 2; section 6) and implemented by 0022 RESOLUTION_REUSE_GUARD_BODY; design v0.6 section 5.5 posed the question",
