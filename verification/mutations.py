@@ -4,15 +4,24 @@ A test must distinguish the intended behaviour from a named defect. These mutati
 refusal, remove a protection, or introduce an overbroad refusal. The route runs each mutation's target tests with
 MutationRunner and requires every target to fail by assertion, rather than error during setup or execution.
 
-A mutation is applied only inside the attempt-owned disposable test database, after the test runner has created and
-migrated it, and is destroyed with it.
+A mutation is applied only inside the attempt-owned disposable test database, after the test runner has created it,
+and is destroyed with it. Since CI-CLONE-1 (Human Governor, 31 Oct 2026: clone mode wherever a database is created) the
+runner shares the TT-1 template path with the isolation runner: the test database is a clone of the run's template,
+and the mutation SQL is executed on the clone's connection only. The template is sealed against connections
+(ALLOW_CONNECTIONS false, witnessed in its receipt), so no statement run here can reach it; and before the mutation is
+applied the clone's CP-0 digest is recomputed and must equal the template's recorded fresh-build CP-0: the compared CP-0
+properties of the clone match the fresh-build reference at the moment the clone was taken (that is, after every earlier
+mutation step). A mismatch does not say whether the template or the clone is at fault; it refuses the step.
 """
 import os
+import sys
+import time
 
 from django.db import connection
 from django.test.runner import DiscoverRunner
 
-from verification.ownership import OwnedDatabaseRunnerMixin
+from verification.isolation.template_mode import TemplateModeRunnerMixin
+from verification.ownership import OwnedDatabaseRunnerMixin, write_receipt
 from verification.recording import RecordingRunnerMixin
 
 MUTATION_ENV = "VERIFICATION_MUTATION"
@@ -225,16 +234,49 @@ MUTATIONS = {
 }
 
 
-class MutationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
-    """Applies the mutation named in VERIFICATION_MUTATION to the freshly migrated test database, before any test."""
+class MutationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
+    """Applies the mutation named in VERIFICATION_MUTATION to the test database (a clone of the run's template in clone
+    mode; a fresh build only under a Human-authorised fresh mode), before any test."""
 
     def setup_databases(self, **kwargs):
         old_config = super().setup_databases(**kwargs)
         name = os.environ.get(MUTATION_ENV)
         if name not in MUTATIONS:
             raise RuntimeError("unknown or missing %s: %r" % (MUTATION_ENV, name))
+        if getattr(self, "template_mode", "clone") == "clone":
+            self.verify_clone_matches_template()
         with connection.cursor() as cursor:
             for statement in MUTATIONS[name]["sql"]:
                 cursor.execute(statement)
         print("VERIFICATION MUTATION APPLIED: %s" % name, flush=True)
         return old_config
+
+    def verify_clone_matches_template(self):
+        """CI-CLONE-1: before any mutation statement, the clone's CP-0 must equal the template's recorded fresh-build CP-0.
+
+        The clone is a copy of the template at the moment it was taken, so an equal digest shows the compared CP-0
+        properties matched the fresh-build reference at that moment. The comparison is written as a clone_cp0_verified receipt (read by the route) and
+        printed as TT1_CLONE_CP0_MATCHES_TEMPLATE. A difference refuses the step before the mutation is applied; the
+        route never falls back to a fresh build (R9).
+        """
+        from verification.isolation import state
+        from verification.isolation.runner import _runner_print
+
+        receipt = getattr(self, "template_receipt", None)
+        if not isinstance(receipt, dict) or not receipt.get("cp0_digest"):
+            raise RuntimeError("R9: clone mode has no template receipt to verify the clone against; fresh-mode fallback is prohibited")
+        started = time.perf_counter()
+        clone_digest = state.digest(state.capture())
+        matches = clone_digest == receipt["cp0_digest"]
+        write_receipt("clone_cp0_verified", name=connection.settings_dict.get("NAME"), template_name=receipt.get("name"),
+                      template_oid=receipt.get("oid"), template_cp0_digest=receipt["cp0_digest"],
+                      clone_cp0_digest=clone_digest, matches=matches, seconds=round(time.perf_counter() - started, 6))
+        _runner_print("TT1_CLONE_CP0_MATCHES_TEMPLATE=%s" % matches, file=sys.stderr, flush=True)
+        if not matches:
+            raise RuntimeError(
+                "R9: the mutation check could not start because the clone's recorded starting state differs from the "
+                "fresh-build reference. No mutation SQL or target test was run; this step's database was not changed. "
+                "Preserve this run's evidence and ask the VC/ME to inspect the template and clone records (the receipts under "
+                "PKTB_VERIFICATION_ROUTE) before releasing another run. A fresh database will not be substituted. "
+                "Technical details: clone CP-0 %s, fresh-build reference %s" % (clone_digest, receipt["cp0_digest"])
+            )

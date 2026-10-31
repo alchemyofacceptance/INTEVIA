@@ -39,6 +39,21 @@ Database safety (A1 C-A1-B3; RC-B2, RC-B3 and RC-O1 in v0.3):
   Limit     PostgreSQL cannot drop a database by oid. Between that final oid check and the DROP statement another client
             could replace the database; the route narrows this window to two consecutive statements on one connection and
             does not claim to close it.
+  Template  (CI-CLONE-1, Human Governor 31 Oct 2026: clone mode wherever a database is created.) One database is built
+            fresh per run, from the migrations at zero, by the first database step (SELF) through the TT-1 template
+            machinery under the build-once policy (verification.isolation.template_mode.prepare_template_build_once,
+            which calls TT-1's _build_template once; prepare_template stays the development path); it is sealed against connections and becomes
+            the run's template. Every later test database - S015 and each MUT step, and the final check below - is a
+            clone of it. The TT-1 evidence root for the run is the directory PKTB_VERIFICATION_ROUTE inside the evidence
+            directory (template store, build intents, every step's database receipts). Each clone step proves its clone
+            is a copy of the template (its compared CP-0 properties match the fresh-build reference; a mutation step checks
+            this before its mutation is applied) and that no second fresh build occurred: SELF alone runs under the
+            build-once policy, every later child under reuse-only, bound to the template SELF recorded. At the end of the
+            run one final clone's CP-0 is compared with the fresh-build reference once more, after every mutation step, and
+            the template is dropped as one more owned database (cleanup). A clone failure fails the step; fresh-mode
+            fallback is prohibited (R9). The empty ownership, lock and template-sealing control probes are never migrated
+            (Human Governor decision 1A). Fresh mode for any other database needs his named decision (R2); the route has
+            no switch for it.
 
 Exit status: 0 every step PASS and cleanup clean; 1 a step FAIL; 2 a step INCOMPLETE (over 1), including an existing
 evidence directory or an unavailable lock; 3 cleanup not clean or unresolved (over all).
@@ -57,6 +72,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import time
 import traceback
 import uuid
 
@@ -79,7 +95,14 @@ MUTATION_RUNNER = "verification.mutations.MutationRunner"
 LOCK_KEY = int(hashlib.sha256(b"intevia-s015-verification-route").hexdigest()[:15], 16)
 LOCK_DATABASE = "postgres"  # common to every route run on a server (RC-O1); not configurable by design
 OWNERSHIP_PROBE_TEST = "test_s015_0022_contract.S0150022ContractTests.test_l2_preimage_refuses_every_body_while_u14_stands"
-STEP_CODES = {"SELF": "self", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3", "LOCK": "lock1"}
+STEP_CODES = {"SELF": "self", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3", "LOCK": "lock1", "TPL-FINAL": "tplf"}
+# CI-CLONE-1: the run's TT-1 evidence root (a directory of this name inside the evidence directory; the name must satisfy
+# template.py's PKTB_ pattern), the template store beneath it, the store namespace, and the step that builds the template.
+TEMPLATE_ROOT = "PKTB_VERIFICATION_ROUTE"
+TEMPLATE_STORE = "template-store"
+TEMPLATE_NAMESPACE = "vr"
+TEMPLATE_BUILD_STEP = "SELF"
+TT1_LINE = re.compile(r"^(TT1_TEMPLATE_BUILD_SECONDS|TT1_CLONE_SETUP_SECONDS|TT1_FRESH_SETUP_SECONDS|TT1_CLONE_CP0_MATCHES_TEMPLATE|TT1_SETUP_OUTCOME)=(\S+)\s*$", re.M)
 STEP_CODES.update({"MUT-" + name: "mut%d" % (i + 1) for i, name in enumerate(sorted(MUTATIONS))})
 
 COLLECT = r"""
@@ -108,6 +131,24 @@ with open(out_path, "x", encoding="utf-8") as f:
     json.dump({"mode": mode, "args": rest, "count": len(ids), "failed_loads": failed, "run_nonce": os.environ.get("VERIFICATION_RUN_NONCE"),
                "digest": hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest(), "ids": ids,
                "facts": facts}, f, indent=1)
+"""
+
+# CI-CLONE-1: the end-of-run template check and drop, run as one more Django child under django_env. The child is a
+# five-line shim around verification.isolation.template_mode.run_final_inspection (importable, so the wrapper and its
+# result record are tested offline - Argon G1/§3) which calls finalise_route_template: one final clone of
+# the template, that clone's CP-0 compared with the fresh-build reference and recorded (TT-1 record_final_clone_cp0,
+# which refuses a differing digest), then the template dropped through TT-1 cleanup_template (drop only by the receipt's
+# oid, cleanup record written, receipt marked destroyed); cleanup is never reached on a mismatch. The final clone itself
+# is an attempted database of the route and is dropped by the route's own guarded cleanup.
+TEMPLATE_FINAL = r"""
+import os, sys
+sys.path.insert(0, os.getcwd())
+import django
+django.setup()
+from django.conf import settings
+from django.db import connection
+from verification.isolation.template_mode import run_final_inspection
+sys.exit(run_final_inspection(connection, settings, os.environ["VERIFICATION_TEMPLATE_STORE"], sys.argv[3], sys.argv[2], sys.argv[1]))
 """
 
 
@@ -323,7 +364,11 @@ class Route:
         self.candidate_state_path = None
         self.candidate_binding = None
         self.run_spec_sha256 = None
-        self.fresh_authorities = {}
+        # CI-CLONE-1: the run's TT-1 evidence root, its database tag (bound to the run id) and the template once built
+        self.template_root = self.path(TEMPLATE_ROOT)
+        os.mkdir(self.template_root)
+        self.template_tag = self.run_token[1:9]
+        self.template = None
         self.transcript = open(os.path.join(self.dir, "transcript.txt"), "x", encoding="utf-8")
 
     def path(self, name):
@@ -523,24 +568,42 @@ class Route:
                 self.lock_conn = None
 
     # ------------------------------------------------------------------ steps
+    def receipts_path(self, sid):
+        """A step's database receipts live in the run's TT-1 evidence root (the template machinery requires the building
+        step's receipts to be inside that root; every step's receipts are kept there for one layout)."""
+        return os.path.join(self.template_root, sid + "_db_receipts.jsonl")
+
     def django_env(self, db_name, sid, isolation=True, mutation=None):
         candidate_state_path, candidate_binding, run_spec_sha256 = (
             self._ensure_candidate_binding()
         )
-        authority_path, authority_sha256 = self._fresh_authority(sid)
         env = _child_python_env(DJANGO_SETTINGS_MODULE="intevia.test_settings", INTEVIA_S015_TEST_ROUTE=ROUTE, INTEVIA_DATABASE_ENGINE="postgresql",
                                 INTEVIA_POSTGRES_TEST_DB=db_name, INTEVIA_POSTGRES_DB=os.environ.get("INTEVIA_POSTGRES_DB", "postgres"),
                                 PYTHONPATH=os.pathsep.join([ROOT, os.path.join(ROOT, "tests")]), PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
                                 VERIFICATION_EXPECTED_CORE_HEAD=self.core_head() or "",
                                 INTEVIA_CANDIDATE_BINDING_SHA256=candidate_binding,
-                                VERIFICATION_TEMPLATE_MODE="fresh",
-                                INTEVIA_FRESH_AUTHORITY_FILE=authority_path,
-                                INTEVIA_FRESH_AUTHORITY_SHA256=authority_sha256,
+                                # CI-CLONE-1: clone mode for every database the run creates (R2 as varied 31 Oct 2026);
+                                # the template store, namespace and evidence root are the route's own, under the evidence
+                                # directory, so the workflow sets nothing for them. The route never sets fresh mode.
+                                VERIFICATION_TEMPLATE_MODE="clone",
+                                VERIFICATION_TEMPLATE_STORE=os.path.join(self.template_root, TEMPLATE_STORE),
+                                VERIFICATION_TEMPLATE_NAMESPACE=TEMPLATE_NAMESPACE,
+                                VERIFICATION_TEMPLATE_CLEANUP="0",
+                                # F2: SELF alone may build, into the empty run-owned store; every later child must reuse
+                                # the template SELF recorded (name:oid:identity) and refuses otherwise - no recovery-and-build
+                                VERIFICATION_TEMPLATE_POLICY="build-once" if sid == TEMPLATE_BUILD_STEP else "reuse-only",
+                                INTEVIA_TEMPLATE_EXPECTED=("%s:%s:%s" % (self.template["name"], self.template["oid"], self.template["identity"])
+                                                           if self.template else ""),
+                                INTEVIA_DATABASE_TAG=self.template_tag,
+                                INTEVIA_EVIDENCE_ROOT=TEMPLATE_ROOT,
+                                INTEVIA_EVIDENCE_ROOT_PATH=self.template_root,
                                 INTEVIA_RUN_SPEC_SHA256=run_spec_sha256,
                                 INTEVIA_RUN_SUFFIX=sid)
+        for inherited in ("INTEVIA_FRESH_AUTHORITY_FILE", "INTEVIA_FRESH_AUTHORITY_SHA256"):
+            env.pop(inherited, None)
         env["PGOPTIONS"] = _child_pgoptions(os.environ.get("PGOPTIONS", ""))
         env[NONCE_ENV] = self.nonce
-        env[RECEIPT_ENV] = self.path(sid + "_db_receipts.jsonl")
+        env[RECEIPT_ENV] = self.receipts_path(sid)
         env["VERIFICATION_ISOLATION_JSON"] = self.path(sid + "_isolation.jsonl")
         env.pop("VERIFICATION_MUTATION", None)
         if mutation:
@@ -591,28 +654,6 @@ class Route:
             self.candidate_binding,
             self.run_spec_sha256,
         )
-
-    def _fresh_authority(self, sid):
-        existing = self.fresh_authorities.get(sid)
-        if existing is not None:
-            return self.path(existing["file"]), existing["sha256"]
-        path = self.path(sid + "_fresh_authority.txt")
-        text = (
-            "Authority: TU-2a CI route implementation, WI-TU2A-6.\n"
-            "Clause: RUN_REQUIREMENTS_POST_PERMIT_v1_0 R2.\n"
-            "Mode: fresh.\n"
-            "Step: %s.\n"
-            "Run suffix: %s.\n" % (sid, sid)
-        )
-        with open(path, "x", encoding="utf-8") as handle:
-            handle.write(text)
-        digest = sha256_file(path)
-        self.fresh_authorities[sid] = {
-            "file": os.path.basename(path),
-            "sha256": digest,
-            "mode": "fresh",
-        }
-        return path, digest
 
     def run_logged(self, cmd, log_path, env):
         with open(log_path, "x", encoding="utf-8", newline="\n") as log:
@@ -810,6 +851,15 @@ class Route:
             step["mutation_applied"] = ("VERIFICATION MUTATION APPLIED: %s" % mutation) in read_text(log)
         if expect_fail and not step.get("mutation_applied") and outcome == "PASS":
             outcome, reason = "FAIL", "the mutation was not applied"
+        if template_mode == "clone":
+            # CI-CLONE-1: the step's database must be a clone of the one template this run built, proven by the step's
+            # own receipts and log; a binding problem fails the step whatever the tests reported.
+            step["template"] = self.template_evidence(sid, db, read_text(log), env[RECEIPT_ENV],
+                                                      env["VERIFICATION_ISOLATION_JSON"] if isolation else None)
+            if step["template"]["problems"] and outcome != "INCOMPLETE":
+                outcome = "FAIL"
+                reason = ("; " .join(filter(None, [reason, "template binding not established: "
+                                                   + "; ".join(step["template"]["problems"])])))
         if outcome != "INCOMPLETE" and isolation:
             step["isolation"] = self.read_isolation(env["VERIFICATION_ISOLATION_JSON"], collection["ids"])
             if step["isolation"]["verdict"] is None:
@@ -822,6 +872,122 @@ class Route:
         if reason:
             step["reason"] = reason
         return step
+
+    def template_evidence(self, sid, db, log_text, receipts_path, isolation_path):
+        """CI-CLONE-1: derive, from the step's own receipts and log, that its database was a clone of the run's one template.
+
+        The first clone step (TEMPLATE_BUILD_STEP) must have built the template fresh (template_created receipt, real
+        TT1_TEMPLATE_BUILD_SECONDS): that build is the run's proof of the migrations from zero. Every later step must
+        have reused it (TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE, no template_created receipt) and its clone_created
+        receipt must name the template's oid and fresh-build CP-0 digest. The clone's own CP-0 must equal that digest:
+        an isolation step records both in its CP-0 checkpoint (and refuses a difference before any test); a mutation
+        step records a clone_cp0_verified receipt before its mutation is applied. Problems are listed, never summarised.
+        """
+        lines = {key: value for key, value in TT1_LINE.findall(log_text)}
+        out = {"mode": "clone", "built": False, "build_seconds": None, "clone_setup_seconds": None,
+               "template": None, "template_oid": None, "clone_cp0_matches_template": None, "problems": []}
+        problems = out["problems"]
+        receipts, problem = read_receipts(receipts_path, self.nonce)
+        if problem:
+            problems.append("receipts not trustworthy: %s" % problem)
+            return out
+        built = [r for r in receipts if r.get("event") == "template_created"]
+        clones = [r for r in receipts if r.get("event") == "clone_created" and r.get("name") == db]
+        build_line = lines.get("TT1_TEMPLATE_BUILD_SECONDS")
+        try:
+            out["clone_setup_seconds"] = float(lines["TT1_CLONE_SETUP_SECONDS"]) if "TT1_CLONE_SETUP_SECONDS" in lines else None
+        except ValueError:
+            problems.append("TT1_CLONE_SETUP_SECONDS is not a number: %r" % lines.get("TT1_CLONE_SETUP_SECONDS"))
+        if "TT1_FRESH_SETUP_SECONDS" in lines:
+            problems.append("the step built its database fresh (TT1_FRESH_SETUP_SECONDS) instead of cloning the template")
+        out["setup_outcome"] = lines.get("TT1_SETUP_OUTCOME")
+        if out["setup_outcome"] != "succeeded":
+            problems.append("the database setup %s (TT1_SETUP_OUTCOME=%s): %s" % (
+                {"failed": "failed while creating the clone", "not started": "was refused before any database was created"}.get(
+                    out["setup_outcome"], "reported no outcome"),
+                out["setup_outcome"],
+                "see the step's log for the refusal" if out["setup_outcome"] in ("failed", "not started") else "the runner did not reach its database setup"))
+        if build_line is None:
+            problems.append("the runner reported no TT1_TEMPLATE_BUILD_SECONDS line (a real build time or NOT_APPLICABLE is required)")
+        if out["clone_setup_seconds"] is None:
+            problems.append("the runner reported no TT1_CLONE_SETUP_SECONDS line")
+        elif not (out["clone_setup_seconds"] >= 0 and out["clone_setup_seconds"] != float("inf")):
+            problems.append("TT1_CLONE_SETUP_SECONDS is not a finite, non-negative duration: %r" % out["clone_setup_seconds"])
+        if self.template is None:
+            if sid != TEMPLATE_BUILD_STEP:
+                problems.append("no template has been built by %s yet this step ran in clone mode" % TEMPLATE_BUILD_STEP)
+            if len(built) != 1 or not all(built[0].get(k) for k in ("name", "oid", "identity", "cp0_digest")):
+                problems.append("expected exactly one template_created receipt with name, oid, identity and cp0_digest, found %d" % len(built))
+            else:
+                try:
+                    seconds = float(build_line)
+                except (TypeError, ValueError):
+                    seconds = None
+                    problems.append("TT1_TEMPLATE_BUILD_SECONDS is not a real build time: %r" % build_line)
+                record = built[0]
+                self.template = {"mode": "clone", "namespace": TEMPLATE_NAMESPACE, "tag": self.template_tag,
+                                 "root": TEMPLATE_ROOT, "store": TEMPLATE_ROOT + "/" + TEMPLATE_STORE,
+                                 "built_by_step": sid, "name": record["name"], "oid": record["oid"],
+                                 "identity": record["identity"], "cp0_digest": record["cp0_digest"],
+                                 "sealed": record.get("allow_connections") is False and record.get("connection_refused") is True,
+                                 "build_seconds": seconds, "clones": []}
+                out.update(built=True, build_seconds=seconds)
+                if not self.template["sealed"]:
+                    problems.append("the template receipt does not witness the ALLOW_CONNECTIONS seal and the direct-connection refusal")
+        else:
+            if built:
+                problems.append("a second fresh template build occurred in this step (%d template_created receipt(s)); one fresh build per run" % len(built))
+            if build_line not in (None, "NOT_APPLICABLE"):
+                problems.append("TT1_TEMPLATE_BUILD_SECONDS=%s in a step that must reuse the template" % build_line)
+        if self.template is not None:
+            out.update(template=self.template["name"], template_oid=self.template["oid"])
+            if len(clones) != 1:
+                problems.append("expected exactly one clone_created receipt for %s, found %d" % (db, len(clones)))
+            else:
+                clone = clones[0]
+                if clone.get("template_oid") != self.template["oid"] or clone.get("template_name") != self.template["name"]:
+                    problems.append("the clone was taken from %s (oid %s), not the run's template %s (oid %s)"
+                                    % (clone.get("template_name"), clone.get("template_oid"), self.template["name"], self.template["oid"]))
+                if clone.get("template_cp0_digest") != self.template["cp0_digest"]:
+                    problems.append("the clone receipt's template CP-0 digest differs from the fresh-build CP-0")
+            clone_digest = None
+            if isolation_path is None:
+                verified = [r for r in receipts if r.get("event") == "clone_cp0_verified" and r.get("name") == db]
+                if len(verified) != 1:
+                    problems.append("expected exactly one clone_cp0_verified receipt before the mutation, found %d" % len(verified))
+                else:
+                    clone_digest = verified[0].get("clone_cp0_digest")
+                    if verified[0].get("matches") is not True or lines.get("TT1_CLONE_CP0_MATCHES_TEMPLATE") != "True":
+                        problems.append("the runner did not record the clone's CP-0 as matching the template before the mutation")
+            else:
+                cp0 = self.isolation_cp0_record(isolation_path)
+                if cp0 is None:
+                    problems.append("no CP-0 isolation record bound to this run")
+                else:
+                    clone_digest = cp0.get("clone_cp0_digest")
+                    if cp0.get("template_cp0_digest") != self.template["cp0_digest"]:
+                        problems.append("the CP-0 record's template digest differs from the fresh-build CP-0")
+            out["clone_cp0_matches_template"] = clone_digest is not None and clone_digest == self.template["cp0_digest"]
+            if not out["clone_cp0_matches_template"]:
+                problems.append("the clone's compared CP-0 properties (%s) do not match the fresh-build reference (%s)"
+                                % (clone_digest, self.template["cp0_digest"]))
+            self.template["clones"].append({"step": sid, "database": db, "clone_setup_seconds": out["clone_setup_seconds"],
+                                            "clone_cp0_matches_template": out["clone_cp0_matches_template"],
+                                            "problems": list(problems)})
+        return out
+
+    def isolation_cp0_record(self, path):
+        if not os.path.exists(path):
+            return None
+        for line in read_text(path).splitlines():
+            if line.strip():
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    return None
+                if record.get("checkpoint") == "CP-0" and record.get("run_nonce") == self.nonce:
+                    return record
+        return None
 
     def read_isolation(self, path, collected):
         """Recompute the isolation verdict from this run's own records (C-A1-B4); never trust a summary line alone."""
@@ -918,7 +1084,7 @@ class Route:
         return (("DROPPED BY THE ROUTE (owned oid %s)" % owned_oid) if gone else "UNRESOLVED - drop issued but the database is still present"), gone
 
     def write_created_receipt(self, name, oid, sid):
-        receipts_path = self.path(sid + "_db_receipts.jsonl")
+        receipts_path = self.receipts_path(sid)
         with open(receipts_path, "x", encoding="utf-8") as f:
             f.write(json.dumps({"event": "created", "run_nonce": self.nonce, "name": name, "oid": oid}) + "\n")
         return receipts_path
@@ -1079,12 +1245,90 @@ class Route:
             for name in dict.fromkeys(names)
         ]
 
+    def template_name_patterns(self):
+        """LIKE patterns of every database the TT-1 template machinery may create under this run's tag."""
+        tag = self.template_tag
+        return ["test\\_intevia\\_tpl\\_%s\\_%s\\_%%" % (TEMPLATE_NAMESPACE, tag), "test\\_intevia\\_boot\\_%s\\_%%" % tag,
+                "test\\_intevia\\_ctl\\_%s\\_%%" % tag]
+
+    def finalise_template(self):
+        """CI-CLONE-1: the template is one more owned database. After the last mutation step, one final clone's compared
+        CP-0 properties must match the fresh-build reference (recorded by TT-1 record_final_clone_cp0); then the template
+        is dropped by its receipt's oid (TT-1 cleanup_template). A mismatch, or any failure, leaves the template untouched
+        and UNRESOLVED (cleanup NOT CLEAN, exit 3)."""
+        if self.template is None:
+            return []
+        sid = "TPL-FINAL"
+        rec = {"step": "template", "name": self.template["name"], "owned_oid": self.template["oid"], "resolved": False}
+        final = {"step": sid, "database": None, "matches": None, "template_dropped": False,
+                 "timing": {"status": "not started", "started": host_clock_utc(), "finished": None, "seconds": None}}
+        self.template["final"] = final
+        clock = time.perf_counter()
+        try:
+            db = self.db_name(sid)
+            final["database"] = db
+            env = self.django_env(db, sid, isolation=False)
+            out_path = self.path(sid + "_result.json")
+            self.attempted.append((sid, db, env[RECEIPT_ENV]))
+            final["timing"]["status"] = "started"
+            code = self.run_logged([sys.executable, "-c", TEMPLATE_FINAL, out_path, db, self.template["identity"]],
+                                   self.path(sid + "_output.log"), env)
+            result = json.loads(read_text(out_path)) if os.path.exists(out_path) else {}
+            final.update({k: result.get(k) for k in ("matches", "template_dropped", "parity_recorded", "final_clone_cp0_digest",
+                                                      "template_cp0_digest", "clone_setup_seconds", "error")}, exit=code)
+            if code == 0 and result.get("matches") is True and result.get("template_dropped") is True \
+                    and result.get("template_oid") == self.template["oid"]:
+                if self.oid_of(self.template["name"]) is None:
+                    rec.update(state="DROPPED BY THE ROUTE (template; the final clone's compared CP-0 properties match the "
+                                     "fresh-build reference; owned oid %s)" % self.template["oid"], resolved=True)
+                else:
+                    rec["state"] = ("UNRESOLVED - the final check reported the template dropped but a database of its name is still "
+                                    "present; left untouched. Inspect %s_output.log and the receipts in %s" % (sid, TEMPLATE_ROOT))
+            elif result.get("matches") is False:
+                rec["state"] = ("UNRESOLVED - the template integrity check failed: the final clone's compared CP-0 properties (%s) do "
+                                "not match the fresh-build reference (%s). This cleanup path left the template untouched; it does not "
+                                "say what changed or who changed it. Preserve this run's evidence and inspect %s_output.log and the "
+                                "template and clone receipts in %s before releasing another run"
+                                % (result.get("final_clone_cp0_digest"), result.get("template_cp0_digest"), sid, TEMPLATE_ROOT))
+            else:
+                rec["state"] = ("UNRESOLVED - the final template check did not complete (exit %s): %s. The template was left "
+                                "untouched; inspect %s_output.log and the receipts in %s"
+                                % (code, result.get("error") or "no result record", sid, TEMPLATE_ROOT))
+        except Exception as exc:
+            rec["state"] = "UNRESOLVED - %s: %s; the template was left untouched" % (type(exc).__name__, exc)
+        finally:
+            # Argon G2: the status says what happened - "completed" only when the child exited 0 and the route classified
+            # it; "failed" when the child exited non-zero or something raised after launch; "not completed" otherwise
+            status = final["timing"]["status"]
+            if status == "started":
+                status = "completed" if final.get("exit") == 0 and rec["resolved"] else "failed"
+            elif status != "completed":
+                status = "not completed"
+            final["timing"].update(status=status, finished=host_clock_utc(), seconds=round(time.perf_counter() - clock, 3))
+        return [rec]
+
+    def sweep_template_names(self):
+        """Any database the template machinery left under this run's tag is reported, never dropped by the route."""
+        if self.lock_conn is None:
+            return []
+        try:
+            found = [n for (n,) in self.lock_conn.execute(
+                "SELECT datname FROM pg_database WHERE datname LIKE %s OR datname LIKE %s OR datname LIKE %s",
+                tuple(self.template_name_patterns())).fetchall()]
+        except Exception as exc:
+            return [{"step": "template sweep", "name": None, "resolved": False,
+                     "state": "UNRESOLVED - the template-name sweep raised %s: %s" % (type(exc).__name__, exc)}]
+        return [{"step": "template sweep", "name": name, "resolved": False,
+                 "state": "UNRESOLVED - present after cleanup under this run's template tag; left untouched"}
+                for name in found]
+
     def finalise_cleanup(self):
         """Runs whatever happened before it. Every attempted name keeps its own record; nothing is replaced by a summary."""
-        records = []
+        records = self.finalise_template()
         for sid, name, receipts_path in self.attempted:
             records.extend(self.cleanup_receipt_file(sid, name, receipts_path))
         records += [self.cleanup_fixture(fx) for fx in self.lifecycle]
+        records += self.sweep_template_names()
         if not records:
             return {"outcome": "NOTHING TO CLEAN", "names": []}
         unresolved = [r for r in records if not r["resolved"]]
@@ -1111,6 +1355,7 @@ class Route:
         try:
             for step_code in STEP_CODES:
                 self.db_name(step_code)
+            identity_started, identity_clock = host_clock_utc(), time.perf_counter()
             ident = self.identity(checkout=checkout)
             self.candidate_base_commit = attested_commit or ident.get("commit")
             if (
@@ -1124,6 +1369,8 @@ class Route:
             summary["identity"] = dict(ident)
             if attested_commit is not None:
                 summary["identity"]["attested_commit"] = attested_commit
+            # the IDENTITY step's timing is kept in summary.identity (the step record's shape is a contract fixture)
+            summary["identity"]["timing"] = {"started": identity_started, "finished": host_clock_utc(), "seconds": round(time.perf_counter() - identity_clock, 3)}
             self.steps.append({"id": "IDENTITY", "outcome": "PASS" if ident["valid"] else "INCOMPLETE", **({} if ident["valid"] else {"reason": "; ".join(ident["problems"])})})
             self.say("tested     : %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED: " + "; ".join(ident["problems"])))
             if attested_commit is not None and ident.get("commit") != attested_commit:
@@ -1142,8 +1389,8 @@ class Route:
             summary["advisory_lock"] = self.lock_record()
             self.say("server     : %s" % summary["server"]["version"].split(",")[0])
             mine = [n for (n,) in self.lock_conn.execute(
-                "SELECT datname FROM pg_database WHERE datname LIKE %s",
-                (self.database_name_pattern(),),
+                "SELECT datname FROM pg_database WHERE datname LIKE %s OR datname LIKE %s OR datname LIKE %s OR datname LIKE %s",
+                (self.database_name_pattern(), *self.template_name_patterns()),
             ).fetchall()]
             if mine:
                 raise RouteRefused("databases for this run id already exist and were left untouched: %s" % mine)
@@ -1158,10 +1405,13 @@ class Route:
                     plan.append((sid, lambda sid=sid, name=name, m=m: self.step_suite(sid, "label", m["targets"], isolation=False, mutation=name, expect_fail=True)))
             for sid, fn in plan:
                 self.say("--- step %s" % sid)
+                started, clock = host_clock_utc(), time.perf_counter()
                 try:
                     step = fn()
                 except Exception as exc:
                     step = {"id": sid, "outcome": "INCOMPLETE", "reason": "step raised %s: %s" % (type(exc).__name__, exc), "traceback": traceback.format_exc()[-2000:]}
+                # CI-CLONE-1 item 2.5: start and end are host-clock diagnostics (item 6(a)); the duration is monotonic
+                step["timing"] = {"started": started, "finished": host_clock_utc(), "seconds": round(time.perf_counter() - clock, 3)}
                 self.steps.append(step)
                 self.say("    %s%s" % (step["outcome"], (" - " + step["reason"]) if step.get("reason") else ""))
                 if sid == "SELF" and step["outcome"] != "PASS":
@@ -1184,7 +1434,7 @@ class Route:
         ran = {s["id"] for s in self.steps}
         for sid in planned:
             if sid not in ran:
-                self.steps.append({"id": sid, "outcome": "INCOMPLETE", "reason": "not run"})
+                self.steps.append({"id": sid, "outcome": "INCOMPLETE", "reason": "not run", "timing": {"status": "not run"}})
         outcomes = [s["outcome"] for s in self.steps]
         result = "PASS" if all(o == "PASS" for o in outcomes) else ("INCOMPLETE" if "INCOMPLETE" in outcomes else "FAIL")
         if skip_mutations:
@@ -1200,8 +1450,18 @@ class Route:
                 "allowed_paths": [],
                 "candidate_binding_sha256": self.candidate_binding,
                 "run_spec_sha256": self.run_spec_sha256,
-                "fresh_authorities": self.fresh_authorities,
+                "template_mode": "clone",
             }
+        summary["template"] = self.template or {"mode": "clone", "built_by_step": None,
+                                                "note": "no database step reached clone-mode setup; no template was built"}
+        # Human Governor decision 1A (31 Oct 2026): the empty ownership/replacement, lock and template-sealing control
+        # probes are a named exception to clone-everything; recorded here, apart from the clone inventory
+        summary["template"]["empty_probe_creates"] = [{"step": fx["step"], "name": fx["name"], "state": fx["state"]} for fx in self.lifecycle]
+        sealing = []
+        if self.template:
+            receipts, _ = read_receipts(self.receipts_path(self.template["built_by_step"]), self.nonce)
+            sealing = [r.get("name") for r in receipts if r.get("event") == "template_control_database_destroyed"]
+        summary["template"]["sealing_control_databases"] = sealing
         self.write(summary)
         return exit_code
 
@@ -1226,6 +1486,38 @@ class Route:
             iso = s.get("isolation")
             iso_txt = ("%s; %d applicable, %d established; %d not applicable" % (iso["verdict"], iso["applicable"], iso["established"], iso["not_applicable"])) if iso and iso.get("verdict") else ""
             lines.append("| %s | %s | %s | %s | %s |" % (s["id"], s["outcome"], tests, iso_txt, s.get("reason", s.get("expectation", ""))))
+        lines += ["", "## Step timings (CI-CLONE-1; start and end are host-clock diagnostics, durations monotonic)", "",
+                  "| Step | Started | Finished | Seconds | Template build s | Clone setup s | Clone CP-0 = template |", "|---|---|---|---|---|---|---|"]
+        for s in summary["steps"]:
+            t = (ident.get("timing") if s["id"] == "IDENTITY" else s.get("timing")) or {}
+            tpl = s.get("template") or {}
+            lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
+                s["id"], t.get("started", ""), t.get("finished", ""), t.get("seconds", ""),
+                tpl.get("build_seconds") if tpl.get("built") else ("" if not tpl else "reused"),
+                "" if tpl.get("clone_setup_seconds") is None else tpl["clone_setup_seconds"],
+                "" if tpl.get("clone_cp0_matches_template") is None else tpl["clone_cp0_matches_template"]))
+        tpl = summary.get("template") or {}
+        final = tpl.get("final") or {}
+        if final:
+            ft = final.get("timing") or {}
+            lines.append("| TPL-FINAL (final inspection; cleanup, not a control) | %s | %s | %s | reused | %s | %s |" % (
+                ft.get("started", ""), ft.get("finished", ""), ft.get("seconds", "") if ft.get("status") == "completed" else ft.get("status", ""),
+                "" if final.get("clone_setup_seconds") is None else final["clone_setup_seconds"],
+                "" if final.get("matches") is None else final["matches"]))
+        lines += ["", "## Template (one fresh build per run; every application test database a clone of it)", ""]
+        if tpl.get("name"):
+            clones = tpl.get("clones", [])
+            lines += ["- **Built by step:** %s in %s s; name `%s`; oid %s; identity `%s`; fresh-build CP-0 reference `%s`; sealed %s"
+                      % (tpl.get("built_by_step"), tpl.get("build_seconds"), tpl["name"], tpl.get("oid"), tpl.get("identity"), tpl.get("cp0_digest"), tpl.get("sealed")),
+                      "- **Test-runner clones (SELF, S015, mutation steps):** %d; every clone's compared CP-0 properties match the fresh-build reference: %s" % (
+                          len(clones), all(c.get("clone_cp0_matches_template") for c in clones) if clones else "no clones"),
+                      "- **Final-inspection clone:** `%s` (1 more clone; setup %s s); compared CP-0 properties match the fresh-build reference: %s; template dropped: %s%s"
+                      % (final.get("database"), final.get("clone_setup_seconds"), final.get("matches"), final.get("template_dropped"), (" (%s)" % final["error"]) if final.get("error") else ""),
+                      "- **Empty probe databases (Human Governor decision 1A, never migrated):** %d route fixtures (%s); %d template-sealing control(s)"
+                      % (len(tpl.get("empty_probe_creates", [])), ", ".join(p["step"] for p in tpl.get("empty_probe_creates", [])) or "none",
+                         len(tpl.get("sealing_control_databases", [])))]
+        else:
+            lines.append("- %s" % tpl.get("note", "no template"))
         outside_discovery_pattern = sorted({
             name
             for step in summary["steps"]

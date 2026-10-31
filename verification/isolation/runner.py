@@ -32,24 +32,21 @@ from intevia.test_postgresql_backend.operations import (
     set_test_timing_context,
 )
 
-from verification.ownership import OwnedDatabaseRunnerMixin, install, read_receipts
+from verification.ownership import OwnedDatabaseRunnerMixin, read_receipts
 from verification.recording import RecordingResult, RecordingRunnerMixin
 
 from . import state
 from .template import (
     TemplateIdentityUnavailable,
-    TemplateNameCollision,
     TemplateReceiptInvalid,
-    TemplateSealingRefused,
     cleanup_template,
     collect_template_identity,
-    install_clone_creation,
-    prepare_template,
     read_template_receipt,
     record_final_clone_cp0,
     template_receipt_path,
 )
 from .run_plan import assert_execution, ensure_suite_matches, load_plan
+from .template_mode import TemplateModeRunnerMixin
 
 CURRENT = {"runner": None}
 DIGEST_KEYS = ("triggers", "constraints", "functions", "ownership_grants", "core_role", "content_types", "permissions", "migrations")
@@ -274,9 +271,14 @@ def owned_database_problem(database_name, receipt_path, run_nonce, protected_nam
     return None
 
 
-class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
+class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
     extra_aliases = ()
     observed_aliases = ("default",)
+
+    def setup_databases(self, **kwargs):
+        # The TT-1 template path, shared with MutationRunner (CI-CLONE-1). Called directly, as before the extraction,
+        # so the isolation runner's database setup emits no DB-SETUP recording records.
+        return TemplateModeRunnerMixin.setup_databases(self, **kwargs)
 
     def build_suite(self, test_labels=None, **kwargs):
         self.run_plan = None
@@ -295,76 +297,6 @@ class IsolationRunner(RecordingRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRu
         _runner_print("ORDERED_GROUPS=%d INTACT" % len(self.run_plan.get("ordered_groups", [])),
               file=sys.stderr, flush=True)
         return suite
-
-    def setup_databases(self, **kwargs):
-        from django.db import connections
-
-        candidate_binding = os.environ.get("INTEVIA_CANDIDATE_BINDING_SHA256")
-        if not isinstance(candidate_binding, str) or re.fullmatch(r"[0-9a-f]{64}", candidate_binding) is None:
-            # Commission §1: unavailable candidate identity is an evidence gap, never a successful fallback.
-            raise RuntimeError("R9: INTEVIA_CANDIDATE_BINDING_SHA256 is missing or invalid")
-        mode = os.environ.get("VERIFICATION_TEMPLATE_MODE", "clone")
-        if mode not in ("fresh", "clone"):
-            raise RuntimeError("R2: template mode must be clone or authorized fresh")
-        if mode == "fresh":
-            from .run_plan import validate_fresh_authority
-
-            self.fresh_authority = validate_fresh_authority(
-                os.environ.get("INTEVIA_FRESH_AUTHORITY_FILE"),
-                os.environ.get("INTEVIA_FRESH_AUTHORITY_SHA256"),
-                os.environ.get("INTEVIA_RUN_SUFFIX", ""),
-            )
-        else:
-            self.fresh_authority = "NONE"
-        self.template_receipt = None
-        self.template_prepare_seconds = 0.0
-        self.template_build_seconds = 0.0
-        self.template_rebuilt = False
-        for alias in connections:
-            install(connections[alias].creation)
-
-        if mode == "clone":
-            store = os.environ.get("VERIFICATION_TEMPLATE_STORE")
-            if not store:
-                raise RuntimeError("VERIFICATION_TEMPLATE_STORE is required for clone mode")
-            connection = connections["default"]
-            template_started = time.perf_counter()
-            try:
-                self.template_receipt, built = prepare_template(connection, "default", store)
-            except TemplateSealingRefused:
-                raise
-            except (TemplateIdentityUnavailable, TemplateNameCollision, TemplateReceiptInvalid) as exc:
-                raise RuntimeError("R9: clone pre-flight refused; fresh-mode fallback is prohibited") from exc
-            else:
-                self.template_prepare_seconds = time.perf_counter() - template_started
-                self.template_rebuilt = bool(built)
-                if built:
-                    self.template_build_seconds = self.template_prepare_seconds
-                install_clone_creation(connection.creation, self.template_receipt)
-
-        setup_started = time.perf_counter()
-        old_config = DiscoverRunner.setup_databases(self, **kwargs)
-        setup_seconds = time.perf_counter() - setup_started
-        self.clone_setup_seconds = setup_seconds
-        self.observed_aliases = sorted(
-            {connection.alias for connection, _, _ in old_config}
-        )
-        self.extra_aliases = [
-            alias for alias in self.observed_aliases if alias != "default"
-        ]
-        self.alias_refs = {}
-
-        if mode == "clone" and self.template_receipt is not None:
-            _runner_print(
-                "TT1_TEMPLATE_BUILD_SECONDS=%.6f" % self.template_build_seconds
-                if self.template_rebuilt else "TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE",
-                file=sys.stderr,
-                flush=True,
-            )
-            _runner_print("TT1_CLONE_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
-        else:
-            _runner_print("TT1_FRESH_SETUP_SECONDS=%.6f" % setup_seconds, file=sys.stderr, flush=True)
-        return old_config
 
     def run_suite(self, suite, **kwargs):
         assert getattr(self, "parallel", 1) == 1

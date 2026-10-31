@@ -1304,8 +1304,13 @@ def create_clone_database(connection, template_receipt, test_database_name):
     protected = {"intevia", "intevia_dev", os.environ.get("INTEVIA_POSTGRES_DB")}
     if test_database_name in protected:
         raise CollisionRefused("protected database name refused for clone")
-    if _database_record(connection, test_database_name) is not None:
-        raise CollisionRefused("clone database %s already exists; refusing reuse" % test_database_name)
+    existing = _database_record(connection, test_database_name)
+    if existing is not None:
+        # CI-CLONE-1: the same collision_refused receipt as the owned fresh path (verification.ownership.install), so the
+        # route's OWNERSHIP collision check reads the refusal and the untouched database's oid in clone mode too.
+        _attempt_receipt("collision_refused", name=test_database_name, existing_oid=existing["oid"])
+        raise CollisionRefused("clone database %s already exists (oid %s); refused without dropping it"
+                               % (test_database_name, existing["oid"]))
 
     _attempt_receipt("create_attempt", name=test_database_name, template=template_receipt["name"],
                      template_oid=template_receipt["oid"], identity=identity)

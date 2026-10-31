@@ -158,32 +158,35 @@ class B0PycachePrefixEnv(_Tmp):
 
 
     def test_django_env_sets_and_guards_route_lock_timeout(self):
+        """Claim: every child the route starts carries the route's lock timeout in PGOPTIONS (ROUTE_TEST_LOCK_TIMEOUT_MS),
+        appended to whatever PGOPTIONS the parent inherited, and the route refuses to start a child whose inherited
+        PGOPTIONS already sets lock_timeout rather than letting two settings compete."""
         r = self.route()
+        expected = "-c lock_timeout=%d" % route_mod.ROUTE_TEST_LOCK_TIMEOUT_MS
         with mock.patch.object(
             r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)
-        ), mock.patch.object(
-            r,
-            "_fresh_authority",
-            return_value=(os.path.join(self.tmp, "authority.txt"), "c" * 64),
         ):
             with mock.patch.dict(os.environ):
                 os.environ.pop("PGOPTIONS", None)
                 child_env = r.django_env("test_db", "SELF")
-            self.assertEqual(child_env["PGOPTIONS"], "-c lock_timeout=120000")
+            self.assertEqual(child_env["PGOPTIONS"], expected,
+                             "with no inherited PGOPTIONS the child must receive exactly the route's lock timeout; it received %r, so a stuck lock would not time out as the route promises" % child_env["PGOPTIONS"])
 
             inherited = "-c application_name=route-selftest"
             with mock.patch.dict(os.environ, {"PGOPTIONS": inherited}):
                 child_env = r.django_env("test_db", "SELF")
             self.assertEqual(
                 child_env["PGOPTIONS"],
-                inherited + " -c lock_timeout=120000",
+                inherited + " " + expected,
+                "an inherited PGOPTIONS must be kept and the route's lock timeout appended; the child received %r" % child_env["PGOPTIONS"],
             )
 
             with mock.patch.dict(
                 os.environ, {"PGOPTIONS": "-c lock_timeout=5s"}
             ):
                 with self.assertRaisesRegex(
-                    ValueError, "inherited PGOPTIONS already sets lock_timeout"
+                    ValueError, "inherited PGOPTIONS already sets lock_timeout",
+                    msg="an inherited lock_timeout must be refused before a child starts, not silently overridden or doubled",
                 ):
                     r.django_env("test_db", "SELF")
 
@@ -507,6 +510,10 @@ class BufferedOutputGuard(unittest.TestCase):
 # ------------------------------------------------------------------ B1
 class B1StepGating(_Tmp):
     def test_every_route_test_command_is_buffered_and_full_steps_report_every_failure(self):
+        """Claim: the command the route runs for a database step is Django's test runner with output buffering on and
+        fail-fast off (R1: ordinary failures do not stop a step, so one run reports every failure), and a step whose
+        child reports every test ok is classified PASS from that command's log. This checks the command the route
+        actually issues; the child's execution of it is the VC's route rehearsal, not this test."""
         r = self.route()
         r.permitted_skips = []
         commands = []
@@ -532,7 +539,9 @@ class B1StepGating(_Tmp):
 
         env = {
             ownership.RECEIPT_ENV: os.path.join(self.tmp, "receipts.jsonl"),
-            "VERIFICATION_TEMPLATE_MODE": "clone",
+            # a Human-authorised fresh run: this test's claim is buffering and full reporting, not template binding
+            # (CICloneTemplateBinding proves that), so no clone evidence is staged here
+            "VERIFICATION_TEMPLATE_MODE": "fresh",
         }
         with mock.patch.object(route_mod.subprocess, "run", side_effect=fake_collection), \
                 mock.patch.object(r, "run_logged", side_effect=fake_run_logged), \
@@ -540,11 +549,12 @@ class B1StepGating(_Tmp):
                 mock.patch.object(r, "oid_of", return_value=None):
             step = r.step_suite("SELF", "label", [TID], isolation=False)
 
-        self.assertEqual(step["outcome"], "PASS", step)
-        self.assertIn("--buffer", commands[0])
-        self.assertNotIn("--failfast", commands[0])
-        route_source = Path("verification/route.py").read_text(encoding="utf-8")
-        self.assertIn('"--noinput", "-v", "2", "--buffer"', route_source)
+        self.assertEqual(step["outcome"], "PASS", "a child whose log reports every test ok must be classified PASS; the step was %s (%s)" % (step["outcome"], step.get("reason")))
+        command = commands[0]
+        self.assertEqual(command[1:3], ["manage.py", "test"], "the route must run Django's test command; it ran %s" % command[1:3])
+        self.assertIn("--buffer", command, "the route's test command must buffer test output (so a test's own prints cannot split the result lines the parser pairs); the command was %s" % command[1:])
+        self.assertNotIn("--failfast", command, "the route's test command must not stop at the first failure (R1: every failure is reported in one run); the command was %s" % command[1:])
+        self.assertEqual(command[command.index("--parallel") + 1], "1", "the route must run tests serially (--parallel 1) for the isolation instrument; the command was %s" % command[1:])
 
     def test_fail_fast_accepts_only_a_collected_failure_prefix(self):
         collected = ["probe.C.test_a", "probe.C.test_b"]
@@ -1651,3 +1661,545 @@ class DatabaseNameBounds(_Tmp):
                     route_mod.POSTGRES_IDENTIFIER_MAX,
                     (run_id, step, name),
                 )
+
+
+# ------------------------------------------------------------------ CI-CLONE-1 (clone mode in the CI route)
+# Controlled example values for the staged evidence below. They are synthetic OIDs and digests chosen for the test, not
+# values read from a live database; every name, nonce and path is derived from the route under test.
+TEMPLATE_CP0 = "e" * 64
+TEMPLATE_IDENTITY = "1" * 64
+TEMPLATE_NAME = "test_intevia_tpl_vr_%s_%s" % ("0" * 8, TEMPLATE_IDENTITY[:32])
+TEMPLATE_OID = 4100
+
+
+class _CloneFixture(_Tmp):
+    """Stages, for one step, the evidence a clone-mode child leaves behind: receipts, TT1 log lines and (for an
+    isolation step) the CP-0 record. Names, nonces and paths come from the route under test; OIDs and digests are the
+    controlled example values above."""
+
+    def receipts(self, r, sid, *records):
+        path = r.receipts_path(sid)
+        with mock.patch.dict(os.environ, {ownership.RECEIPT_ENV: path, ownership.NONCE_ENV: r.nonce}):
+            for event, fields in records:
+                ownership.write_receipt(event, **fields)
+        return path
+
+    def template_record(self, r, name=TEMPLATE_NAME, oid=TEMPLATE_OID, cp0=TEMPLATE_CP0):
+        return ("template_created", {"name": name, "oid": oid, "identity": TEMPLATE_IDENTITY, "cp0_digest": cp0,
+                                     "allow_connections": False, "connection_refused": True})
+
+    def clone_record(self, db, oid=TEMPLATE_OID, name=TEMPLATE_NAME, cp0=TEMPLATE_CP0):
+        return ("clone_created", {"name": db, "clone_oid": 5000, "template_name": name, "template_oid": oid,
+                                  "identity": TEMPLATE_IDENTITY, "template_cp0_digest": cp0})
+
+    def cp0_record(self, r, sid, clone=TEMPLATE_CP0, template=TEMPLATE_CP0):
+        path = r.path(sid + "_isolation.jsonl")
+        with open(path, "x", encoding="utf-8") as handle:
+            handle.write(json.dumps({"checkpoint": "CP-0", "run_nonce": r.nonce, "requirements_met": True,
+                                     "template_cp0_digest": template, "clone_cp0_digest": clone}) + "\n")
+        return path
+
+    GOOD_LINES = ["TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE", "TT1_CLONE_SETUP_SECONDS=1.5", "TT1_SETUP_OUTCOME=succeeded"]
+
+    def step(self, r, sid, log_lines, receipts, isolation_path=None):
+        """r.step_suite with the child mocked: the child's log and receipts are what the fixture staged."""
+        collection = {"ids": [TID], "count": 1, "digest": "d" * 64, "failed_loads": [], "run_nonce": r.nonce, "facts": {}}
+
+        def fake_collection(command, **kwargs):
+            with open(command[4], "x", encoding="utf-8") as handle:
+                json.dump(collection, handle)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        def fake_run_logged(command, log_path, env):
+            with open(log_path, "x", encoding="utf-8") as handle:
+                handle.write("\n".join(log_lines) + "\ntest_a (probe.C.test_a) ... ok\n" + TAIL)
+            return 0
+
+        env = {ownership.RECEIPT_ENV: receipts, "VERIFICATION_TEMPLATE_MODE": "clone",
+               "VERIFICATION_ISOLATION_JSON": isolation_path or r.path(sid + "_isolation.jsonl")}
+        with mock.patch.object(route_mod.subprocess, "run", side_effect=fake_collection), \
+                mock.patch.object(r, "run_logged", side_effect=fake_run_logged), \
+                mock.patch.object(r, "django_env", return_value=env), \
+                mock.patch.object(r, "oid_of", return_value=None), \
+                mock.patch.object(r, "read_isolation", return_value={"verdict": "PASS", "applicable": 1, "established": 1, "not_applicable": 0}):
+            return r.step_suite(sid, "label", [TID], isolation=isolation_path is not None)
+
+    def run_route(self, r, suite, child, oid_of):
+        """r.run with the lock, identity and the other steps mocked; `suite` plays the database steps, `child` the
+        TPL-FINAL child process. Returns (exit code, summary.json)."""
+        fake_lock = mock.MagicMock()
+        fake_lock.execute.return_value.fetchall.return_value = []
+        env = {"INTEVIA_POSTGRES_USER": "probe", "INTEVIA_POSTGRES_PASSWORD": "not-a-credential"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(r, "identity", return_value={"valid": True, "problems": [], "tested": "x"}), \
+                mock.patch.object(r, "acquire_lock", side_effect=lambda: setattr(r, "lock_conn", fake_lock)), \
+                mock.patch.object(r, "lock_record", return_value={"held": True}), mock.patch.object(r, "server", return_value={"version": "simulated"}), \
+                mock.patch.object(r, "step_offline", return_value={"id": "OFFLINE", "outcome": "PASS"}), mock.patch.object(r, "step_suite", side_effect=suite), \
+                mock.patch.object(r, "step_ownership", return_value={"id": "OWNERSHIP", "outcome": "PASS"}), \
+                mock.patch.object(r, "step_lock", return_value={"id": "LOCK", "outcome": "PASS"}), \
+                mock.patch.object(r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)), \
+                mock.patch.object(r, "run_logged", side_effect=child), \
+                mock.patch.object(r, "oid_of", side_effect=oid_of), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = r.run(skip_mutations=True)
+        return code, json.loads(route_mod.read_text(r.path("summary.json")))
+
+
+class CICloneTemplateBinding(_CloneFixture):
+    def test_every_database_step_is_bound_to_the_one_template_the_run_built(self):
+        """Claim: in clone mode every database step's database is a clone of the one template SELF built (CP-0 matching
+        the fresh-build reference, one build per run, the route never setting fresh mode) - proven two ways: (a) the
+        route's environment and read-back refuse any step not so bound (no build, second build, other template, differing
+        CP-0, fresh build, no clone, incomplete setup); (b) the shared set-up itself enforces the policy before any
+        database work: SELF alone may build (one attempt, no retry), every later child reuses the recorded template and
+        refuses a missing database, a missing receipt or a changed identity with zero build or migration calls; (c) in the
+        route, a SELF whose build failed stops every later database step; (d) under a CI policy a second alias with its own
+        physical database is refused before any template preparation or database creation; (b) reaches TT-1's real
+        verify_registered_template for the missing database, with only the catalogue read stubbed."""
+        from verification.isolation import template as template_mod
+        from verification.isolation import template_mode
+
+        r = self.route()
+        r.permitted_skips = []
+        with mock.patch.object(r, "_ensure_candidate_binding", return_value=(None, "a" * 64, "b" * 64)):
+            env_self = r.django_env("test_db", "SELF")
+            r.template = {"name": TEMPLATE_NAME, "oid": TEMPLATE_OID, "identity": TEMPLATE_IDENTITY, "cp0_digest": TEMPLATE_CP0, "clones": []}
+            env_s015 = r.django_env("test_db", "S015")
+            r.template = None
+        self.assertEqual(env_self["VERIFICATION_TEMPLATE_MODE"], "clone",
+                         "the CI route must create every database in clone mode (R2 as varied 31 Oct 2026); it set %r" % env_self["VERIFICATION_TEMPLATE_MODE"])
+        self.assertEqual((env_self[template_mode.POLICY_ENV], env_s015[template_mode.POLICY_ENV]), ("build-once", "reuse-only"),
+                         "SELF must run under the build-once policy and every later step under reuse-only; the route set %r / %r"
+                         % (env_self[template_mode.POLICY_ENV], env_s015[template_mode.POLICY_ENV]))
+        self.assertEqual(env_s015[template_mode.EXPECTED_ENV], "%s:%s:%s" % (TEMPLATE_NAME, TEMPLATE_OID, TEMPLATE_IDENTITY),
+                         "a later step must be told the template SELF recorded (name:oid:identity); the route passed %r" % env_s015[template_mode.EXPECTED_ENV])
+        self.assertEqual(env_self["INTEVIA_EVIDENCE_ROOT_PATH"], r.template_root, "the TT-1 evidence root must be the route's template root")
+        self.assertEqual(os.path.basename(r.template_root), env_self["INTEVIA_EVIDENCE_ROOT"], "the evidence root name must equal the directory name")
+        self.assertTrue(env_self["VERIFICATION_TEMPLATE_STORE"].startswith(r.template_root), "the template store must sit inside the template root")
+        self.assertEqual(env_self[ownership.RECEIPT_ENV], r.receipts_path("SELF"), "a step's receipts must sit inside the template root")
+        self.assertNotIn("INTEVIA_FRESH_AUTHORITY_FILE", env_self, "the route must never hand a child a fresh authority")
+
+        # (a) positive control: SELF builds, S015 clones (isolation step), a mutation step clones and verifies before its SQL
+        mut_sid = "MUT-" + sorted(route_mod.MUTATIONS)[0]
+        self_db, s015_db, mut_db = r.db_name("SELF"), r.db_name("S015"), r.db_name(mut_sid)
+        step = self.step(r, "SELF", ["TT1_TEMPLATE_BUILD_SECONDS=27.5", "TT1_CLONE_SETUP_SECONDS=1.25", "TT1_SETUP_OUTCOME=succeeded"],
+                         self.receipts(r, "SELF", self.template_record(r), self.clone_record(self_db)), self.cp0_record(r, "SELF"))
+        self.assertEqual((step["outcome"], step["template"]["built"], step["template"]["build_seconds"]), ("PASS", True, 27.5),
+                         "SELF with a real build line, a template_created receipt and a matching clone must PASS as the building step; got %s" % step.get("reason", step["outcome"]))
+        self.assertEqual(r.template["built_by_step"], "SELF", "the route must record SELF as the building step")
+        step = self.step(r, "S015", self.GOOD_LINES, self.receipts(r, "S015", self.clone_record(s015_db)), self.cp0_record(r, "S015"))
+        self.assertEqual((step["outcome"], step["template"]["built"], step["template"]["clone_cp0_matches_template"]), ("PASS", False, True),
+                         "S015 reusing the template with a matching CP-0 must PASS without building; got %s" % step.get("reason", step["outcome"]))
+        mut_receipts = self.receipts(r, mut_sid, self.clone_record(mut_db),
+                                     ("clone_cp0_verified", {"name": mut_db, "template_cp0_digest": TEMPLATE_CP0, "clone_cp0_digest": TEMPLATE_CP0, "matches": True}))
+        step = self.step(r, mut_sid, self.GOOD_LINES + ["TT1_CLONE_CP0_MATCHES_TEMPLATE=True"], mut_receipts)
+        self.assertEqual((step["outcome"], step["template"]["clone_cp0_matches_template"]), ("PASS", True),
+                         "a mutation step whose clone_cp0_verified receipt matches must PASS; got %s" % step.get("reason", step["outcome"]))
+        self.assertEqual([c["step"] for c in r.template["clones"]], ["SELF", "S015", mut_sid], "every clone step must be inventoried on the template record")
+        # (a) counterexamples, each on a fresh route so the positive control above is not disturbed
+        cases = {
+            "no template built before a clone step": lambda q, db: (self.GOOD_LINES, self.receipts(q, "S015", self.clone_record(db)), self.cp0_record(q, "S015")),
+            "a second fresh build": lambda q, db: (["TT1_TEMPLATE_BUILD_SECONDS=26.0", "TT1_CLONE_SETUP_SECONDS=1.0", "TT1_SETUP_OUTCOME=succeeded"], self.receipts(q, "S015", self.template_record(q, oid=4101), self.clone_record(db, oid=4101)), self.cp0_record(q, "S015")),
+            "a clone of another template": lambda q, db: (self.GOOD_LINES, self.receipts(q, "S015", self.clone_record(db, oid=9999)), self.cp0_record(q, "S015")),
+            "a clone whose CP-0 differs": lambda q, db: (self.GOOD_LINES, self.receipts(q, "S015", self.clone_record(db)), self.cp0_record(q, "S015", clone="f" * 64)),
+            "a fresh build instead of a clone": lambda q, db: (["TT1_FRESH_SETUP_SECONDS=28.0", "TT1_SETUP_OUTCOME=succeeded"], self.receipts(q, "S015", self.clone_record(db)), self.cp0_record(q, "S015")),
+            "no clone at all": lambda q, db: (self.GOOD_LINES, self.receipts(q, "S015"), self.cp0_record(q, "S015")),
+            "a setup that did not complete": lambda q, db: (["TT1_TEMPLATE_BUILD_SECONDS=NOT_APPLICABLE", "TT1_CLONE_SETUP_SECONDS=0.4", "TT1_SETUP_OUTCOME=failed"], self.receipts(q, "S015", self.clone_record(db)), self.cp0_record(q, "S015")),
+        }
+        for index, (label, stage) in enumerate(cases.items()):
+            with self.subTest(counterexample=label):
+                q = self.route(name="clone-%d" % index)
+                q.permitted_skips = []
+                if label != "no template built before a clone step":
+                    q.template = dict(r.template, clones=[])
+                lines, receipts, cp0 = stage(q, q.db_name("S015"))
+                step = self.step(q, "S015", lines, receipts, cp0)
+                self.assertEqual(step["outcome"], "FAIL", "%s must make the step FAIL (the step's database is not bound to the run's template), got %s: %s" % (label, step["outcome"], step.get("reason")))
+                self.assertIn("template binding not established", step["reason"], "%s: the step's reason must name the template binding" % label)
+
+        # (b) the shared set-up's control flow, with the database boundary stubbed
+        store = os.path.join(self.tmp, "store")
+        built_receipt = {"name": TEMPLATE_NAME, "oid": TEMPLATE_OID, "identity": TEMPLATE_IDENTITY, "cp0_digest": TEMPLATE_CP0,
+                         "listing": "L", "run_nonce": "n" * 32, "candidate_binding": "a" * 64}
+        calls = []
+
+        def exercise(policy, expected=None, present=True, receipt=built_receipt, identity=TEMPLATE_IDENTITY, build_fails=False):
+            calls.clear()
+
+            def verify(connection, receipt_, ident, listing):
+                calls.append("verify")
+                if not present:
+                    # the real TT-1 verification, with only the catalogue read stubbed to "absent": its own
+                    # database-presence check (template.py verify_registered_template) must refuse
+                    with mock.patch.object(template_mod, "validate_template_receipt", return_value=True), \
+                            mock.patch.object(template_mod, "_verify_template_build_intent", return_value=None), \
+                            mock.patch.object(template_mod, "_database_record", return_value=None):
+                        return template_mod.verify_registered_template(connection, receipt_, ident, listing)
+            env = {template_mode.POLICY_ENV: policy, "INTEVIA_EVIDENCE_ROOT_PATH": self.tmp, "VERIFICATION_RUN_NONCE": "n" * 32,
+                   "INTEVIA_CANDIDATE_BINDING_SHA256": "a" * 64}
+            if expected is not None:
+                env[template_mode.EXPECTED_ENV] = expected
+
+            def build(connection, alias, store_, lines):
+                calls.append("build")
+                if build_fails:
+                    raise template_mod.TemplateSealingRefused("simulated: the role could not seal the template")
+                return built_receipt, True
+
+            def migrate(*a, **k):
+                calls.append("migrate")
+
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(template_mode, "_build_template", side_effect=build), \
+                    mock.patch.object(template_mod, "_migrate_build_database", side_effect=migrate), \
+                    mock.patch.object(template_mode, "recover_template_builds", side_effect=lambda *a: calls.append("recover")), \
+                    mock.patch.object(template_mode, "source_input_lines", return_value=["head=x"]), \
+                    mock.patch.object(template_mode, "runtime_input_lines", return_value=[]), \
+                    mock.patch.object(template_mode, "complete_identity", return_value=("L", identity)), \
+                    mock.patch.object(template_mode, "collect_template_identity", return_value=("L", identity)), \
+                    mock.patch.object(template_mode, "template_database_name", return_value=TEMPLATE_NAME), \
+                    mock.patch.object(template_mode, "template_receipt_path", side_effect=lambda s_, i: os.path.join(s_, i + ".json")), \
+                    mock.patch.object(template_mode, "read_template_receipt", side_effect=lambda path, ident: receipt), \
+                    mock.patch.object(template_mode, "_database_record", side_effect=lambda c, n: {"oid": TEMPLATE_OID} if present else None), \
+                    mock.patch.object(template_mode, "verify_registered_template", side_effect=verify):
+                try:
+                    if policy == "build-once":
+                        return template_mode.prepare_template_build_once(mock.MagicMock(), "default", store), None
+                    return template_mode.prepare_template_reuse_only(mock.MagicMock(), "default", store, template_mode.parse_expected_template(expected)), None
+                except Exception as exc:
+                    return None, exc
+
+        shutil.rmtree(store, ignore_errors=True)
+        result, error = exercise("build-once", present=False)
+        self.assertEqual((result, error, calls), ((built_receipt, True), None, ["build"]),
+                         "SELF (build-once) on an empty store must build exactly once; calls %s, error %s" % (calls, error))
+        with open(os.path.join(store, TEMPLATE_IDENTITY + ".json"), "x", encoding="utf-8") as handle:
+            json.dump(built_receipt, handle)
+        result, error = exercise("build-once", present=True)
+        self.assertTrue(result is None and "build" not in calls, "build-once with pre-existing store evidence must refuse before building; calls %s, result %s" % (calls, result))
+        shutil.rmtree(store, ignore_errors=True)
+        result, error = exercise("build-once", present=False, build_fails=True)
+        self.assertTrue(isinstance(error, template_mod.TemplateSealingRefused) and calls == ["build", "recover"],
+                        "a failed initial build must propagate after one attempt and recovery, with no retry; calls %s, error %r" % (calls, error))
+        expected = "%s:%s:%s" % (TEMPLATE_NAME, TEMPLATE_OID, TEMPLATE_IDENTITY)
+        result, error = exercise("reuse-only", expected=expected)
+        self.assertEqual((result, error, calls), ((built_receipt, False), None, ["verify"]),
+                         "a later step (reuse-only) with the recorded template present and verified must reuse it; calls %s, error %s" % (calls, error))
+        for label, kwargs in (("missing receipt", {"receipt": None}), ("changed identity", {"identity": "2" * 64}), ("missing database", {"present": False})):
+            with self.subTest(refusal=label):
+                result, error = exercise("reuse-only", expected=expected, **kwargs)
+                self.assertTrue(result is None and error is not None and "build" not in calls and "migrate" not in calls and "recover" not in calls,
+                                "reuse-only with %s must refuse with zero build, migration or recovery calls; calls %s, result %s, error %r" % (label, calls, result, error))
+                if label == "missing database":
+                    self.assertEqual(str(error), "template database is absent or its OID differs from the receipt",
+                                     "the missing-database refusal must come from TT-1's real verify_registered_template, not from a test stub; it was %r" % error)
+
+        # (c) a SELF whose build failed stops every later database step
+        q = self.route(name="self-failed")
+        order = []
+
+        def failing_suite(sid, *a, **k):
+            order.append(sid)
+            if sid == "SELF":
+                raise RuntimeError("R9: clone pre-flight refused (R2 build-once: simulated sealing refusal); fresh-mode fallback is prohibited")
+            return {"id": sid, "outcome": "PASS"}
+
+        code, summary = self.run_route(q, failing_suite, lambda *a: 0, lambda name, conn=None: None)
+        self.assertEqual(order, ["SELF"], "after a failed SELF build the route must start no later database step; it started %s" % order)
+        by_id = {st["id"]: st for st in summary["steps"]}
+        self.assertEqual((by_id["SELF"]["outcome"], by_id["S015"]["outcome"], by_id["S015"].get("reason"), code), ("INCOMPLETE", "INCOMPLETE", "not run", 2),
+                         "SELF must be INCOMPLETE, S015 'not run' and the route exit 2; got SELF %s, S015 %s (%s), exit %s" % (by_id["SELF"]["outcome"], by_id["S015"]["outcome"], by_id["S015"].get("reason"), code))
+        self.assertEqual(summary["template"].get("built_by_step"), None, "no template may be recorded as built after a failed SELF build")
+
+        # (d) the alias boundary: a second alias with its own physical database is refused before any preparation
+        from django.test.runner import DiscoverRunner
+
+        from verification.isolation.runner import IsolationRunner
+
+        prepared = []
+        fake_default = mock.MagicMock(alias="default", settings_dict={"NAME": "postgres", "TEST": {}})
+        fake_secondary = mock.MagicMock(alias="secondary", settings_dict={"NAME": "other", "TEST": {}})
+        env = {"VERIFICATION_TEMPLATE_MODE": "clone", "INTEVIA_CANDIDATE_BINDING_SHA256": "a" * 64, "VERIFICATION_TEMPLATE_STORE": store,
+               template_mode.POLICY_ENV: "reuse-only", template_mode.EXPECTED_ENV: expected}
+        with mock.patch.dict(os.environ, env), mock.patch("django.db.connections", {"default": fake_default, "secondary": fake_secondary}), \
+                mock.patch.object(template_mode, "install", side_effect=lambda creation: None), \
+                mock.patch.object(template_mode, "prepare_template_reuse_only", side_effect=lambda *a: prepared.append("prepare")), \
+                mock.patch.object(DiscoverRunner, "setup_databases", autospec=True, side_effect=lambda *a, **k: prepared.append("django")), \
+                mock.patch("verification.isolation.runner._runner_print", side_effect=lambda *a, **k: prepared.append(a[0])):
+            runner = IsolationRunner(parallel=0, verbosity=0, nonce="test-nonce", step="SELF")
+            with self.assertRaises(RuntimeError, msg="a second alias with its own physical test database must be refused under a CI policy") as refused:
+                runner.setup_databases()
+        self.assertIn("alias 'secondary' has its own physical test database", str(refused.exception), "the refusal must name the alias; it said %s" % refused.exception)
+        self.assertEqual([p_ for p_ in prepared if p_ in ("prepare", "django")], [], "the refusal must come before any template preparation or database creation; observed %s" % prepared)
+        self.assertIn("TT1_SETUP_OUTCOME=not started", prepared, "a pre-flight refusal must still print its setup outcome ('not started'); printed %s" % prepared)
+        fake_secondary.settings_dict["TEST"] = {"MIRROR": "default"}
+        with mock.patch.dict(os.environ, env), mock.patch("django.db.connections", {"default": fake_default, "secondary": fake_secondary}), \
+                mock.patch.object(template_mode, "install", side_effect=lambda creation: None), \
+                mock.patch.object(template_mode, "prepare_template_reuse_only", return_value=(built_receipt, False)), \
+                mock.patch.object(template_mode, "install_clone_creation", side_effect=lambda *a: None), \
+                mock.patch.object(DiscoverRunner, "setup_databases", autospec=True, return_value=[(fake_default, "x", True)]), \
+                mock.patch("verification.isolation.runner._runner_print", side_effect=lambda *a, **k: prepared.append(a[0])):
+            runner = IsolationRunner(parallel=0, verbosity=0, nonce="test-nonce", step="SELF")
+            runner.setup_databases()
+        self.assertIn("TT1_SETUP_OUTCOME=succeeded", prepared, "a mirror alias needs no create and must not be refused; printed %s" % prepared)
+
+    def test_every_step_records_its_timing_and_the_summary_shows_build_and_clone_seconds(self):
+        """Claim: summary.json carries, for every planned step, its start, end and monotonic duration (status 'not run' for a
+        step the run never reached), the template build and clone-setup seconds the steps' logs reported (never a zero
+        for absent evidence), and the final inspection's own timing and clone setup; SUMMARY.md renders the timing table,
+        the final-inspection row and the template section with the two clone categories counted from records."""
+        r = self.route()
+        template = {"mode": "clone", "built_by_step": "SELF", "name": "tpl", "oid": 1, "identity": "1" * 64, "cp0_digest": TEMPLATE_CP0,
+                    "sealed": True, "build_seconds": 27.5, "clones": [{"step": "SELF", "database": "x", "clone_setup_seconds": 1.25, "clone_cp0_matches_template": True, "problems": []}]}
+        # the simulated story: SELF builds and takes the first clone; S015 fails to start, so it takes no clone
+        import itertools
+
+        ticks = itertools.count(100.0, 0.5)  # a controlled monotonic clock: every start/end pair is 0.5 s apart
+
+        def suite(sid, *a, **k):
+            r.template = template
+            if sid == "S015":
+                raise RuntimeError("simulated: the S015 child could not be started")
+            return {"id": sid, "outcome": "PASS", "template": {"mode": "clone", "built": sid == "SELF", "build_seconds": 27.5 if sid == "SELF" else None,
+                                                             "clone_setup_seconds": 1.5, "clone_cp0_matches_template": True, "template": "tpl", "template_oid": 1, "problems": []}}
+
+        def child(command, log_path, env):
+            with open(log_path, "x", encoding="utf-8") as handle:
+                handle.write("final\n")
+            with open(command[3], "x", encoding="utf-8") as handle:
+                json.dump({"matches": True, "template_dropped": True, "parity_recorded": True, "template_oid": 1, "clone_setup_seconds": 1.1,
+                           "final_clone_cp0_digest": TEMPLATE_CP0, "template_cp0_digest": TEMPLATE_CP0}, handle)
+            return 0
+
+        with mock.patch.object(route_mod.time, "perf_counter", side_effect=lambda: next(ticks)):
+            code, summary = self.run_route(r, suite, child, lambda name, conn=None: None)
+        by_id = {step["id"]: step for step in summary["steps"]}
+        self.assertEqual(code, 2, "a step that raised is INCOMPLETE, so the route must exit 2; it exited %s" % code)
+        for step_id in ("OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"):
+            timing = by_id[step_id].get("timing")
+            self.assertIsNotNone(timing, "step %s recorded no timing at all; every executed step must carry started, finished and seconds" % step_id)
+            self.assertEqual(set(timing), {"started", "finished", "seconds"}, "step %s timing has keys %s, not started/finished/seconds" % (step_id, sorted(timing)))
+            self.assertTrue(isinstance(timing["seconds"], float) and timing["seconds"] >= 0, "step %s seconds %r must be a non-negative number" % (step_id, timing["seconds"]))
+        self.assertEqual(summary["identity"].get("timing", {}).keys() and set(summary["identity"]["timing"]), {"started", "finished", "seconds"},
+                         "IDENTITY's timing must be recorded under summary.identity.timing")
+        for step_id in ("OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"):
+            self.assertEqual(by_id[step_id]["timing"]["seconds"], 0.5, "step %s's duration must come from the controlled monotonic clock (0.5 s per start/end pair), not the wall clock; got %r" % (step_id, by_id[step_id]["timing"]["seconds"]))
+        self.assertEqual(by_id["S015"]["outcome"], "INCOMPLETE", "a step whose child raised must be INCOMPLETE, with its timing still recorded")
+        self.assertEqual((by_id["SELF"]["template"]["build_seconds"], by_id["OWNERSHIP"].get("template")), (27.5, None),
+                         "the building step must keep its build seconds and a non-database step must carry no template record")
+        self.assertEqual(summary["template"]["built_by_step"], "SELF", "summary.template must name the building step")
+        final = summary["template"]["final"]
+        self.assertEqual((final["timing"]["status"], final["clone_setup_seconds"], final["matches"]), ("completed", 1.1, True),
+                         "the final inspection must record its own timing status, clone setup seconds and parity; got %s" % final)
+        self.assertEqual(final["timing"]["seconds"], 0.5, "the final inspection's duration must come from the controlled monotonic clock; got %r" % final["timing"]["seconds"])
+        planned_not_run = [s for s in summary["steps"] if s.get("reason") == "not run"]
+        self.assertTrue(all(s.get("timing") == {"status": "not run"} for s in planned_not_run), "a planned step that never ran must carry timing status 'not run', never a zero duration")
+        summary_md = route_mod.read_text(r.path("SUMMARY.md"))
+        self.assertIn("## Step timings", summary_md, "SUMMARY.md must render the step-timing table")
+        self.assertIn("| SELF | %s | %s | %s | 27.5 | 1.5 | True |" % (by_id["SELF"]["timing"]["started"], by_id["SELF"]["timing"]["finished"], by_id["SELF"]["timing"]["seconds"]), summary_md,
+                      "the SELF row must show its build seconds (27.5), clone setup (1.5) and CP-0 match")
+        self.assertIn("| TPL-FINAL (final inspection; cleanup, not a control) | %s | %s | %s | reused | 1.1 | True |" % (final["timing"]["started"], final["timing"]["finished"], final["timing"]["seconds"]), summary_md,
+                      "the final inspection must be rendered as its own timing row with its clone setup seconds, outside the fixed controls")
+        self.assertIn("- **Test-runner clones (SELF, S015, mutation steps):** 1;", summary_md, "the test-runner clone count must be derived from the template's clone records (one: SELF's; S015 never started)")
+        self.assertIn("- **Final-inspection clone:** `%s` (1 more clone; setup 1.1 s)" % final["database"], summary_md, "the final-inspection clone must be counted separately")
+        self.assertIn("Built by step:** SELF in 27.5 s", summary_md, "the template section must show the building step and its build seconds")
+
+    def test_the_template_is_one_more_owned_database_inspected_then_dropped(self):
+        """Claim: at the end of the run the route's final inspection (run_final_inspection -> finalise_route_template)
+        clones the template once, captures CP-0 on that final clone with the connection name restored on every exit path,
+        records parity only when the compared properties match the fresh-build reference and only then invokes TT-1's
+        owned cleanup; a mismatch never reaches cleanup and the record the child writes still carries matches False,
+        both digests and the clone's setup time; the route records a matching, dropped template as CLEAN (exit 0,
+        timing status "completed") and a failed or incomplete final check as UNRESOLVED and NOT CLEAN (exit 3, timing
+        status "failed")."""
+        from verification.isolation import template as template_mod
+        from verification.isolation import template_mode
+
+        # the child's logic, with the database and TT-1 boundaries stubbed
+        def exercise(clone_digest, capture_raises=False):
+            events = []
+            connection = mock.MagicMock()
+            connection.settings_dict = {"NAME": "postgres"}
+            connection.close.side_effect = lambda: events.append(("close", connection.settings_dict["NAME"]))
+            settings = SimpleNamespace(DATABASES={"default": {"NAME": "postgres"}})
+            receipt = {"name": TEMPLATE_NAME, "oid": TEMPLATE_OID, "cp0_digest": TEMPLATE_CP0}
+
+            def capture():
+                events.append(("capture", connection.settings_dict["NAME"], settings.DATABASES["default"]["NAME"]))
+                if capture_raises:
+                    raise RuntimeError("simulated: the capture query failed")
+                return clone_digest
+
+            out_path = os.path.join(self.tmp, "final-%s-%s.json" % (clone_digest[:4], capture_raises))
+            with mock.patch.object(template_mode, "read_template_receipt", return_value=receipt), \
+                    mock.patch.object(template_mode, "template_receipt_path", side_effect=lambda s_, i: os.path.join(s_, i + ".json")), \
+                    mock.patch.object(template_mod, "create_clone_database", side_effect=lambda c, rcpt, name: events.append(("clone", name)) or name), \
+                    mock.patch.object(template_mod, "record_final_clone_cp0", side_effect=lambda path, ident, digest: events.append(("record", digest))), \
+                    mock.patch.object(template_mod, "cleanup_template", side_effect=lambda c, path, ident: events.append(("cleanup", ident))):
+                status = template_mode.run_final_inspection(connection, settings, self.tmp, TEMPLATE_IDENTITY, "final_db", out_path, capture=capture)
+            written = json.loads(route_mod.read_text(out_path))
+            result = written if status == 0 else None
+            error = written.get("error") if status != 0 else None
+            return result, error, events, connection.settings_dict["NAME"], settings.DATABASES["default"]["NAME"], written, status
+
+        result, error, events, name_after, setting_after, written, status = exercise(TEMPLATE_CP0)
+        self.assertEqual((status, error), (0, None), "a final clone whose CP-0 matches must complete with exit 0 and no error; got exit %s, error %r" % (status, error))
+        self.assertEqual([e[0] for e in events], ["clone", "close", "capture", "close", "record", "cleanup"],
+                         "the final inspection must clone, capture on the clone, record parity and only then clean up; observed order %s" % [e[0] for e in events])
+        self.assertEqual(events[2], ("capture", "final_db", "final_db"), "the CP-0 capture must target the final clone on both the connection and the settings; it targeted %s" % (events[2],))
+        self.assertEqual((name_after, setting_after), ("postgres", "postgres"), "the connection and settings names must be restored after the capture")
+        self.assertEqual((result["matches"], result["parity_recorded"], result["template_dropped"]), (True, True, True), "the equal case must record parity before owned cleanup and report the drop; got %s" % result)
+        result, error, events, name_after, setting_after, written, status = exercise("f" * 64)
+        self.assertEqual(status, 1, "a differing final CP-0 must make the child exit 1; it exited %s" % status)
+        self.assertTrue(error and error.startswith("TemplateReceiptInvalid:"), "a differing final CP-0 must refuse with TemplateReceiptInvalid; the record says %r" % error)
+        self.assertEqual((written.get("matches"), written.get("final_clone_cp0_digest"), written.get("template_cp0_digest")), (False, "f" * 64, TEMPLATE_CP0),
+                         "on a mismatch the record the child writes must keep matches False and both digests (Argon G1); it holds %s" % written)
+        self.assertIsInstance(written.get("clone_setup_seconds"), float, "on a mismatch the record must keep the final clone's setup time; it holds %r" % written.get("clone_setup_seconds"))
+        self.assertNotIn("cleanup", [e[0] for e in events], "on a mismatch the owned cleanup must never be invoked (the template stays untouched); events %s" % events)
+        self.assertNotIn("record", [e[0] for e in events], "on a mismatch parity must not be recorded; events %s" % events)
+        self.assertIn("template integrity check failed", str(error), "the refusal must say the integrity check failed and that the template was left untouched; it said %s" % error)
+        result, error, events, name_after, setting_after, written, status = exercise(TEMPLATE_CP0, capture_raises=True)
+        self.assertEqual((status, written.get("matches")), (1, None), "a failed capture must exit 1 with no parity claim; got exit %s, matches %r" % (status, written.get("matches")))
+        self.assertEqual((name_after, setting_after), ("postgres", "postgres"), "the names must be restored even when the capture fails; left %s / %s" % (name_after, setting_after))
+        self.assertNotIn("cleanup", [e[0] for e in events], "a failed capture must not reach cleanup; events %s" % events)
+
+        # the route's classification of the child's result
+        def run_with(final_result, child_exit=0, present_after=False):
+            r = self.route(name="final-%s" % hashlib.sha256(json.dumps(final_result, sort_keys=True).encode()).hexdigest()[:8])
+            template = {"mode": "clone", "built_by_step": "SELF", "name": TEMPLATE_NAME, "oid": TEMPLATE_OID, "identity": TEMPLATE_IDENTITY,
+                        "cp0_digest": TEMPLATE_CP0, "sealed": True, "build_seconds": 27.5, "clones": []}
+            commands = []
+
+            def suite(sid, *a, **k):
+                r.template = template
+                return {"id": sid, "outcome": "PASS"}
+
+            def child(command, log_path, env):
+                commands.append((command, env))
+                with open(log_path, "x", encoding="utf-8") as handle:
+                    handle.write("final\n")
+                if final_result is not None:
+                    with open(command[3], "x", encoding="utf-8") as handle:
+                        json.dump(dict(final_result, template_oid=TEMPLATE_OID), handle)
+                return child_exit
+
+            code, summary = self.run_route(r, suite, child, lambda name, conn=None: TEMPLATE_OID if (name == TEMPLATE_NAME and present_after) else None)
+            return r, code, summary, commands
+
+        r, code, summary, commands = run_with({"matches": True, "template_dropped": True, "parity_recorded": True, "final_clone_cp0_digest": TEMPLATE_CP0, "template_cp0_digest": TEMPLATE_CP0})
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (0, "CLEAN"), "a matching, dropped template must leave cleanup CLEAN and exit 0; got %s %s" % (code, summary["cleanup"]))
+        self.assertEqual(summary["template"]["final"]["timing"]["status"], "completed", "a final check that exited 0 and was classified dropped must read 'completed'; it reads %r" % summary["template"]["final"]["timing"]["status"])
+        record = next(n for n in summary["cleanup"]["names"] if n["step"] == "template")
+        self.assertTrue(record["resolved"] and record["state"].startswith("DROPPED BY THE ROUTE (template;"), "the template's cleanup record must be resolved and dropped; got %s" % record)
+        self.assertEqual(record["owned_oid"], TEMPLATE_OID, "the cleanup record must carry the template's owned oid")
+        command, env = commands[-1]
+        self.assertEqual((command[1], command[4], command[5]), ("-c", r.db_name("TPL-FINAL"), TEMPLATE_IDENTITY), "the final check must clone under the route's own TPL-FINAL name with the template identity; command %s" % command[1:6])
+        self.assertEqual((env["VERIFICATION_TEMPLATE_MODE"], env[template_mode.POLICY_ENV]), ("clone", "reuse-only"), "the final child must run in clone mode under the reuse-only policy")
+        self.assertIn(("TPL-FINAL", r.db_name("TPL-FINAL"), r.receipts_path("TPL-FINAL")), r.attempted, "the final clone must be an attempted database the route cleans")
+        r, code, summary, _ = run_with({"matches": False, "template_dropped": False, "final_clone_cp0_digest": "f" * 64, "template_cp0_digest": TEMPLATE_CP0, "error": "TemplateReceiptInvalid: the template integrity check failed"}, child_exit=1, present_after=True)
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (3, "NOT CLEAN"), "a failed integrity check must leave cleanup NOT CLEAN and exit 3; got %s %s" % (code, summary["cleanup"]["outcome"]))
+        record = next(n for n in summary["cleanup"]["names"] if n["step"] == "template")
+        self.assertTrue(record["state"].startswith("UNRESOLVED - the template integrity check failed") and not record["resolved"] and "left the template untouched" in record["state"],
+                        "the template record must be unresolved, name the failed integrity check and say the template was left untouched; got %s" % record)
+        self.assertIn("f" * 64, record["state"], "the operator's message must carry the final clone's digest; it reads %s" % record["state"])
+        self.assertEqual(summary["template"]["final"]["timing"]["status"], "failed", "a final check whose child exited 1 must read 'failed', never 'completed'; it reads %r" % summary["template"]["final"]["timing"]["status"])
+        r, code, summary, _ = run_with(None, child_exit=1, present_after=True)
+        self.assertEqual(summary["template"]["final"]["timing"]["status"], "failed", "a final check with no result record must read 'failed'; it reads %r" % summary["template"]["final"]["timing"]["status"])
+        self.assertEqual((code, summary["cleanup"]["outcome"]), (3, "NOT CLEAN"), "a final check with no result record must leave cleanup NOT CLEAN and exit 3; got %s" % code)
+        record = next(n for n in summary["cleanup"]["names"] if n["step"] == "template")
+        self.assertTrue(record["state"].startswith("UNRESOLVED - the final template check did not complete") and not record["resolved"], "an incomplete final check must be unresolved; got %s" % record)
+
+
+class CICloneMutationRunner(unittest.TestCase):
+    def test_a_mutation_is_applied_to_the_clone_only_after_its_cp0_equals_the_templates(self):
+        """Claim: through the shared set-up, MutationRunner's mutation runs on the database the set-up created as a clone
+        of the template (never the template itself), and only after the clone's CP-0 has been recomputed and recorded as
+        matching the fresh-build reference; a differing CP-0 refuses with no mutation statement; a clone-creation failure
+        produces no mutation SQL and no fresh creation; a Human-authorised fresh run (not a CI mode) applies the mutation
+        without a clone check. Runner output is captured so the OFFLINE step's accounting is undisturbed (VC V1)."""
+        from django.test.runner import DiscoverRunner
+
+        from verification import mutations as mutations_mod
+        from verification.isolation import runner as runner_mod
+        from verification.isolation import state as state_mod
+        from verification.isolation import template as template_mod
+        from verification.isolation import template_mode
+
+        name = sorted(mutations_mod.MUTATIONS)[0]
+        template_digest = "a" * 64
+        receipt = {"name": TEMPLATE_NAME, "oid": TEMPLATE_OID, "cp0_digest": template_digest, "identity": TEMPLATE_IDENTITY,
+                   "build_intent": {"path": "/x"}}
+
+        def exercise(mode, clone_digest, clone_fails=False):
+            executed, receipts, printed, created = [], [], [], []
+            fake_connection = mock.MagicMock()
+            fake_connection.alias = "default"
+            fake_connection.settings_dict = {"NAME": "postgres", "TEST": {}}
+            cursor = mock.MagicMock()
+            cursor.__enter__.return_value.execute.side_effect = lambda statement: executed.append((fake_connection.settings_dict["NAME"], statement))
+            fake_connection.cursor.return_value = cursor
+            connections = {"default": fake_connection}
+
+            def fresh_install(creation):
+                creation._create_test_db = lambda *a, **k: created.append(("fresh", "test_db")) or "test_db"
+
+            def create_clone(connection, rcpt, clone_name):
+                if clone_fails:
+                    raise template_mod.TemplateNameCollision("simulated: clone database %s already exists" % clone_name)
+                created.append(("clone", clone_name))
+                return clone_name
+
+            def django_setup(runner_self, **kwargs):
+                clone_name = "test_intevia_living_organism_probe_mut1"
+                fake_connection.settings_dict["NAME"] = fake_connection.creation._create_test_db(0, False)
+                return [(fake_connection, clone_name, True)]
+
+            env = {mutations_mod.MUTATION_ENV: name, "VERIFICATION_TEMPLATE_MODE": mode, "INTEVIA_CANDIDATE_BINDING_SHA256": "a" * 64,
+                   "VERIFICATION_TEMPLATE_STORE": "/store", template_mode.POLICY_ENV: "reuse-only",
+                   template_mode.EXPECTED_ENV: "%s:%s:%s" % (TEMPLATE_NAME, TEMPLATE_OID, TEMPLATE_IDENTITY),
+                   "INTEVIA_FRESH_AUTHORITY_FILE": "", "INTEVIA_FRESH_AUTHORITY_SHA256": ""}
+            fake_connection.creation._get_test_db_name = lambda: "test_intevia_living_organism_probe_mut1"
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch("django.db.connections", connections), \
+                    mock.patch.object(template_mode, "install", side_effect=fresh_install), \
+                    mock.patch.object(template_mode, "prepare_template_reuse_only", return_value=(receipt, False)), \
+                    mock.patch.object(template_mode, "_database_record", return_value=None), \
+                    mock.patch.object(template_mod, "create_clone_database", side_effect=create_clone), \
+                    mock.patch("verification.isolation.run_plan.validate_fresh_authority", return_value="AUTH"), \
+                    mock.patch.object(DiscoverRunner, "setup_databases", autospec=True, side_effect=django_setup), \
+                    mock.patch.object(mutations_mod, "connection", fake_connection), \
+                    mock.patch.object(mutations_mod, "write_receipt", side_effect=lambda event, **fields: receipts.append((event, dict(fields), list(executed)))), \
+                    mock.patch.object(state_mod, "capture", return_value={"probe": True}), \
+                    mock.patch.object(state_mod, "digest", return_value=clone_digest), \
+                    mock.patch.object(runner_mod, "_runner_print", side_effect=lambda *a, **k: printed.append(a[0])), \
+                    contextlib.redirect_stdout(io.StringIO()) as captured:
+                runner = mutations_mod.MutationRunner(parallel=0, verbosity=0, nonce="test-nonce", step="MUT-" + name)
+                try:
+                    runner.setup_databases()
+                    error = None
+                except Exception as exc:
+                    error = exc
+            return executed, receipts, printed, created, captured.getvalue(), error
+
+        executed, receipts, printed, created, output, error = exercise("clone", template_digest)
+        self.assertIsNone(error, "with a matching clone the set-up must complete; it raised %r" % error)
+        self.assertEqual(created, [("clone", "test_intevia_living_organism_probe_mut1")], "the set-up must create exactly one clone and no fresh database; it created %s" % created)
+        self.assertEqual([target for target, _ in executed], ["test_intevia_living_organism_probe_mut1"] * len(executed), "every mutation statement must target the created clone, never the template %s; targets %s" % (TEMPLATE_NAME, [t for t, _ in executed]))
+        self.assertEqual([statement for _, statement in executed], mutations_mod.MUTATIONS[name]["sql"], "the mutation must run exactly as registered")
+        self.assertEqual([(event, fields["name"], fields["matches"], before) for event, fields, before in receipts], [("clone_cp0_verified", "test_intevia_living_organism_probe_mut1", True, [])],
+                         "the CP-0 check must be recorded for the clone before any mutation statement; receipts %s" % receipts)
+        self.assertIn("TT1_CLONE_CP0_MATCHES_TEMPLATE=True", printed, "the runner must print the match marker; printed %s" % printed)
+        self.assertIn("VERIFICATION MUTATION APPLIED: %s" % name, output, "the applied marker must be printed (and captured here, so OFFLINE's accounting is undisturbed)")
+        executed, receipts, printed, created, output, error = exercise("clone", "b" * 64)
+        self.assertEqual(executed, [], "a clone whose CP-0 differs from the fresh-build reference must receive no mutation statement; executed %s" % executed)
+        self.assertIsNotNone(error, "a differing CP-0 must refuse the step")
+        self.assertIn("could not start because the clone's recorded starting state differs from the fresh-build reference", str(error), "the refusal must explain what happened in plain English; it said %s" % error)
+        self.assertIn("A fresh database will not be substituted", str(error), "the refusal must say no fresh fallback happens")
+        self.assertEqual([(event, fields["matches"]) for event, fields, _ in receipts], [("clone_cp0_verified", False)], "the mismatch must be recorded; receipts %s" % receipts)
+        self.assertNotIn("VERIFICATION MUTATION APPLIED", output, "no applied marker may be printed on a mismatch")
+        executed, receipts, printed, created, output, error = exercise("clone", template_digest, clone_fails=True)
+        self.assertEqual((executed, created, receipts), ([], [], []), "a clone-creation failure must produce no mutation SQL, no fresh creation and no CP-0 receipt; got %s %s %s" % (executed, created, receipts))
+        self.assertIsNotNone(error, "a clone-creation failure must raise")
+        executed, receipts, printed, created, output, error = exercise("fresh", "irrelevant")
+        self.assertIsNone(error, "an authorised fresh run must still complete; it raised %r" % error)
+        self.assertEqual(([statement for _, statement in executed], receipts, created), (mutations_mod.MUTATIONS[name]["sql"], [], [("fresh", "test_db")]),
+                         "an authorised fresh run (not a CI mode) applies the mutation to its fresh database without a clone check; got %s %s %s" % (executed, receipts, created))

@@ -1,10 +1,14 @@
-# INTEVIA run requirements (repository copy) — post-permit v1.3 (27 Oct 2026: R1 — every failure reported in one run; v1.2, 17 Oct 2026: R10 and R16 — CI as the default closure; the D-CI-2 merge gate)
+# INTEVIA run requirements (repository copy) — post-permit v1.4 (31 Oct 2026: R2 — clone mode wherever a database is created, the CI route included; R8, R9 aligned; v1.3, 27 Oct 2026: R1 — every failure reported in one run; v1.2, 17 Oct 2026: R10 and R16 — CI as the default closure; the D-CI-2 merge gate)
 
 Rendered from practice section R as reset by the Human Governor's decisions TR-1 to TR-4 of 15 October 2026 (the testing reset), reconciled
 from the Lead Designer's returns v1.0 section 5.5 and v1.1 and the TU-2a commission. R10 and R16 are amended by the Human Governor's two
 decisions of 17 October 2026: CI as the default closure for code-bearing packets (US015-B-28), and D-CI-2, the merge gate (US015-B-27).
-R1 and its R7 accounting wording incorporate the Human Governor's 27 October 2026 brittle-test repair direction;
-this repository amendment must also be reconciled into practice section R by its custodian.
+R1 and its R7 accounting wording incorporate the Human Governor's 27 October 2026 brittle-test repair direction.
+R2 is varied by the Human Governor's direction of 31 October 2026 (US015-B-36, capture HG_DIRECTION_CLONE_MODE_ERROR_MESSAGES_AND_AI_FAIL_20261031;
+practice item 165; unit CI-CLONE-1): clone mode wherever an application database is created, the CI verification route included, with his
+decisions 1A (empty control probes) and 3A (development reuse) of 31 October 2026 (HG_DECISIONS_CI_CLONE_1_ADVISOR_1_TO_3_20261031); R8 and R9
+are aligned with it.
+These repository amendments must also be reconciled into practice section R by its custodian.
 Operative from the first launch after the TU-2a
 qualification permit (R5), when the Human Governor has placed this file and a state file binding its digest. This copy is bound by its byte
 digest in the authorised run state file and checked at every launch (R11). On a contradiction between a relay and this copy, the Making
@@ -15,9 +19,13 @@ R1. Ordinary test failures do not stop a development, closure or full run: every
     stops at once when an isolation checkpoint is refused, and cleanup is judged after the run. Fail-fast may be
     requested for a quick local check; it is never required. Completeness is the required selection executing and
     passing.
-R2. Clone (template) mode is the development default; fresh mode only where a commission or the Human Governor names it for that run,
-    bound by the authority file's digest. A reason alone is refused. The CI verification route runs in fresh mode by this rule; its per-run
-    authority file cites R2, names fresh mode and the step, and is bound by its digest.
+R2. Application test databases use clone mode. Each CI verification route run builds one application database from migrations at zero,
+    uses that database as its run-owned template, and clones it for SELF, S015, every mutation step and final inspection. Only SELF may
+    build that template; later steps require the recorded template and refuse if it is unavailable or inconsistent. No fresh fallback is
+    permitted. By the Human Governor's named exception (decision 1A, 31 October 2026), the ownership/replacement, lock and template-sealing
+    control probes may create empty databases without application migrations; their ownership evidence and cleanup requirements remain
+    unchanged. Development invocations retain TT-1's identity-validated template reuse under the Human Governor's named clarification
+    (decision 3A, 31 October 2026). Any other fresh creation requires his named authority, bound by digest.
 R3. Labels are module.Class or module.Class.method, resolved to a plan; a launcher accepts at most twenty labels and otherwise a plan file.
     A module is expanded to its classes and loader-checked before launch.
 R4. Resolve the current selection and counts through the loader at launch (unique tests, no duplicates, no failed labels), stored as a
@@ -34,9 +42,15 @@ R7. The runner executes exactly the validated plan. A complete run accounts for 
     The child receives the plan only as a file with its digest; no identifier is placed on a command line.
 R8. Every report records the actual mode, fail-fast, plan digest, run kind (pre-run, development, closure, full, qualification),
     executed-versus-plan result, template built or reused with real build seconds, and the per-test timing phases (check, unittest,
-    post-teardown, flush) with incomplete phases marked.
+    post-teardown, flush) with incomplete phases marked. The CI route's summary also records, per step, its start, end and monotonic
+    duration (a step never reached is marked "not run", never given a zero), the template build seconds (the building step, reported as
+    soon as the build completes), each clone's setup seconds and setup outcome, and the final inspection's own timing and clone setup,
+    so that the CI growth table (practice item 162) is exact; the two clone categories (test-runner clones; the final-inspection clone)
+    and the empty probe creates are counted from records.
 R9. Missing, stale or contradictory inputs refuse before launch with an actionable message naming the R-number; never a silent
-    fall-back to another mode.
+    fall-back to another mode. In the CI route a later step that cannot find or verify the recorded template, a clone that cannot be
+    taken, or a clone whose compared CP-0 properties do not match the fresh-build reference, refuses before any migration, clone
+    creation or mutation SQL; the step and the run fail; fresh-mode fallback is prohibited.
 R10. Closure and the merge gate.
     Closure (the Human Governor's decision of 17 October 2026, US015-B-28). Each commission names its closure. For a code-bearing packet the
     default is one qualifying full-suite GitHub CI run on the exact final candidate, which is the packet's verification of record. A
