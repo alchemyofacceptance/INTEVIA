@@ -10,6 +10,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import os
 import sys
 import uuid
 
@@ -601,6 +602,111 @@ def sr_definition_guard_suspended(cur):
             cur.execute(f"ALTER TABLE public.core_organismroledefinition ENABLE TRIGGER {SR_DEFINITION_INSERT_GUARD}")
 
 
+S2B_OFFICE_ATTRIBUTION_GUARD = "s2b_10_attribution"
+_OFFICE_EVENT_TABLE = "core_contextualroleassignmentstateevent"
+
+
+def _require_owned_office_fixture_database(cur):
+    """Refuse trigger latitude outside the current run's owned test database.
+
+    Check the supplied cursor, not the default connection: test settings and the
+    route marker, configured and actual database name, and the current database
+    OID against an unclosed creation receipt for this run. This is an accidental
+    misuse guard; a privileged operator can forge settings/receipts. Production
+    must separately deny the application role trigger-changing privileges.
+    """
+    from verification.ownership import NONCE_ENV, RECEIPT_ENV, read_receipts
+
+    database = cur.db
+    route = "LIVING_ORGANISM_TEST_LIFECYCLE"
+    name = database.settings_dict.get("NAME")
+    nonce, receipt = os.environ.get(NONCE_ENV), os.environ.get(RECEIPT_ENV)
+    if (
+        getattr(settings, "INTEVIA_TEST_CONTEXT", False) is not True
+        or getattr(settings, "INTEVIA_FIXTURE_SUBSTITUTES_PERMITTED", False) is not True
+        or database.vendor != "postgresql"
+        or database.settings_dict.get("S015_TEST_ROUTE") != route
+        or os.environ.get("INTEVIA_S015_TEST_ROUTE") != route
+        or type(name) is not str
+        or not name.startswith(_DISPOSABLE_TEST_DATABASE_PREFIX)
+        or name == _DISPOSABLE_TEST_DATABASE_PREFIX
+        or not nonce or not receipt
+    ):
+        raise RuntimeError("office fixture latitude requires the owned test route")
+    try:
+        records, problem = read_receipts(receipt, nonce)
+        lifecycle = [r for r in records if r.get("name") == name
+                     and r.get("event") in ("created", "destroyed", "destroy_refused")]
+        last = lifecycle[-1] if lifecycle else {}
+        valid = (not problem and last.get("event") == "created"
+                 and type(last.get("oid")) is int)
+    except (OSError, ValueError, TypeError, AttributeError):
+        valid = False
+        last = {}
+    if not valid:
+        raise RuntimeError("office fixture latitude requires a current creation receipt")
+    cur.execute("SELECT current_database(), oid FROM pg_catalog.pg_database WHERE datname = current_database()")
+    observed = cur.fetchone()
+    if observed != (name, last["oid"]):
+        raise RuntimeError("office fixture latitude database identity does not match its receipt")
+
+
+@contextlib.contextmanager
+def s2b_attribution_guard_suspended(cur):
+    """Construct historical rows or isolate a different guard in an owned test DB.
+
+    SR C2 (migration 0052) widened s2b_guard_office_attribution to every LO-scoped
+    office code, so the founding fixture's reserved root offices (INTEVIA_*, a
+    founder's own PARTY act; ruling 4 refuses them until P2/GENESIS lands) and the
+    structure tests' non-COORDINATOR PARTY-written offices now meet the attribution
+    guard before the deferred 0021 guards they exist to reach. This is the same
+    test-only compatibility seam as sr_definition_guard_suspended, on trigger
+    s2b_10_attribution of core_contextualroleassignmentstateevent: outer atomic
+    transaction required; a savepoint encloses both ALTERs and the fixture writes;
+    a pre-disabled trigger or nested use is refused; the guard is restored before
+    control returns. The deferred constraint triggers of the event table are
+    settled before each ALTER, so the caller refreshes each assignment's governed
+    cache inside the seam (the chain guard compares cache and fold when settled).
+    Commit fixture setup before starting concurrent contenders: ENABLE does not
+    release the SHARE ROW EXCLUSIVE table lock, which lasts until the outer
+    transaction ends. A C2 test may use it indirectly for root fixture setup;
+    its challenged act must run after restoration. Existing structure/vocabulary
+    tests isolate their own guard while attribution is suspended and make no
+    attribution claim. Below 0036 there is no guard to suspend.
+    """
+    database = cur.db
+    if not database.in_atomic_block:
+        raise RuntimeError("office fixture latitude requires an outer atomic transaction")
+    _require_owned_office_fixture_database(cur)
+    with transaction.atomic(using=database.alias):
+        cur.execute(
+            "SELECT t.tgenabled FROM pg_catalog.pg_trigger t "
+            "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname = %s "
+            "AND t.tgname = %s AND NOT t.tgisinternal",
+            (_OFFICE_EVENT_TABLE, S2B_OFFICE_ATTRIBUTION_GUARD),
+        )
+        row = cur.fetchone()
+        installed = row is not None
+        if installed:
+            if row[0] != "O":
+                raise RuntimeError(
+                    "office fixture latitude requires s2b_10_attribution enabled; nested use is refused"
+                )
+            deferrable = _deferrable_constraints(cur, _OFFICE_EVENT_TABLE)
+            _settle_deferred(cur, deferrable)
+            cur.execute(
+                f"ALTER TABLE public.{_OFFICE_EVENT_TABLE} DISABLE TRIGGER {S2B_OFFICE_ATTRIBUTION_GUARD}"
+            )
+        yield
+        if installed:
+            _settle_deferred(cur, deferrable)
+            cur.execute(
+                f"ALTER TABLE public.{_OFFICE_EVENT_TABLE} ENABLE TRIGGER {S2B_OFFICE_ATTRIBUTION_GUARD}"
+            )
+
+
 def found_organism(
     cur,
     tag,
@@ -730,32 +836,44 @@ def found_organism(
         + (["INTEVIA_PRIVACY_COORDINATOR"] if root and "pc_assignment" not in skip else [])
         + (["COORDINATOR"] if not root else [])
     )
-    for code in [c for c in to_assign if c in ids["roles"]]:
-        assignment_state = assignment_states.get(code, "ACTIVE")
-        a_uuid = u(f"assignment:{tag}:{code}")
-        cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
-                    "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, T0, T0, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
-        ids["assignments"][code] = cur.fetchone()[0]
-        if "assignment_event" not in skip:
-            assignment_event_overrides = None
-            if code == "COORDINATOR":
-                if "founding_event_uuid" not in ids:
-                    raise RuntimeError(
-                        "founding Coordinator ASSIGN requires the sequence-1 FOUND event"
-                    )
-                assignment_event_overrides = {
-                    "evidence_reference": f"founding-batch:{ids['founding_event_uuid']}",
-                    "authority_decision_reference": ids[
-                        "founding_authority_decision_reference"
-                    ],
-                }
-                assignment_event_overrides.update(founding_assignment_overrides or {})
-            event_id = append_event(
-                cur, "core_contextualroleassignmentstateevent", ids["assignments"][code], 1, "ASSIGN", None,
-                assignment_state, act, basis, f"{tag}:{code}", overrides=assignment_event_overrides
-            )[0]
-            ids["assignment_events"][code] = event_id
-            ids["events"].setdefault("core_contextualroleassignmentstateevent", event_id)
+    assigned_codes = [c for c in to_assign if c in ids["roles"]]
+    # SR C2: the root's reserved offices are the founder's own PARTY act, which the widened
+    # attribution guard refuses (ruling 4) until P2/GENESIS lands - a pre-SR-shaped fixture
+    # row under the labelled latitude; the Coordinator's founding ASSIGN takes the guard's own
+    # founding branch and needs no latitude. Each assignment is refreshed inside the seam
+    # when a refresh is wanted, because the seam settles the deferred chain guard on exit.
+    reserved_codes = [c for c in assigned_codes if c != "COORDINATOR" and "assignment_event" not in skip]
+    office_latitude = s2b_attribution_guard_suspended(cur) if reserved_codes else contextlib.nullcontext()
+    with office_latitude:
+        for code in assigned_codes:
+            assignment_state = assignment_states.get(code, "ACTIVE")
+            a_uuid = u(f"assignment:{tag}:{code}")
+            cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
+                        "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, T0, T0, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
+            ids["assignments"][code] = cur.fetchone()[0]
+            if "assignment_event" not in skip:
+                assignment_event_overrides = None
+                if code == "COORDINATOR":
+                    if "founding_event_uuid" not in ids:
+                        raise RuntimeError(
+                            "founding Coordinator ASSIGN requires the sequence-1 FOUND event"
+                        )
+                    assignment_event_overrides = {
+                        "evidence_reference": f"founding-batch:{ids['founding_event_uuid']}",
+                        "authority_decision_reference": ids[
+                            "founding_authority_decision_reference"
+                        ],
+                    }
+                    assignment_event_overrides.update(founding_assignment_overrides or {})
+                event_id = append_event(
+                    cur, "core_contextualroleassignmentstateevent", ids["assignments"][code], 1, "ASSIGN", None,
+                    assignment_state, act, basis, f"{tag}:{code}", overrides=assignment_event_overrides
+                )[0]
+                ids["assignment_events"][code] = event_id
+                ids["events"].setdefault("core_contextualroleassignmentstateevent", event_id)
+        if reserved_codes and do_refresh and "core_contextualroleassignment" not in skip_refresh:
+            for a in ids["assignments"].values():
+                refresh(cur, "core_contextualroleassignment", a)
     if "requirement" not in skip:
         cur.execute("INSERT INTO core_essentialcoveragerequirement (requirement_uuid, roster_version, responsibility_domain_code, qualifying_role_code, minimum_active_occupants, scope, effective_from, effective_until, living_organism_id) "
                     "VALUES (%s, 1, 'GOVERNANCE', 'COORDINATOR', 1, 'LIVING_ORGANISM', %s, NULL, %s) RETURNING id", (u(f"req:{tag}"), T_MINUS_1D, lo))
@@ -875,24 +993,33 @@ def append_second_event(cur, ids, event_table, tag, *, prior=DEFAULT_PRIOR, eff=
     }
     anchor_id, action, default_prior, result, extra = cases[event_table]
     event_time = eff or (T0 + dt.timedelta(hours=1))
-    return append_event(
-        cur,
-        event_table,
-        anchor_id,
-        2,
-        action,
-        default_prior if prior is DEFAULT_PRIOR else prior,
-        result,
-        ids["identity"],
-        ids["basis"],
-        tag,
-        pred_id=ids["events"][event_table],
-        eff=event_time,
-        occ=event_time,
-        rec=T0 + dt.timedelta(hours=1),
-        extra=extra,
-        overrides=overrides,
+    # SR C2: the office row here is the founder's own act on a reserved root office (the first
+    # assignment of a root founding), which the widened attribution guard refuses before the
+    # CHECK or deferred guard a caller means to reach - written under the labelled latitude.
+    latitude = (
+        s2b_attribution_guard_suspended(cur)
+        if event_table == "core_contextualroleassignmentstateevent"
+        else contextlib.nullcontext()
     )
+    with latitude:
+        return append_event(
+            cur,
+            event_table,
+            anchor_id,
+            2,
+            action,
+            default_prior if prior is DEFAULT_PRIOR else prior,
+            result,
+            ids["identity"],
+            ids["basis"],
+            tag,
+            pred_id=ids["events"][event_table],
+            eff=event_time,
+            occ=event_time,
+            rec=T0 + dt.timedelta(hours=1),
+            extra=extra,
+            overrides=overrides,
+        )
 
 
 def found_root(cur, tag=None, **kw):

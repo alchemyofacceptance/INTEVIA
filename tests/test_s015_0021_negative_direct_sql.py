@@ -15,7 +15,8 @@ from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
     database_now,
     drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_organism, found_root, fresh, predecessor_l1,
-    refresh, restore_unset_check, seed_authority, seed_identity, sr_definition_guard_suspended, u,
+    refresh, restore_unset_check, s2b_attribution_guard_suspended, seed_authority, seed_identity,
+    sr_definition_guard_suspended, u,
 )
 
 POSTGRESQL_ONLY = skipUnless(connection.vendor == "postgresql", "S015 0021 guardians are PostgreSQL triggers")
@@ -286,16 +287,20 @@ class VocabulariesAndShapes(_S015NegativeBase):
         a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
         with connection.cursor() as cur:
             cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
-        self.refuses(lambda cur: append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "SUSPEND", "ACTIVE", "RESTRICTED", ids["identity"], ids["basis"], fresh(), pred_id=head),
-                     contains="vocab_ck")
+        def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
+            with s2b_attribution_guard_suspended(cur):
+                append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "SUSPEND", "ACTIVE", "RESTRICTED", ids["identity"], ids["basis"], fresh(), pred_id=head)
+        self.refuses(attempt, contains="vocab_ck")
 
     def test_neg_assignment_action_outside_six(self):
         ids = self.commits(lambda cur: self.root(cur))
         a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
         with connection.cursor() as cur:
             cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
-        self.refuses(lambda cur: append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "PROMOTE", "ACTIVE", "SUSPENDED", ids["identity"], ids["basis"], fresh(), pred_id=head),
-                     contains="cra_action_ck")
+        def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
+            with s2b_attribution_guard_suspended(cur):
+                append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "PROMOTE", "ACTIVE", "SUSPENDED", ids["identity"], ids["basis"], fresh(), pred_id=head)
+        self.refuses(attempt, contains="cra_action_ck")
 
     def test_neg_planning_result_fourth_token(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -415,12 +420,16 @@ class Structure(_S015NegativeBase):
             role_id = cur.fetchone()[0]
         return role_id
 
+    # SR C2: these three offices are written as a party's own act so that 0021's deferred structure
+    # guard, the one under examination, answers; the widened attribution guard (0052) would refuse
+    # them first, so the ASSIGN is written under the labelled latitude and refreshed inside it.
     def test_neg_membership_and_role_in_different_organisms(self):
         a, b = self._two()
         def attempt(cur):
             role_id = self._non_coordinator_role(cur, b["lo"])
             aid = self._assignment(cur, a["membership"], role_id)
-            append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
+            with s2b_attribution_guard_suspended(cur):
+                append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
         self.refuses(attempt, contains="assignment structure")
 
     def test_neg_scope_circle_mismatch(self):
@@ -428,7 +437,8 @@ class Structure(_S015NegativeBase):
         def attempt(cur):
             role_id = self._non_coordinator_role(cur, a["lo"])
             aid = self._assignment(cur, a["membership"], role_id, circle=a["circle"])
-            append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
+            with s2b_attribution_guard_suspended(cur):
+                append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
         self.refuses(attempt, contains="role scope")
 
     def test_neg_founder_steward_for_non_founder(self):
@@ -441,7 +451,8 @@ class Structure(_S015NegativeBase):
             m = cur.fetchone()[0]
             append_event(cur, "core_organismmembershiptransition", m, 1, "JOIN", None, "ACTIVE", a["identity"], a["basis"], fresh(), extra={"reason_class": "X"}); refresh(cur, "core_organismmembership", m)
             aid = self._assignment(cur, m, a["roles"]["INTEVIA_FOUNDER_STEWARD"])
-            append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
+            with s2b_attribution_guard_suspended(cur):
+                append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
         self.refuses(attempt, contains="INTEVIA_FOUNDER_STEWARD anchor must be held by the founder")
 
     def test_neg_self_mentor(self):
