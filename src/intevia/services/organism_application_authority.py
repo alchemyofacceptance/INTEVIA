@@ -58,6 +58,7 @@ from core.models import (
     PlatformTermsVersion,
 )
 from core.organism_authority_facts import (
+    REFERENCE_SENTINEL,
     S015AuthorityFactsUndeclared,
     S015_AUTHORITY_FACTS_SCHEMA,
     S015_AUTHORITY_REFERENCE_MAX_LENGTH,
@@ -284,6 +285,7 @@ _POST_ACTIONS = {
     OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
+    OrganismAction.RECORD_ROLE_DEFINITION,
     OrganismAction.TRANSITION_MEMBERSHIP,
     OrganismAction.TRANSITION_LIVING_ORGANISM,
     OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
@@ -594,6 +596,7 @@ class ProductionApplicationAuthorityProvider:
             if request.action in {
                 OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
                 OrganismAction.RECORD_OFFICE_CONSENT,
+                OrganismAction.RECORD_ROLE_DEFINITION,
                 OrganismAction.TRANSITION_MEMBERSHIP,
             }:
                 target_organism_matches = (
@@ -816,6 +819,10 @@ class ProductionApplicationAuthorityProvider:
                     request.target.get("version_uuid") != request.version_uuid
                     or request.version_kind not in {"DRAFT", "EFFECT"}
                 ):
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            elif request.action is OrganismAction.RECORD_ROLE_DEFINITION:
+                from src.intevia.services.organism_role_definition_service import definition_target_valid
+                if not definition_target_valid(request.target, request.living_organism_id):
                     return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
             elif type(request.target.get("application_uuid")) is not UUID:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
@@ -1153,13 +1160,14 @@ class ProductionApplicationAuthorityProvider:
             membership_uuid=membership_uuid,
             living_organism=organism,
         ).first()
-        role = OrganismRoleDefinition.objects.using(self.database_alias).filter(
-            role_uuid=role_uuid,
-            living_organism=organism,
-            active=True,
-            scope="LIVING_ORGANISM",
-            code="COORDINATOR",
+        named_role = OrganismRoleDefinition.objects.using(self.database_alias).filter(
+            role_uuid=role_uuid, living_organism=organism, scope="LIVING_ORGANISM",
         ).first()
+        if named_role is not None:
+            expected_source = "CONFIGURATION" if named_role.code == "COORDINATOR" else "DEFINITION"
+            if request.target.get("nomination_rule_source", "CONFIGURATION") != expected_source:
+                return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        role = named_role if named_role is not None and named_role.active and named_role.code == "COORDINATOR" else None
         if nominee is None or role is None or _fold_state(
             self.database_alias, "core_organismmembership", nominee.pk,
             request.effective_at, request.evaluated_at,
@@ -2160,9 +2168,84 @@ class ProductionApplicationAuthorityProvider:
             return self._qualify_governance_adoption(request, organism)
         if request.action is OrganismAction.CREATE_DORMANT_CIRCLE:
             return self._qualify_governance_circle_creation(request, organism)
+        if request.action is OrganismAction.RECORD_ROLE_DEFINITION:
+            return self._qualify_role_definition(request, organism, membership, office)
         if request.action in _VERSION_SPECS:
             return self._qualify_gateway_change(request, organism, membership, office)
         return self._qualify_application_processing(request, organism, membership, office)
+
+    def _qualify_role_definition(self, request, organism, membership, office):
+        """Qualify definition content after the installed Coordinator gates; write nothing.
+
+        RETIRE reads the named immutable version and no entitlement. DEFINE/AMEND
+        read CUSTOM_ROLES at receipt, or the nomination source for a SILENT A/B
+        policy. Constitutional A/B is free. An absent configuration refuses closed.
+        """
+        from src.intevia.services.organism_role_definition_service import (
+            definition_target_valid, custom_role_entitled,
+        )
+        target = request.target
+        if not definition_target_valid(target, organism.organism_id):
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        configuration = _effective_version(
+            self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
+            request.effective_at, request.evaluated_at,
+        )
+        if configuration is None:
+            return self._refuse(request, S015AuthorityRefusalCode.C_CONFIGURATION_NOT_ESTABLISHED)
+        if configuration.cq_active is True or configuration.inherit_portal_cq_settings is True:
+            return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
+        if target["code"].startswith("INTEVIA_"):
+            return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
+        if target["code"] == "COORDINATOR":
+            return self._refuse(request, S015AuthorityRefusalCode.C_COORDINATOR_DEFINITION_RESERVED)
+        if target["event_action"] == "RETIRE" and target["kind"] == "BOARD_OFFICE":
+            return self._refuse(request, S015AuthorityRefusalCode.C_BOARD_OFFICE_PERMANENT)
+        action = target["event_action"]
+        prior = None
+        if action in {"AMEND", "RETIRE"}:
+            prior = OrganismRoleDefinition.objects.using(self.database_alias).filter(
+                role_uuid=target["role_uuid"], living_organism=organism,
+                scope="LIVING_ORGANISM", code=target["code"],
+            ).first()
+            if prior is None:
+                return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            if action == "AMEND" and target["kind"] != prior.kind:
+                return self._refuse(request, S015AuthorityRefusalCode.C_DEFINITION_KIND_FIXED)
+            if action == "RETIRE" and any(target[key] != getattr(prior, key) for key in (
+                "kind", "appointing_authority", "appointing_body_reference", "alternative_route_reference",
+                "nomination_basis", "nomination_policy", "nomination_dependency", "participation_required",
+                "ex_officio_seat_reference", "definition_version",
+            )):
+                return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+            if action == "RETIRE":
+                provisions = sorted([
+                    {"relationship":p.relationship,"provision_reference":p.provision_reference,"provision_version":p.provision_version}
+                    for p in prior.provisions.all()
+                ], key=lambda p:p["relationship"])
+                if target["provisions"] != provisions:
+                    return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        head = _latest_transition(
+            self.database_alias, ContextualRoleAssignmentStateEvent, "assignment_id", office.pk,
+            request.effective_at, request.evaluated_at,
+        )
+        if head is None:
+            return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+        facts = {"g": REFERENCE_SENTINEL if prior is None else str(prior.role_uuid),
+                 "c": str(configuration.version_uuid), "o": str(head.event_uuid)}
+        if action != "RETIRE":
+            if target["kind"] == "CUSTOM":
+                if not custom_role_entitled(organism.organism_id, request.evaluated_at, self.database_alias):
+                    return self._refuse(request, S015AuthorityRefusalCode.E_CUSTOM_ROLE_NOT_ENTITLED)
+                facts["z"] = "CUSTOM_ROLES"
+            elif target["nomination_basis"] == "SILENT" and target["nomination_policy"] in {"A", "B"}:
+                reference = self.nomination_entitlement_source.reference_at(
+                    organism.organism_id, request.effective_at, request.evaluated_at,
+                )
+                if type(reference) is not str or not reference:
+                    return self._refuse(request, S015AuthorityRefusalCode.E_NOMINATION_POLICY_NOT_ENTITLED)
+                facts["i"] = reference
+        return self._qualified(request, facts)
 
     def _qualify_phase_advance(
         self,

@@ -420,6 +420,7 @@ ENTRY_ACTIONS: dict[IntakeEntry, str | None] = {
     IntakeEntry.PROPOSE_ASSIGNMENT: OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
     IntakeEntry.TRANSITION_ASSIGNMENT: OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
     IntakeEntry.RECORD_OFFICE_CONSENT: OrganismAction.RECORD_OFFICE_CONSENT.value,
+    IntakeEntry.RECORD_ROLE_DEFINITION: OrganismAction.RECORD_ROLE_DEFINITION.value,
     IntakeEntry.ACTIVATE_BETA: OrganismAction.EFFECT_ENTITLEMENT_ELECTION.value,
 }
 _GATEWAY_ACTIONS = frozenset(
@@ -491,6 +492,7 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.PROPOSE_ASSIGNMENT,
         IntakeEntry.TRANSITION_ASSIGNMENT,
         IntakeEntry.RECORD_OFFICE_CONSENT,
+        IntakeEntry.RECORD_ROLE_DEFINITION,
         IntakeEntry.SAVE_GATEWAY_DRAFT,
         IntakeEntry.EFFECT_GATEWAY_VERSION,
         IntakeEntry.FOUND_LIVING_ORGANISM,
@@ -1686,6 +1688,9 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
         return _membership_shape(entry, command)
     if entry in {IntakeEntry.PROPOSE_ASSIGNMENT, IntakeEntry.TRANSITION_ASSIGNMENT}:
         return _assignment_shape(entry, command)
+    if entry is IntakeEntry.RECORD_ROLE_DEFINITION:
+        from src.intevia.services.organism_role_definition_service import definition_intake_shape
+        return definition_intake_shape(command)
     if entry is IntakeEntry.RECORD_OFFICE_CONSENT:
         return _office_consent_shape(command)
     raise ValueError("entry has no active intake shape")
@@ -1716,6 +1721,9 @@ def _authority_unavailable(entry: IntakeEntry | ChildEntry):
         from src.intevia.services.organism_role_service import S015AssignmentAuthorityUnavailable
 
         return S015AssignmentAuthorityUnavailable
+    if entry is IntakeEntry.RECORD_ROLE_DEFINITION:
+        from src.intevia.services.organism_role_definition_service import S015RoleDefinitionAuthorityUnavailable
+        return S015RoleDefinitionAuthorityUnavailable
     if entry is IntakeEntry.RECORD_OFFICE_CONSENT:
         from src.intevia.services.organism_office_consent_service import (
             S015OfficeConsentAuthorityUnavailable,

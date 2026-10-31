@@ -1158,6 +1158,11 @@ class OrganismRoleService(_OrganismCommandService):
             raise S015AssignmentNotFound("membership not found") from exc
         organism = membership.living_organism
 
+        # code is immutable: this fingerprint read needs no row or LO lock.
+        source_code = OrganismRoleDefinition.objects.using(self._alias).filter(
+            role_uuid=role_definition_uuid, living_organism=organism,
+            scope=OrganismRoleDefinition.Scope.LIVING_ORGANISM,
+        ).values_list("code", flat=True).first()
         target = {
             "action": _ACTION.value,
             "circle": None,
@@ -1172,6 +1177,8 @@ class OrganismRoleService(_OrganismCommandService):
             "suspension_tolls_term": _TOLLING_VALUE,
             "suspension_tolls_term_source": _TOLLING_SOURCE,
         }
+        if source_code is not None and source_code != _COORDINATOR_ROLE_CODE:
+            target["nomination_rule_source"] = "DEFINITION"
         target_fingerprint = authority_target_fingerprint(target)
         command_fingerprint = self._command_fingerprint(
             actor=actor,

@@ -252,8 +252,9 @@ def _result_organism_pk(result: object, database_alias: str) -> int | None:
     Uses the first of these attributes the result has, and returns
     that lookup's answer, None included: application_uuid (the
     Application's LO), membership_uuid (the membership's LO),
-    assignment_uuid (the LO of the assignment's membership), then
-    version_uuid, looked up in the application settings, application
+    assignment_uuid (the LO of the assignment's membership),
+    role_definition_uuid (the definition's LO), then version_uuid,
+    looked up in the application settings, application
     question and governance configuration version tables in that
     order. Returns None when the result has none of them. Reads only,
     on database_alias.
@@ -270,6 +271,11 @@ def _result_organism_pk(result: object, database_alias: str) -> int | None:
         return ContextualRoleAssignment.objects.using(database_alias).filter(
             assignment_uuid=result.assignment_uuid
         ).values_list("membership__living_organism_id", flat=True).first()
+    if hasattr(result, "role_definition_uuid"):
+        from core.models import OrganismRoleDefinition
+        return OrganismRoleDefinition.objects.using(database_alias).filter(
+            role_uuid=result.role_definition_uuid,
+        ).values_list("living_organism_id", flat=True).first()
     if hasattr(result, "version_uuid"):
         for model in (
             LOApplicationSettingsVersion,

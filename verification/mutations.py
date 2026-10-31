@@ -205,7 +205,23 @@ MUTATIONS = {
         "sql": [
             "DO $mutation$\nDECLARE definition text; needle text := '             WHERE held.membership_id = v_membership_id\n               AND held.id <> NEW.assignment_id\n               AND (held.state = ''ACTIVE'' OR public.s015_fold_effective_state(\n                   ''core_contextualroleassignment'', held.id,\n                   NEW.effective_at, NEW.recorded_at\n               ) = ''ACTIVE'')\n               AND held_definition.living_organism_id = v_lo_id';\nBEGIN\n    SELECT pg_get_functiondef('public.s2b_guard_office_attribution()'::regprocedure) INTO definition;\n    IF definition IS NULL OR\n       (length(definition) - length(replace(definition, needle, ''))) <> length(needle) THEN\n        RAISE EXCEPTION 'expected unique C2 mutation marker was not found';\n    END IF;\n    EXECUTE replace(definition, needle, '             WHERE (held.membership_id = v_membership_id OR\n                    held_definition.living_organism_id <> v_lo_id)\n               AND held.id <> NEW.assignment_id\n               AND (held.state = ''ACTIVE'' OR public.s015_fold_effective_state(\n                   ''core_contextualroleassignment'', held.id,\n                   NEW.effective_at, NEW.recorded_at\n               ) = ''ACTIVE'')');\nEND\n$mutation$"
         ]
-    }
+    },
+    "sr-c3-citations-admission": {
+        # ADMISSION: source faults for Python surfaces are separately declared, never fake SQL.
+        "class": 'ADMISSION',
+        "follow_up": 'SR C3 admission; unqualified until normal / one-defect / restored evidence',
+        "intended": 'Command reaches sr_definition_citations_guard at the outer commit and distinguishes its named refusal',
+        "targets": ['test_sr_definitions.SRDefinitionCommandTests.test_07_sr30_reached_at_real_command_commit'],
+        "sql": ["DO $mutation$\nDECLARE definition text; needle text := 'SR definition refused: office basis citation missing';\nBEGIN\n SELECT pg_get_functiondef('public.sr_definition_citations_guard()'::regprocedure) INTO definition;\n IF definition IS NULL OR (length(definition)-length(replace(definition,needle,''))) <> length(needle) THEN\n  RAISE EXCEPTION 'C3 expected single guard message missing';\n END IF;\n EXECUTE replace(definition,needle,'C3 MUTATION: unrelated refusal');\nEND\n$mutation$"],
+    },
+    "sr-c3-supersession-admission": {
+        # ADMISSION: source faults for Python surfaces are separately declared, never fake SQL.
+        "class": 'ADMISSION',
+        "follow_up": 'SR C3 admission; unqualified until normal / one-defect / restored evidence',
+        "intended": 'Command reaches sr_definition_superseded_guard at the outer commit and distinguishes its named refusal',
+        "targets": ['test_sr_definitions.SRDefinitionCommandTests.test_08_sr20_reached_at_real_command_commit'],
+        "sql": ["DO $mutation$\nDECLARE definition text; needle text := 'SR definition refused: a deactivated version must be superseded by a successor at commit';\nBEGIN\n SELECT pg_get_functiondef('public.sr_definition_superseded_guard()'::regprocedure) INTO definition;\n IF definition IS NULL OR (length(definition)-length(replace(definition,needle,''))) <> length(needle) THEN\n  RAISE EXCEPTION 'C3 expected single guard message missing';\n END IF;\n EXECUTE replace(definition,needle,'C3 MUTATION: unrelated refusal');\nEND\n$mutation$"],
+    },
 }
 
 

@@ -178,6 +178,14 @@ class S015AuthorityRefusalCode(str, Enum):
     SB_BIRTHING_ELECTORATE_EMPTY = "SB_BIRTHING_ELECTORATE_EMPTY"
     C_GATEWAY_NOT_OPEN = "C_GATEWAY_NOT_OPEN"
     C_ROUTE_IS_CQ = "C_ROUTE_IS_CQ"
+    C_RESERVED_ROOT_OFFICE = "C_RESERVED_ROOT_OFFICE"
+    C_COORDINATOR_DEFINITION_RESERVED = "C_COORDINATOR_DEFINITION_RESERVED"
+    C_DEFINITION_KIND_FIXED = "C_DEFINITION_KIND_FIXED"
+    C_BOARD_OFFICE_PERMANENT = "C_BOARD_OFFICE_PERMANENT"
+    E_CUSTOM_ROLE_NOT_ENTITLED = "E_CUSTOM_ROLE_NOT_ENTITLED"
+    C_APPOINTING_ROUTE_NOT_IMPLEMENTED = "C_APPOINTING_ROUTE_NOT_IMPLEMENTED"
+    E_NOMINEE_NOT_ELIGIBLE = "E_NOMINEE_NOT_ELIGIBLE"
+    C_NOMINATION_ROUTE_NOT_IMPLEMENTED = "C_NOMINATION_ROUTE_NOT_IMPLEMENTED"
     C_CONFIGURATION_NOT_ESTABLISHED = "C_CONFIGURATION_NOT_ESTABLISHED"
     C_CHANGE_SELF_AUTHORISING = "C_CHANGE_SELF_AUTHORISING"
     C_TERMINAL_ROW_STANDS = "C_TERMINAL_ROW_STANDS"
@@ -929,6 +937,7 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.RECORD_ENTITLEMENT_GRANT,
     OrganismAction.TRANSITION_CONTEXTUAL_ROLE,
     OrganismAction.RECORD_OFFICE_CONSENT,
+    OrganismAction.RECORD_ROLE_DEFINITION,
     OrganismAction.TRANSITION_MEMBERSHIP,
     OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
     OrganismAction.CREATE_DORMANT_CIRCLE,
@@ -1134,6 +1143,14 @@ def _facts_read(
             continue
         spec = shape.keys[key]
         kind = spec.kind
+        if kind is FactKind.PROVISION:
+            definition = content.get("g")
+            if value != "AR" or type(definition) is not str or definition == REFERENCE_SENTINEL:
+                raise S015AuthorityMalformed("alternative route requires AR and definition g")
+            facts.append({"relation": spec.relation, "reference": definition + ":ALTERNATIVE_ROUTE", "eligible_at": eligible_at})
+            continue
+        if key == "z" and spec.relation == "s015_entitlement_effective" and value != "CUSTOM_ROLES":
+            raise S015AuthorityMalformed("custom entitlement fact is invalid")
         if kind in {FactKind.TEXT, FactKind.LITERAL}:
             continue
         if kind is FactKind.CONSENT_U:

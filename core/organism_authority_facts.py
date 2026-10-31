@@ -51,7 +51,7 @@ from core.organism_contract import OrganismAction
 
 S015_AUTHORITY_REFERENCE_PREFIX: Final = "s015a1:"
 S015_AUTHORITY_REFERENCE_MAX_LENGTH: Final = 255
-S015_AUTHORITY_FACTS_SCHEMA: Final = "S015_AUTHORITY_FACTS_V1"
+S015_AUTHORITY_FACTS_SCHEMA: Final = "S015_AUTHORITY_FACTS_V2"
 S015_AUTHORITY_REFUSAL_KEY: Final = "x"
 REFERENCE_SENTINEL: Final = "-"
 
@@ -106,6 +106,7 @@ class FactKind(str, Enum):
     ENGAGEMENT = "ENGAGEMENT"
     CONSENT_U = "CONSENT_U"
     CONSENT_W = "CONSENT_W"
+    PROVISION = "PROVISION"  # AR derives <g>:ALTERNATIVE_ROUTE; no database read
     POLICY_K = "POLICY_K"
     FOUNDING_RULE = "FOUNDING_RULE"
     FOUNDING_REGISTRATION = "FOUNDING_REGISTRATION"
@@ -119,6 +120,7 @@ FACT_BEARING_KINDS: Final = frozenset({
     FactKind.REF_OR_NULL,
     FactKind.ENGAGEMENT,
     FactKind.CONSENT_W,
+    FactKind.PROVISION,
     FactKind.POLICY_K,
     FactKind.FOUNDING_RULE,
     FactKind.FOUNDING_REGISTRATION,
@@ -150,15 +152,16 @@ class Selector(str, Enum):
     reference discriminators.
 
     NONE: one form; entries differ by reference discriminators only.
-    ROLE_EVENT_ACTION: form "PROPOSE" when the target's event_action is
-        "PROPOSE", otherwise "TRANSITION" (a target that is not a dict
-        counts as empty).
+    ROLE_EVENT_ACTION: PROPOSE_DEFINITION for PROPOSE with authoritative source
+        DEFINITION; PROPOSE for absent/CONFIGURATION source; otherwise TRANSITION.
+    DEFINITION_EVENT_ACTION: DEFINE, AMEND or RETIRE from the target.
     ELECTION_TARGET_FORM: form "SNAPSHOT" or "GATEWAY" by the exact
         predicates in election_target_form, else None.
     """
     NONE = "NONE"
     ROLE_EVENT_ACTION = "ROLE_EVENT_ACTION"
     ELECTION_TARGET_FORM = "ELECTION_TARGET_FORM"
+    DEFINITION_EVENT_ACTION = "DEFINITION_EVENT_ACTION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,9 +473,20 @@ _ROWS: dict[OrganismAction, ActionFacts] = {
                 "c": _ref(*_CONFIGURATION),
                 "d": FactKey(FactKind.REF, "s2b_coordinator_nomination_policy_default", literals=frozenset({"C"})),
             }, propose_role=True, exactly_one=(frozenset({"c", "d"}),)),
+            _entry("PROPOSE_DEFINITION", {}, {
+                "m": _ref(_MEMBERSHIP_TRANSITION, required=True),
+                "n": _ref(_MEMBERSHIP_TRANSITION, required=True),
+                "t": _literal("SELF_PROPOSAL", "MEMBER_NOMINATION", "EFFECTIVE_COORDINATOR", required=True),
+                "k": FactKey(FactKind.POLICY_K, "sr_nomination_policy", required=True, literals=POLICY_LITERALS),
+                "i": _ref_or_null("s2b_coordinator_nomination_entitlement", required=True),
+                "o": _ref(_STATE_EVENT),
+                "z": FactKey(FactKind.REF, "s015_entitlement_effective", literals=frozenset({"CUSTOM_ROLES"})),
+                "e": _ref("core_circleparticipation"),
+            }, propose_role=True, required_when={"t": {"EFFECTIVE_COORDINATOR": {"o"}}}),
             _entry("TRANSITION", {}, {
                 "a": _ref(_ASSIGNMENT, required=True),
                 "g": _ref(_ROLE_DEFINITION, required=True),
+                "y": FactKey(FactKind.PROVISION, "core_organismroledefinitionprovision", literals=frozenset({"AR"})),
                 "k": _literal("ASSIGN", "END", "REASSIGN", required=True),
                 "o": _ref(_STATE_EVENT),
                 "p": _ref(_STATE_EVENT),
@@ -481,6 +495,7 @@ _ROWS: dict[OrganismAction, ActionFacts] = {
         ),
         _freeze({
             "PROPOSE": _refusal({}),
+            "PROPOSE_DEFINITION": _refusal({}),
             "TRANSITION": _refusal({
                 "a": _ref(_ASSIGNMENT),
                 "k": _literal("ASSIGN", "END", "REASSIGN"),
@@ -489,6 +504,20 @@ _ROWS: dict[OrganismAction, ActionFacts] = {
                 "u": FactKey(FactKind.CONSENT_U),
             }),
         }),
+    ),
+    # C3: one action, three target forms; retirement reads no entitlement.
+    OrganismAction.RECORD_ROLE_DEFINITION: ActionFacts(
+        Selector.DEFINITION_EVENT_ACTION,
+        tuple(_entry(form, {}, {
+            "g": _ref(_ROLE_DEFINITION, required=True),
+            "c": _ref(*_CONFIGURATION, required=True),
+            "o": _ref(_STATE_EVENT, required=True),
+            **({} if form == "RETIRE" else {
+                "z": FactKey(FactKind.REF, "s015_entitlement_effective", literals=frozenset({"CUSTOM_ROLES"})),
+                "i": _ref_or_null("s2b_coordinator_nomination_entitlement"),
+            }),
+        }) for form in ("DEFINE", "AMEND", "RETIRE")),
+        _freeze({form: _refusal({}, exact=True) for form in ("DEFINE", "AMEND", "RETIRE")}),
     ),
     # 14. RECORD_OFFICE_CONSENT — _qualify_office_consent
     OrganismAction.RECORD_OFFICE_CONSENT: _undiscriminated(
@@ -608,13 +637,20 @@ def election_target_form(request) -> str | None:
 
 
 def role_event_form(request) -> str:
-    """Return "PROPOSE" when the request target's event_action is "PROPOSE",
-    otherwise "TRANSITION". A target that is not a dict counts as empty.
+    """Select the Coordinator, definition-sourced proposal, or transition form.
+
+    Unknown nomination source values refuse selection; historical absent keys
+    retain the installed Coordinator form. No database reads occur here.
     """
     target = getattr(request, "target", None)
     if type(target) is not dict:
         target = {}
-    return "PROPOSE" if target.get("event_action") == "PROPOSE" else "TRANSITION"
+    if target.get("event_action") != "PROPOSE":
+        return "TRANSITION"
+    source = target.get("nomination_rule_source", "CONFIGURATION")
+    if source not in {"CONFIGURATION", "DEFINITION"}:
+        raise FactsSelectionError("nomination_rule_source is invalid")
+    return "PROPOSE_DEFINITION" if source == "DEFINITION" else "PROPOSE"
 
 
 def select_form(vocabulary: ActionFacts, request) -> str | None:
@@ -623,6 +659,9 @@ def select_form(vocabulary: ActionFacts, request) -> str | None:
         return role_event_form(request)
     if vocabulary.selector is Selector.ELECTION_TARGET_FORM:
         return election_target_form(request)
+    if vocabulary.selector is Selector.DEFINITION_EVENT_ACTION:
+        target = getattr(request, "target", None)
+        return target.get("event_action") if type(target) is dict else None
     return None
 
 
@@ -740,6 +779,8 @@ def _value_is_lawful(key: str, spec: FactKey, value: object) -> bool:
     into S015AuthorityFactsUndeclared.
     """
     kind = spec.kind
+    if kind is FactKind.PROVISION:
+        return type(value) is str and value == "AR"
     if kind in {FactKind.REF, FactKind.ENGAGEMENT, FactKind.POLICY_K, FactKind.TEXT, FactKind.LITERAL}:
         if value == REFERENCE_SENTINEL and kind in {FactKind.REF, FactKind.ENGAGEMENT} and spec.literals is None:
             return True
@@ -834,6 +875,17 @@ def validate_authority_facts(request, facts: Mapping[str, object], *, refusal_co
         needed = by_literal.get(facts.get(key))
         if needed and not needed <= present:
             raise S015AuthorityFactsUndeclared(f"{label} qualified facts with {key}={facts[key]!r} require {sorted(needed)!r}")
+    if "y" in facts and (type(facts.get("g")) is not str or facts["g"] == REFERENCE_SENTINEL):
+        raise S015AuthorityFactsUndeclared(f"{label} y requires a definition reference g")
+    if select_form(vocabulary, request) == "PROPOSE_DEFINITION":
+        target = request.target
+        if target.get("participation_required") is True and "e" not in facts:
+            raise S015AuthorityFactsUndeclared(f"{label} participation requires e")
+        if target.get("kind") == "CUSTOM" and facts.get("z") != "CUSTOM_ROLES":
+            raise S015AuthorityFactsUndeclared(f"{label} CUSTOM requires z")
+    if vocabulary.selector is Selector.DEFINITION_EVENT_ACTION and select_form(vocabulary, request) in {"DEFINE", "AMEND"}:
+        if request.target.get("kind") == "CUSTOM" and facts.get("z") != "CUSTOM_ROLES":
+            raise S015AuthorityFactsUndeclared(f"{label} CUSTOM definition requires z")
     if entry.propose_role and facts.get("k") in POLICY_LITERALS:
         if propose_role_reference(request) is None:
             raise S015AuthorityFactsUndeclared(f"{label} qualified facts need the target's role_definition_uuid")
