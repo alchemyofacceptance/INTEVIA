@@ -48,7 +48,7 @@ from src.intevia.services.organism_application_authority import ProductionApplic
 from src.intevia.services import organism_role_definition_service as definitions
 from src.intevia.services.organism_command_support import S015CommandReceiptMalformed, S015CommandReplayMismatch, _authority_request
 from src.intevia.services.organism_formation_service import OrganismFormationService, FoundLivingOrganismCommand
-from src.intevia.services.organism_role_service import OrganismRoleService, ProposeAssignmentCommand, S015OperationNotYetImplemented
+from src.intevia.services.organism_role_service import OrganismRoleService, ProposeAssignmentCommand, TransitionAssignmentCommand, S015OperationNotYetImplemented
 from src.intevia.services.organism_entitlement_service import OrganismEntitlementService
 from tests.s015_0021_support import (
     database_now, found_nonroot, seed_test_gateway, register_test_learner,
@@ -443,10 +443,12 @@ class SRDefinitionCommandTests(TransactionTestCase):
         return error
 
     def test_03_definition_lifecycle_keeps_history_and_creates_no_office(self):
-        """O-22/O-18: DEFINE, AMEND, RETIRE preserve content and do not appoint."""
+        """O-22/O-18: definition lifecycle preserves history; explicit office commands appoint."""
         self._custom_entitlement()
         before = self._snapshot()
         command, first = self._define_custom()
+        self._unchanged_except(before,"OrganismRoleDefinition","OrganismRoleDefinitionProvision","AuthorityDecision","OrganismCommandReceipt","CommandIntake",
+            action_description="Defining the custom role without appointing anyone")
         self._class_c_refusal(self._command("AMEND",row=first,content=replace(command.content,
             kind="BOARD_OFFICE",nomination_basis="SILENT",provisions=(
                 definitions.DefinitionProvision("OFFICE_BASIS","library:test-c3:v1#office","v1"),))),
@@ -455,21 +457,33 @@ class SRDefinitionCommandTests(TransactionTestCase):
         first_content = {key: getattr(first,key) for key in ("code","kind","nomination_policy","authority_decision_reference","recorded_at")}
         amend = self._command("AMEND", row=first, content=replace(command.content, participation_required=True,
             provisions=command.content.provisions + (definitions.DefinitionProvision("PARTICIPATION_REQUIRED","library:test-c3:v1#participation","v1"),)))
-        # C4 qualifies non-Coordinator PROPOSE; the service must still stop at IL-8.
+        # C5 replaces the old IL-8 branch with real nomination, appointment and
+        # ending, so no unfinished nomination blocks this lifecycle's RETIRE.
         role_service = OrganismRoleService(authority=self.authority, clock=database_now)
+        def office_success(call, action):
+            try: return call()
+            except Exception as exc:
+                self.fail(f"{action} should complete through the real office route; it instead raised {type(exc).__name__}.")
         at = database_now()
         nominee = models.OrganismMembership.objects.get(pk=self.ids["membership"])
-        try:
-            role_service.propose_assignment(ProposeAssignmentCommand(
-                credential=self.actor.credential, request_reference="c3-propose:"+self.tag,
-                idempotency_key="c3-propose:"+self.tag, occurred_at=at,effective_at=at,
-                membership_uuid=nominee.membership_uuid,role_definition_uuid=first.role_uuid,
-                effective_until_state="NOT_ESTABLISHED",effective_until=None))
-        except (S015AuthorityDenied, definitions.S015RoleDefinitionError, S015OperationNotYetImplemented) as exc:
-            self.assertTrue(isinstance(exc, S015OperationNotYetImplemented), msg=f"Nominating someone for the custom role should reach the unbuilt IL-8 boundary after authority qualifies; actual {_outcome_label(exc)}.")
-            self.assertIn("IL-8",str(exc), msg='Refusing the unbuilt custom-role nomination should identify IL-8; the diagnostic names another implementation limit.')
-        else:
-            self.fail("Nominating someone for the custom role should stop at the unbuilt IL-8 boundary; the nomination was allowed.")
+        proposed = office_success(lambda:role_service.propose_assignment(ProposeAssignmentCommand(
+            credential=self.actor.credential, request_reference="c5-d03-propose:"+self.tag,
+            idempotency_key="c5-d03-propose:"+self.tag, occurred_at=at,effective_at=at,
+            membership_uuid=nominee.membership_uuid,role_definition_uuid=first.role_uuid,
+            effective_until_state="NOT_ESTABLISHED",effective_until=None)),"Nominating the member")
+        self.assertTrue(models.OrganismCommandReceipt.objects.filter(lineage_reference=proposed.lineage_reference).exists(),
+                        "Nominating for the custom role should commit its receipt; the receipt is missing.")
+        for action,state in (("ASSIGN","ACTIVE"),("END","ENDED")):
+            at=database_now();key=uuid4().hex
+            outcome=office_success(lambda:role_service.transition_assignment(TransitionAssignmentCommand(
+                credential=self.actor.credential,request_reference="c5-d03-"+action+":"+key,idempotency_key=key,
+                occurred_at=at,effective_at=at,assignment_uuid=proposed.assignment_uuid,action=action,resulting_state=state,
+                effective_until_state="NONE" if action=="ASSIGN" else None,effective_until=None)),"Appointing or ending the member")
+            self.assertTrue(models.OrganismCommandReceipt.objects.filter(lineage_reference=outcome.lineage_reference).exists(),
+                            "Appointing and then ending the custom-role self-nomination should commit each receipt; a receipt is missing.")
+        self.assertEqual(models.ContextualRoleAssignment.objects.get(assignment_uuid=proposed.assignment_uuid).state,"ENDED",
+                         "Finishing the custom-role appointment should leave it ended before retirement; it remains open.")
+        after_office_acts = self._snapshot()
         second_result = self._success(amend, action_description='Amending the custom role to require GOVERNANCE participation')
         second = models.OrganismRoleDefinition.objects.get(role_uuid=second_result.role_definition_uuid)
         self.assertEqual((second.definition_version,second.supersedes_id), (first.definition_version+1,first.pk), msg='Amending the custom role should create the next version linked to the original definition; its version or predecessor differs.')
@@ -483,7 +497,9 @@ class SRDefinitionCommandTests(TransactionTestCase):
         self.assertIsNotNone(second.retired_recorded_at, msg='Retiring the custom-role definition should record when retirement was stored; that time is missing.')
         self.assertEqual(len(retired.lineage_reference), 71, msg='Recording the custom-role retirement should return the agreed 71-character history reference; its length differs.')
         self.assertEqual(second.retired_by_decision_reference, models.OrganismCommandReceipt.objects.get(lineage_reference=retired.lineage_reference).authority_decision_reference, msg='Retiring the custom role should attribute the retired version to the same decision as its receipt; the decision references differ.')
-        self._unchanged_except(before,"OrganismRoleDefinition","OrganismRoleDefinitionProvision","AuthorityDecision","OrganismCommandReceipt","CommandIntake", action_description='Creating, amending and retiring the custom role without appointing anyone')
+        self._unchanged_except(before,"OrganismRoleDefinition","OrganismRoleDefinitionProvision","AuthorityDecision","OrganismCommandReceipt","CommandIntake","ContextualRoleAssignment","ContextualRoleAssignmentStateEvent", action_description='Creating and retiring a custom role after explicitly appointing and ending its holder')
+        self._unchanged_except(after_office_acts,"OrganismRoleDefinition","OrganismRoleDefinitionProvision","AuthorityDecision","OrganismCommandReceipt","CommandIntake",
+            action_description="Amending and retiring the definition without changing the ended appointment")
         for action in ("AMEND","RETIRE"):
             self._class_c_refusal(self._command(action,row=second,content=command.content if action=="AMEND" else None),
                 "SR_DEFINITION_RETIRED",'This office has been retired, so it cannot be changed, retired again, or re-established here. No changes have been made. Its definition and history remain on record.', action_description='Trying to amend or retire the already retired custom-role version')

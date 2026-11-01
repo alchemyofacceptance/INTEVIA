@@ -102,7 +102,7 @@ class S015OfficeConsentSuperseded(S015OfficeConsentCommandError):
 
 
 def office_consent_support_details(error, action="Responding to this office nomination"):
-    """Keep consent-specific text, then share the disclosed-rule and IL-8 fallbacks."""
+    """Keep consent-specific text, then share disclosed-rule and unavailable-action explanations."""
     from src.intevia.services.organism_role_service import office_action_support_details
     if isinstance(error, S015AuthorityDenied):
         code = getattr(error.disclosed_refusal_code, "value", None)
@@ -185,7 +185,7 @@ class OfficeConsentCommandResult:
 
 
 class OfficeAppointmentConsentService(_OrganismCommandService):
-    """The command service for a nominee's consent to a Coordinator
+    """The command service for a nominee's consent to an LO-scoped office
     nomination (RECORD_OFFICE_CONSENT).
 
     Declares, for the shared _OrganismCommandService, the action

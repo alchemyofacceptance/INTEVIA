@@ -1,4 +1,4 @@
-"""SR C4: eight focused witnesses; TAR and fixture limits are in the return ledger.
+"""SR C4/C5: six focused witnesses; TAR and fixture limits are in the return ledger.
 
 No archive imports. C3's disposable F0 fixture is retained and labelled: its
 seeded identity has incomplete historical registration evidence. The challenged
@@ -151,7 +151,7 @@ class SRProviderTests(TransactionTestCase):
             assignment_uuid=assignment.assignment_uuid,proposal_event_uuid=proposal.event_uuid,action=action)
 
     def test_02_proposals_apply_the_current_definition_rule_and_custom_gate(self):
-        """O-07: a new non-Coordinator nomination uses the recorded rule and required entitlement."""
+        """O-07: temporary provider-only policy matrix, retained for SILENT entitlement, constitutional policy B and unsupported nomination-route boundaries until the complete service replacement is admitted."""
         nominee=self._member()
         # Constitutional member nomination is free; a non-Coordinator member acts.
         command=self._command()
@@ -189,41 +189,7 @@ class SRProviderTests(TransactionTestCase):
             facts = self._evaluate(self._proposal(silent, nominee), action_description='Nominating another member under silent policy A after entitlement evidence is unavailable')
         self.assertEqual((facts["k"], facts["t"], facts["i"]), ("C", "EFFECTIVE_COORDINATOR", None), msg='Nominating without silent-policy entitlement should fall back to policy C through an effective Coordinator with no entitlement claim; the decision facts differ.')
 
-    def test_03_assignment_uses_recorded_alternative_and_refuses_missing_route(self):
-        """O-07: a named-body appointment qualifies only through its recorded alternative route."""
-        command=self._command()
-        content=replace(command.content,appointing_authority="NAMED_BODY",appointing_body_reference="library:test#board",
-            provisions=command.content.provisions+(definitions.DefinitionProvision("APPOINTING_AUTHORITY","library:test#board","v1"),))
-        result=self._success(replace(command,content=content), action_description='Creating the board office appointed by a named body')
-        row=models.OrganismRoleDefinition.objects.get(role_uuid=result.role_definition_uuid)
-        member,assignment,proposal=self._nomination(row,consented=True)
-        request=self._request({"event_action":"ASSIGN","assignment_uuid":str(assignment.assignment_uuid)})
-        self._evaluate(request,"C_APPOINTING_ROUTE_NOT_IMPLEMENTED", action_description='Appointing a member to the board office through a named body with no available alternative')
-        updated=replace(content,alternative_route_reference="TEST recorded Coordinator alternative",
-            provisions=content.provisions+(definitions.DefinitionProvision("ALTERNATIVE_ROUTE","library:test#alternative","v1"),))
-        amended=self._success(self._command("AMEND",row=row,content=updated), action_description='Recording an alternative appointment route in the new board-office version')
-        current=models.OrganismRoleDefinition.objects.get(role_uuid=amended.role_definition_uuid)
-        # The earlier chain does not borrow the alternative from its successor.
-        self._evaluate(self._request({"event_action":"ASSIGN","assignment_uuid":str(assignment.assignment_uuid)}),"C_APPOINTING_ROUTE_NOT_IMPLEMENTED", action_description='Appointing through the old board-office nomination after an alternative was added only to a later definition')
-        member2,assignment2,proposal2=self._nomination(current,consented=True)
-        facts=self._evaluate(self._request({"event_action":"ASSIGN","assignment_uuid":str(assignment2.assignment_uuid)}), action_description='Appointing through the new board-office nomination using its recorded alternative')
-        self.assertEqual((facts["g"],facts["y"]),(str(current.role_uuid),"AR"), msg="Appointing someone through the recorded alternative should name this nomination's current definition and its alternative route; the decision facts differ.")
 
-    def test_04_existing_chains_keep_version_for_end_and_reassign(self):
-        """O-22: ending an existing appointment keeps its recorded version after amendment."""
-        for kind in ("BOARD_OFFICE","CUSTOM"):
-            with self.subTest(kind=kind):
-                command,row=self._define() if kind=="BOARD_OFFICE" else self._define_custom()
-                aid=self._fixture_holder(row)
-                assignment=models.ContextualRoleAssignment.objects.select_related("membership__identity__credential","membership__head_transition").get(pk=aid)
-                amended=self._success(self._command("AMEND",row=row,content=command.content), action_description='Amending the occupied office while preserving its existing appointment')
-                self.assertNotEqual(amended.role_definition_uuid,row.role_uuid, msg='Amending the occupied office should create a distinct definition version; the amendment reused the old version.')
-                for act,member in (("END",assignment.membership),("END",None),("REASSIGN",None)):
-                    facts=self._evaluate(self._request({"event_action":act,"assignment_uuid":str(assignment.assignment_uuid)},actor_member=member), action_description=f"{'Ending' if act == 'END' else 'Reassigning'} the existing {'board office' if kind == 'BOARD_OFFICE' else 'custom role'} appointment after its definition was amended")
-                    self.assertEqual((facts["g"],facts["k"]),(str(row.role_uuid),act), msg='Ending or reassigning the existing appointment after amendment should keep its original definition and the requested action; the decision facts differ.')
-                    self.assertNotIn("y",facts, msg='Ending or reassigning this existing appointment should not claim an alternative appointing route; the decision unexpectedly includes one.')
-                assignment.refresh_from_db()
-                self.assertEqual(assignment.role_definition_id,row.pk,'Amending the office definition should leave the existing appointment attached to its original version; the appointment was retargeted.')
 
     def test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal(self):
         """O-22: fresh consent requires the current definition while withdrawal preserves the old chain."""
@@ -252,7 +218,7 @@ class SRProviderTests(TransactionTestCase):
         self.assertEqual(a1.state,"PROPOSED",'Withdrawing consent should leave the nomination proposed rather than close it; its state changed.')
 
     def test_06_participation_requirement_refuses_proposal_and_assignment(self):
-        """SR §F.2 / ruling 1b: participation is required at both nomination and appointment."""
+        """SR §F.2: temporary negative participation witness; C5 positive/closed/ended replacement must qualify before this is shed."""
         command=self._command()
         content=replace(command.content,participation_required=True,
             provisions=command.content.provisions+(definitions.DefinitionProvision("PARTICIPATION_REQUIRED","library:test#participation","v1"),))
@@ -264,8 +230,8 @@ class SRProviderTests(TransactionTestCase):
         # Real positive SB-G participation and Circle lifecycle are named cuts;
         # source review of the query is not a runtime positive witness.
 
-    def test_07_coordinator_and_il8_boundaries_remain(self):
-        """O-18: Coordinator qualification remains installed while non-Coordinator transitions stop at IL-8."""
+    def test_07_coordinator_qualification_remains(self):
+        """O-18: Coordinator qualification retains its original policy and provenance."""
         member=models.OrganismMembership.objects.select_related("identity__credential","head_transition").get(pk=self.ids["membership"])
         role=models.OrganismRoleDefinition.objects.get(pk=self.ids["roles"]["COORDINATOR"])
         facts=self._evaluate(self._proposal(role,member,actor_member=member), action_description='Putting yourself forward for Coordinator under its existing nomination policy')
@@ -273,20 +239,6 @@ class SRProviderTests(TransactionTestCase):
         self.assertTrue("c" in facts or "d" in facts, msg='Putting yourself forward for Coordinator should name either the recorded governance settings or the default nomination policy; both are missing.')
         self.assertNotIn("z",facts, msg='Putting yourself forward for Coordinator should not require custom-role access; the decision incorrectly includes it.')
         self.assertNotIn("e",facts, msg='Putting yourself forward for Coordinator should not add a GOVERNANCE participation requirement; the decision incorrectly includes one.')
-        command,board=self._define()
-        m,a,p=self._nomination(board,consented=True)
-        route=OrganismRoleService(authority=self.authority,clock=database_now)
-        at=database_now()
-        # This exact command shape is compared to the production dataclass in SCC S3.
-        cmd=TransitionAssignmentCommand(credential=self.actor.credential,request_reference="c4-assign:"+uuid4().hex,
-            idempotency_key=uuid4().hex,occurred_at=at,effective_at=at,assignment_uuid=a.assignment_uuid,
-            action="ASSIGN",resulting_state="ACTIVE",effective_until_state="NONE",effective_until=None)
-        before=self._snapshot()
-        with self.assertRaises(S015OperationNotYetImplemented, msg='Appointing someone to the board office should stop because this action is not yet available in C4; the expected implementation-limit refusal did not occur.') as held:
-            route.transition_assignment(cmd)
-        self.assertIn("IL-8",str(held.exception), msg='Refusing the unbuilt board-office appointment should identify the existing IL-8 limit; the diagnostic names a different reason.')
-        after=self._snapshot()
-        self.assertEqual({k:v for k,v in after.items() if k!="CommandIntake"},{k:v for k,v in before.items() if k!="CommandIntake"}, msg='Stopping the unbuilt board-office appointment should preserve every business record and retain only the request record; another stored record changed.')
 
 
     def test_08_reserved_office_consent_actions_refuse_at_the_live_provider(self):

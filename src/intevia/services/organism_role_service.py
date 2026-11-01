@@ -47,8 +47,15 @@ transition_assignment raises after successful qualification can leave
 that QUALIFIED decision; authority_atomic does not itself isolate
 refusal evidence from other writes.
 
+LO-scoped board offices and custom roles support PROPOSE, ASSIGN, END and
+REASSIGN. REASSIGN ends the old appointment; it does not appoint a successor.
+Reserved INTEVIA offices remain unavailable through this route. After authority,
+new nominations and appointments require the current definition, and a new
+non-Coordinator appointment refuses an already-held office across its versions.
+Existing appointments retain their version for END and REASSIGN.
+
 Local implementation limits cover non-LO-scoped definitions,
-non-COORDINATOR codes, role suspension and events whose
+role suspension and events whose
 (effective_at, occurred_at, received_at) precedes the head's.
 A non-founder cannot END or REASSIGN an assignment recognised as the
 founder's original appointment while no Birthing event is eligible
@@ -174,10 +181,31 @@ class S015AssignmentEdgeRefused(S015AssignmentCommandError):
 
     Raised for a state, action or edge outside the implemented set, for
     PROPOSE sent as a transition, for a role definition belonging to another
-    LO or not active, and for an authority reference that does not name the
-    nominee's consent.
+    LO or an inactive Coordinator definition, and for an authority reference
+    that does not name the nominee's consent. A superseded non-Coordinator
+    definition raises S015AssignmentRuleRefused("SR_SUPERSEDED_DEFINITION").
     """
     pass
+
+
+OFFICE_STATE_MESSAGES = {
+    "SR_OFFICE_ALREADY_HELD": ("This person could not be appointed because they already hold this office in this organisation. No appointment has changed; the request remains on record. A fresh appointment can be made after the current one ends, using a new request.", "A"),
+    "SR_SUPERSEDED_DEFINITION": ("This nomination or appointment could not be recorded because the office definition has been updated. The existing nomination and appointment history is unchanged; the request remains on record. Open the current office definition and make a fresh nomination before seeking consent and appointment.", "A"),
+    "SR_ROOT_OFFICE_RESERVED": ("This action could not be completed because this reserved INTEVIA office is established through the platform's founding. It cannot be nominated for, filled or ended through this route. No nomination or appointment has changed; your request remains on record. You cannot complete this action here; repeating it will not make this route available.", "B"),
+}
+
+
+class S015AssignmentRuleRefused(S015AssignmentCommandError):
+    """Post-authority transaction class C; SUPPORT A/B as the known remedy requires.
+
+    Raised inside authority_atomic: the new qualification and business writes
+    roll back, while the separately committed intake remains. No ticket is
+    claimed to have been created by this classification hook.
+    """
+    def __init__(self, code):
+        self.code = code
+        self.support_message, self.support_class = OFFICE_STATE_MESSAGES[code]
+        super().__init__(self.support_message)
 
 
 class S015AssignmentStateUnused(S015AssignmentCommandError):
@@ -193,8 +221,8 @@ class S015AssignmentTermRefused(S015AssignmentCommandError):
 class S015AssignmentMembershipRefused(S015AssignmentCommandError):
     """The nominee's membership does not allow the office act.
 
-    Raised when a proposal names a PROBATIONARY or otherwise non-ACTIVE
-    membership, and when ASSIGN finds the nominee's stored membership not
+    Raised when a proposal names a PROBATIONARY membership for any office
+    or otherwise names a non-ACTIVE membership, and when ASSIGN finds the nominee's stored membership not
     ACTIVE or a departure recorded after the proposal.
     """
     pass
@@ -896,6 +924,8 @@ OFFICE_KNOWN_ERROR_MESSAGES = {
 
 def office_action_support_details(error, action="Changing this office"):
     """Render only disclosed rules and known action names; never infer private causes."""
+    if isinstance(error, S015AssignmentRuleRefused):
+        return error.support_class, error.support_message
     support_pending = "INTEVIA could not confirm the outcome of this action. Check its current record before trying again. INTEVIA Support needs the error details to investigate."
     from src.intevia.services.organism_office_consent_service import S015OfficeConsentNotFound
     if isinstance(error, S015CommandReplayMismatch):
@@ -1207,13 +1237,14 @@ class OrganismRoleService(_OrganismCommandService):
         If qualification returns, the local checks proceed in this order:
         require a founding authority basis and lock its row; resolve and lock
         the role definition; require it to belong to the same LO and be active;
-        refuse non-LO scope, then a code other than COORDINATOR; refuse a
-        PROBATIONARY nominee, then any other stored state that is not ACTIVE.
+        refuse non-LO scope, then a reserved INTEVIA office; refuse a
+        PROBATIONARY nominee for any office, then any other stored state that is not ACTIVE.
 
         These checks raise S015AssignmentAuthorityUnavailable for a missing
         basis, S015AssignmentNotFound for an unknown definition,
-        S015AssignmentEdgeRefused for a different LO or inactive definition,
-        S015OperationNotYetImplemented for unsupported scope or code, and
+        S015AssignmentEdgeRefused for a different LO or inactive Coordinator definition,
+        S015OperationNotYetImplemented for unsupported scope,
+        S015AssignmentRuleRefused for reserved or superseded definitions, and
         S015AssignmentMembershipRefused for the nominee's state. Earlier actor
         checks or authority qualification can refuse before these checks.
 
@@ -1373,15 +1404,17 @@ class OrganismRoleService(_OrganismCommandService):
                 "role definition and membership must share an organism"
             )
         if not role_definition.active:
+            if role_definition.code != _COORDINATOR_ROLE_CODE:
+                raise S015AssignmentRuleRefused("SR_SUPERSEDED_DEFINITION")
             raise S015AssignmentEdgeRefused("role definition is not active")
         # scope before code: a Circle-scoped office of any kind is S4's (IL-6)
         if role_definition.scope != OrganismRoleDefinition.Scope.LIVING_ORGANISM:
             raise S015OperationNotYetImplemented("circle_scoped_office", "IL-6", "S4")
-        if role_definition.code != _COORDINATOR_ROLE_CODE:
-            raise S015OperationNotYetImplemented("appoint_non_coordinator_office", "IL-8", "SR")
+        if role_definition.code.startswith("INTEVIA_"):
+            raise S015AssignmentRuleRefused("SR_ROOT_OFFICE_RESERVED")
         if membership.state == "PROBATIONARY":
             raise S015AssignmentMembershipRefused(
-                "a PROBATIONARY membership holds no COORDINATOR office (⟨E2.114⟩)"
+                "a probationary membership cannot hold an office"
             )
         if membership.state != "ACTIVE":
             raise S015AssignmentMembershipRefused(
@@ -1477,8 +1510,10 @@ class OrganismRoleService(_OrganismCommandService):
         proposal. It verifies the nominee's consent against the authority
         reference through _verify_assign_consent.
 
-        Next, in order, it refuses non-LO scope and non-COORDINATOR codes with
-        S015OperationNotYetImplemented; validates the current state and edge;
+        Next it refuses non-LO scope with S015OperationNotYetImplemented and
+        reserved INTEVIA offices with S015AssignmentRuleRefused. Non-Coordinator
+        ASSIGN also refuses a superseded definition or an already-held office
+        with that class-C exception. It then validates the current state and edge;
         requires a head event; and refuses an event whose
         (effective_at, occurred_at, received_at) sorts before the head's tuple.
 
@@ -1657,7 +1692,9 @@ class OrganismRoleService(_OrganismCommandService):
                 .select_related("membership", "role_definition")
                 .get(pk=assignment.pk)
             )
-            # R4 slice 2 (the Human Governor, 4 Oct 2026): a completed departure is honoured at
+            # H72(a): current membership is required by ⟨C.037⟩; the probationary
+            # Coordinator restriction is ⟨E2.114⟩. R4 slice 2 (HG, 4 Oct 2026)
+            # is the lineage of this record-time rule. A completed departure is honoured at
             # record time. The nominee's membership state is read from the row locked above,
             # under the organism lock, after definitive authorisation. Neither the provider's
             # fold at the act's coordinates nor a supplied earlier effective_at overrides it:
@@ -1689,13 +1726,18 @@ class OrganismRoleService(_OrganismCommandService):
             )
 
         # Every refusal that reads the target's state sits after authority (the d6af911 order).
-        # IL-6 and IL-8 bind every act on an office, not only its proposal (the Reviewer's S2 F2):
+        # IL-6 and the reserved-office restriction bind every office act:
         # scope before code, as in _execute_propose
         role_definition = assignment.role_definition
         if role_definition.scope != OrganismRoleDefinition.Scope.LIVING_ORGANISM:
             raise S015OperationNotYetImplemented("circle_scoped_office", "IL-6", "S4")
-        if role_definition.code != _COORDINATOR_ROLE_CODE:
-            raise S015OperationNotYetImplemented("transition_non_coordinator_office", "IL-8", "SR")
+        if role_definition.code.startswith("INTEVIA_"):
+            raise S015AssignmentRuleRefused("SR_ROOT_OFFICE_RESERVED")
+        if event_action == "ASSIGN" and role_definition.code != _COORDINATOR_ROLE_CODE:
+            if not role_definition.active:
+                raise S015AssignmentRuleRefused("SR_SUPERSEDED_DEFINITION")
+            if self._office_already_held(assignment, effective_at):
+                raise S015AssignmentRuleRefused("SR_OFFICE_ALREADY_HELD")
         current_state = _canonical_key(assignment.state, "assignment.state", 19)
         _validate_assignment_edge(
             current_state=current_state,
@@ -1804,6 +1846,29 @@ class OrganismRoleService(_OrganismCommandService):
             result=result,
             received_at=bound.received_at,
         )
+
+    def _office_already_held(self, assignment, effective_at):
+        """Message pre-check under the already-held LO lock; the database guard remains final.
+
+        Match C2's cached-ACTIVE OR effective fold, across versions of the same
+        LO-scoped code, for this membership only, excluding this nomination.
+        One database clock cut is used for this observation. Raw result: bool.
+        """
+        with connections[self._alias].cursor() as cursor:
+            cursor.execute("SELECT clock_timestamp()")
+            known_at = cursor.fetchone()[0]  # aware datetime
+            cursor.execute("""SELECT EXISTS (
+                SELECT 1 FROM public.core_contextualroleassignment held
+                JOIN public.core_organismroledefinition d ON d.id = held.role_definition_id
+                WHERE held.membership_id = %s AND held.id <> %s
+                  AND d.living_organism_id = %s AND d.code = %s
+                  AND d.scope = 'LIVING_ORGANISM'
+                  AND (held.state = 'ACTIVE' OR public.s015_fold_effective_state(
+                      'core_contextualroleassignment', held.id, %s, %s) = 'ACTIVE'))""",
+                [assignment.membership_id, assignment.pk,
+                 assignment.membership.living_organism_id, assignment.role_definition.code,
+                 effective_at, known_at])
+            return cursor.fetchone()[0]
 
     def _verify_assign_consent(
         self,
@@ -2096,6 +2161,7 @@ __all__ = [
     "S015AssignmentEdgeRefused",
     "S015AssignmentMembershipRefused",
     "S015AssignmentNotFound",
+    "S015AssignmentRuleRefused",
     "S015AssignmentStateUnused",
     "S015AssignmentTermRefused",
     "S015CommandAtomicityRequired",
