@@ -1,6 +1,6 @@
 # S015 — public crosswalk for PKT-A foundations and PKT-B
 
-**v1.1 · 1 November 2026 · current at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`**
+**v1.2 · 1 November 2026 · current at main `02790ab8572181ba602ec1404eb8da90666c1f5f`** (v1.2 records SR-H's current GitHub evidence)
 
 The September v1.0 foundation account is retained below and marked as history. Current PKT-B implementation paths and restrictions are added in §3.
 
@@ -100,7 +100,7 @@ All nine findings with their September status:
 
 ## 6. What can be checked today
 
-GitHub continuous integration (CI) is the evidence of record. The [C5 run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727) records 126 product tests plus 19 deliberate-defect checks. New tests follow six test admission rules (TAR). The old suite of about 1,800 tests is archived and not run; the current route builds one template database and uses copies in clone mode. The smaller suite is not proven to provide equivalent coverage.
+GitHub continuous integration (CI) is the evidence of record. The [SR-H run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205) records 134 product tests plus 19 deliberate-defect checks. New tests follow six test admission rules (TAR). The old suite of about 1,800 tests is archived and not run; the current route builds one template database and uses copies in clone mode. The smaller suite is not proven to provide equivalent coverage.
 
 | Current route or record | Repository path |
 |---|---|

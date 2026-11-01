@@ -1,6 +1,6 @@
 # INTEVIA v1.0 — Current Implementation Crosswalk
 
-Qualified repository ref: `f829d1b2b714cb282d96a273fbd0887eac9c3522`  
+Qualified repository ref: `02790ab8572181ba602ec1404eb8da90666c1f5f` (document header; each row keeps the ref at which its paths were checked)  
 Last verified: 2026-11-01 (documentation and path review)  
 Document role: derivative evidence-state navigation  
 Authority effect: none
@@ -29,7 +29,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 ## Current testing boundary
 
-GitHub continuous integration (CI) is the evidence of record. At C5 the route recorded 126 product tests and 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run; selective reuse must satisfy the rules. The route uses one prepared database template and disposable copies. See [verification](../verification/README.md) and [the archive record](../../archive/tests_2026_10/00_ARCHIVE_RECORD.md).
+GitHub continuous integration (CI) is the evidence of record. At SR-H the route recorded 134 product tests and 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run; selective reuse must satisfy the rules. The route uses one prepared database template and disposable copies. See [verification](../verification/README.md) and [the archive record](../../archive/tests_2026_10/00_ARCHIVE_RECORD.md).
 
 Fields 3 and 4 below are current path checks. Older execution figures remain historical at their named versions. Presence in the archive supplies no current test coverage. A glob such as `archive/tests_2026_10/test_contribution_*.py` means the matching files in that directory, not a new test selection.
 
@@ -276,15 +276,15 @@ Fields 3 and 4 below are current path checks. Older execution figures remain his
 | Recorded requests and safe repeat handling | `src/intevia/services/command_intake.py`; `src/intevia/services/organism_command_support.py`; `core/migrations/0049_h100_command_intake.py` | `tests/test_sr_definitions.py`; `tests/test_sr_office_actions.py` | The selected office checks do not establish every command route. Stored consent-result hardening remains due. |
 | Subscription-based feature access and complimentary beta access | `src/intevia/services/organism_entitlement_service.py`; `core/migrations/0046_se_entitlement_foundation.py`; `core/migrations/0047_sek1_platform_rule_statement_start.py`; `core/migrations/0048_se_entitlement_granted_event_guard.py` | No dedicated current witness claimed here | Feature access is not authority to act. The custom-office subscription-expiry journey still needs assurance. |
 
-**5 — Last recorded execution evidence:** C5 GitHub run [41308978727](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727), 126 product tests plus 19 deliberate-defect checks. No rerun is claimed by this document.
+**5 — Last recorded execution evidence:** SR-H GitHub run [41352656205](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205), 134 product tests plus 19 deliberate-defect checks. No rerun is claimed by this document.
 
-**6 — Packet evidence source:** [Governed Organisations, Membership and Offices](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md).
+**6 — Packet evidence source:** [Governed Organisations, Membership and Offices](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md), with its [closing record](../holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md).
 
 **7 — Independent reproduction:** Not performed for this documentation update.
 
 **8 — Human authority:** The Datacron records the Human Governor's decisions. Under the 19 October ruling, his committing or authorising commitment accepts that record, not unfinished work.
 
-**9 — Unresolved work:** Extra database safeguards before office user access; custom offices held pending subscription assurance; stored consent-result hardening; later Circle, law-in-force, naming, support and test-value work. See Datacron §9 for assigned homes.
+**9 — Unresolved work:** The SR-H database safeguards and the stored consent-result hardening landed at `02790ab8`; the reserved-office update safeguard awaits its physical test (FW-11). Custom offices are held pending subscription assurance; later Circle, law-in-force, naming, support and test-value work remain. See Datacron §9 and the [closing record](../holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) §4 for assigned homes.
 
 **10 — Deployment and release:** Pre-alpha; the shared boundary applies.
 

@@ -1,7 +1,7 @@
 # INTEVIA — Governance Navigation Index
 
 Status: live root-level inspection aid  
-Qualified repository ref: `f829d1b2b714cb282d96a273fbd0887eac9c3522`  
+Qualified repository ref: `02790ab8572181ba602ec1404eb8da90666c1f5f`  
 Last verified: 2026-11-01 (documentation and path review)  
 Authority effect: none
 
@@ -55,7 +55,7 @@ The presence of a file in these routes does not itself prove ratification or cur
 
 The Whurthy excavation — the evidence trail, sealed evidence packages, timestamp captures and lineage synthesis for the predecessor system that inspired INTEVIA's Events domain — is held on the programme's Drive (`05_WHURTHY_ARCHIVE` and the `Whurthy` working folder) and is not in this repository. Whurthy inspired the Events domain; it did not form it. INTEVIA's Events are their own, more evolved set of requirements and diverge from Whurthy in significant ways. Named placeholders for that lineage were removed from the repository in the September reconciliation; whether a repository lineage document is written from the Drive material is a future Human decision.
 
-Current packet lineage: [Governed Organisations, Membership and Offices](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Its §8 explains the six test admission rules (TAR), archived old suite and GitHub evidence; the active route now uses database copies. See [verification](docs/verification/README.md).
+Current packet lineage: [Governed Organisations, Membership and Offices](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Its §8 explains the six test admission rules (TAR), archived old suite and GitHub evidence; the active route now uses database copies. See [verification](docs/verification/README.md). Its [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) covers SR-H, the accepted re-plan and where each unfinished item goes; the Human Governor closed PKT-B on 1 November 2026.
 
 ## Index maintenance rules
 

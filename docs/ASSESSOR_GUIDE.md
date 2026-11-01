@@ -1,7 +1,7 @@
 # INTEVIA — a guide for funders and assessors
 
-**v0.3 · 1 November 2026 · current at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`**
-*Refreshes v0.2 of 19 September 2026 for the completed PKT-B work.*
+**v0.4 · 1 November 2026 · current at main `02790ab8572181ba602ec1404eb8da90666c1f5f`**
+*v0.4 records SR-H's current GitHub evidence and PKT-B's closure. v0.3 refreshed v0.2 of 19 September 2026 for the completed PKT-B work.*
 *Supersedes v0.1, which described the audience too narrowly and described HAT incorrectly.*
 
 ---
@@ -109,7 +109,7 @@ be used to run a real organisation's governance today.
 | Organisation and recorded-history foundations | Built; the earlier PKT-A records retain their original boundaries |
 | Membership, applications, founding, Birthing and governance formation | Working behind-the-scenes processes; see the PKT-B record |
 | Office definitions, nomination, consent and appointment | Built through SR-H with database safeguards; custom-office access remains held, and the reserved-office update safeguard awaits its physical test (FW-11) |
-| Automatic checks on GitHub | C5 recorded 126 product tests and 19 deliberate-defect checks; the old suite is archived, not run |
+| Automatic checks on GitHub | SR-H recorded 134 product tests and 19 deliberate-defect checks; the old suite is archived, not run |
 | The fictional scenario in §3 | An illustration for design, not an operational pilot or completed programme |
 | Complete website, public deployment and release readiness | Not established |
 
@@ -136,7 +136,7 @@ The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Develo
 
 ## 6. What an assessor can check today
 
-**The current evidence.** The [C5 GitHub run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727) recorded 126 product tests and 19 deliberate-defect checks. These are governed by six test admission rules (TAR). The automatic checking sequence took 3 min 32 s; the complete job took 4 min 10 s.
+**The current evidence.** The [SR-H GitHub run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205) recorded 134 product tests and 19 deliberate-defect checks. These are governed by six test admission rules (TAR). The automatic checking sequence took 4 min 12 s; the complete job took about 4 min 49 s.
 
 The Human Governor set aside the old suite of about 1,800 tests on 29 October. The new route builds one database template and uses disposable copies, called clone mode. GitHub continuous integration (CI) is the evidence of record; local diagnosis does not replace it. [The verification guide](verification/README.md) explains what a pass means. A smaller suite is not proven to give equivalent coverage.
 

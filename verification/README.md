@@ -8,7 +8,7 @@ The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Develo
 
 **GitHub continuous integration (CI) is the evidence of record.** The [workflow](../.github/workflows/s015-verification.yml) checks the exact candidate, extracts and verifies its committed `verification/bootstrap.py`, runs it with an explicit candidate and tree identity, then applies [the separate gate](../.github/s015_gate.py). The full route and the gate must both pass. The [run requirements](../docs/operations/RUN_REQUIREMENTS.md), especially R10 and R16, govern closure and merge evidence.
 
-The current suite follows six test admission rules (TAR). C5 recorded 126 product tests and 19 deliberate-defect checks. The old suite of about 1,800 tests is archived and not run. Its [archive record](../archive/tests_2026_10/00_ARCHIVE_RECORD.md) controls any selective reuse and names the test that must never run again.
+The current suite follows six test admission rules (TAR). SR-H recorded 134 product tests and 19 deliberate-defect checks (GitHub run 41352656205). The old suite of about 1,800 tests is archived and not run. Its [archive record](../archive/tests_2026_10/00_ARCHIVE_RECORD.md) controls any selective reuse and names the test that must never run again.
 
 Direct entrypoints remain available for authorised local inspection; they are not merge evidence:
 

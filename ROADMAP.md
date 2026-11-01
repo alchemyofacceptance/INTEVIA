@@ -1,7 +1,7 @@
 # INTEVIA v1.0 — Current Direction and Decision Gates
 
 Status: live orientation surface; not a release roadmap  
-Qualified repository ref: `f829d1b2b714cb282d96a273fbd0887eac9c3522`  
+Qualified repository ref: `02790ab8572181ba602ec1404eb8da90666c1f5f`  
 Last verified: 2026-11-01 (documentation and path review)  
 Authority effect: none
 
@@ -12,18 +12,18 @@ This document makes current direction legible without converting proposals into 
 ## Established context
 
 - INTEVIA v1.0 remains a pre-alpha build. At the named base, PKT-B supports recorded membership, applications, founding, explicit Birthing, governance formation and office definitions, consent and actions. [The PKT-B Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) gives the evidence and limits.
-- There is no complete website journey or permission for public use. Custom offices remain held until the missing subscription checks are established. Extra database safeguards are due before office user access.
-- GitHub continuous integration (CI) is the evidence of record. C5 recorded 126 product tests plus 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run. The route uses prepared database copies, or clone mode; see [the verification guide](docs/verification/README.md).
+- There is no complete website journey or permission for public use. Custom offices remain held until the missing subscription checks are established. SR-H added the database safeguards required before office user access.
+- GitHub continuous integration (CI) is the evidence of record. SR-H recorded 134 product tests plus 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run. The route uses prepared database copies, or clone mode; see [the verification guide](docs/verification/README.md).
 - The earlier PKT-A-2 and PKT-A-3 records preserve their September status and carried findings. They remain history, not a replacement for the current PKT-B account. S015 is not closed by this update.
 - The S014 record retains its deferred `MAT-S014-01` finding and its issue-time acceptance status.
 - The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
 ## Agreed next work and longer-term direction
 
-C6 closes the offices work with this documentation change.
+The Human Governor closed PKT-B on 1 November 2026 against its [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md), which records where each unfinished item goes.
 
-1. Next is SR-H, the limited offices safeguard unit. It covers the additional database protections before user access and the stored consent-result correction before v1.0 release.
-2. The test-value review follows SR-H. Other named homes include the subscription lifecycle, current constitutional law with CARE, office naming, automatic support tickets and Circle-specific work. The [Datacron §9](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) keeps each restriction and assignment explicit.
+1. The accepted S015 re-plan (a planning baseline of 1 November 2026, not a delivery forecast) sets the next packages: C (membership, authority and continuity), D (private access and understandable history) and E (integration evidence and S015 closure), with R (INTEVIA's root organisation), Circles and CQ in dependency order. The closing record §3 summarises it.
+2. The test-value review and a bounded contract unit for C come first; short checks of the remaining domains start with EVENT. The closing record §4 and the [Datacron §9](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) keep each restriction and assignment explicit.
 
 Later S015 work, wider product hardening, HPCC curriculum and educator formation, and future public, funding, cohort and deployment decisions remain subject to their own commissions and Human decisions. HPCC means HAT Practitioner Certification Curriculum. This document adds no scope or delivery deadline.
 

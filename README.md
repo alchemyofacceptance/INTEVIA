@@ -17,9 +17,9 @@ Two things are held apart deliberately:
 
 ### Current position
 
-**Current position — 1 November 2026, main `f829d1b2b714cb282d96a273fbd0887eac9c3522`.** INTEVIA is pre-alpha software being built toward v1.0. It now has working foundations for recording membership, applications, founding, Birthing, governance formation and office actions. Birthing is the explicit act that completes an organisation's formation under its recorded conditions. These are behind-the-scenes capabilities, not a complete website experience.
+**Current position — 1 November 2026, main `02790ab8572181ba602ec1404eb8da90666c1f5f`.** INTEVIA is pre-alpha software being built toward v1.0. It now has working foundations for recording membership, applications, founding, Birthing, governance formation and office actions. Birthing is the explicit act that completes an organisation's formation under its recorded conditions. These are behind-the-scenes capabilities, not a complete website experience.
 
-The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what was built and how it was checked. All office user access waits for further database safeguards; custom offices also wait for entitlement-lifecycle assurance. See [the roadmap](ROADMAP.md#agreed-next-work-and-longer-term-direction) for the agreed next steps. This does not authorise public deployment or claim a completed product.
+The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what was built and how it was checked. SR-H added the database safeguards required before office user access; custom offices still wait for entitlement-lifecycle assurance. The Human Governor closed PKT-B on 1 November 2026; its [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) lists where each unfinished item goes. See [the roadmap](ROADMAP.md#agreed-next-work-and-longer-term-direction) for the agreed next steps. This does not authorise public deployment or claim a completed product.
 
 ## Start here
 
@@ -57,7 +57,7 @@ responsibility; it makes Human responsibility visible.**
 
 This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0.
 
-Its current centre is the organisation work through offices C5 at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`. PKT-B adds recorded actions to the earlier database foundations and history chain. The [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains both the capabilities and the remaining restrictions.
+Its current centre is the organisation work through offices C5 and the SR-H safeguards at main `02790ab8572181ba602ec1404eb8da90666c1f5f`. PKT-B adds recorded actions to the earlier database foundations and history chain. The [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains both the capabilities and the remaining restrictions.
 
 It also contains implementation and test-definition paths from earlier work: Identity, Events, Services, Library, CARE, contribution lineage, profile effect, and a bounded Education Course-definition slice.
 
@@ -113,7 +113,7 @@ Repository evidence must be read by class:
 
 At the current base, the [PKT-B census](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#2-identity) counts repository text and distinguishes the archive from the live tests. It is a measure of volume, not protection.
 
-**GitHub continuous integration (CI) is the evidence of record.** The C5 run recorded 126 product tests and 19 deliberate-defect checks: 145 checks under the six test admission rules (TAR). The old suite of about 1,800 tests was archived on 29 October and is not run. The route now builds one database template and uses disposable copies, called clone mode. Its checking sequence took 3 min 32 s; the whole job took 4 min 10 s. A smaller suite is not proven to give equivalent coverage. See [verification](docs/verification/README.md) for the route and evidence.
+**GitHub continuous integration (CI) is the evidence of record.** The SR-H run recorded 134 product tests and 19 deliberate-defect checks: 153 checks under the six test admission rules (TAR). The old suite of about 1,800 tests was archived on 29 October and is not run. The route now builds one database template and uses disposable copies, called clone mode. Its checking sequence took 4 min 12 s; the whole job took about 4 min 49 s. A smaller suite is not proven to give equivalent coverage. See [verification](docs/verification/README.md) for the route and evidence.
 
 ## Current governed implementation families
 

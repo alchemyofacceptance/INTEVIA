@@ -21,7 +21,7 @@ The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Develo
 
 ## Current suite and evidence
 
-GitHub continuous integration (CI) is the evidence of record for the exact candidate. At C5, run [41308978727](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727) recorded 126 product tests and 19 deliberate-defect checks. These are the registry entries: each deliberately introduces a fault to show that a selected test detects it. New tests follow six test admission rules (TAR).
+GitHub continuous integration (CI) is the evidence of record for the exact candidate. At SR-H, run [41352656205](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205) recorded 134 product tests and 19 deliberate-defect checks. These are the registry entries: each deliberately introduces a fault to show that a selected test detects it. New tests follow six test admission rules (TAR).
 
 The old suite of about 1,800 tests was archived on 29 October and is not run. Reuse is selective and must follow the [archive restrictions](../../archive/tests_2026_10/00_ARCHIVE_RECORD.md), including the named test that must never run again. A smaller suite is not proven to give equivalent coverage.
 
