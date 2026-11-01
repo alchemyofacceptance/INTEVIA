@@ -25,6 +25,7 @@ from src.intevia.services.organism_command_support import (
     S015CommandAtomicityRequired,
     S015CommandMutexUnavailable,
     S015CommandReplayMismatch,
+    S015CommandReceiptMalformed,
     S015CommandSubstrateError,
     _OrganismCommandService,
     _canonical_key,
@@ -491,35 +492,58 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         )
 
     def _replay_result(self, payload: object) -> OfficeConsentCommandResult:
-        """Rebuild an office-consent result from a receipt payload.
+        """Read only the consent writer's complete stored result contract.
 
-        Require a dict of exactly that type, else raise
-        S015CommandReplayMismatch. Construct the three UUIDs and parse
-        recorded_at with datetime.fromisoformat. Missing fields and
-        TypeError or ValueError from construction become
-        S015CommandReplayMismatch; other exceptions propagate.
-
-        Take action, ordinal and references as stored, without
-        validating their types or values. This decoder does not require
-        canonical timestamp spelling or a timezone, or verify the
-        recorded consent.
+        Require exactly nine keys, canonical UUIDs and an aware canonical
+        timestamp, a supported consent action, a positive integer ordinal
+        (never bool), and string references. As in the role decoder, reference
+        contents are not independently authenticated here. This decoder does
+        not check the consent row; no new event-agreement query is introduced.
+        A malformed record raises S015CommandReceiptMalformed with its cause
+        chained. A genuine request-content mismatch remains ReplayMismatch
+        at the shared request comparison, outside this decoder.
+        The canonical-timestamp check locally matches the role service's private
+        _parse_canonical_timestamp; that module-private helper is not imported.
         """
         if type(payload) is not dict:
-            raise S015CommandReplayMismatch("consent receipt payload is malformed")
+            raise S015CommandReceiptMalformed() from TypeError("consent receipt payload must be a dict")
         try:
+            expected_keys = {
+                "assignment_uuid", "proposal_event_uuid", "consent_uuid", "action",
+                "ordinal", "recorded_at", "lineage_reference", "authority_reference",
+                "authority_decision_reference",
+            }
+            if set(payload) != expected_keys:
+                raise ValueError("consent receipt fields do not match the stored result contract")
+            for key in expected_keys - {"ordinal"}:
+                if type(payload[key]) is not str:
+                    raise TypeError(f"{key} must be a string in a consent receipt")
+            if type(payload["ordinal"]) is not int or payload["ordinal"] < 1:
+                raise TypeError("consent receipt ordinal must be a positive integer")
+            if payload["action"] not in _ACTIONS:
+                raise ValueError("consent receipt action is outside the supported consent actions")
+            identifiers = {}
+            for key in ("assignment_uuid", "proposal_event_uuid", "consent_uuid"):
+                value = UUID(payload[key])
+                if str(value) != payload[key]:
+                    raise ValueError(f"{key} must use canonical UUID spelling")
+                identifiers[key] = value
+            recorded_at = datetime.fromisoformat(payload["recorded_at"].replace("Z", "+00:00"))
+            if canonical_timestamp(recorded_at) != payload["recorded_at"]:
+                raise ValueError("consent receipt timestamp must use canonical spelling")
             return OfficeConsentCommandResult(
-                assignment_uuid=UUID(payload["assignment_uuid"]),
-                proposal_event_uuid=UUID(payload["proposal_event_uuid"]),
-                consent_uuid=UUID(payload["consent_uuid"]),
+                assignment_uuid=identifiers["assignment_uuid"],
+                proposal_event_uuid=identifiers["proposal_event_uuid"],
+                consent_uuid=identifiers["consent_uuid"],
                 action=payload["action"],
                 ordinal=payload["ordinal"],
-                recorded_at=datetime.fromisoformat(payload["recorded_at"]),
+                recorded_at=recorded_at,
                 lineage_reference=payload["lineage_reference"],
                 authority_reference=payload["authority_reference"],
                 authority_decision_reference=payload["authority_decision_reference"],
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise S015CommandReplayMismatch("consent receipt payload is malformed") from exc
+            raise S015CommandReceiptMalformed() from exc
 
 
 __all__ = [

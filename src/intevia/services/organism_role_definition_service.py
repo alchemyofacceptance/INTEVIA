@@ -865,4 +865,4 @@ __all__ = ["DefinitionContent", "DefinitionProvision", "RecordRoleDefinitionComm
            "OrganismRoleDefinitionService", "S015RoleDefinitionError", "S015RoleDefinitionMalformed",
            "S015RoleDefinitionNotFound", "S015RoleDefinitionAuthorityUnavailable", "S015RoleDefinitionRefused",
            "S015RoleDefinitionGuardRefused", "_write_definition_version",
-           "board_office_vacancies", "BoardOfficeVacancy", "definition_support_details"]
+           "board_office_vacancies", "BoardOfficeVacancy", "definition_support_details", "definition_guard_message"]

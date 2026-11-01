@@ -63,9 +63,41 @@ The design work examines events of a kind any organisation meets:
 
 **What is implemented today** includes the organisation and history foundations, plus recorded processes for membership, applications, founding, explicit Birthing, governance formation and offices. Birthing is the formal act that completes formation under the recorded conditions. [The PKT-B record](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what these actions do for people.
 
-This does not make the fictional scenario a delivered programme. There is no complete website journey or permission for public use. Custom offices remain held. The next agreed work strengthens database safeguards before office user access, then reviews the value of tests.
+This does not make the fictional scenario a delivered programme. There is no complete website journey or permission for public use. Custom offices remain held. The database safeguards are now built; a physical test of the reserved-office update safeguard remains due under follow-up item FW-11. Reviewing the value of tests remains planned.
 
 The [public crosswalk](S015_PUBLIC_CROSSWALK.md) maps current claims to source files and keeps the earlier foundation history.
+
+## 3a. Making it concrete — one organisation's journey
+
+**This illustrates the processes already built, using a fictional organisation and people.** Our example is **Hillside Allotment Society**, a small community group. It is not a report of a real organisation using INTEVIA.
+
+**1. Priya registers with INTEVIA.**
+Registering gives Priya her own account. It does not automatically make her a member of Hillside or another organisation. [Evidence: registration and founding](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning).
+
+**2. Priya founds Hillside.**
+One founding act creates the organisation, records Priya as its first member and appoints her as its founding Coordinator. This is an office through which she can act for Hillside when its rules permit. [Evidence: the founding act](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning).
+
+**3. Hillside sets up its governance.**
+Governance means the arrangements for who may act and decide. Hillside records the creation of its governing group, called a GOVERNANCE Circle, and the authority for creating it. The Circle is initially inactive: creating it does not itself transfer authority from the Coordinators. INTEVIA supports governance formation both before and after the next step. [Evidence: governance formation](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices).
+
+**4. Priya records Hillside's “Birthing”.**
+Birthing is the explicit act that completes formation once the required conditions are met. INTEVIA records Hillside's constitution—the organisation's rules—as it stands at that moment. Saving a form does not accidentally complete this act. [Evidence: Birthing and governance](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning).
+
+**5. Tom applies to join.**
+Tom has his own account. His application goes through a recorded process, with a decision by someone entitled to make it. He can withdraw before a final outcome. Once final, the outcome cannot be replaced by a conflicting later one. In this example, Tom is admitted and his membership is recorded. [Evidence: membership and applications](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices).
+
+**6. Hillside defines a Treasurer office.**
+It records Treasurer as a board office, citing the part of its constitution that provides for it. When an office change is requested through INTEVIA, it refuses to retire a board office or convert it into another kind of office. Changes to the Coordinator office are also refused through this route. The database itself now also refuses these prohibited changes. [Evidence: database safeguards](../core/migrations/0053_sr_office_safeguards.py). Amendments keep earlier editions of the definition on record. [Evidence: office definitions and their limits](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary).
+
+**7. Tom becomes Treasurer.**
+Tom is now a member eligible for appointment. Priya nominates him, Tom gives his consent, and an authorised appointment is recorded. Nomination, consent and appointment are separate steps: saying yes does not itself appoint him. When an appointment is requested through INTEVIA, it refuses the appointment if the office definition is outdated. The database itself now also refuses that appointment. [Evidence: database safeguards](../core/migrations/0053_sr_office_safeguards.py). [Evidence: holding an office](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning); [appointment safeguards](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary).
+
+**8. Hillside records the end of Tom's appointment.**
+The Treasurer office remains in place, vacant. Ending Tom's appointment does not appoint a successor. The next person needs their own appointment. [Evidence: appointments and vacancies](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary).
+
+**Throughout, the record distinguishes who entered an action from whose act it was and the authority behind it.** A refused action can still leave a record of the request. [Evidence: responsibility](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning); [recorded requests](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices).
+
+**What remains.** These are behind-the-scenes processes: there is no complete website journey or permission for public use yet. Custom offices, beyond the standard governance offices, remain held pending subscription checks. The reserved-office update safeguard still awaits a physical database test under follow-up item FW-11. Checking whether cited constitutional rules are currently in force also remains due. Further work across events, learning, services and discussions lies ahead on the path to v1.0. [Evidence: implementation limits](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary); [current capability map](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#capability-blocks).
 
 ## 4. Maturity — stated plainly
 
@@ -76,7 +108,7 @@ be used to run a real organisation's governance today.
 |---|---|
 | Organisation and recorded-history foundations | Built; the earlier PKT-A records retain their original boundaries |
 | Membership, applications, founding, Birthing and governance formation | Working behind-the-scenes processes; see the PKT-B record |
-| Office definitions, nomination, consent and appointment | Built through C5; custom-office access remains held and additional database safeguards remain due |
+| Office definitions, nomination, consent and appointment | Built through SR-H with database safeguards; custom-office access remains held, and the reserved-office update safeguard awaits its physical test (FW-11) |
 | Automatic checks on GitHub | C5 recorded 126 product tests and 19 deliberate-defect checks; the old suite is archived, not run |
 | The fictional scenario in §3 | An illustration for design, not an operational pilot or completed programme |
 | Complete website, public deployment and release readiness | Not established |

@@ -1259,7 +1259,7 @@ try {
         -RunNonce $runNonce
     $env:VERIFICATION_DB_RECEIPT = $receiptPath
     $env:VERIFICATION_ISOLATION_JSON = $isolationPath
-    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0052_sr_office_guard_widening"
+    $env:VERIFICATION_EXPECTED_CORE_HEAD = "0053_sr_office_safeguards"
     $env:VERIFICATION_STEP = "S015"
     $env:VERIFICATION_TEMPLATE_MODE = $Mode
     $env:VERIFICATION_TEMPLATE_STORE = $effectiveTemplateStore

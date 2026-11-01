@@ -234,6 +234,21 @@ MUTATIONS = {
 }
 
 
+def selected_mutation(name):
+    """Resolve an explicit mutation; SR-H admission entries never enter the recurring list."""
+    from verification.admission_mutations import ADMISSION_MUTATIONS
+    if set(MUTATIONS) & set(ADMISSION_MUTATIONS):
+        raise RuntimeError("mutation registries have duplicate names; reconcile them before running")
+    if name in MUTATIONS:
+        return MUTATIONS[name]
+    if name in ADMISSION_MUTATIONS:
+        entry = ADMISSION_MUTATIONS[name]
+        if entry.get("class") != "ADMISSION":
+            raise RuntimeError("the separate registry accepts admission experiments only")
+        return entry
+    raise RuntimeError("unknown or missing %s: %r" % (MUTATION_ENV, name))
+
+
 class MutationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDatabaseRunnerMixin, DiscoverRunner):
     """Applies the mutation named in VERIFICATION_MUTATION to the test database (a clone of the run's template in clone
     mode; a fresh build only under a Human-authorised fresh mode), before any test."""
@@ -241,12 +256,11 @@ class MutationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDatabas
     def setup_databases(self, **kwargs):
         old_config = super().setup_databases(**kwargs)
         name = os.environ.get(MUTATION_ENV)
-        if name not in MUTATIONS:
-            raise RuntimeError("unknown or missing %s: %r" % (MUTATION_ENV, name))
+        entry = selected_mutation(name)
         if getattr(self, "template_mode", "clone") == "clone":
             self.verify_clone_matches_template()
         with connection.cursor() as cursor:
-            for statement in MUTATIONS[name]["sql"]:
+            for statement in entry["sql"]:
                 cursor.execute(statement)
         print("VERIFICATION MUTATION APPLIED: %s" % name, flush=True)
         return old_config
