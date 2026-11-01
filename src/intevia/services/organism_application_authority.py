@@ -65,6 +65,7 @@ from core.organism_authority_facts import (
     S015_AUTHORITY_REFERENCE_PREFIX,
     S015_AUTHORITY_REFUSAL_KEY,
     validate_authority_facts,
+    validate_definition_nomination_facts,
 )
 from core.organism_contract import OrganismAction
 from src.intevia.services.organism_authority import (
@@ -1088,7 +1089,11 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
-        """Qualify a Coordinator proposal, or delegate a role transition.
+        """Qualify an LO-scoped proposal, or delegate a role transition.
+
+        Non-Coordinator proposals resolve the named version and use the active
+        family rule through _qualify_definition_proposal. The following installed
+        configuration branch remains for the Coordinator only.
 
         For TRANSITION_CONTEXTUAL_ROLE, ASSIGN, END and REASSIGN delegate to
         _qualify_role_transition; an event_action other than PROPOSE is
@@ -1167,7 +1172,11 @@ class ProductionApplicationAuthorityProvider:
             expected_source = "CONFIGURATION" if named_role.code == "COORDINATOR" else "DEFINITION"
             if request.target.get("nomination_rule_source", "CONFIGURATION") != expected_source:
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
-        role = named_role if named_role is not None and named_role.active and named_role.code == "COORDINATOR" else None
+        role = named_role
+        if role is not None and role.code.startswith("INTEVIA_"):
+            return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
+        if role is not None and role.code == "COORDINATOR" and not role.active:
+            role = None
         if nominee is None or role is None or _fold_state(
             self.database_alias, "core_organismmembership", nominee.pk,
             request.effective_at, request.evaluated_at,
@@ -1183,6 +1192,14 @@ class ProductionApplicationAuthorityProvider:
             request.effective_at, request.evaluated_at,
         ) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+
+        if role.code != "COORDINATOR":
+            # New nominations use the family's current rule, while the target
+            # keeps the exact version named. C5 owns its post-authority stale check.
+            current = OrganismRoleDefinition.objects.using(self.database_alias).filter(
+                living_organism=organism, scope="LIVING_ORGANISM", code=role.code, active=True,
+            ).first()
+            return self._qualify_definition_proposal(request, organism, proposer, nominee, current)
 
         configuration = _effective_version(
             self.database_alias,
@@ -1242,12 +1259,117 @@ class ProductionApplicationAuthorityProvider:
             facts["d"] = "C"
         return self._qualified(request, facts)
 
+    def _office_participation_reference(self, request, organism, nominee):
+        """Read SB-G participation at the act's effective and knowledge cuts.
+
+        Same unended-record rule as SB-G readiness; additionally bind membership,
+        circle kind and parent LO, and exclude a Circle folded CLOSED at those cuts
+        (the existing SB-G readiness rule). No new continuation/cascade rule.
+        Raw PostgreSQL participation_uuid is uuid.UUID; return its string for V2 e.
+        """
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute("""SELECT p.participation_uuid
+                FROM core_circleparticipation p
+                JOIN core_circle c ON c.id = p.circle_id
+                WHERE p.membership_id = %s AND c.parent_organism_id = %s
+                  AND c.kind = 'GOVERNANCE'
+                  AND EXISTS (SELECT 1 FROM core_circlestateevent created
+                      WHERE created.circle_id = c.id AND created.action = 'CREATE_DORMANT'
+                        AND created.recorded_at <= %s)
+                  AND public.s015_fold_effective_state('core_circle',
+                      c.id, %s, %s) IS DISTINCT FROM 'CLOSED'
+                  AND p.effective_at <= %s AND p.recorded_at <= %s
+                  AND public.s015_fold_effective_state('core_organismmembership',
+                      p.membership_id, %s, %s) = 'ACTIVE'
+                  AND NOT EXISTS (SELECT 1 FROM core_circleparticipationend e
+                      WHERE e.participation_id = p.id AND e.effective_at <= %s
+                        AND e.recorded_at <= %s)
+                ORDER BY p.recorded_at, p.id LIMIT 1""", [nominee.pk, organism.pk,
+                request.evaluated_at, request.effective_at, request.evaluated_at, request.effective_at,
+                request.evaluated_at, request.effective_at, request.evaluated_at,
+                request.effective_at, request.evaluated_at])
+            row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def _qualify_definition_proposal(self, request, organism, proposer, nominee, role):
+        """Qualify with the current recorded rule; LAW remains held, never inferred.
+
+        CONSTITUTION A/B/C is applied as recorded, free. UNSUPPORTED refuses,
+        never substitutes Coordinators. SILENT A/B needs i, otherwise C. CUSTOM
+        needs CUSTOM_ROLES at receipt for every new proposal; existing chains do
+        not call this helper. Entitlement and participation are read once.
+        """
+        from src.intevia.services.organism_role_definition_service import custom_role_entitled
+        if role is None:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if role.nomination_policy == "UNSUPPORTED":
+            return self._refuse(request, S015AuthorityRefusalCode.C_NOMINATION_ROUTE_NOT_IMPLEMENTED)
+        policy = role.nomination_policy
+        if policy not in {"A", "B", "C"}:
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        entitlement_reference = None
+        custom = role.kind == "CUSTOM"
+        if custom:
+            if not custom_role_entitled(organism.organism_id, request.evaluated_at, self.database_alias):
+                return self._refuse(request, S015AuthorityRefusalCode.E_CUSTOM_ROLE_NOT_ENTITLED)
+        elif role.nomination_basis == "SILENT":
+            if policy in {"A", "B"}:
+                entitlement_reference = self.nomination_entitlement_source.reference_at(
+                    organism.organism_id, request.effective_at, request.evaluated_at)
+                if type(entitlement_reference) is not str or not entitlement_reference:
+                    policy = "C"
+                    entitlement_reference = None
+        elif role.nomination_basis != "CONSTITUTION":
+            return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ACTION)
+        participation = None
+        if role.participation_required:
+            participation = self._office_participation_reference(request, organism, nominee)
+            if participation is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOMINEE_NOT_ELIGIBLE)
+        same_member = proposer.pk == nominee.pk
+        route = "SELF_PROPOSAL" if same_member else "MEMBER_NOMINATION"
+        office = None
+        if policy == "B" or (policy == "C" and not same_member):
+            office = self._effective_coordinator_office(request, proposer)
+            if office is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+            route = "EFFECTIVE_COORDINATOR"
+        proposer_head = _latest_transition(self.database_alias, OrganismMembershipTransition,
+            "membership_id", proposer.pk, request.effective_at, request.evaluated_at)
+        nominee_head = _latest_transition(self.database_alias, OrganismMembershipTransition,
+            "membership_id", nominee.pk, request.effective_at, request.evaluated_at)
+        if proposer_head is None or nominee_head is None:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        facts = {"m": str(proposer_head.event_uuid), "n": str(nominee_head.event_uuid),
+                 "t": route, "k": policy, "i": entitlement_reference}
+        if office is not None:
+            head = _latest_transition(self.database_alias, ContextualRoleAssignmentStateEvent,
+                "assignment_id", office.pk, request.effective_at, request.evaluated_at)
+            if head is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
+            facts["o"] = str(head.event_uuid)
+        if custom:
+            facts["z"] = "CUSTOM_ROLES"
+        if participation is not None:
+            facts["e"] = participation
+        validate_definition_nomination_facts(facts, {
+            "kind": role.kind, "nomination_basis": role.nomination_basis,
+            "participation_required": role.participation_required,
+        })
+        return self._qualified(request, facts)
+
     def _qualify_role_transition(
         self,
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
-        """Qualify ASSIGN, END or REASSIGN of a Coordinator office.
+        """Qualify ASSIGN, END or REASSIGN of an LO-scoped office.
+
+        Non-Coordinator chains retain their recorded definition even after AMEND.
+        Reserved INTEVIA_ offices refuse. Only ASSIGN checks the recorded
+        appointing route and participation; END/REASSIGN keep the installed
+        route, including the holder's own END. No entitlement is rechecked for an
+        existing chain. The active-version predicate remains for Coordinator only.
 
         Called by _qualify_role_proposal for those three event actions. Folds
         use request.effective_at and request.evaluated_at. In order, require:
@@ -1309,10 +1431,13 @@ class ProductionApplicationAuthorityProvider:
             membership__living_organism=organism,
             role_definition__living_organism=organism,
             role_definition__scope="LIVING_ORGANISM",
-            role_definition__code="COORDINATOR",
-            role_definition__active=True,
         ).select_related("membership", "role_definition").first()
         if assignment is None:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        role = assignment.role_definition
+        if role.code.startswith("INTEVIA_"):
+            return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
+        if role.code == "COORDINATOR" and not role.active:
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         proposal = ContextualRoleAssignmentStateEvent.objects.using(self.database_alias).filter(
             assignment=assignment,
@@ -1353,6 +1478,19 @@ class ProductionApplicationAuthorityProvider:
         ) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
 
+        alternative_route = False
+        if event_action == "ASSIGN" and role.code != "COORDINATOR":
+            if role.appointing_authority == "NAMED_BODY":
+                alternative_route = bool(role.alternative_route_reference) and role.provisions.filter(
+                    relationship="ALTERNATIVE_ROUTE",
+                ).exists()
+                if not alternative_route:
+                    return self._refuse(request, S015AuthorityRefusalCode.C_APPOINTING_ROUTE_NOT_IMPLEMENTED)
+            elif role.appointing_authority != "LO_COORDINATOR_BODY":
+                return self._refuse(request, S015AuthorityRefusalCode.C_APPOINTING_ROUTE_NOT_IMPLEMENTED)
+            if role.participation_required and self._office_participation_reference(request, organism, nominee) is None:
+                return self._refuse(request, S015AuthorityRefusalCode.E_NOMINEE_NOT_ELIGIBLE)
+
         holder_act = actor_membership.pk == nominee.pk
         if event_action != "END" or not holder_act:
             office = self._effective_coordinator_office(request, actor_membership)
@@ -1377,6 +1515,8 @@ class ProductionApplicationAuthorityProvider:
         }
         if office is not None and office.head_state_event_id is not None:
             facts["o"] = str(office.head_state_event.event_uuid)
+        if alternative_route:
+            facts["y"] = "AR"
         if event_action == "ASSIGN":
             facts["p"] = str(proposal.event_uuid)
             with connections[self.database_alias].cursor() as cursor:
@@ -1398,6 +1538,7 @@ class ProductionApplicationAuthorityProvider:
                 if withdrawn:
                     facts["u"] = "c:" + str(consent_rows[-1].consent_uuid)
                     facts.pop("g", None)
+                    facts.pop("y", None)
                     return self._refuse(
                         request,
                         S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
@@ -1410,6 +1551,7 @@ class ProductionApplicationAuthorityProvider:
                     if latest_consent is not None:
                         facts["u"] = "c:" + str(latest_consent.consent_uuid)
                     facts.pop("g", None)
+                    facts.pop("y", None)
                     return self._refuse(
                         request,
                         S015AuthorityRefusalCode.C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN,
@@ -1423,8 +1565,12 @@ class ProductionApplicationAuthorityProvider:
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
-        """Qualify a nominee's CONSENT, DECLINE or WITHDRAW on a Coordinator
-        proposal (RECORD_OFFICE_CONSENT).
+        """Qualify a nominee's CONSENT, DECLINE or WITHDRAW on an LO office.
+
+        Non-Coordinator chains use their recorded definition without an active
+        predicate. INTEVIA_ refuses. The live service subsequently refuses a fresh
+        CONSENT on a superseded definition; WITHDRAW and DECLINE remain available.
+        The active-version predicate remains for Coordinator only.
 
         The dispatcher checks the event action and canonical target UUIDs.
         Folds use request.effective_at and request.evaluated_at. In order:
@@ -1484,9 +1630,13 @@ class ProductionApplicationAuthorityProvider:
             membership__living_organism=organism,
             role_definition__living_organism=organism,
             role_definition__scope="LIVING_ORGANISM",
-            role_definition__code="COORDINATOR",
-            role_definition__active=True,
         ).select_related("membership", "role_definition").first()
+        if assignment is not None:
+            role = assignment.role_definition
+            if role.code.startswith("INTEVIA_"):
+                return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
+            if role.code == "COORDINATOR" and not role.active:
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         nominee = OrganismMembership.objects.using(self.database_alias).filter(
             membership_uuid=membership_uuid,
             living_organism=organism,

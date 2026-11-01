@@ -49,10 +49,41 @@ from src.intevia.services.organism_command_support import (
 
 # SUPPORT classification is independent of the transaction refusal classes.
 SUPPORT_INTERIM_MESSAGE = "Something went wrong and INTEVIA could not complete this action. No changes have been made to this organisation's offices. This has been recorded with the details needed to investigate; please try again later or contact INTEVIA Support."
-DEFINITION_REFUSAL_MESSAGES = {'SR_DEFINITION_KIND_FIXED': ('You cannot change this office from a board office to a custom role, or from a custom role to a board office. An office keeps the kind it was recorded with, and its history is kept. No changes have been made to the office.', 'B'), 'SR_DESIGNATION_INCOMPLETE': ('This board office could not be recorded. A board office must cite the provision of your constitution that creates it, and which version; this designation does not. No office has been created or changed. Add the citation and submit again — or, if no provision creates this office, record it as a custom role.', 'A'), 'SR_RETIREMENT_HOLDER_REMAINS': ("This office still has a holder. End or reassign the appointment through its own route first; retiring the definition does not end anyone's office. Nothing has changed.", 'A'), 'SR_ROOT_OFFICE_RESERVED': ("This is a reserved INTEVIA root office. It is not defined, changed, retired or filled through this route; its route is the platform's root founding. Nothing has changed.", 'B'), 'SR_COORDINATOR_DEFINITION_RESERVED': ('You cannot change or retire the Coordinator office here. This office is established when the Living Organism is founded. No changes have been made to the office.', 'B'), 'SR_DEFINITION_EXISTS': ('This office could not be created: this organisation already has an office with this identity. No office has been created or changed. To change how the existing office is defined, amend it.', 'A'), 'SR_DEFINITION_RETIRED': ('This office has been retired, so it cannot be changed, retired again, or re-established here. No changes have been made. Its definition and history remain on record.', 'B'), 'SR_SUPERSEDED_DEFINITION': ("This office's definition has been updated since the version you were working from. No changes have been made. Open the current definition and make the change there.", 'A'), 'SR_GOVERNANCE_RELATIONSHIP_UNCITED': ('This office could not be recorded. Each relationship between this office and your GOVERNANCE Circle — who elects or appoints to it, whether holding it requires GOVERNANCE participation, and any seat it carries — must cite the provision of your constitution that provides it, and which version; this designation leaves one uncited. No office has been created or changed. Add the citation, or remove the relationship, and submit again.', 'A'), 'SR_BOARD_OFFICE_PERMANENT': ("Board offices cannot be retired. A board office is part of this organisation's governing structure, and its history is kept. If no one holds it, it simply remains vacant. No changes have been made to the office.", 'B')}
-DEFINITION_AUTHORITY_MESSAGES = {'C_DEFINITION_KIND_FIXED': ('You cannot change this office from a board office to a custom role, or from a custom role to a board office. An office keeps the kind it was recorded with, and its history is kept. No changes have been made to the office.', 'B'), 'E_CUSTOM_ROLE_NOT_ENTITLED': ("This custom role could not be recorded. Custom roles are a subscription capability, and this organisation does not have an active subscription or complimentary access at this time. No custom role has been created or changed; the request and this refusal are on record. Your constitution's board offices can be recorded free. Existing custom-role appointments continue; new ones cannot start.", 'A'), 'E_NOMINATION_POLICY_NOT_ENTITLED': ('The nomination rule for this office could not be recorded. Member nominations or Coordinator nominations can be chosen only under an entitlement that permits it, and this organisation does not have one at this time. No office has been created or changed; the request and this refusal are on record. Without the entitlement, the standard rule applies: members may put themselves forward and effective Coordinators may nominate others. Choose that rule, or arrange the entitlement first.', 'A'), 'C_RESERVED_ROOT_OFFICE': ("This is a reserved INTEVIA root office. It is not defined, changed, retired or filled through this route; its route is the platform's root founding. Nothing has changed.", 'B'), 'C_COORDINATOR_DEFINITION_RESERVED': ('You cannot change or retire the Coordinator office here. This office is established when the Living Organism is founded. No changes have been made to the office.', 'B'), 'C_BOARD_OFFICE_PERMANENT': ("Board offices cannot be retired. A board office is part of this organisation's governing structure, and its history is kept. If no one holds it, it simply remains vacant. No changes have been made to the office.", 'B'), 'C_ROUTE_IS_CQ': ('This change to an office definition could not be made by the Coordinators alone: this organisation decides such matters through its Collective Questioning process. No office has been created or changed; the request and this refusal are on record. Raise it through that process.', 'A'), 'E_NOT_EFFECTIVE_COORDINATOR': ("You cannot define, change or retire this organisation's offices: this action is for its effective Coordinators. No changes have been made; the request and this refusal are on record.", 'B'), 'DENIED': ("You cannot define, change or retire this organisation's offices: this action is for its effective Coordinators. No changes have been made; the request and this refusal are on record.", 'B')}
+DEFINITION_REFUSAL_MESSAGES = {
+    'SR_DEFINITION_KIND_FIXED': ('You cannot change this office from a board office to a custom role, or from a custom role to a board office. An office keeps the kind it was recorded with, and its history is kept. No changes have been made to the office.', 'B'),
+    'SR_DESIGNATION_INCOMPLETE': ('This board office could not be recorded. A board office must cite the provision of your constitution that creates it, and which version; this designation does not. No office has been created or changed. Add the citation and submit again — or, if no provision creates this office, record it as a custom role.', 'A'),
+    'SR_RETIREMENT_HOLDER_REMAINS': ("This office still has a holder. End or reassign the appointment through its own route first; retiring the definition does not end anyone's office. Nothing has changed.", 'A'),
+    'SR_ROOT_OFFICE_RESERVED': ("This is a reserved INTEVIA root office. It is not defined, changed, retired or filled through this route; its route is the platform's root founding. Nothing has changed.", 'B'),
+    'SR_COORDINATOR_DEFINITION_RESERVED': ('You cannot create, change or retire the Coordinator office here. This office is established when the Living Organism is founded. No changes have been made to the office.', 'B'),
+    'SR_DEFINITION_EXISTS': ('This office could not be created: this organisation already has an office with this identity. No office has been created or changed. To change how the existing office is defined, amend it.', 'A'),
+    'SR_DEFINITION_RETIRED': ('This office has been retired, so it cannot be changed, retired again, or re-established here. No changes have been made. Its definition and history remain on record.', 'B'),
+    'SR_SUPERSEDED_DEFINITION': ("This office's definition has been updated since the version you were working from. No changes have been made. Open the current definition and make the change there.", 'A'),
+    'SR_GOVERNANCE_RELATIONSHIP_UNCITED': ('This office could not be recorded. Each relationship between this office and your GOVERNANCE Circle — who elects or appoints to it, whether holding it requires GOVERNANCE participation, and any seat it carries — must cite the provision of your constitution that provides it, and which version; this designation leaves one uncited. No office has been created or changed. Add the citation, or remove the relationship, and submit again.', 'A'),
+    'SR_BOARD_OFFICE_PERMANENT': ("Board offices cannot be retired. A board office is part of this organisation's governing structure, and its history is kept. If no one holds it, it simply remains vacant. No changes have been made to the office.", 'B'),
+}
+DEFINITION_AUTHORITY_MESSAGES = {
+    'C_DEFINITION_KIND_FIXED': ('You cannot change this office from a board office to a custom role, or from a custom role to a board office. An office keeps the kind it was recorded with, and its history is kept. No changes have been made to the office.', 'B'),
+    'E_CUSTOM_ROLE_NOT_ENTITLED': ("This custom role could not be recorded. Custom roles are a subscription capability, and this organisation does not have an active subscription or complimentary access at this time. No custom role has been created or changed; the request and this refusal are on record. Your constitution's board offices can be recorded free. Existing custom-role appointments continue; new ones cannot start.", 'A'),
+    'E_NOMINATION_POLICY_NOT_ENTITLED': ('The nomination rule for this office could not be recorded. Member nominations or Coordinator nominations can be chosen only under an entitlement that permits it, and this organisation does not have one at this time. No office has been created or changed; the request and this refusal are on record. Without the entitlement, the standard rule applies: members may put themselves forward and effective Coordinators may nominate others. Choose that rule, or arrange the entitlement first.', 'A'),
+    'C_RESERVED_ROOT_OFFICE': ("This is a reserved INTEVIA root office. It is not defined, changed, retired or filled through this route; its route is the platform's root founding. Nothing has changed.", 'B'),
+    'C_COORDINATOR_DEFINITION_RESERVED': ('You cannot create, change or retire the Coordinator office here. This office is established when the Living Organism is founded. No changes have been made to the office.', 'B'),
+    'C_BOARD_OFFICE_PERMANENT': ("Board offices cannot be retired. A board office is part of this organisation's governing structure, and its history is kept. If no one holds it, it simply remains vacant. No changes have been made to the office.", 'B'),
+    'C_ROUTE_IS_CQ': ('This change to an office definition could not be made by the Coordinators alone: this organisation decides such matters through its Collective Questioning process. No office has been created or changed; the request and this refusal are on record. Raise it through that process.', 'A'),
+    'E_NOT_EFFECTIVE_COORDINATOR': ("You cannot define, change or retire this organisation's offices: this action is for its effective Coordinators. No changes have been made; the request and this refusal are on record.", 'B'),
+    'DENIED': ("You cannot define, change or retire this organisation's offices: this action is for its effective Coordinators. No changes have been made; the request and this refusal are on record.", 'B'),
+}
 DEFINITION_STATE_REFUSALS = frozenset(['E_IDENTITY_INACTIVE', 'C_CONFIGURATION_NOT_ESTABLISHED', 'C_LO_NO_CAPACITY', 'C_LO_PAUSED', 'C_LO_CLOSED', 'SBG_LO_NOT_ACTIVE', 'SBG_SEAT_ROUTE_UNAVAILABLE'])
-DEFINITION_NOT_FOUND_MESSAGE = 'The office you were working on could not be found in this organisation — it may have been changed by someone else since you opened it. No changes have been made. Refresh and try again.'
+ORGANISM_NOT_FOUND_MESSAGE = 'The organisation could not be found for this office operation. No organisation matches the supplied reference. No office has been changed. Open the organisation you intended to use and start the operation again.'
+DEFINITION_NOT_FOUND_MESSAGE = 'The office definition could not be found for this operation. The supplied version does not identify an office definition in this organisation. No office has been changed. Open the office from the intended organisation and start the operation again.'
+DEFINITION_STATE_MESSAGES = {
+    'E_IDENTITY_INACTIVE': ('Creating, changing or retiring this office definition was refused. INTEVIA could not confirm that your personal access record and current sign-in details allow you to act now. No office definition has been changed; your request and this refusal are on record. Sign in again before trying once more. If your access is still not active, you cannot make this change and there is no recovery action offered here.', 'B'),
+    'C_CONFIGURATION_NOT_ESTABLISHED': ("Creating, changing or retiring this office definition was refused. This organisation's governance settings have not been established. No office definition has been changed; your request and this refusal are on record. Try again after the required governance settings have been established. An effective Coordinator of this organisation can establish those settings.", 'A'),
+    'C_LO_NO_CAPACITY': ("Creating, changing or retiring this office definition was refused. The organisation's history does not show that this action was allowed at the time requested: its founding may not yet be recorded for that time, it may already have closed, or its stage may not permit this action. This refusal does not identify which applies. No office definition has been changed; your request and this refusal are on record. You cannot make this change until the organisation's recorded status permits it; repeating the request will not change that status.", 'B'),
+    'C_LO_PAUSED': ('Creating, changing or retiring this office definition was refused. This organisation is paused. No office definition has been changed; your request and this refusal are on record. Wait until the organisation is active before requesting this office-definition change again.', 'B'),
+    'C_LO_CLOSED': ('Creating, changing or retiring this office definition was refused. This organisation is closed. No office definition has been changed; your request and this refusal are on record. You cannot make this office-definition change in a closed organisation. Do not repeat it here.', 'B'),
+    'SBG_LO_NOT_ACTIVE': ('Creating, changing or retiring this office definition was refused. This organisation is not active. No office definition has been changed; your request and this refusal are on record. You cannot make this office-definition change until the organisation is active.', 'B'),
+    'SBG_SEAT_ROUTE_UNAVAILABLE': ("Creating, changing or retiring this office definition was refused. The requested way of giving someone a GOVERNANCE seat does not match the organisation's or Circle's stage of development. Founding seats are handled before Birthing; later appointments must follow the process allowed at that stage. No office definition has been changed; your request and this refusal are on record. You cannot use the requested seating process at this stage; repeating the request will not make it available.", 'B'),
+}
 
 
 def definition_support_details(error):
@@ -70,7 +101,8 @@ def definition_support_details(error):
             message, support_class = DEFINITION_AUTHORITY_MESSAGES[code]
             return support_class, message
         if code in DEFINITION_STATE_REFUSALS:
-            return "B", str(error)
+            message, category = DEFINITION_STATE_MESSAGES[code]
+            return category, message
         return "C", SUPPORT_INTERIM_MESSAGE
     if isinstance(error, S015CommandReplayMismatch):
         return "A", str(error)
@@ -496,20 +528,21 @@ def _check_citations(content):
     }
     present = {p.relationship for p in content.provisions}
     if "OFFICE_BASIS" in required - present:
-        raise S015RoleDefinitionRefused('SR_DESIGNATION_INCOMPLETE', 'This board office could not be recorded. A board office must cite the provision of your constitution that creates it, and which version; this designation does not. No office has been created or changed. Add the citation and submit again — or, if no provision creates this office, record it as a custom role.')
+        raise S015RoleDefinitionRefused('SR_DESIGNATION_INCOMPLETE', DEFINITION_REFUSAL_MESSAGES['SR_DESIGNATION_INCOMPLETE'][0])
     if present != required:
-        raise S015RoleDefinitionRefused('SR_GOVERNANCE_RELATIONSHIP_UNCITED', 'This office could not be recorded. Each relationship between this office and your GOVERNANCE Circle — who elects or appoints to it, whether holding it requires GOVERNANCE participation, and any seat it carries — must cite the provision of your constitution that provides it, and which version; this designation leaves one uncited. No office has been created or changed. Add the citation, or remove the relationship, and submit again.')
+        raise S015RoleDefinitionRefused('SR_GOVERNANCE_RELATIONSHIP_UNCITED', DEFINITION_REFUSAL_MESSAGES['SR_GOVERNANCE_RELATIONSHIP_UNCITED'][0])
 
 
-def _has_unended_assignment(alias, organism, code):
+def _has_unended_assignment(alias, organism, code, *, at=None):
     """Class-C pre-check for the better message, using the family-wide state fold.
 
     This clock sample precedes sr_10's own sample. The database retirement guard
     remains authoritative for the committed act; this check cannot replace it.
     """
     with connections[alias].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
-        at = cursor.fetchone()[0]  # psycopg: aware datetime, one sample, matching sr_10
+        if at is None:
+            cursor.execute("SELECT clock_timestamp()")
+            at = cursor.fetchone()[0]  # psycopg: aware datetime, one sample, matching sr_10
         cursor.execute("""SELECT EXISTS (
             SELECT 1 FROM core_contextualroleassignment a
             JOIN core_organismroledefinition d ON d.id = a.role_definition_id
@@ -576,10 +609,17 @@ def board_office_vacancies(organism_uuid, database_alias="default"):
     for is unfilled". CARE mechanics and law-in-force interpretation are FW-9.
     Filled means an assignment under any version of the code folds not ENDED,
     exactly as _has_unended_assignment (including a pending nomination). No own
-    transaction or locks; reads are not a single consistent snapshot unless the
-    caller supplies one. Missing citations are returned as None, never invented.
+    transaction or locks; one clock cut is shared across every office fold. Reads
+    still require a caller-supplied repeatable snapshot for concurrent consistency.
+    Missing citations are returned as None, never invented.
     """
-    organism = LivingOrganism.objects.using(database_alias).get(organism_id=organism_uuid)
+    try:
+        organism = LivingOrganism.objects.using(database_alias).get(organism_id=organism_uuid)
+    except LivingOrganism.DoesNotExist as exc:
+        raise S015RoleDefinitionNotFound(ORGANISM_NOT_FOUND_MESSAGE, cause="living organism not found") from exc
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        at = cursor.fetchone()[0]  # psycopg: aware datetime, shared by every office fold
     rows = OrganismRoleDefinition.objects.using(database_alias).filter(
         living_organism=organism, scope="LIVING_ORGANISM", kind="BOARD_OFFICE", active=True,
     ).prefetch_related("provisions").order_by("code", "pk")
@@ -589,7 +629,7 @@ def board_office_vacancies(organism_uuid, database_alias="default"):
         result.append(BoardOfficeVacancy(row.role_uuid, row.code,
             None if basis is None else basis.provision_reference,
             None if basis is None else basis.provision_version,
-            _has_unended_assignment(database_alias, organism, row.code)))
+            _has_unended_assignment(database_alias, organism, row.code, at=at)))
     return tuple(result)
 
 
@@ -695,7 +735,7 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
         try:
             organism = LivingOrganism.objects.using(self._alias).get(organism_id=command.living_organism_uuid)
         except LivingOrganism.DoesNotExist as exc:
-            raise S015RoleDefinitionNotFound(DEFINITION_NOT_FOUND_MESSAGE, cause='living organism not found') from exc
+            raise S015RoleDefinitionNotFound(ORGANISM_NOT_FOUND_MESSAGE, cause='living organism not found') from exc
         _read_actor_active_membership(database_alias=self._alias, actor_identity_pk=actor.pk,
             living_organism_pk=organism.pk, unavailable=self._authority_unavailable)
         _lock_registered_organism(database_alias=self._alias, organism_id=command.living_organism_uuid)
@@ -717,13 +757,13 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
         if action == "AMEND" and prior.code != content.code:
             raise S015RoleDefinitionMalformed("AMEND cannot change a code family")
         if content.code == "COORDINATOR":
-            raise S015RoleDefinitionRefused('SR_COORDINATOR_DEFINITION_RESERVED', 'You cannot change or retire the Coordinator office here. This office is established when the Living Organism is founded. No changes have been made to the office.')
+            raise S015RoleDefinitionRefused('SR_COORDINATOR_DEFINITION_RESERVED', DEFINITION_REFUSAL_MESSAGES['SR_COORDINATOR_DEFINITION_RESERVED'][0])
         if content.code.startswith("INTEVIA_"):
-            raise S015RoleDefinitionRefused('SR_ROOT_OFFICE_RESERVED', "This is a reserved INTEVIA root office. It is not defined, changed, retired or filled through this route; its route is the platform's root founding. Nothing has changed.")
+            raise S015RoleDefinitionRefused('SR_ROOT_OFFICE_RESERVED', DEFINITION_REFUSAL_MESSAGES['SR_ROOT_OFFICE_RESERVED'][0])
         if action == "AMEND" and prior.kind != content.kind:
-            raise S015RoleDefinitionRefused("SR_DEFINITION_KIND_FIXED", 'You cannot change this office from a board office to a custom role, or from a custom role to a board office. An office keeps the kind it was recorded with, and its history is kept. No changes have been made to the office.')
+            raise S015RoleDefinitionRefused('SR_DEFINITION_KIND_FIXED', DEFINITION_REFUSAL_MESSAGES['SR_DEFINITION_KIND_FIXED'][0])
         if action == "RETIRE" and content.kind == "BOARD_OFFICE":
-            raise S015RoleDefinitionRefused("SR_BOARD_OFFICE_PERMANENT", "Board offices cannot be retired. A board office is part of this organisation's governing structure, and its history is kept. If no one holds it, it simply remains vacant. No changes have been made to the office.")
+            raise S015RoleDefinitionRefused('SR_BOARD_OFFICE_PERMANENT', DEFINITION_REFUSAL_MESSAGES['SR_BOARD_OFFICE_PERMANENT'][0])
         latest = OrganismRoleDefinition.objects.using(self._alias).filter(living_organism=organism, code=content.code).order_by("-definition_version").first()
         version = prior.definition_version if action == "RETIRE" else (0 if latest is None else latest.definition_version) + 1
         content_values = asdict(content) if action == "RETIRE" else _content_dict(content)
@@ -739,14 +779,14 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
             target_fingerprint=authority_target_fingerprint(target), received_at=bound.received_at,
             effective_at=command.effective_at, target=target, living_organism_id=organism.organism_id)
         if latest is not None and latest.retired_by_decision_reference is not None:
-            raise S015RoleDefinitionRefused("SR_DEFINITION_RETIRED", 'This office has been retired, so it cannot be changed, retired again, or re-established here. No changes have been made. Its definition and history remain on record.')
+            raise S015RoleDefinitionRefused('SR_DEFINITION_RETIRED', DEFINITION_REFUSAL_MESSAGES['SR_DEFINITION_RETIRED'][0])
         if action == "DEFINE" and latest is not None:
-            raise S015RoleDefinitionRefused('SR_DEFINITION_EXISTS', 'This office could not be created: this organisation already has an office with this identity. No office has been created or changed. To change how the existing office is defined, amend it.')
+            raise S015RoleDefinitionRefused('SR_DEFINITION_EXISTS', DEFINITION_REFUSAL_MESSAGES['SR_DEFINITION_EXISTS'][0])
         if prior is not None and (not prior.active or latest is None or latest.pk != prior.pk):
-            raise S015RoleDefinitionRefused('SR_SUPERSEDED_DEFINITION', "This office's definition has been updated since the version you were working from. No changes have been made. Open the current definition and make the change there.")
+            raise S015RoleDefinitionRefused('SR_SUPERSEDED_DEFINITION', DEFINITION_REFUSAL_MESSAGES['SR_SUPERSEDED_DEFINITION'][0])
         if action == "RETIRE":
             if _has_unended_assignment(self._alias, organism, prior.code):
-                raise S015RoleDefinitionRefused('SR_RETIREMENT_HOLDER_REMAINS', "This office still has a holder. End or reassign the appointment through its own route first; retiring the definition does not end anyone's office. Nothing has changed.")
+                raise S015RoleDefinitionRefused('SR_RETIREMENT_HOLDER_REMAINS', DEFINITION_REFUSAL_MESSAGES['SR_RETIREMENT_HOLDER_REMAINS'][0])
             OrganismRoleDefinition.objects.using(self._alias).filter(pk=prior.pk, active=True).update(
                 active=False, retired_by_decision_reference=decision.authority_decision_reference,
                 retired_effective_at=command.effective_at, retired_received_at=bound.received_at,
@@ -771,4 +811,5 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
 __all__ = ["DefinitionContent", "DefinitionProvision", "RecordRoleDefinitionCommand", "RoleDefinitionResult",
            "OrganismRoleDefinitionService", "S015RoleDefinitionError", "S015RoleDefinitionMalformed",
            "S015RoleDefinitionNotFound", "S015RoleDefinitionAuthorityUnavailable", "S015RoleDefinitionRefused",
-           "S015RoleDefinitionGuardRefused", "_write_definition_version"]
+           "S015RoleDefinitionGuardRefused", "_write_definition_version",
+           "board_office_vacancies", "BoardOfficeVacancy", "definition_support_details"]

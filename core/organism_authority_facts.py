@@ -636,7 +636,7 @@ def election_target_form(request) -> str | None:
     return None
 
 
-def role_event_form(request) -> str:
+def role_event_form(request) -> str | None:
     """Select the Coordinator, definition-sourced proposal, or transition form.
 
     Unknown nomination source values refuse selection; historical absent keys
@@ -648,8 +648,8 @@ def role_event_form(request) -> str:
     if target.get("event_action") != "PROPOSE":
         return "TRANSITION"
     source = target.get("nomination_rule_source", "CONFIGURATION")
-    if source not in {"CONFIGURATION", "DEFINITION"}:
-        raise FactsSelectionError("nomination_rule_source is invalid")
+    if type(source) is not str or source not in {"CONFIGURATION", "DEFINITION"}:
+        return None
     return "PROPOSE_DEFINITION" if source == "DEFINITION" else "PROPOSE"
 
 
@@ -877,18 +877,50 @@ def validate_authority_facts(request, facts: Mapping[str, object], *, refusal_co
             raise S015AuthorityFactsUndeclared(f"{label} qualified facts with {key}={facts[key]!r} require {sorted(needed)!r}")
     if "y" in facts and (type(facts.get("g")) is not str or facts["g"] == REFERENCE_SENTINEL):
         raise S015AuthorityFactsUndeclared(f"{label} y requires a definition reference g")
-    if select_form(vocabulary, request) == "PROPOSE_DEFINITION":
-        target = request.target
-        if target.get("participation_required") is True and "e" not in facts:
-            raise S015AuthorityFactsUndeclared(f"{label} participation requires e")
-        if target.get("kind") == "CUSTOM" and facts.get("z") != "CUSTOM_ROLES":
-            raise S015AuthorityFactsUndeclared(f"{label} CUSTOM requires z")
-    if vocabulary.selector is Selector.DEFINITION_EVENT_ACTION and select_form(vocabulary, request) in {"DEFINE", "AMEND"}:
-        if request.target.get("kind") == "CUSTOM" and facts.get("z") != "CUSTOM_ROLES":
-            raise S015AuthorityFactsUndeclared(f"{label} CUSTOM definition requires z")
+    form = select_form(vocabulary, request)
+    if form == "PROPOSE_DEFINITION":
+        for key, spec in entry.keys.items():
+            if spec.kind is FactKind.REF and spec.literals is None and facts.get(key) == REFERENCE_SENTINEL:
+                raise S015AuthorityFactsUndeclared(f"{label} {key} needs a real reference")
+        # Some pure callers supply metadata; the production provider separately
+        # validates these relations against the resolved row, never caller claims.
+        validate_definition_nomination_facts(facts, request.target, partial=True)
+    if vocabulary.selector is Selector.DEFINITION_EVENT_ACTION:
+        for key in ("c", "o") + (() if form == "DEFINE" else ("g",)):
+            if facts.get(key) == REFERENCE_SENTINEL:
+                raise S015AuthorityFactsUndeclared(f"{label} {key} needs a real reference")
+        if form in {"DEFINE", "AMEND"}:
+            target = request.target
+            if (facts.get("z") == "CUSTOM_ROLES") != (target.get("kind") == "CUSTOM"):
+                raise S015AuthorityFactsUndeclared(f"{label} z must describe CUSTOM exactly")
+            if "i" in facts and not (target.get("nomination_basis") == "SILENT" and target.get("nomination_policy") in {"A", "B"} and target.get("kind") != "CUSTOM"):
+                raise S015AuthorityFactsUndeclared(f"{label} i is only for entitled SILENT A/B")
     if entry.propose_role and facts.get("k") in POLICY_LITERALS:
         if propose_role_reference(request) is None:
             raise S015AuthorityFactsUndeclared(f"{label} qualified facts need the target's role_definition_uuid")
+
+
+def validate_definition_nomination_facts(facts, definition, *, partial=False):
+    """Check e/z/i against resolved definition attributes without changing the target.
+
+    The provider passes a complete mapping from the database row. The vocabulary
+    validator checks metadata when present in a pure request; absence is not a
+    statement that a real definition lacks the relationship. This adds no V2 key.
+    """
+    if not partial or "participation_required" in definition:
+        required = definition.get("participation_required") is True
+        if ("e" in facts) != required or (required and facts["e"] == REFERENCE_SENTINEL):
+            raise S015AuthorityFactsUndeclared("participation evidence e must match the definition")
+    if not partial or "kind" in definition:
+        if (facts.get("z") == "CUSTOM_ROLES") != (definition.get("kind") == "CUSTOM"):
+            raise S015AuthorityFactsUndeclared("CUSTOM evidence z must match the definition")
+    if not partial or "nomination_basis" in definition:
+        entitled = definition.get("nomination_basis") == "SILENT" and facts.get("k") in {"A", "B"}
+        if entitled:
+            if type(facts.get("i")) is not str or facts["i"] in {"", REFERENCE_SENTINEL}:
+                raise S015AuthorityFactsUndeclared("SILENT A/B needs nomination entitlement i")
+        elif facts.get("i") is not None:
+            raise S015AuthorityFactsUndeclared("nomination entitlement i is over-declared")
 
 
 __all__ = [

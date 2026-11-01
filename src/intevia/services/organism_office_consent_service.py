@@ -1,4 +1,4 @@
-"""PKT-B R2 nominee consent for Coordinator office nominations."""
+"""PKT-B R2 / SR C4 nominee consent for LO-scoped office nominations."""
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +19,7 @@ from core.models import (
     OrganismMembership,
 )
 from core.organism_contract import OrganismAction
-from src.intevia.services.organism_authority import S015Authority
+from src.intevia.services.organism_authority import S015Authority, S015AuthorityDenied
 from src.intevia.services.organism_command_support import (
     ReplayViewer,
     S015CommandAtomicityRequired,
@@ -55,7 +55,7 @@ _ACTIONS = frozenset({"CONSENT", "DECLINE", "WITHDRAW"})
 
 class S015OfficeConsentCommandError(Exception):
     """Base class for this module's office-consent command errors."""
-    pass
+    support_class = "C"
 
 
 class S015OfficeConsentAuthorityUnavailable(S015OfficeConsentCommandError):
@@ -81,6 +81,39 @@ class S015OfficeConsentNotFound(S015OfficeConsentCommandError):
     event with the command's proposal_event_uuid.
     """
     pass
+
+
+OFFICE_CONSENT_MESSAGES = {
+    'SUPERSEDED': "Your consent to this office nomination could not be recorded. The office's definition was updated after you were nominated. Nothing has changed: your nomination remains on record as it was. You can still decline it. To consent, you need a new nomination under the current definition.",
+    'RETIRED': 'Your consent to this office nomination could not be recorded. The office was retired after you were nominated. Nothing has changed: your nomination and its history remain on record. You can still decline it. No one can now be appointed to this office.',
+    'C_RESERVED_ROOT_OFFICE': '{action} was refused. This is a reserved INTEVIA office, so its consent history cannot be changed through this organisation-office route. No consent, decline or withdrawal has been recorded by this request; your request and this refusal are on record. This office is managed by INTEVIA itself; there is nothing for you to do.',
+    'C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN': "{action} was refused. The nomination's existing consent history does not permit that action. No consent, decline or withdrawal has been recorded by this request; your request and this refusal are on record. Open the nomination and check its consent history. For someone else's nomination, a first response can be consent or decline, and withdrawal requires prior consent. A self-nominee can withdraw without a separate consent.",
+}
+
+
+class S015OfficeConsentSuperseded(S015OfficeConsentCommandError):
+    """Transaction class C (the decision rolls back; prior intake remains). SUPPORT class A."""
+    code = "SR_SUPERSEDED_DEFINITION"
+    support_class = "A"
+
+    def __init__(self, *, retired: bool):
+        self.retired = retired
+        super().__init__(OFFICE_CONSENT_MESSAGES["RETIRED" if retired else "SUPERSEDED"])
+
+
+def office_consent_support_details(error, action="Responding to this office nomination"):
+    """Keep consent-specific text, then share the disclosed-rule and IL-8 fallbacks."""
+    from src.intevia.services.organism_role_service import office_action_support_details
+    if isinstance(error, S015AuthorityDenied):
+        code = getattr(error.disclosed_refusal_code, "value", None)
+        if error.authority_decision_reference is not None and code in {
+            "C_RESERVED_ROOT_OFFICE", "C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN",
+        }:
+            return ("B" if code == "C_RESERVED_ROOT_OFFICE" else "A"), OFFICE_CONSENT_MESSAGES[code].format(action=action)
+    category = getattr(error, "support_class", "C")
+    if not isinstance(error, S015AuthorityDenied) and category != "C":
+        return category, str(error)
+    return office_action_support_details(error, action)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +200,21 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
     _authority_unavailable = S015OfficeConsentAuthorityUnavailable
 
     def record_office_consent(
+        self, command: RecordOfficeConsentCommand,
+    ) -> OfficeConsentCommandResult:
+        """Run the governed consent route and attach SUPPORT details to every error."""
+        try:
+            return self._record_office_consent(command)
+        except Exception as exc:
+            try:
+                from src.intevia.services.organism_role_service import OFFICE_ACTION_NAMES
+                exc.support_class, exc.support_message = office_consent_support_details(
+                    exc, OFFICE_ACTION_NAMES.get(command.action, "Responding to this office nomination"))
+            except Exception:
+                pass
+            raise
+
+    def _record_office_consent(
         self, command: RecordOfficeConsentCommand,
     ) -> OfficeConsentCommandResult:
         """Admit an office-consent request, then execute it.
@@ -371,10 +419,14 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
 
         nomination = (
             ContextualRoleAssignment.objects.using(self._alias)
+            # No of=: also lock the joined definition so AMEND serialises with the stale check.
             .select_for_update()
-            .select_related("membership")
+            .select_related("membership", "role_definition")
             .get(pk=nomination.pk)
         )
+        role = nomination.role_definition
+        if command.action == "CONSENT" and role.code != "COORDINATOR" and not role.active:
+            raise S015OfficeConsentSuperseded(retired=role.retired_by_decision_reference is not None)
         proposal = ContextualRoleAssignmentStateEvent.objects.using(self._alias).get(
             pk=proposal.pk,
             assignment=nomination,

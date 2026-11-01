@@ -143,8 +143,8 @@ _DECIDED_EDGES = {
 
 
 class S015AssignmentCommandError(Exception):
-    """Base class for this module's office-command errors."""
-    pass
+    """Base class for this module's office-command errors; SUPPORT C by default."""
+    support_class = "C"
 
 
 class S015AssignmentAuthorityUnavailable(S015AssignmentCommandError):
@@ -837,6 +837,87 @@ def assignment_in_effect(
     return assignment.state == "ACTIVE"
 
 
+OFFICE_ACTION_MESSAGES = {
+    'C_NOMINATION_ROUTE_NOT_IMPLEMENTED': ('Nominating someone for this office is not available. The nomination route recorded for this office is not implemented in this release. No nomination has been made. You cannot complete this nomination in this release; repeating it will not help. Coordinators cannot nominate in place of the recorded route.', 'B'),
+    'C_APPOINTING_ROUTE_NOT_IMPLEMENTED': ('Appointing someone to this office is not available. The body named in the office definition has no implemented appointment route, and no alternative route is recorded. No appointment has been made. You cannot complete this appointment through the named body in this release; repeating it will not help. Coordinators cannot appoint in its place without a recorded alternative route.', 'B'),
+    'E_NOMINEE_NOT_ELIGIBLE': ('Nominating or appointing this person to this office was refused. The office requires current GOVERNANCE participation, and the person has no qualifying participation at the time of this action. No nomination or appointment has been made by this request. Choose an eligible nominee, or wait until this person has qualifying participation before trying again.', 'B'),
+    'E_CUSTOM_ROLE_NOT_ENTITLED': ('Nominating someone for this custom role was refused. Custom roles need an active subscription or complimentary access, and this organisation did not have it when the request was made. No nomination has been made; existing nominations and appointments are unchanged. Once the organisation has that access, make a new nomination.', 'A'),
+    'C_RESERVED_ROOT_OFFICE': ('Nominating, appointing, ending or reassigning this reserved INTEVIA office was refused. Reserved INTEVIA offices cannot be managed through this organisation-office route. No office has been changed. This office is managed by INTEVIA itself; there is nothing for you to do.', 'B'),
+}
+
+OFFICE_REFUSAL_RULE_NAMES = {
+    'C_GATEWAY_NOT_OPEN': 'the organisation has not opened the required application gateway',
+    'C_REFERENCE_UNREPRESENTABLE': 'the required authority evidence cannot be represented within the supported record format',
+    'E_NOMINATION_POLICY_NOT_ENTITLED': 'the organisation lacks the entitlement needed for this nomination policy',
+    'C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED': 'the requested membership transition is not implemented',
+    'C_BOARD_OFFICE_PERMANENT': 'a board office is permanent and cannot be retired',
+    'C_COORDINATOR_DEFINITION_RESERVED': 'the Coordinator office is established at founding and cannot be defined here',
+    'C_DEFINITION_KIND_FIXED': 'an office definition cannot change between a board office and a custom role',
+    'E_NOT_APPLICANT': 'only the applicant can take this action',
+    'E_NOT_REGISTERED': 'the actor has no qualifying registration at the required time',
+    'E_NOT_ASSIGNEE': 'only the current assignee can take this application action',
+    'UNRECOGNISED_ROUTE': 'the requested authority route is not recognised',
+    'DENIED': 'you do not have authority for this action, and no further reason can be given',
+    'UNRECOGNISED_ACTION': 'the requested office action or its supplied references are not recognised',
+    'E_NOT_EFFECTIVE_COORDINATOR': 'this action requires an effective Coordinator of this organisation',
+    'C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED': 'there is no eligible Coordinator and the required recovery route is not implemented',
+    'C_ROUTE_IS_CQ': 'this organisation uses Collective Questioning for this action',
+    'C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN': 'the required consent is absent, withdrawn or does not permit this action',
+    'C_LO_NO_CAPACITY': 'this organisation lacks the required recorded capacity',
+    'C_LO_PAUSED': 'this organisation is paused',
+    'C_LO_CLOSED': 'this organisation is closed',
+    'E_IDENTITY_INACTIVE': 'the acting identity is not active',
+    'C_CONFIGURATION_NOT_ESTABLISHED': 'the organisation has no established governance settings',
+    'SBG_LO_NOT_ACTIVE': 'this organisation is not active',
+    'SBG_SEAT_ROUTE_UNAVAILABLE': 'the required GOVERNANCE seat route is unavailable',
+}
+
+OFFICE_ACTION_NAMES = {
+    'PROPOSE': 'Nominating someone for this office',
+    'ASSIGN': 'Appointing someone to this office',
+    'END': 'Ending this office appointment',
+    'REASSIGN': 'Ending this appointment for reassignment',
+    'CONSENT': 'Giving consent to this office nomination',
+    'DECLINE': 'Declining this office nomination',
+    'WITHDRAW': 'Withdrawing consent to this office nomination',
+}
+
+OFFICE_FALLBACK_MESSAGES = {
+    'GOVERNED': '{action} was refused under this rule: {rule}. Nothing has changed; your request and this refusal are on record (reference {decision_reference}). Check that rule before making a new request; repeating the same request will get the same answer.',
+    'NOT_AVAILABLE': '{action} is not yet available in this release. Nothing has changed; your request is on record. You cannot complete it in this release, so there is no need to repeat it.',
+}
+
+
+OFFICE_KNOWN_ERROR_MESSAGES = {
+    'REPLAY_MISMATCH': ('{action} was refused. This request uses the same reference as an earlier request but with different details, so it cannot be treated as a repeat of it. Nothing has changed; the earlier request stands as it was. To make a different change, start a new request.', 'A'),
+    'NOMINATION_NOT_FOUND': ("{action} was refused. The nomination could not be found in this organisation. Nothing has changed. Open the nomination from this organisation's current list and try again.", 'A'),
+}
+
+
+def office_action_support_details(error, action="Changing this office"):
+    """Render only disclosed rules and known action names; never infer private causes."""
+    support_pending = "INTEVIA could not confirm the outcome of this action. Check its current record before trying again. INTEVIA Support needs the error details to investigate."
+    from src.intevia.services.organism_office_consent_service import S015OfficeConsentNotFound
+    if isinstance(error, S015CommandReplayMismatch):
+        text, category = OFFICE_KNOWN_ERROR_MESSAGES["REPLAY_MISMATCH"]
+        return category, text.format(action=action)
+    if isinstance(error, S015OfficeConsentNotFound):
+        text, category = OFFICE_KNOWN_ERROR_MESSAGES["NOMINATION_NOT_FOUND"]
+        return category, text.format(action=action)
+    if isinstance(error, S015AuthorityDenied):
+        code = getattr(error.disclosed_refusal_code, "value", None)
+        if error.authority_decision_reference is not None:
+            if code in OFFICE_ACTION_MESSAGES:
+                text, category = OFFICE_ACTION_MESSAGES[code]
+                return category, text
+            rule = OFFICE_REFUSAL_RULE_NAMES.get(code, "a rule for which this release has no plain-English explanation; the specific cause cannot be stated here")
+            return "B", OFFICE_FALLBACK_MESSAGES["GOVERNED"].format(
+                action=action, rule=rule, decision_reference=error.authority_decision_reference)
+    if isinstance(error, S015OperationNotYetImplemented):
+        return "B", OFFICE_FALLBACK_MESSAGES["NOT_AVAILABLE"].format(action=action)
+    return "C", support_pending
+
+
 class OrganismRoleService(_OrganismCommandService):
     """The office command service: propose_assignment and transition_assignment, and two reads.
 
@@ -918,6 +999,17 @@ class OrganismRoleService(_OrganismCommandService):
         )
 
     def propose_assignment(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
+        """Execute once and attach the SUPPORT classification without changing the outcome."""
+        try:
+            return self._propose_assignment_with_intake(command)
+        except Exception as exc:
+            try:
+                exc.support_class, exc.support_message = office_action_support_details(exc, "Nominating someone for this office")
+            except Exception:
+                pass
+            raise
+
+    def _propose_assignment_with_intake(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
         """Propose an office assignment: admits the request through the shared
         intake, then runs _execute_propose with the bound request within
         authority_atomic on this service's database alias and returns its
@@ -954,6 +1046,17 @@ class OrganismRoleService(_OrganismCommandService):
             return self._execute_propose(command, bound=bound)
 
     def transition_assignment(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
+        """Execute once and attach the SUPPORT classification without changing the outcome."""
+        try:
+            return self._transition_assignment_with_intake(command)
+        except Exception as exc:
+            try:
+                exc.support_class, exc.support_message = office_action_support_details(exc, OFFICE_ACTION_NAMES.get(command.action, "Changing this office"))
+            except Exception:
+                pass
+            raise
+
+    def _transition_assignment_with_intake(self, command: TransitionAssignmentCommand) -> AssignmentCommandResult:
         """Appoint or end an office assignment: admits the request through the
         shared intake, then runs _execute_transition with the bound request
         within authority_atomic on this service's database alias and returns
