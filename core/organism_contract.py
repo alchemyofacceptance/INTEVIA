@@ -1,4 +1,6 @@
-"""Canonical contracts for the bounded S015 organism substrate."""
+"""Canonical contracts for the bounded S015 organism substrate.
+
+S015 names the organisation slice. These contracts describe actions and values shared by its services; naming an action, including recording an office definition, neither activates it nor grants permission to perform it."""
 
 from dataclasses import dataclass
 from enum import Enum

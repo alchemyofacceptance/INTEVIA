@@ -1,8 +1,8 @@
 # INTEVIA — Governance Navigation Index
 
 Status: live root-level inspection aid  
-Qualified repository ref: `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`  
-Last verified: 2026-09-15  
+Qualified repository ref: `f829d1b2b714cb282d96a273fbd0887eac9c3522`  
+Last verified: 2026-11-01 (documentation and path review)  
 Authority effect: none
 
 ## How to read this index
@@ -16,6 +16,10 @@ For each object, distinguish:
 - verification method and date;
 - exact authority source, if any; and
 - limitations on what the index can establish.
+
+For the current position and its limits, see [the README](README.md#current-position).
+
+The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
 ## Primary routes
 
@@ -43,19 +47,21 @@ For each object, distinguish:
 - [`docs/governance/runtime-continuity-governing-law.md`](docs/governance/runtime-continuity-governing-law.md)
 - [`docs/governance/Architectural-Re-Inhabitation.md`](docs/governance/Architectural-Re-Inhabitation.md)
 - [`docs/governance/proposals/GP-07-co-evolution.md`](docs/governance/proposals/GP-07-co-evolution.md) — a proposal; its own text states it is not canonical until ratified
-- [`docs/constitution/`](docs/constitution/) — including the Interoperability Principle and the CARE ontology, relocated here at this ref from `core/migrations/governance/` by their own stated status
+- [`docs/constitution/`](docs/constitution/) — including the Interoperability Principle and the CARE ontology, relocated here in September from `core/migrations/governance/` by their own stated status
 
 The presence of a file in these routes does not itself prove ratification or current applicability. Read the object's own status and exact Human-authority source.
 
 ## Lineage held outside the repository
 
-The Whurthy excavation — the evidence trail, sealed evidence packages, timestamp captures and lineage synthesis for the predecessor system that inspired INTEVIA's Events domain — is held on the programme's Drive (`05_WHURTHY_ARCHIVE` and the `Whurthy` working folder) and is not in this repository. Whurthy inspired the Events domain; it did not form it. INTEVIA's Events are their own, more evolved set of requirements and diverge from Whurthy in significant ways. Named placeholders for that lineage were removed from the repository at this ref; whether a repository lineage document is written from the Drive material is a future Human decision.
+The Whurthy excavation — the evidence trail, sealed evidence packages, timestamp captures and lineage synthesis for the predecessor system that inspired INTEVIA's Events domain — is held on the programme's Drive (`05_WHURTHY_ARCHIVE` and the `Whurthy` working folder) and is not in this repository. Whurthy inspired the Events domain; it did not form it. INTEVIA's Events are their own, more evolved set of requirements and diverge from Whurthy in significant ways. Named placeholders for that lineage were removed from the repository in the September reconciliation; whether a repository lineage document is written from the Drive material is a future Human decision.
+
+Current packet lineage: [Governed Organisations, Membership and Offices](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Its §8 explains the six test admission rules (TAR), archived old suite and GitHub evidence; the active route now uses database copies. See [verification](docs/verification/README.md).
 
 ## Index maintenance rules
 
 - Use Carmian Owen's current legal name in live navigation.
 - Preserve superseded names inside sealed historical evidence unless corrected through an authorised wrapper or erratum.
-- Human ratification or acceptance is signalled only by the Human Governor's explicit word — "Accepted", or historically "This is the way of the HAT" — and by nothing else. AI agreement never constitutes a decision.
+- Human authority must be evidenced by the applicable ruling. Under the 19 October ruling, the Human Governor committing or authorising commitment of a Datacron accepts that record; it does not accept unfinished product work. See [the PKT-B acceptance boundary](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Earlier acceptance markers remain historical evidence. AI agreement never constitutes a decision.
 - A superseded document moves to `docs/superseded/` and is not deleted; lineage is retained.
 - Do not present self-verification as independent verification.
 - Do not infer current execution from test definitions or historical results.

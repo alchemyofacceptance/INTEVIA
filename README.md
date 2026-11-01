@@ -15,17 +15,11 @@ Two things are held apart deliberately:
 
 **INTEVIA is being developed for organisations, including businesses, not-for-profit and charitable bodies.** That states intended breadth, not existing customers, validated demand, or suitability for every use. Three relationships stay distinct: the **adopting organisation** operates INTEVIA and is accountable for its own conduct; **participating members** belong, participate, exercise authority and may disagree; the **wider community** may benefit from the organisation's activities without participating in its governance.
 
-### Intended capability, and what operates today
+### Current position
 
-The paragraphs above describe **what INTEVIA is being built to do**. None of it operates as a product today.
+**Current position — 1 November 2026, main `f829d1b2b714cb282d96a273fbd0887eac9c3522`.** INTEVIA is pre-alpha software being built toward v1.0. It now has working foundations for recording membership, applications, founding, Birthing, governance formation and office actions. Birthing is the explicit act that completes an organisation's formation under its recorded conditions. These are behind-the-scenes capabilities, not a complete website experience.
 
-**INTEVIA is pre-alpha development toward v1.0 and is not production software.** What exists now is the
-foundation beneath that purpose: database-level schema, constraints and guardians for organisations,
-their Circles and memberships, an append-only recorded chain, the INTEVIA Lineage-Chain contract on top
-of it, and a re-runnable verification route with retained evidence for those foundations. No Organism
-is populated, no organisation is using it, and no capability is accepted or released.
-
-Everything below states which of those two it belongs to.
+The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what was built and how it was checked. All office user access waits for further database safeguards; custom offices also wait for entitlement-lifecycle assurance. See [the roadmap](ROADMAP.md#agreed-next-work-and-longer-term-direction) for the agreed next steps. This does not authorise public deployment or claim a completed product.
 
 ## Start here
 
@@ -33,7 +27,7 @@ Everything below states which of those two it belongs to.
 |---|---|
 | **new to INTEVIA** | [A guide for funders and assessors](docs/ASSESSOR_GUIDE.md) — what it is for, what exists today, what is still design work, what comes next |
 | **checking the engineering** | [docs/verification](docs/verification/README.md) — a re-runnable verification route whose result is decided by a program separate from the one producing the evidence, with the evidence retained |
-| **tracing foundations to commits** | [the public S015 crosswalk](docs/S015_PUBLIC_CROSSWALK.md) — PKT-A-2 and PKT-A-3 against their commits, with the limitations the lineage record admits |
+| **tracing foundations to commits** | [the public S015 crosswalk](docs/S015_PUBLIC_CROSSWALK.md) — PKT-A foundations and current PKT-B paths, with their evidence and limits |
 | **unfamiliar with the terminology** | [the plain-language glossary](docs/public/GLOSSARY.md) — a navigation aid, not an authority source |
 | **assessing evidence states** | [the Current Implementation Crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) — navigation, not authority |
 
@@ -63,15 +57,15 @@ responsibility; it makes Human responsibility visible.**
 
 This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0.
 
-Its current centre is the **Living Organism substrate** — organism, circle and membership anchors with an append-only recorded chain and bitemporal fold — and the **INTEVIA Lineage-Chain (ILC)** contract laid onto that chain, both landed since September 2026, together with the verification route that checks them.
+Its current centre is the organisation work through offices C5 at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`. PKT-B adds recorded actions to the earlier database foundations and history chain. The [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains both the capabilities and the remaining restrictions.
 
 It also contains implementation and test-definition paths from earlier work: Identity, Events, Services, Library, CARE, contribution lineage, profile effect, and a bounded Education Course-definition slice.
 
 ## What this repository currently lets you inspect
 
-You can examine source, migrations, and test-definition paths for the bounded foundations listed below. You cannot enrol learners, deliver classes, run production services, populate an Organism, or treat any capability as accepted, released, or operational.
+You can inspect the source, database changes and tests for the foundations below. Recorded founding and registration now have working code. That does not provide course delivery, a complete website, or authority to use the software for a real organisation.
 
-Every landing is ruled, designed and verified under the Human Governor's authority. The programme distinguishes four states — **designated** (the controlling design object is named), **implemented** (built and verified against it), **landed** (on `main`), and **accepted** (a separate, direct Human act) — and each Slice or packet Datacron records which of them its work has reached. Repository presence is the first three at most; it is never the fourth.
+Each unit is designed, reviewed and verified under the Human Governor's authority. **Designated** names the controlling design; **implemented** means built; **landed** means included on `main`; **accepted** records the applicable Human decision. A file being present proves neither verification nor acceptance. Under the standing 19 October ruling, the Human Governor committing or authorising commitment of a Datacron accepts that record. It does not accept unfinished product work. See the [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md).
 
 That is materially beyond the repository's earlier runtime-seed stage. It is not evidence that every defined test currently passes, that every historical result has been independently reproduced, or that INTEVIA is deployed, release-ready, externally validated, or complete.
 
@@ -91,7 +85,7 @@ For the evidence states behind any capability statement, use the [Current Implem
 - **Developers:** begin with this README, then the [architecture entry point](architecture/README.md) and [implementation crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md).
 - **Funders and assessors:** begin with [the assessor guide](docs/ASSESSOR_GUIDE.md), then the repository posture above, then inspect the crosswalk's separate fields for repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and non-claims.
 - **Governance readers:** use the [root governance index](GOVERNANCE_INDEX.md), the [governance navigation index](docs/governance/governance-index.md), and the exact constitutional or Human-issued sources they identify.
-- **AI assessors:** do not compress path presence, test definitions, recorded execution, independent reproduction, Human acceptance, unresolved deferral, and release readiness into one maturity label. The two most recent Datacrons carry their own status blocks and non-claims; read those before the code.
+- **AI assessors:** do not compress path presence, test definitions, recorded execution, independent reproduction, Human acceptance, unresolved deferral, and release readiness into one maturity label. The [PKT-B Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and the earlier packet records carry their own status and limits; read those before the code.
 
 ## The Human-AI Team (HAT)
 
@@ -117,13 +111,13 @@ Repository evidence must be read by class:
 - Human acceptance or closure requires an exact Human-issued source; and
 - documentation creates no implementation, validation, acceptance, promotion, release, or publication authority.
 
-The static inventory at the qualified documentation-review baseline, by the method stated in the crosswalk, found **97 tracked paths matched by `git ls-files 'test_*.py' '**/test_*.py'`** — 94 files whose own name begins `test_`, plus three matched through the directory `intevia/test_postgresql_backend/` — and **805 textual Python test-definition matches** using the pattern `^\s*(async\s+)?def\s+test_`. These are different measures from any recorded execution count; numerical equality between a static inventory and an executed selection does not make them the same evidence object.
+At the current base, the [PKT-B census](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#2-identity) counts repository text and distinguishes the archive from the live tests. It is a measure of volume, not protection.
 
-**Recorded execution is a separate class again**, and for the S015 foundations it now exists: see [docs/verification](docs/verification/README.md) for what was executed, on which tree, in which environment, and what the decision was.
+**GitHub continuous integration (CI) is the evidence of record.** The C5 run recorded 126 product tests and 19 deliberate-defect checks: 145 checks under the six test admission rules (TAR). The old suite of about 1,800 tests was archived on 29 October and is not run. The route now builds one database template and uses disposable copies, called clone mode. Its checking sequence took 3 min 32 s; the whole job took 4 min 10 s. A smaller suite is not proven to give equivalent coverage. See [verification](docs/verification/README.md) for the route and evidence.
 
 ## Current governed implementation families
 
-At commit `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`, repository paths are present for:
+At main `f829d1b2b714cb282d96a273fbd0887eac9c3522`, repository paths are present for:
 
 - governed contribution and knowledge-lineage foundations;
 - Events, registration, attendance, and personal-event surfaces;
@@ -133,15 +127,17 @@ At commit `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`, repository paths are prese
 - Event-resource linking and readback;
 - governed service-submission profile effect;
 - the bounded S014 Education Course-definition foundation;
-- **the S015 Living Organism substrate** — migrations `0019` to `0021`: organism, circle and membership anchors; twelve append-only governed event chains with a canonical byte form, fingerprints and a bitemporal fold; 163 database guardians — designated, implemented and landed; not accepted; and
-- **the S015 INTEVIA Lineage-Chain (ILC) contract** — migration `0022`: actor states, parts and commitments, an identity-resolution table with an append-only severance ledger — designated, implemented and landed; not accepted; carrying named limitations into the next packet, recorded in its Datacron.
+- **the S015 Living Organism substrate** — migrations `0019` to `0021`: organism, circle and membership anchors; twelve append-only governed event chains with a canonical byte form, fingerprints and a bitemporal fold; 163 database guardians at that original landing. The PKT-A-2 record retains its issue-time status; and
+- **the S015 INTEVIA Lineage-Chain (ILC) contract** — migration `0022`: actor states, parts and commitments, an identity-resolution table with an append-only severance ledger — with its September status and carried limitations retained in its Datacron.
 
-Since that commit, also landed on `main`:
+Later foundation work also present on `main`:
 
 - **migrations `0023` and `0024`** — the canonical form moved by forward migration, and the L1 and parts preimages built as compact canonical text;
-- **the S015 verification route, its authoritative qualification gate and consumer contract** — designated, implemented and landed; not accepted. Its reports, decision rules and retained evidence are at [docs/verification](docs/verification/README.md).
+- **the S015 verification route, its qualification decision and evidence rules** — subsequently updated for the new suite and database copies. Its reports, decision rules and retained evidence are at [docs/verification](docs/verification/README.md).
 
-These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts or Circles; its Datacron keeps `MAT-S014-01` visibly deferred. S015 does not establish a populated Organism, second-layer commitment verification, an Organism acting as an actor, or a production database role; its Datacrons name each limitation and what is carried forward.
+PKT-B then added organisation membership and application decisions; founding and registration; explicit Birthing and governance formation; recorded request handling; subscription feature access; and office definitions, consent and actions. [The current crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices) maps those claims to code. [The Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) records their limits and the Human decisions.
+
+These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts or Circles; its Datacron keeps `MAT-S014-01` visibly deferred. The earlier S015 packet records retain their September limitations. They are not a current status list for PKT-B. The current Datacron names remaining office safeguards, custom-office restrictions and other follow-up work; no release or operational use is established.
 
 ## HPCC, Organisms, and Circles
 
@@ -160,14 +156,14 @@ INTEVIA/
 ├── manage.py                         Django management entry point
 ├── run.py                            bounded local run entry point
 ├── .github/                          CI workflow, qualification gate and its controls
-├── core/                             Django models, migrations, views, commands, and contract tests
+├── core/                             Django models, migrations, views and commands
 ├── verification/                     the S015 verification route and its self-tests
 ├── src/intevia/                      implementation services and command surfaces
-├── tests/                            tracked test-definition paths
+├── tests/                            current live test files
 ├── vectors/                          the S015 canonical-form rule and its fixed test vectors
 ├── architecture/                     conceptual architecture and boundaries
 ├── docs/ASSESSOR_GUIDE.md            guide for funders and assessors
-├── docs/S015_PUBLIC_CROSSWALK.md     PKT-A-2 and PKT-A-3 against their commits
+├── docs/S015_PUBLIC_CROSSWALK.md     PKT-A history and current PKT-B paths
 ├── docs/verification/                decision rules, qualification reports and navigation
 ├── docs/architecture/                current implementation crosswalk
 ├── docs/constitution/                ratified constitutional core and doctrines
@@ -249,7 +245,7 @@ uses isolated test settings and does not reuse an operational key.
 
 ## Development approach
 
-INTEVIA is developed through governed mutation: bounded change that preserves Human authority, evidence, lineage, and inspection discipline. The operating practice within the HAT is IDOP; its current version is named in each Datacron.
+INTEVIA is developed through bounded, reviewed changes that preserve Human authority and an inspectable record. The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
 See [Current Direction and Decision Gates](ROADMAP.md), the [selected change record](CHANGELOG.md), and the [governance index](GOVERNANCE_INDEX.md).
 

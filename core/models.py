@@ -4491,6 +4491,13 @@ class OrganismMembership(_S015ImmutableAnchor):
 
 
 class OrganismRoleDefinition(_S015ImmutableAnchor):
+    """Store one version of what an office is, separately from who holds it.
+    
+    The offices workstream (SR) adds its kind, nomination rules, constitutional
+    citations and attribution. Old rows may have empty new fields; migration 0051
+    requires the new fields for later organisation-scoped inserts. Database guards
+    control amendment, retirement and citations. This model does not grant authority
+    or appoint a person. An office code is its stable internal identifier, not its display label."""
     class Scope(models.TextChoices):
         LIVING_ORGANISM = "LIVING_ORGANISM"
         CIRCLE = "CIRCLE"
@@ -4501,20 +4508,24 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
     # guard sr_00_definition_insert requires them on every LO-scoped row written
     # after it. Written only by _write_definition_version (the one writer).
     class Kind(models.TextChoices):
+        """Distinguish the founding Coordinator, a constitutional board office and a custom role. These labels do not by themselves grant anyone permission."""
         COORDINATOR = "COORDINATOR"
         BOARD_OFFICE = "BOARD_OFFICE"
         CUSTOM = "CUSTOM"
 
     class AppointingAuthority(models.TextChoices):
+        """Name the recorded category of appointing body. Selecting a category records content; it does not establish that a particular appointment is authorised."""
         LO_COORDINATOR_BODY = "LO_COORDINATOR_BODY"
         NAMED_BODY = "NAMED_BODY"
 
     class NominationBasis(models.TextChoices):
+        """Record whether the nomination rule comes from the constitution, its silence, or a custom role. Later authority checks interpret that recorded basis."""
         CONSTITUTION = "CONSTITUTION"
         SILENT = "SILENT"
         CUSTOM = "CUSTOM"
 
     class NominationPolicy(models.TextChoices):
+        """Name nomination routes: A permits member nominations, B requires an effective Coordinator, and C permits self-proposal or an effective Coordinator. UNSUPPORTED records an unimplemented route; it is not permission to use another route."""
         A = "A"
         B = "B"
         C = "C"
@@ -4612,6 +4623,7 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
             )
 
     class Meta:
+        """Declare definition identity and closed-value constraints for the offices fields. Database triggers add the decision, history and citation checks; these declarations alone are not complete authority enforcement."""
         constraints = [
             models.UniqueConstraint(
                 fields=("living_organism", "code", "definition_version"),
@@ -4671,16 +4683,15 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
 
 
 class OrganismRoleDefinitionProvision(_S015AppendOnly):
-    """SR (0051, v0.7 section D.2): one constitutional citation of one
-    definition version - the office basis or a GOVERNANCE relationship.
-
-    Append-only; written by _write_definition_version in the same
-    transaction as its version row; the deferred guard
-    sr_30_definition_citations requires exactly the rows the version's
-    columns call for. recorded_at is database-assigned.
-    """
+    """Record one constitutional citation for one office-definition version.
+    
+    The offices workstream (SR), migration 0051, requires citations to be added
+    with their definition and never edited or removed. The database sets record
+    time and checks the exact required relationship set at transaction completion.
+    A stored citation is not proof that the cited law is currently in force."""
 
     class Relationship(models.TextChoices):
+        """Name what a constitutional citation supports: the office itself, appointing or nomination arrangements, required participation, an alternative route, or a seat carried by the office. These are recorded relationships, not independent grants of authority."""
         OFFICE_BASIS = "OFFICE_BASIS"
         APPOINTING_AUTHORITY = "APPOINTING_AUTHORITY"
         ALTERNATIVE_ROUTE = "ALTERNATIVE_ROUTE"
@@ -4700,6 +4711,7 @@ class OrganismRoleDefinitionProvision(_S015AppendOnly):
     recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     class Meta:
+        """Allow one citation per relationship per definition version and only the listed relationship names. The deferred database guard also checks which relationships the definition requires."""
         constraints = [
             models.UniqueConstraint(
                 fields=("definition", "relationship"),
@@ -4871,6 +4883,11 @@ class GovernedVisibilityGrant(_S015ImmutableAnchor):
 
 
 class IntakeEntry(models.TextChoices):
+    """Name the kinds of request the durable intake can record.
+    
+    The offices workstream adds RECORD_ROLE_DEFINITION for creating, amending or
+    retiring an office definition; chunk C3 activates its command route. Presence
+    in this list alone does not activate a route or grant authority to use it."""
     FOUND_LIVING_ORGANISM = "FOUND_LIVING_ORGANISM", "Found living organism"
     ADVANCE_PHASE = "ADVANCE_PHASE", "Advance phase"
     BIRTHING = "BIRTHING", "Birthing"

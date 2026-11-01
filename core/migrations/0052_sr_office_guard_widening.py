@@ -9,7 +9,8 @@ reverse and populated-reverse refusal) and v1.2. Commission 00_COMMISSION_LD_SR_
 
 What this migration changes, in one atomic transaction, by replacing two function bodies in
 place (``CREATE OR REPLACE FUNCTION``): no trigger is created, dropped or rebound, so the
-non-internal trigger count stays at 0051's 483.
+non-internal trigger count must equal its observed value before this migration.
+The check does not require a hard-coded total of 483.
 
 1. ``s2b_guard_office_attribution`` (0036's function as 0044 installed it; trigger
    ``s2b_10_attribution`` BEFORE INSERT on ``core_contextualroleassignmentstateevent``):
@@ -56,12 +57,11 @@ Primary messages this migration adds: ``S2B office attribution refused: reserved
 ``S2B office attribution refused: superseded definition``,
 ``S2B office attribution refused: office already held``. The installed messages are unchanged.
 
-Production behaviour of the office acts is unchanged by this chunk alone: the provider still
-answers DENIED for non-COORDINATOR acts and the role service still refuses with IL-8 (SR-C4
-and SR-C5 change that). Test fixtures that build historical or deliberately invalid office rows
-reach this guard under the labelled latitude ``s2b_attribution_guard_suspended``
-(``tests/s015_0021_support.py``), never an act under examination.
-"""
+Historical boundary at this chunk's landing: the authority provider still refused
+non-Coordinator acts and the role service reported its implementation limit IL-8
+(the then-unbuilt office route). Chunks C4 and C5 subsequently opened those routes.
+The old test-only suspension helper is not a production permission route and is
+not evidence that an act under examination passes these database guards."""
 
 from importlib import import_module
 
@@ -88,6 +88,7 @@ PREVIOUS_S2B_GUARD_OFFICE_ATTRIBUTION_BODY = _SB2.NEW_S2B_GUARD_OFFICE_ATTRIBUTI
 
 
 def _installed_assign_consent_body():
+    """Extract the earlier consent guard body from migration 0037. This supplies the expected baseline; it neither queries nor changes the live database."""
     source = _S2B_CONSENT.ASSIGN_CONSENT_SQL
     function_start = source.index("CREATE FUNCTION public.s2b_guard_assign_consent()")
     body_start = source.index("AS $$", function_start) + len("AS $$")
@@ -102,6 +103,7 @@ if len(PREVIOUS_S2B_GUARD_OFFICE_ATTRIBUTION_BODY.encode("utf-8")) != 9070:
 
 
 def _replace_once(body, marker, replacement, what):
+    """Build the widened guard text only when its expected fragment occurs exactly once. Refuse a changed baseline instead of guessing where to edit; no database write occurs here."""
     if body.count(marker) != 1:
         raise RuntimeError(f"SR 0052: {what} is not unique in the installed body")
     return body.replace(marker, replacement, 1)
@@ -264,10 +266,12 @@ EXPECTED_TRIGGERS = {
 
 
 def _refuse(message):
+    """Stop office guard migration 0052 with a labelled reason. No data is removed to make the migration succeed."""
     raise RuntimeError(f"SR 0052 {message}")
 
 
 def _installed_body(cursor, function_name):
+    """Read the body of exactly one named public database function. Refuse absence or ambiguity; do not substitute a function with a similar name."""
     cursor.execute(
         """
         SELECT p.prosrc
@@ -294,6 +298,7 @@ def _assert_body(cursor, function_name, expected_body, phase):
 
 
 def _event_triggers(cursor):
+    """Read office-event trigger bindings, enabled states and conditions. This is read-only evidence for the caller, not a repair operation."""
     cursor.execute(
         """
         SELECT t.tgname, t.tgenabled, t.tgtype, t.tgdeferrable, t.tginitdeferred,
@@ -322,6 +327,7 @@ def _assert_trigger_bindings(cursor, phase):
 
 
 def _non_internal_trigger_count(cursor):
+    """Count public triggers that are not database-internal. This detects a changed total; it does not prove that any particular guard works."""
     cursor.execute(
         """
         SELECT count(*) FROM pg_catalog.pg_trigger t
@@ -334,6 +340,7 @@ def _non_internal_trigger_count(cursor):
 
 
 def _replace_function(cursor, name, body):
+    """Replace one guard function body while retaining its existing trigger bindings. This helper relies on its caller to check the baseline and use an atomic transaction."""
     cursor.execute(
         f"CREATE OR REPLACE FUNCTION public.{name}() RETURNS trigger LANGUAGE plpgsql AS $${body}$$"
     )
@@ -396,6 +403,9 @@ def restore_guards(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    """Widen office decision and consent guards in one atomic database change.
+    
+    Use the checked forward and reverse functions; no appointment is made here."""
     atomic = True
 
     dependencies = [("core", PREVIOUS_MIGRATION)]

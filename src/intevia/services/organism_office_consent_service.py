@@ -92,11 +92,14 @@ OFFICE_CONSENT_MESSAGES = {
 
 
 class S015OfficeConsentSuperseded(S015OfficeConsentCommandError):
-    """Transaction class C (the decision rolls back; prior intake remains). SUPPORT class A."""
+    """Transaction class C (the decision rolls back; prior intake remains). SUPPORT class A.
+    
+    Support class A supplies a corrective action; transaction class C describes rollback after qualification. The two classifications serve different purposes, and neither creates a support ticket."""
     code = "SR_SUPERSEDED_DEFINITION"
     support_class = "A"
 
     def __init__(self, *, retired: bool):
+        """Keep the approved explanation that this nomination uses an outdated office definition. This creates an exception only; the caller rolls back the attempted change and the separately recorded request remains."""
         self.retired = retired
         super().__init__(OFFICE_CONSENT_MESSAGES["RETIRED" if retired else "SUPERSEDED"])
 

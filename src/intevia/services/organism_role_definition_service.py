@@ -1,4 +1,8 @@
-"""SR: the role-definition record and its one writer.
+"""The offices workstream (SR): record what an office is and preserve its history.
+
+LO means Living Organism, the organisation. An office code is its stable internal
+identifier, not the label a person sees. HG means Human Governor. LAW held means
+that deciding which law is currently in force remains outside this route.
 
 Design: SR_COMMISSION_OTHER_OFFICES_v0_7.md (adopted 15 October 2026) sections C, D.1,
 D.2, D.3 and G; the Lead Designer's plan v1.1 row SR-C1 (US015-B-35, 26 October 2026).
@@ -15,12 +19,20 @@ COORDINATOR DEFINE/AMEND/RETIRE are refused before the decision (HG 31 Oct 2026,
 What the writer does and does not do. It writes one version row and its provision rows in
 the caller's transaction and returns the row; the database guards installed by migration
 0051 are the authority on what a lawful row is (``sr_00_definition_insert`` compares the
-decision the caller passes against the row, column by column; ``sr_30_definition_citations``
+decision against six target keys: organism, code, definition version, kind,
+nomination policy and appointing authority, with actor, time and qualification
+status checks alongside them; it does not compare every content column; ``sr_30_definition_citations``
 checks the citations at commit). The writer does not qualify authority, does not open a
 transaction, does not write a receipt and does not catch the guards' refusals: a refusal
 propagates as the database's ``IntegrityError`` for the caller's class-B translation at its
 own transaction exit (v0.7 section G).
-"""
+
+Support classes describe the explanation: A has a known corrective action, B
+explains a restriction without a remedy offered here, and C needs technical
+support. These are separate from transaction refusal classes B/C/D, which
+describe how failures unwind. No support ticket is created by these hooks.
+FW-8 is the forward item for shared refusal wording; FW-9 is the later work on
+CARE (the observation service) and interpretation of law in force."""
 from __future__ import annotations
 
 import hashlib
@@ -120,6 +132,7 @@ class S015RoleDefinitionNotFound(S015RoleDefinitionError):
     support_class = "A"
 
     def __init__(self, message, *, cause=None):
+        """Keep a disclosed missing-target cause as support class A. Without that cause, treat the lookup failure as technical class C; do not invent a user remedy."""
         self.cause = cause
         self.support_class = "A" if cause is not None else "C"
         super().__init__(message)
@@ -158,12 +171,14 @@ class DefinitionProvision:
 
 
 def _text(value: object, name: str) -> str:
+    """Require an exact, non-blank string for one writer field. Refuse malformed content without changing its spelling or writing anything."""
     if type(value) is not str or not value.strip():
         raise S015RoleDefinitionMalformed(f"{name} must be a non-empty string")
     return value
 
 
 def _optional_text(value: object, name: str) -> str | None:
+    """Accept an absent optional field; otherwise require the same non-blank string as a required field. Do not invent a default."""
     if value is None:
         return None
     return _text(value, name)
@@ -329,6 +344,7 @@ class S015RoleDefinitionRefused(S015RoleDefinitionError):
     transaction class C; governed writes roll back and durable intake may remain.
     """
     def __init__(self, code, message):
+        """Keep the refusal code and supplied explanation, and select its support category from the known message map. An unknown code defaults to technical support; no ticket is created."""
         self.code = code
         self.support_class = DEFINITION_REFUSAL_MESSAGES.get(code, (None, "C"))[1]
         super().__init__(message)
@@ -337,6 +353,7 @@ class S015RoleDefinitionRefused(S015RoleDefinitionError):
 class S015RoleDefinitionGuardRefused(S015RoleDefinitionError):
     """Database refusal after rollback; preserve primary, classify by service twin."""
     def __init__(self, primary):
+        """Retain the database reason and translate only recognised business refusals. Unknown reasons remain technical-support cases; this constructor does not retry or write evidence."""
         self.primary = primary
         text, self.support_class = definition_guard_message(primary)
         super().__init__(text)
@@ -400,7 +417,9 @@ class RecordRoleDefinitionCommand:
 
 
 def _content_dict(content):
-    """Validate representation only, before intake; citation sufficiency is after authority."""
+    """Validate representation only, before intake; citation sufficiency is after authority.
+    
+    Refuse wrong field types, blank required text, invalid closed values, inconsistent relationships and repeated citation relationships. Return content suitable for fingerprinting; do not read a constitution or grant authority."""
     if type(content) is not DefinitionContent:
         raise S015RoleDefinitionMalformed("content must be DefinitionContent")
     if len(_text(content.code, "code")) > 48:
@@ -438,7 +457,9 @@ def _content_dict(content):
 
 
 def definition_intake_shape(command):
-    """Pure canonical projection: all requested content, coordinates and reason are bound."""
+    """Pure canonical projection: all requested content, coordinates and reason are bound.
+    
+    A fingerprint is a stable summary of the request used to distinguish a retry from a different instruction. A successful projection is not an accepted request or an authorised office change."""
     from src.intevia.services.command_intake import IntakeShape
     if type(command) is not RecordRoleDefinitionCommand:
         raise TypeError("RECORD_ROLE_DEFINITION requires its exact command type")
@@ -475,7 +496,7 @@ def definition_intake_shape(command):
 
 
 def custom_role_entitled(organism_uuid, received_at, database_alias):
-    """Read CUSTOM_ROLES once at the durable receipt coordinate; failure is not denial."""
+    """Read whether custom-role capability is effective at the durable request receipt time. Database failure propagates; it is not silently treated as absence of entitlement. This does not grant a subscription or authorise an appointment."""
     # Same installed predicate as C1 sr_00; no dependency on an uncarried Python API.
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT COALESCE(public.s015_entitlement_effective(%s, 'CUSTOM_ROLES', %s), FALSE)",
@@ -484,7 +505,7 @@ def custom_role_entitled(organism_uuid, received_at, database_alias):
 
 
 def definition_target_valid(target, organism_uuid):
-    """Validate the command's closed target shape; called independently by the provider."""
+    """Check the closed definition target shape, including its organisation, action and version references. Return False for malformed content; this independent provider check makes no database write and grants no authority."""
     if type(target) is not dict:
         return False
     keys = {"action", "schema", "event_action", "living_organism_id", "role_uuid",
@@ -515,7 +536,13 @@ def definition_target_valid(target, organism_uuid):
 
 
 def _check_citations(content):
-    """Class C, after qualification; sr_30 independently enforces the same at commit."""
+    """Check that the supplied citations match the definition's stated relationships.
+    
+    A board office needs its constitutional basis. Required appointing, alternative,
+    nomination, participation and office-carried seat relationships need their own
+    citations, and a citation without its relationship is refused. This follows
+    authority qualification; the database checks again at transaction completion.
+    It does not read the cited constitution or decide whether it is law in force."""
     required = {
         name for name, needed in (
             ("OFFICE_BASIS", content.kind == "BOARD_OFFICE"),
@@ -563,12 +590,14 @@ class RoleDefinitionResult:
     lineage_reference: str
 
     def receipt_payload(self):
+        """Convert the result to receipt fields, rendering its universally unique identifier (UUID) as text. This prepares data only; it neither stores a receipt nor reveals it to a viewer."""
         result = asdict(self)
         result["role_definition_uuid"] = str(self.role_definition_uuid)
         return result
 
     @classmethod
     def from_payload(cls, payload):
+        """Rebuild a result only from the exact receipt field set and valid action, version and reference shapes. Refuse malformed data as a malformed command receipt; database agreement is checked separately during replay."""
         try:
             if type(payload) is not dict or set(payload) != set(cls.__dataclass_fields__):
                 raise ValueError("receipt fields differ")
@@ -587,6 +616,7 @@ class RoleDefinitionResult:
 
     @classmethod
     def replay_field_audiences(cls, result):
+        """Restrict the two authority references to the processing audience during replay. Refuse a result of the wrong type; this declaration alone does not decide a viewer's access."""
         if type(result) is not cls:
             raise TypeError("wrong definition result")
         return {"authority_reference": "PROCESSING", "authority_decision_reference": "PROCESSING"}
@@ -594,7 +624,7 @@ class RoleDefinitionResult:
 
 @dataclass(frozen=True, slots=True)
 class BoardOfficeVacancy:
-    """Recorded board definition and cited basis, with the commissioned holder fold."""
+    """Carry an active board definition, its citations and an observed occupancy flag. The flag includes a pending nomination, so it does not prove that an appointed person currently holds the office."""
     role_identity: UUID
     code: str
     office_basis_reference: str | None
@@ -604,7 +634,7 @@ class BoardOfficeVacancy:
 
 def board_office_vacancies(organism_uuid, database_alias="default"):
     """Read active board definitions and citations for one LO; write and decide nothing.
-
+    
     Foundation for CARE's later observation: "an office your constitution provides
     for is unfilled". CARE mechanics and law-in-force interpretation are FW-9.
     Filled means an assignment under any version of the code folds not ENDED,
@@ -612,7 +642,8 @@ def board_office_vacancies(organism_uuid, database_alias="default"):
     transaction or locks; one clock cut is shared across every office fold. Reads
     still require a caller-supplied repeatable snapshot for concurrent consistency.
     Missing citations are returned as None, never invented.
-    """
+    
+    A missing organisation raises the disclosed not-found exception. The Human Governor's 31 October 2026 ruling keeps board offices permanent; this observation does not retire a vacant office, establish constitutional validity or issue an instruction to fill it."""
     try:
         organism = LivingOrganism.objects.using(database_alias).get(organism_id=organism_uuid)
     except LivingOrganism.DoesNotExist as exc:
@@ -634,6 +665,7 @@ def board_office_vacancies(organism_uuid, database_alias="default"):
 
 
 def _lineage(row, action, decision_reference):
+    """Make a stable SHA-256 fingerprint of this definition version, act and decision reference. It identifies the recorded result; it is not itself a permission decision."""
     return "s015r1:" + hashlib.sha256(b"INTEVIA:S015:ROLE_DEFINITION_RESULT:v1\x00" + canonical_json_bytes({
         "role_uuid": str(row.role_uuid), "definition_version": row.definition_version,
         "event_action": action, "decision_reference": decision_reference,
@@ -652,9 +684,11 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
     _authority_unavailable = S015RoleDefinitionAuthorityUnavailable
 
     def _replay_result(self, payload):
+        """Decode a stored receipt through the strict result parser. This makes no business write; the following replay check verifies agreement with the definition record."""
         return RoleDefinitionResult.from_payload(payload)
 
     def _verify_replay_result(self, result):
+        """Check that a replayed result names an existing definition and agrees with its version, decision, creation or amendment form, and lineage fingerprint. Refuse disagreement as a malformed receipt; never repair the record or re-execute the act."""
         row = OrganismRoleDefinition.objects.using(self._alias).filter(role_uuid=result.role_definition_uuid).first()
         if row is None:
             raise S015CommandReceiptMalformed() from ValueError("definition missing")
@@ -716,6 +750,25 @@ class OrganismRoleDefinitionService(_OrganismCommandService):
             raise  # Technical faults are never rewritten as a business refusal.
 
     def _execute(self, command, bound):
+        """Execute one admitted definition request inside the caller's authority transaction.
+        
+        Verify the bound actor and request, refuse times after receipt, acquire the
+        retry mutex, and serve an existing matching receipt before fresh work. For a
+        fresh act, resolve and lock the organisation, the actor's membership context
+        and any named prior definition. A missing target or changed code family refuses.
+        
+        Before seeking a decision, refuse the Coordinator and platform-reserved offices,
+        a changed office kind, and retirement of a board office. These implement the
+        Human Governor's 31 October 2026 rulings, including F-20 option A (Coordinator
+        refusal before the decision). Then ask the authority provider to decide.
+        
+        After qualification, refuse reuse of a retired code, creation of an existing
+        code, or use of an outdated prior version. Retirement also refuses an unended
+        assignment, including a pending nomination. Creation and amendment require the
+        recorded citations; amendment deactivates the prior version and writes its
+        successor. Retirement only records the end of the definition's use. Finalise a
+        receipt; appoint nobody. Database guards still run at transaction completion,
+        so this method returning alone is not proof that the transaction committed."""
         from src.intevia.services.command_intake import IntakeEntry
         actor = _lock_actor(database_alias=self._alias, credential=command.credential, unavailable=self._authority_unavailable)
         bound.verify(command, actor, IntakeEntry.RECORD_ROLE_DEFINITION, self._alias)

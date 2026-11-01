@@ -1,6 +1,8 @@
-# S015 — public crosswalk for PKT-A-2 and PKT-A-3
+# S015 — public crosswalk for PKT-A foundations and PKT-B
 
-**v1.0 · 19 September 2026**
+**v1.1 · 1 November 2026 · current at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`**
+
+The September v1.0 foundation account is retained below and marked as history. Current PKT-B implementation paths and restrictions are added in §3.
 
 This document ties INTEVIA's public description of the S015 slice to the commits that actually
 implemented it, and states the limitations the lineage record already admits. It was written because an
@@ -8,11 +10,15 @@ external reviewer, inspecting the public repository in September 2026 without ru
 for exactly this: a crosswalk citing the commits and the admitted limitations, rather than more
 doctrine.
 
-A reader should be able to check every claim below from the repository alone.
+For the current position and its limits, see [the README](../README.md#current-position).
+
+The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
+
+Read a path as a place to inspect the claim, not proof that every behaviour in that file has current test coverage.
 
 ---
 
-## 1. The commits
+## 1. The foundation commits — September history
 
 | Commit | Date | What it did |
 |---|---|---|
@@ -24,7 +30,7 @@ A reader should be able to check every claim below from the repository alone.
 
 `b11b246` is the commit the external review inspected.
 
-## 2. What those commits deliver
+## 2. What those foundation commits delivered
 
 **PKT-A-2 — the recorded chain and bitemporal fold (0021).** Schema and database-level constraints for
 recording state transitions so that history is append-only and the sequence of events is checkable in
@@ -41,10 +47,12 @@ the database rather than by convention in application code.
 Identity and severance are **one limb of the packet**, not the whole of it. Describing 0022 as "the
 identity chain" under-describes what landed, and the earlier version of this document did exactly that.
 
-Both are **schema-level**: the rules are installed in PostgreSQL. The accompanying tests exercise them
-by direct SQL as well as through the application layer.
+Both are **schema-level**: the rules are installed in PostgreSQL. The accompanying tests exercised them
+by direct SQL as well as through the application layer. The old suite is now archived. Current selected foundation tests are `tests/test_s015_0021_negative_direct_sql.py` and `tests/test_s015_0022_contract.py`; they do not inherit the whole old suite's coverage.
 
 ## 3. What has changed since the review
+
+### September corrections — historical record
 
 | Commit | Change |
 |---|---|
@@ -55,10 +63,15 @@ by direct SQL as well as through the application layer.
 | [`23aabdec`](https://github.com/alchemyofacceptance/INTEVIA/commit/23aabdec8df202685f19b5744cf41f149a808f9f) | lawful 0022 fixtures and the 0022 contract test brought into the S015 set; the expected resolution schema corrected, and second-layer test expectations replaced by assertions of the specific refusal |
 | [`57015b13`](https://github.com/alchemyofacceptance/INTEVIA/commit/57015b13739aaedabf51f792ed0684bae18428e1) | **Change C** — a re-runnable verification route, an authoritative qualification decision separate from the code that produces the evidence, and retained evidence. See [docs/verification](verification/README.md) |
 
-## 4. The limitations the lineage record admits
+### Current PKT-B mapping
 
-These are carried in the lineage record at `b11b246` and remain open. They are stated here because a
-crosswalk that omitted them would be the thing the review objected to.
+The [detailed PKT-B mapping](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices) lists the current implementation paths, related tests and limits in one place. A test-file reference does not establish coverage of the whole capability.
+
+The [PKT-B Datacron](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) supplies the capability boundaries, completed changes and open work. The current route and archive policy are mapped in §6.
+
+## 4. The limitations the earlier lineage record admitted
+
+The table preserves the September findings at `b11b246`. It is historical, not a current assertion that PKT-B delivered no organisation actions. Current office restrictions are above and in the PKT-B Datacron. This documentation pass does not adjudicate closure of all earlier foundation findings.
 
 | | Limitation |
 |---|---|
@@ -67,9 +80,9 @@ crosswalk that omitted them would be the thing the review objected to.
 | **U-6** | **The identity-resolution admission policy is unruled.** What may be admitted has not been decided |
 | **F-U21l-04** | **The application still connects to the database as a superuser.** The privilege separation the design assumes is not in place |
 
-## 5. Findings from the external review that remain open
+## 5. Further findings from the September external review
 
-Beyond the four above, the review returned findings that are not yet closed:
+Beyond the four above, the September review recorded these implementation gaps:
 
 - the application object model and the 0022 schema have diverged; no model class was found for the
   identity-resolution table;
@@ -80,14 +93,27 @@ Beyond the four above, the review returned findings that are not yet closed:
 
 Two findings about **test expectations** — the identity-resolution schema disagreeing with its own
 tests, and second-layer tests expecting output from a function that raises — were corrected at
-`23aabdec`. **The implementation gaps behind them are not closed** and are listed above.
+`23aabdec`. **That September test repair did not close the underlying implementation gaps** listed above. Their later disposition must be read from the applicable finding record, not inferred here.
 
-All nine findings with their current status:
+All nine findings with their September status:
 [Report 2 §7](verification/reports/REPORT_2_IMPLEMENTATION_v1_0.md).
 
 ## 6. What can be checked today
 
-The headline claim an assessor can verify: **the S015 tests pass against a live PostgreSQL server, on
+GitHub continuous integration (CI) is the evidence of record. The [C5 run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727) records 126 product tests plus 19 deliberate-defect checks. New tests follow six test admission rules (TAR). The old suite of about 1,800 tests is archived and not run; the current route builds one template database and uses copies in clone mode. The smaller suite is not proven to provide equivalent coverage.
+
+| Current route or record | Repository path |
+|---|---|
+| GitHub workflow and separate qualification decision | `.github/workflows/s015-verification.yml`; `.github/s015_gate.py` |
+| Route and deliberate-defect checks | `verification/route.py`; `verification/mutations.py` |
+| Current run requirements | `docs/operations/RUN_REQUIREMENTS.md` |
+| Archived suite and reuse restrictions | `archive/tests_2026_10/00_ARCHIVE_RECORD.md` |
+
+See [the verification guide](verification/README.md) for the current process. A pass is scoped to the tested candidate and does not establish release readiness.
+
+### September qualification — historical evidence
+
+The claim recorded in September was: **the S015 tests pass against a live PostgreSQL server, on
 two independent environments, and the result is decided by a program separate from the one producing
 the evidence.**
 

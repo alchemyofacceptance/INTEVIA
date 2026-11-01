@@ -1,4 +1,11 @@
-"""Durable, inactive command-intake boundary for S015 governed requests."""
+"""Record admitted requests durably before their governed commands run.
+
+For slice S015 (organisations and their recorded authority), the active-entry
+registry selects the available routes, including office definitions from offices
+chunk C3. The request fingerprint binds its content to its retry key: a changed
+request under that key is refused. A receipt of intake is evidence of an attempt,
+not permission, success or a completed office change. Command failures can leave
+this receipt on record. This module is no longer an inactive boundary."""
 
 from __future__ import annotations
 
@@ -1654,7 +1661,9 @@ def _founding_seating_shape(command: object) -> IntakeShape:
 
 
 def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
-    """Return the pure command projection used by verification and test binding."""
+    """Return the pure command projection used by verification and test binding.
+    
+    The office-definition branch includes the requested definition content through its own projection. This helper checks representation and binds retries; it does not decide authority or write an office."""
     if type(entry) is not IntakeEntry:
         raise ValueError("entry must be an IntakeEntry")
     if entry is IntakeEntry.SAVE_GATEWAY_DRAFT:
@@ -1697,7 +1706,9 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
 
 
 def _authority_unavailable(entry: IntakeEntry | ChildEntry):
-    """Return the authority-epoch refusal class for the served entry family."""
+    """Return the authority-epoch refusal class for the served entry family.
+    
+    Office-definition requests use their own unavailable-authority exception. This selection does not establish why authority was unavailable or create a support ticket."""
     if entry in {
         IntakeEntry.REQUEST_GOVERNANCE_SEAT,
         IntakeEntry.DECIDE_GOVERNANCE_SEAT,

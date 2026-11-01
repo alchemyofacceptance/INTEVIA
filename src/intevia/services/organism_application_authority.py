@@ -1261,12 +1261,18 @@ class ProductionApplicationAuthorityProvider:
 
     def _office_participation_reference(self, request, organism, nominee):
         """Read SB-G participation at the act's effective and knowledge cuts.
-
+        
         Same unended-record rule as SB-G readiness; additionally bind membership,
         circle kind and parent LO, and exclude a Circle folded CLOSED at those cuts
         (the existing SB-G readiness rule). No new continuation/cascade rule.
         Raw PostgreSQL participation_uuid is uuid.UUID; return its string for V2 e.
-        """
+        
+        The Governance Circle must have a CREATE_DORMANT creation event recorded by
+        the knowledge cutoff. The membership must fold to active, the participation
+        must have started and have no eligible end, and the Circle must not fold closed.
+        Return the earliest eligible participation identifier, or None; do not create a
+        seat or decide that the constitution is in force. SB-G is the governance-readiness
+        work package; the V2 e field is the second authority-reference format's participation evidence."""
         with connections[self.database_alias].cursor() as cursor:
             cursor.execute("""SELECT p.participation_uuid
                 FROM core_circleparticipation p
@@ -2326,11 +2332,18 @@ class ProductionApplicationAuthorityProvider:
 
     def _qualify_role_definition(self, request, organism, membership, office):
         """Qualify definition content after the installed Coordinator gates; write nothing.
-
+        
         RETIRE reads the named immutable version and no entitlement. DEFINE/AMEND
         read CUSTOM_ROLES at receipt, or the nomination source for a SILENT A/B
         policy. Constitutional A/B is free. An absent configuration refuses closed.
-        """
+        
+        The Human Governor's 31 October 2026 rulings reserve the Coordinator and
+        INTEVIA platform offices, keep board offices permanent, and fix an office's
+        kind. This provider refuses those prohibited acts independently of the service.
+        The checks here follow the configuration and Collective Questioning (CQ) checks;
+        they are not a claim that every direct database path is blocked. A retired
+        version is compared with its recorded content and citations. This returns an
+        authority response, not an office write or a support ticket."""
         from src.intevia.services.organism_role_definition_service import (
             definition_target_valid, custom_role_entitled,
         )

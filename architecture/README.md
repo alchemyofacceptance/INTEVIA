@@ -2,7 +2,11 @@
 
 *A guided entry point into INTEVIA's conceptual architectural spine.*
 
-> **Reading boundary — qualified 2026-09-15:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`.
+> **Reading boundary — refreshed 2026-11-01:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `f829d1b2b714cb282d96a273fbd0887eac9c3522`.
+
+For the current position and its limits, see [the README](../README.md#current-position).
+
+The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
 ## Purpose of this directory
 
@@ -30,13 +34,13 @@ Architecture language describes intended meaning. Whether a corresponding path e
 
 ## v1.0 implementation boundary at the qualified ref
 
-The repository contains paths associated with bounded governed foundations across contribution lineage, Identity, Events, Services, Library, CARE, resource relationships, service activity, profile effect, an Education Course-definition slice, and — since September 2026 — the Living Organism substrate (organism, circle and membership anchors on an append-only recorded chain with a bitemporal fold) and the INTEVIA Lineage-Chain contract laid onto that chain. Both S015 packets are designated, implemented and landed; neither is accepted.
+The repository contains paths associated with bounded governed foundations across contribution lineage, Identity, Events, Services, Library, CARE, resource relationships, service activity, profile effect, an Education Course-definition slice, and — since September 2026 — the Living Organism substrate (organism, circle and membership anchors on an append-only recorded chain with a bitemporal fold) and the INTEVIA Lineage-Chain contract laid onto that chain. Those two foundation packets retain their September status in their own records. PKT-B has since added recorded organisation and office actions; its current boundaries are in the [PKT-B Datacron](../docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md).
 
-That statement establishes path presence only. The crosswalk routes to the exact evidence classes and non-claims.
+The crosswalk distinguishes files being present from tests being run and work being accepted. GitHub continuous integration (CI) is now the evidence of record. The smaller suite follows six test admission rules (TAR), uses prepared database copies, and does not run the archived old suite. See [verification](../docs/verification/README.md).
 
 For Education specifically, S014 introduces a bounded governed Course aggregate and version lineage. It does not establish curriculum delivery, class delivery, enrolment, completion, assessment, certification, educator qualification, payment, or a full learning system. `MAT-S014-01` remains visibly deferred in the S014 record at this baseline.
 
-Broader conceptual domains—including Exchange, Applications, Locations, marketplace mechanics, integrations, broader Education, Recognition, and HAT productisation—remain architecture intent unless exact current evidence establishes a narrower implemented boundary.
+Broader conceptual domains—including Exchange, Locations, marketplace mechanics, integrations, broader Education, Recognition, and HAT productisation—remain architecture intent unless exact current evidence establishes a narrower implemented boundary.
 
 ## Reading order
 

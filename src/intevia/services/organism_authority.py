@@ -133,13 +133,23 @@ class S015AuthorityDenied(S015AuthorityError):
 class S015AuthorityRefusalCode(str, Enum):
     """Refusal codes an authority provider, qualify's preflight or a service
     can return or raise.
-
+    
     Each value equals its name except SB_IL_GOVCONST and SB_IL_GOVENABLE,
     whose values are "SB-IL-GOVCONST" and "SB-IL-GOVENABLE". The value is
     what an AuthorityDecision records as refusal_code. A refusal carries
     two codes: the code decided and the code disclosed, which may be the
     less specific DENIED.
-    """
+    
+    For office operations, C_CONFIGURATION_NOT_ESTABLISHED means no eligible
+    governance configuration was found. C_LO_PAUSED and C_LO_CLOSED mean the
+    Living Organism (LO) is paused or closed at the checked coordinates.
+    C_LO_NO_CAPACITY means the recorded lifecycle cannot support this act; it does
+    not identify one unique cause. SBG_LO_NOT_ACTIVE means the organisation is not
+    active; SBG_SEAT_ROUTE_UNAVAILABLE means the requested governance seating route
+    is unavailable at that stage. E_IDENTITY_INACTIVE means the actor's access
+    state or credential epoch does not permit the act. Base exceptions may retain
+    the generic refusal text; specialised service display helpers supply some, not
+    all, contextual messages. These codes neither repair state nor create tickets."""
     DENIED = "DENIED"
     E_IDENTITY_INACTIVE = "E_IDENTITY_INACTIVE"
     E_NOT_APPLICANT = "E_NOT_APPLICANT"

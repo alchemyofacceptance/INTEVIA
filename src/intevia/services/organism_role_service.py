@@ -203,6 +203,7 @@ class S015AssignmentRuleRefused(S015AssignmentCommandError):
     claimed to have been created by this classification hook.
     """
     def __init__(self, code):
+        """Keep the office-rule code and select its approved message and support category. An unknown code is a programming error in the lookup; this constructor does not record a refusal decision or a ticket."""
         self.code = code
         self.support_message, self.support_class = OFFICE_STATE_MESSAGES[code]
         super().__init__(self.support_message)
@@ -923,7 +924,9 @@ OFFICE_KNOWN_ERROR_MESSAGES = {
 
 
 def office_action_support_details(error, action="Changing this office"):
-    """Render only disclosed rules and known action names; never infer private causes."""
+    """Render only disclosed rules and known action names; never infer private causes.
+    
+    Support class A offers a known next action, B explains a restriction without a recovery route here, and C needs technical support. Return text and category only; do not claim that a support ticket exists."""
     if isinstance(error, S015AssignmentRuleRefused):
         return error.support_class, error.support_message
     support_pending = "INTEVIA could not confirm the outcome of this action. Check its current record before trying again. INTEVIA Support needs the error details to investigate."

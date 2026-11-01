@@ -1,8 +1,8 @@
 # INTEVIA v1.0 — Current Direction and Decision Gates
 
 Status: live orientation surface; not a release roadmap  
-Qualified repository ref: `4282ebcbc6c3b942c0b6c5efa8b3ff1a01ad73e0`  
-Last verified: 2026-09-15  
+Qualified repository ref: `f829d1b2b714cb282d96a273fbd0887eac9c3522`  
+Last verified: 2026-11-01 (documentation and path review)  
 Authority effect: none
 
 ## Purpose
@@ -11,25 +11,23 @@ This document makes current direction legible without converting proposals into 
 
 ## Established context
 
-- INTEVIA v1.0 remains an internal-pre-alpha governed build.
-- Repository paths and lineage records are present through Slice S015, packets PKT-A-2 and PKT-A-3, at the qualified ref. Slice S015 is open.
-- The S015 Living Organism substrate (migrations `0019`–`0021`) and the INTEVIA Lineage-Chain contract (migration `0022`) are **designated, implemented and landed; not accepted.** Each packet's Datacron records its status block, its limitations, and what it carries forward. PKT-A acceptance is not on the path forward, by Human ruling recorded in the PKT-A-2 Datacron.
-- The PKT-A-3 Datacron at this ref is a corrected record (v0.8): two Human rulings of 12 September — the identity split and its insert-only guardian — are not delivered in migration `0022` and are carried into PKT-B by Human ruling of 15 September.
-- The S014 Datacron keeps `MAT-S014-01` deferred and states that direct Human implementation acceptance, Datacron acceptance, and closure were pending at its issue state.
-- The HAT operating practice is documented at v0.3 (one Human, ten AI functions); IDOP v0.9.7 is the controlling operating practice within it.
-- This documentation reconciliation changes no runtime, test, migration, database, product, release, certification, or cohort, Circle or Organism state.
+- INTEVIA v1.0 remains a pre-alpha build. At the named base, PKT-B supports recorded membership, applications, founding, explicit Birthing, governance formation and office definitions, consent and actions. [The PKT-B Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) gives the evidence and limits.
+- There is no complete website journey or permission for public use. Custom offices remain held until the missing subscription checks are established. Extra database safeguards are due before office user access.
+- GitHub continuous integration (CI) is the evidence of record. C5 recorded 126 product tests plus 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run. The route uses prepared database copies, or clone mode; see [the verification guide](docs/verification/README.md).
+- The earlier PKT-A-2 and PKT-A-3 records preserve their September status and carried findings. They remain history, not a replacement for the current PKT-B account. S015 is not closed by this update.
+- The S014 record retains its deferred `MAT-S014-01` finding and its issue-time acceptance status.
+- The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
-## Direction candidates awaiting exact Human priority
+## Agreed next work and longer-term direction
 
-- pre-PKT-B reconciliation: the scope of PKT-A-3 (`U-2`), whether the ILC's actor rule binds the twelve S015 chains (`U-1`), the Organism-as-actor limb (`BD-1`), the undelivered identity split and guardian, the `0022` contract test file, the absence of ORM classes for the ILC layer, and how stored fingerprints remain verifiable across event-table column additions;
-- PKT-B through PKT-E of Slice S015, PKT-B design being authorised to open on the carried limitations;
-- the pre-production hardening list: a non-superuser application database role, a declared Python and Django runtime, a version review before any production release;
-- address deferred assurance and protocol-development work through its own authority path;
-- improve repository legibility and evidence routing, including the governance corpus consolidation begun at this ref;
-- continue HPCC curriculum and educator-formation work; and
-- prepare future public, funding, cohort, Circle, Organism, and product decisions without presenting them as made.
+C6 closes the offices work with this documentation change.
 
-This list is not ordered and does not authorise work.
+1. Next is SR-H, the limited offices safeguard unit. It covers the additional database protections before user access and the stored consent-result correction before v1.0 release.
+2. The test-value review follows SR-H. Other named homes include the subscription lifecycle, current constitutional law with CARE, office naming, automatic support tickets and Circle-specific work. The [Datacron §9](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) keeps each restriction and assignment explicit.
+
+Later S015 work, wider product hardening, HPCC curriculum and educator formation, and future public, funding, cohort and deployment decisions remain subject to their own commissions and Human decisions. HPCC means HAT Practitioner Certification Curriculum. This document adds no scope or delivery deadline.
+
+The September roadmap listed pre-PKT-B questions about identity, authority and history verification. That was the starting backlog. This refresh does not declare all of it closed; the Vision Chamber should reconcile any remaining finding against the current ledger before it is commissioned again.
 
 ## Human decision gates
 
@@ -51,7 +49,9 @@ The mutation/commit/push gate is the programme's standard execution gate. It is 
 - Current evidence-state navigation: [`docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md`](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md)
 - Selected factual repository events: [`CHANGELOG.md`](CHANGELOG.md)
 - Governance navigation: [`GOVERNANCE_INDEX.md`](GOVERNANCE_INDEX.md)
-- The two most recent lineage records: [`D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md`](docs/holocron/datacrons/D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md) and [`D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md`](docs/holocron/datacrons/D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md)
+- Earlier foundation lineage records: [`D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md`](docs/holocron/datacrons/D-S015-PKT-A-2-GOVERNED-RECORDED-CHAIN-AND-BITEMPORAL-FOLD.md) and [`D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md`](docs/holocron/datacrons/D-S015-PKT-A-3-INTEVIA-LINEAGE-CHAIN-ILC.md)
+
+- Current PKT-B record: [Governed Organisations, Membership and Offices](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md)
 
 ## Non-claims
 

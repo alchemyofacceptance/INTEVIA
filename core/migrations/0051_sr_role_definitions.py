@@ -519,6 +519,7 @@ _TRIGGER_SQL = (
 
 
 def _columns(cursor, table):
+    """Read the names of columns in one public table. This reports structure only; it changes no rows and makes no judgement about their content."""
     cursor.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s",
         [table],
@@ -527,11 +528,13 @@ def _columns(cursor, table):
 
 
 def _table_exists(cursor, table):
+    """Report whether the named public table exists. This reads database metadata only; it does not create or validate the table."""
     cursor.execute("SELECT to_regclass(%s) IS NOT NULL", [f"public.{table}"])
     return cursor.fetchone()[0]
 
 
 def _sr_triggers(cursor):
+    """List the public, non-internal triggers in the offices workstream (SR) name families. This is an inventory, not proof that their bodies or bindings are correct."""
     cursor.execute(
         """
         SELECT t.tgname, c.relname FROM pg_catalog.pg_trigger t
@@ -545,6 +548,7 @@ def _sr_triggers(cursor):
 
 
 def _sr_functions(cursor):
+    """List public database functions in the offices workstream (SR) name families. Names alone do not establish what the functions enforce."""
     cursor.execute(
         """
         SELECT p.proname FROM pg_catalog.pg_proc p
@@ -556,6 +560,7 @@ def _sr_functions(cursor):
 
 
 def _definition_triggers(cursor):
+    """Read each definition-table trigger and the details of its binding. Return the enabled state, timing, function and column conditions for comparison; do not alter a guard."""
     cursor.execute(
         """
         SELECT t.tgname, t.tgenabled, t.tgtype, t.tgdeferrable, t.tginitdeferred,
@@ -600,6 +605,7 @@ def _assert_0021_definition_triggers(cursor, phase):
 
 
 def _intake_check(cursor):
+    """Read the intake entry constraint and whether the database has validated it. Return no row when absent; the caller decides whether that absence is acceptable."""
     cursor.execute(
         """
         SELECT pg_get_constraintdef(con.oid), con.convalidated
@@ -631,17 +637,23 @@ def _assert_previous_intake_check(cursor, phase):
     literals = ", ".join(f"'{value}'::character varying" for value in PREVIOUS_ENTRY_VALUES)
     expected = f"CHECK (((entry)::text = ANY ((ARRAY[{literals}])::text[])))"
     def compact(value):
+        """Remove whitespace and parentheses for the fixed entry-constraint comparison. This is not a general equivalence checker for database expressions."""
         return re.sub(r"[\s()]", "", value)
     if row is None or not row[1] or compact(row[0]) != compact(expected):
         _refuse(f"{phase} failed: {INTAKE_CHECK} is not exactly 0049's validated entry CHECK")
 
 
 def _refuse(message):
+    """Stop the migration with a reason labelled as offices schema change 0051. Raise an error; do not repair or discard existing evidence."""
     raise RuntimeError(f"SR 0051 {message}")
 
 
 def forward_preflight(apps, schema_editor):
-    """Refuse to start unless the database is exactly the state 0050 leaves (section 5.9)."""
+    """Check the specific preconditions this migration needs before writing anything.
+    
+    Require PostgreSQL, absence of the new columns, citation table and named guards,
+    and the expected intake constraint and earlier definition trigger bindings.
+    Refuse any mismatch. This is not a comparison of the entire database with 0050."""
     if schema_editor.connection.vendor != "postgresql":
         _refuse("forward preflight failed: PostgreSQL is the only substrate")
     with schema_editor.connection.cursor() as cursor:
@@ -661,7 +673,11 @@ def forward_preflight(apps, schema_editor):
 
 
 def reverse_final_check(apps, schema_editor):
-    """After Django has dropped the columns, the table and the constraints: verify exact restoration."""
+    """Check restoration of the office-related structure after reversal.
+    
+    On PostgreSQL, refuse remaining new columns, citation table or named guards,
+    or a changed intake constraint or earlier definition trigger binding.
+    Other database engines return without checking. This is not a whole-database audit."""
     if schema_editor.connection.vendor != "postgresql":
         return
     with schema_editor.connection.cursor() as cursor:
@@ -679,6 +695,10 @@ def reverse_final_check(apps, schema_editor):
 
 
 def install_guards(apps, schema_editor):
+    """Install the office-definition and citation guard functions and triggers.
+    
+    Require PostgreSQL and check the resulting named-trigger inventory. A mismatch
+    raises an error inside the migration transaction; existing business records are not repaired."""
     if schema_editor.connection.vendor != "postgresql":
         _refuse("install failed: PostgreSQL is the only substrate")
     with schema_editor.connection.cursor() as cursor:
@@ -733,6 +753,10 @@ def uninstall_guards(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    """Install the office-definition fields, citations and guards as one database change.
+    
+    The forward and reverse checks below refuse incompatible or populated states;
+    this migration neither backfills old definitions nor deletes evidence to reverse it."""
     atomic = True
 
     dependencies = [("core", PREVIOUS_MIGRATION)]

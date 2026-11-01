@@ -1,6 +1,7 @@
 # INTEVIA — a guide for funders and assessors
 
-**v0.2 · 19 September 2026**
+**v0.3 · 1 November 2026 · current at main `f829d1b2b714cb282d96a273fbd0887eac9c3522`**
+*Refreshes v0.2 of 19 September 2026 for the completed PKT-B work.*
 *Supersedes v0.1, which described the audience too narrowly and described HAT incorrectly.*
 
 ---
@@ -60,43 +61,27 @@ The design work examines events of a kind any organisation meets:
 | Someone participates but disagrees | dissent should be represented, not flattened into consensus or silence | **design** |
 | An evaluator's authority lapses | authority that has expired should not quietly keep being exercised | **design** |
 
-**What is implemented today** are the *foundations* beneath those events, not the events themselves:
+**What is implemented today** includes the organisation and history foundations, plus recorded processes for membership, applications, founding, explicit Birthing, governance formation and offices. Birthing is the formal act that completes formation under the recorded conditions. [The PKT-B record](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what these actions do for people.
 
-- **The Organism foundation** represents the organisation, its Circles, and the relationships on which
-  participation and authority depend.
-- **The INTEVIA Lineage-Chain (ILC)** connects attributable records through time, so a later examination
-  can follow the relevant history.
+This does not make the fictional scenario a delivered programme. There is no complete website journey or permission for public use. Custom offices remain held. The next agreed work strengthens database safeguards before office user access, then reviews the value of tests.
 
-Both are installed as database schema, constraints, triggers and functions — the rules are enforced by
-the database rather than relied on as convention in application code. Their exact implemented guarantees
-and admitted limits are in the
-[public S015 crosswalk](S015_PUBLIC_CROSSWALK.md).
-
-**The next bounded delivery milestone** is PKT-B: reconcile the application object model with the
-landed schema, replace the identity-split guard that is currently installed as a function that does not
-act, and decide and implement what the second verification layer must check. *Proposed here; the
-detailed packet scope is not yet ruled.*
+The [public crosswalk](S015_PUBLIC_CROSSWALK.md) maps current claims to source files and keeps the earlier foundation history.
 
 ## 4. Maturity — stated plainly
 
 **INTEVIA is in pre-alpha development toward v1.0 and is not production software.** Nothing here should
 be used to run a real organisation's governance today.
 
-| Area | State |
+| Area | State at the named base |
 |---|---|
-| Organism and ILC database foundations (S015, migrations 0019–0024) | **Delivered**: schema, constraints, triggers, functions and a contract test suite |
-| Verification and continuous integration | **Delivered**: a re-runnable verification route, an authoritative qualification decision, retained evidence — [docs/verification](verification/README.md) |
-| Application object model aligned with the database | **Incomplete**: known divergence from migration 0022 |
-| Identity-split guard | **Incomplete**: installed as a function that does not act |
-| Second-layer correspondence verification | **Not implemented**; a design decision is outstanding on what it should check |
-| The scenario events in §3 | **Design and pre-discovery work**; not implemented |
-| Organism-as-actor | **Planned** |
-| Application database privileges | **Known weakness**: the application still connects as a superuser |
-| Web application, deployment, operations | **Planned** |
+| Organisation and recorded-history foundations | Built; the earlier PKT-A records retain their original boundaries |
+| Membership, applications, founding, Birthing and governance formation | Working behind-the-scenes processes; see the PKT-B record |
+| Office definitions, nomination, consent and appointment | Built through C5; custom-office access remains held and additional database safeguards remain due |
+| Automatic checks on GitHub | C5 recorded 126 product tests and 19 deliberate-defect checks; the old suite is archived, not run |
+| The fictional scenario in §3 | An illustration for design, not an operational pilot or completed programme |
+| Complete website, public deployment and release readiness | Not established |
 
-Every incomplete item above is a carried finding from an **independent external review** of the public
-repository in September 2026, listed with its current status in
-[Report 2 §7](verification/reports/REPORT_2_IMPLEMENTATION_v1_0.md).
+The [September review](verification/reports/REPORT_2_IMPLEMENTATION_v1_0.md) remains a historical record, not the current status list. The [PKT-B Datacron §9](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) identifies remaining work and restrictions. It does not claim that every earlier foundation finding is closed.
 
 ## 5. How the work is governed — HAT and HPCC
 
@@ -112,16 +97,24 @@ how long it survived. HAT is a working practice, not a product, a standard or a 
 **HPCC** is the **HAT Practitioner Certification Curriculum**, planned training material for
 practitioners. It is not delivered.
 
-Neither is simplified here: the governing account is
-[`HAT_THE_HUMAN_AI_TEAM_v0_3.md`](../HAT_THE_HUMAN_AI_TEAM_v0_3.md) in the governance corpus.
+The governing account of HAT is
+[`HAT_THE_HUMAN_AI_TEAM_v0_3.md`](governance/HAT_THE_HUMAN_AI_TEAM_v0_3.md) in the governance corpus.
+
+The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
 ## 6. What an assessor can check today
 
-**The claim.** The S015 foundations pass a defined set of tests against a live PostgreSQL server, on two
+**The current evidence.** The [C5 GitHub run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41308978727) recorded 126 product tests and 19 deliberate-defect checks. These are governed by six test admission rules (TAR). The automatic checking sequence took 3 min 32 s; the complete job took 4 min 10 s.
+
+The Human Governor set aside the old suite of about 1,800 tests on 29 October. The new route builds one database template and uses disposable copies, called clone mode. GitHub continuous integration (CI) is the evidence of record; local diagnosis does not replace it. [The verification guide](verification/README.md) explains what a pass means. A smaller suite is not proven to give equivalent coverage.
+
+### September qualification — historical evidence
+
+**The September claim, retained as history.** The S015 foundations pass a defined set of tests against a live PostgreSQL server, on two
 independent environments, and the result is decided by a program separate from the one that produces the
 evidence.
 
-**How to check it without taking our word for it:**
+**How to inspect that historical evidence:**
 
 1. Open the [CI run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/35436023009). The
    check passes only when the verification route exits successfully **and** the qualification gate
@@ -129,13 +122,12 @@ evidence.
 2. Download the run's retained evidence artifact — the records the decision consumed, and the decision.
 3. Read [`CONSUMER_REQUIREMENT_v1_2.md`](verification/CONSUMER_REQUIREMENT_v1_2.md), the governing
    decision rules, and run `.github/s015_gate.py` over that evidence yourself.
-4. Or run the whole thing: `pip install -r requirements-verification.txt`, point it at a PostgreSQL
-   server, and execute the route.
+4. The current route has changed. Use [the current verification guide](verification/README.md) for present requirements; a new run is not reproduction of the September tree.
 
-**The strongest thing to look at.** Two of the eight control steps deliberately replace a database
-protection with an unrelated one and require the corresponding test to **fail by assertion**, naming the
-refusal it did not receive. That distinguishes a test that checks a specific protection from one that
-would pass on any error. Both are evidenced in the retained artifact and described in
+**The strongest evidence in that September qualification.** Two of the eight control steps deliberately replaced a database
+protection with an unrelated one and required the corresponding test to **fail by assertion**, naming the
+refusal it did not receive. That distinguished a test that checked a specific protection from one that
+would pass on any error. Both were evidenced in the retained artifact and described in
 [Report 1 §3](verification/reports/REPORT_1_DESIGN_v1_0.md).
 
 264 tests across eight control steps. Per-step counts, database and interpreter versions, and every
@@ -162,7 +154,7 @@ beneficiary counts, savings or social-impact results are claimed.**
 Every substantive claim in this repository is tied to a commit identity. The record distinguishes what
 was designed, what was implemented, what was qualified, and what a human being accepted — four different
 things, never merged. Superseded documents are retained rather than deleted, including the historical
-`CONSUMER_REQUIREMENT_v1_0.md` beside the governing v1.2, and failed attempts are preserved with them.
+`CONSUMER_REQUIREMENT_v1_0.md` beside the v1.2 gate contract, and failed attempts are preserved with them.
 
 **Development history in brief.** A substantial design period preceded software development; the
 documentation that period produced is the design record, not an overhead. The work is now design-then-
@@ -170,8 +162,7 @@ build: designs are reviewed adversarially before implementation, and defects fou
 nothing compared with the same defect reaching a live organisation's records.
 
 **This document does not claim** that INTEVIA is complete, deployable, secure against a determined
-attacker, independently reproduced, or free of defects in its database foundations — §4 lists known
-ones. It claims that a defined, bounded set of properties is checked, that the check is re-runnable by a
+attacker, independently reproduced, or free of defects in its database foundations — the PKT-B record carries open work. It claims that a defined, bounded set of properties is checked, that the check is re-runnable by a
 third party, and that the evidence is retained.
 
 ---

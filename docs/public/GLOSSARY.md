@@ -14,6 +14,10 @@ This glossary gives first-time readers a concise route into recurring INTEVIA te
 
 ## Development and evidence terms
 
+- **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking: the rules for commissioning, checking and recording work. Historical records keep the earlier name IDOP. [Source](../../README.md#development-approach)
+- **TAR** — the six test admission rules and their adherence report: the rules used to decide whether a new test belongs in the suite and the record of how it meets them. [Source](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#glossary)
+- **Clone mode** — running tests on disposable copies of a prepared database instead of rebuilding it each time. Ownership checks and cleanup still apply. [Source](../../verification/README.md#databases)
+
 - **Slice** — a named, bounded unit of implementation work; evidence associated with a Slice establishes only what its exact source records. [Source](../../README.md#evidence-boundary)
 - **Datacron** — a Slice lineage record that preserves evidence, decisions, findings, and status only within the boundary declared by that record. [Sources](../../GOVERNANCE_INDEX.md#primary-routes) · [evidence boundary](../../README.md#evidence-boundary)
 - **Qualified repository ref** — the exact Git reference recorded for examining repository bytes; it establishes only what is present at that qualified ref. [Source](../architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#source-precedence)
@@ -24,6 +28,8 @@ This glossary gives first-time readers a concise route into recurring INTEVIA te
 - **Non-claim** — an explicit statement of what the available evidence does not establish, used to prevent readers from overestimating maturity or capability. [Source](../architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#what-this-crosswalk-cannot-establish)
 
 ## Formation terms
+
+- **Birthing** — the explicit act that completes an organisation's formation under the applicable recorded conditions. [Source](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#glossary)
 
 - **Organism** — in INTEVIA's formation vocabulary, an organisation within which governed work can be arranged. Architecture documents also use lowercase *organism* as a metaphor for the INTEVIA system itself; the two uses are distinct. Repository documentation establishes no Organism as created, populated, or operational. [Source](../../README.md#hpcc-organisms-and-circles)
 - **Circle** — a sub-unit, team, or grouping within an Organism. Repository documentation establishes no Circle as launched, populated, or operational. [Source](../../README.md#hpcc-organisms-and-circles)

@@ -2,6 +2,31 @@
 
 This is a factual navigation aid, not a release history, lifecycle ledger, or substitute for commit, Datacron, execution, or Human-authority evidence. Entries are selective and source-linked. Absence from this file does not imply that an event did not occur.
 
+## Unreleased
+
+INTEVIA is pre-release; this section collects notable changes until the first release. The current account reaches main `f829d1b2b714cb282d96a273fbd0887eac9c3522` on 1 November 2026.
+
+The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
+
+The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) covers the completed organisation foundations. There is no complete website journey or public-use approval; custom offices remain held. The next work is the offices safeguard unit before office user access, followed by the test-value review. The current GitHub checks use clone mode and the six test admission rules (TAR): 126 product tests plus 19 deliberate-defect checks. The old suite of about 1,800 tests is archived and not run.
+
+### Added
+
+- Organisation membership and application routes, including recorded decisions, admission and leaving an organisation; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [a721b3db](https://github.com/alchemyofacceptance/INTEVIA/commit/a721b3db4135e1885258fbb080cc5017b023db55), [ea4dcc7c](https://github.com/alchemyofacceptance/INTEVIA/commit/ea4dcc7c4e00382a4107af49494f0cd5ea4c411e), [a9dadb5e](https://github.com/alchemyofacceptance/INTEVIA/commit/a9dadb5e75106eb5b918a99d65e239526b166243).
+- Governed founding, registration of a Learner (INTEVIA's person account, not course enrolment), explicit Birthing and governance formation; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [bb94c5c4](https://github.com/alchemyofacceptance/INTEVIA/commit/bb94c5c478332b5ae4ef9fd3ff1186f7765e4ba5), [10662970](https://github.com/alchemyofacceptance/INTEVIA/commit/1066297013871537ef106a23cd1d73b6d3d42f2c), [26093aef](https://github.com/alchemyofacceptance/INTEVIA/commit/26093aefc0b679dbf17e5cbb857f39e804d0ae31), [c68efab7](https://github.com/alchemyofacceptance/INTEVIA/commit/c68efab77de0f90804c38c5b1b3fa0d27f43d4e1).
+- Complimentary beta access and the entitlement foundation, with unknown usage shown as unavailable; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [ac7aa844](https://github.com/alchemyofacceptance/INTEVIA/commit/ac7aa8449fc5600bc0eeb12fed82792bd5cf0455), [c71d7552](https://github.com/alchemyofacceptance/INTEVIA/commit/c71d755257c8e0c36c6671f2d1352208a0fc2dcf).
+- Recorded office definitions, broader appointment and consent safeguards, and non-Coordinator office commands. All office user access waits for the SR-H database safeguards; custom offices also wait for entitlement-lifecycle assurance; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [2e295bff](https://github.com/alchemyofacceptance/INTEVIA/commit/2e295bff5170d342df8f97b5512540705ac27424), [9e5f706d](https://github.com/alchemyofacceptance/INTEVIA/commit/9e5f706dd2dc9201a70874b7e8ffc2610a050571), [52f802c7](https://github.com/alchemyofacceptance/INTEVIA/commit/52f802c794919cdaf4e2182ff561293c9a879944), [f829d1b2](https://github.com/alchemyofacceptance/INTEVIA/commit/f829d1b2b714cb282d96a273fbd0887eac9c3522).
+
+### Changed
+
+- Requests are recorded before their governed commands run; retries use that record and receipt time. See the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [e832273f](https://github.com/alchemyofacceptance/INTEVIA/commit/e832273fad9ef5785437ae344ba1970588acccf9), [de7f6e7a](https://github.com/alchemyofacceptance/INTEVIA/commit/de7f6e7a7836e52f3fa3496ac2237146f090e9c6), [e155bf25](https://github.com/alchemyofacceptance/INTEVIA/commit/e155bf25ec7e0e97145a76ac50ce7efb7d12a893).
+- Continuous integration (CI), the automatic GitHub verification route, became the default closure gate. It now reuses prepared database copies in clone mode; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [39986973](https://github.com/alchemyofacceptance/INTEVIA/commit/39986973186fe43fc2baa2abfe7e8d54da7c1225), [04e9df6c](https://github.com/alchemyofacceptance/INTEVIA/commit/04e9df6ce46f0f4159c224e647844c475b862a71).
+- The Human Governor set down the old test suite and commissioned a smaller suite built around explicit obligations. The archive remains in the repository; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [35c37a44](https://github.com/alchemyofacceptance/INTEVIA/commit/35c37a4443246e66cd4b3354accd6378a6cf65d3), [c50a5585](https://github.com/alchemyofacceptance/INTEVIA/commit/c50a5585fa01928301f2be61606835aebaa404d6).
+
+### Fixed
+
+- Departure and consent-withdrawal handling while appointments wait, database-clock usage, and shared locking and retry checks; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [772e5a5a](https://github.com/alchemyofacceptance/INTEVIA/commit/772e5a5ab77c339951d4bca23e9c126781a91533), [e9136b3b](https://github.com/alchemyofacceptance/INTEVIA/commit/e9136b3bd6ba4f6624471babc2d9e406549dd750), [f770ec67](https://github.com/alchemyofacceptance/INTEVIA/commit/f770ec67bf924ca0ba2e065d0a90a93ea3540f3d), [567860b2](https://github.com/alchemyofacceptance/INTEVIA/commit/567860b27c7c65c482a79ed41597eaba4f58c3d5), [b6fc705a](https://github.com/alchemyofacceptance/INTEVIA/commit/b6fc705ae5803efed59f8320b837c418f11c2ec7).
+
 ## 2026-09-15 — Documentation reconciliation and governance corpus consolidation
 
 - Front-door surfaces (this file, `README.md`, `ROADMAP.md`, both governance indexes, the implementation crosswalk, the architecture entry point) moved from qualified ref `1aed0f4` to `4282ebc`.
