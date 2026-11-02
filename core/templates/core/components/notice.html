@@ -1,0 +1,5 @@
+<aside class="notice {{ kind|default:'info' }}"{% if kind == 'refusal' or kind == 'error' %} role="alert"{% else %} role="status"{% endif %}>
+{% if title %}<h2>{{ title }}</h2>{% endif %}<p>{{ message }}</p>
+{% if next_url %}<p class="next-action">{% include 'core/components/button.html' with href=next_url label=next_label variant='secondary' only %}</p>{% endif %}
+{% if retained %}<p>{{ retained }}</p>{% endif %}
+</aside>

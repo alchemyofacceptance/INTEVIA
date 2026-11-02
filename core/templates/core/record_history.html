@@ -4,10 +4,7 @@
   <h1>{{ history.heading }}</h1>
   <ol class="event-list">
     {% for entry in history.entries %}
-      <li class="event-item">
-        <p>{{ entry.message }}</p>
-        <p class="meta">{{ entry.occurred_at }}</p>
-      </li>
+      <li>{% include 'core/components/history_row.html' with message=entry.message occurred_at=entry.occurred_at only %}</li>
     {% empty %}
       <li>No record history is shown.</li>
     {% endfor %}

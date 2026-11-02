@@ -1,7 +1,13 @@
-# S015 verification route in CI (workflow v0.10, Change C design v0.5).
+# S015 verification route in CI (workflow v0.11, Change C design v0.5).
 #
 # Author : Vision Chamber (Claude Opus 5), UFUND-5, 18 September 2026. Human Governor: Carmian Owen.
 # Against: CONSUMER_REQUIREMENT_v0_5.md, sha256 995073dbf74a8722dbdb03a55d68acba29893534360e5e8e5364f903a3aafd20
+#
+# v0.11 change from v0.10, and only this:
+#
+#   1. STYLESHEET. Append the f0-styles job. The s015 job and the gate are untouched.
+#      The stylesheet check is a separate status, not part of the qualification decision.
+#      The VC must read both statuses green before landing; required-check configuration is separate.
 #
 # v0.10 change from v0.9, and only this:
 #
@@ -309,3 +315,34 @@ jobs:
             exit 1
           fi
           echo "PASS: the route exited 0 and the qualification decision holds."
+
+  f0-styles:
+    name: F0 stylesheet rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind source and verify committed styles
+        env:
+          F0_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$F0_EXPECTED_SHA"
+          started=$SECONDS
+          python tools/f0_styles.py check 2>&1 | tee f0-styles.log
+          echo "F0 stylesheet job work: $((SECONDS-started)) seconds" | tee -a f0-styles.log
+      - name: Retain F0 stylesheet evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: F0-styles-${{ github.run_id }}-${{ github.run_attempt }}
+          path: f0-styles.log
+          if-no-files-found: error

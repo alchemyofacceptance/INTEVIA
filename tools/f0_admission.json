@@ -1,0 +1,98 @@
+[
+  {
+    "id": "f0-admission-01",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_01_existing_pages_keep_records_forms_and_messages",
+    "path": "core/templates/core/event_detail.html",
+    "before": "{{ event.registration.message }}",
+    "after": "The original message was lost."
+  },
+  {
+    "id": "f0-admission-02",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_02_navigation_identity_and_honest_destinations",
+    "path": "core/templatetags/f0_ui.py",
+    "before": "\"id\":\"home\", \"label\":\"Home\"",
+    "after": "\"id\":\"home\", \"label\":\"Changed\""
+  },
+  {
+    "id": "f0-admission-03",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_03_login_retains_entry_and_visitor_limits",
+    "path": "core/templates/core/components/field.html",
+    "before": "{% field_control field %}",
+    "after": "<input name=\"{{ field.name }}\">"
+  },
+  {
+    "id": "f0-admission-04",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_04_catalogue_is_opt_in_and_has_every_state",
+    "path": "core/ui_views.py",
+    "before": "if not settings.INTEVIA_DESIGN_CATALOGUE:",
+    "after": "if False:"
+  },
+  {
+    "id": "f0-admission-05",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_05_anonymous_counts_never_render_people",
+    "path": "core/ui.py",
+    "before": "people = []\n    else:",
+    "after": "people = list(members)\n    else:"
+  },
+  {
+    "id": "f0-admission-06",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_06_threshold_is_configurable_and_names_remain_in_list",
+    "path": "core/ui.py",
+    "before": "threshold = settings.INTEVIA_ORBIT_MAX_MEMBERS",
+    "after": "threshold = 9"
+  },
+  {
+    "id": "f0-admission-07",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_07_refusal_stays_whole_and_next_action_precedes_retained_entry",
+    "path": "core/templates/core/components/notice.html",
+    "before": "{% if next_url %}<p class=\"next-action\">{% include 'core/components/button.html' with href=next_url label=next_label variant='secondary' only %}</p>{% endif %}\n{% if retained %}<p>{{ retained }}</p>{% endif %}",
+    "after": "{% if retained %}<p>{{ retained }}</p>{% endif %}\n{% if next_url %}<p class=\"next-action\">{% include 'core/components/button.html' with href=next_url label=next_label variant='secondary' only %}</p>{% endif %}"
+  },
+  {
+    "id": "f0-admission-08",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_08_domain_variants_and_local_assets_only",
+    "path": "core/templates/core/components/domains.html",
+    "before": "{% if not domain.enabled and ui.off_style == 'greyed' %} off{% endif %}",
+    "after": ""
+  },
+  {
+    "id": "f0-admission-09",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_02_navigation_identity_and_honest_destinations",
+    "path": "core/templates/core/restricted.html",
+    "before": "{% block title %}Access restricted | INTEVIA{% endblock %}",
+    "after": "{% block title %}Access restricted | INTEVIA{% include 'core/components/signout.html' %}{% endblock %}"
+  },
+  {
+    "id": "f0-admission-10",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_02_navigation_identity_and_honest_destinations",
+    "path": "core/templatetags/f0_ui.py",
+    "before": "restricted_page = current == \"restricted\"",
+    "after": "restricted_page = False"
+  },
+  {
+    "id": "f0-admission-11",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_08_domain_variants_and_local_assets_only",
+    "path": "core/ui_views.py",
+    "before": "if scope == \"you\" and not request.user.is_authenticated:",
+    "after": "if False:  # admission fault: remove the You-domain sign-in guard"
+  },
+  {
+    "id": "f0-admission-12",
+    "class": "ADMISSION",
+    "target": "tests.test_f0_ui.F0PresentationTests.test_07_refusal_stays_whole_and_next_action_precedes_retained_entry",
+    "path": "core/templates/core/components/notice.html",
+    "before": "href=next_url label=next_label variant='secondary' only",
+    "after": "href=next_url label=next_label variant='primary' only"
+  }
+]

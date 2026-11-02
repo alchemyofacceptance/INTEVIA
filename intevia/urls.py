@@ -17,9 +17,15 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from core import views
+from core import views, ui_views
 
 urlpatterns = [
+    path('explore/', ui_views.placeholder, {"section": "explore"}, name='f0-explore'),
+    path('intevia/', ui_views.placeholder, {"section": "organisation"}, name='f0-organisation'),
+    path('history/', ui_views.placeholder, {"section": "history"}, name='f0-history'),
+    path('you/', ui_views.you, name='f0-you'),
+    path('spaces/<str:scope>/<str:domain>/', ui_views.domain, name='f0-domain'),
+    path('design/', ui_views.catalogue, name='f0-catalogue'),
     path('', views.shell, name='shell'),
     path('login/', views.product_login, name='login'),
     path('restricted/', views.restricted, name='restricted'),

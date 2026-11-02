@@ -1,0 +1,1 @@
+<section id="you" class="card"><h2>You</h2><p>Profile settings arrive with a later website slice.</p><details><summary>Sign out</summary><p>Sign out of INTEVIA on this device?</p><form method="post" action="{% url 'logout' %}">{% csrf_token %}{% include 'core/components/button.html' with type='submit' variant='secondary' label='Confirm sign out' only %}</form></details></section>

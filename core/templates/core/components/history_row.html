@@ -1,0 +1,3 @@
+<article class="card history-row"><dl><dt>What happened?</dt><dd>{{ message }}</dd><dt>When?</dt><dd>{{ occurred_at }}</dd></dl>
+{% if detail %}<details><summary>More about this record</summary><p>{{ detail }}</p></details>{% endif %}
+{% if chain_url %}<a href="{{ chain_url }}">{{ chain_label|default:'Read the full record history' }}</a>{% endif %}</article>

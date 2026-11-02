@@ -155,7 +155,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 
 SESSION_COOKIE_AGE = 8 * 60 * 60
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
@@ -166,3 +166,8 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# F0 presentation settings. The catalogue is off unless a local/CI setting opts in.
+INTEVIA_DESIGN_CATALOGUE = False
+INTEVIA_ORBIT_MAX_MEMBERS = 9
+INTEVIA_OFF_DOMAIN_STYLE = "greyed"

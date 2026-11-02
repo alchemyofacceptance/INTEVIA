@@ -6,8 +6,8 @@
   <form method="post" class="panel" novalidate>
     {% csrf_token %}
     {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
-    <div class="field">{{ form.username.label_tag }}{{ form.username }}{{ form.username.errors }}</div>
-    <div class="field">{{ form.password.label_tag }}{{ form.password }}{{ form.password.errors }}</div>
-    <button type="submit">Sign in</button>
+    {% include 'core/components/field.html' with field=form.username only %}
+    {% include 'core/components/field.html' with field=form.password only %}
+    {% include 'core/components/button.html' with type='submit' label='Sign in' only %}
   </form>
 {% endblock %}

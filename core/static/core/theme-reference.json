@@ -1,0 +1,451 @@
+{
+  "tokens": [
+    {
+      "name": "color-page",
+      "value": "#F8F6FB"
+    },
+    {
+      "name": "color-surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "color-text",
+      "value": "#21152F"
+    },
+    {
+      "name": "color-muted",
+      "value": "#665C70"
+    },
+    {
+      "name": "color-line",
+      "value": "#DED5E8"
+    },
+    {
+      "name": "color-control",
+      "value": "#867991"
+    },
+    {
+      "name": "color-primary",
+      "value": "#4B0082"
+    },
+    {
+      "name": "color-primary-soft",
+      "value": "#F0EAF7"
+    },
+    {
+      "name": "color-accent",
+      "value": "#007A82"
+    },
+    {
+      "name": "color-accent-soft",
+      "value": "#EAF5F4"
+    },
+    {
+      "name": "color-focus",
+      "value": "#007A82"
+    },
+    {
+      "name": "color-success",
+      "value": "#186448"
+    },
+    {
+      "name": "color-success-bg",
+      "value": "#E6F4EA"
+    },
+    {
+      "name": "color-warning",
+      "value": "#805300"
+    },
+    {
+      "name": "color-warning-bg",
+      "value": "#FFF6E5"
+    },
+    {
+      "name": "color-danger",
+      "value": "#A3192B"
+    },
+    {
+      "name": "color-danger-bg",
+      "value": "#FDECEE"
+    },
+    {
+      "name": "color-pending",
+      "value": "#665C70"
+    },
+    {
+      "name": "color-pending-bg",
+      "value": "#EFEDF3"
+    },
+    {
+      "name": "color-night",
+      "value": "#05060D"
+    },
+    {
+      "name": "color-violet",
+      "value": "#B799FF"
+    },
+    {
+      "name": "color-luminous",
+      "value": "#F5F7FF"
+    },
+    {
+      "name": "color-moon",
+      "value": "#C8C1D8"
+    },
+    {
+      "name": "font-sans",
+      "value": "Inter,Arial,sans-serif"
+    },
+    {
+      "name": "font-heading",
+      "value": "\"EB Garamond\",Georgia,serif"
+    },
+    {
+      "name": "spacing",
+      "value": "0.25rem"
+    },
+    {
+      "name": "text-xs",
+      "value": "0.75rem"
+    },
+    {
+      "name": "text-sm",
+      "value": "0.875rem"
+    },
+    {
+      "name": "text-base",
+      "value": "1rem"
+    },
+    {
+      "name": "text-lg",
+      "value": "1.125rem"
+    },
+    {
+      "name": "text-xl",
+      "value": "1.5rem"
+    },
+    {
+      "name": "text-2xl",
+      "value": "2rem"
+    },
+    {
+      "name": "text-3xl",
+      "value": "2.75rem"
+    },
+    {
+      "name": "radius-sm",
+      "value": "0.5rem"
+    },
+    {
+      "name": "radius-card",
+      "value": "1.25rem"
+    },
+    {
+      "name": "radius-pill",
+      "value": "999px"
+    },
+    {
+      "name": "breakpoint-desktop",
+      "value": "64rem"
+    },
+    {
+      "name": "touch",
+      "value": "2.75rem"
+    },
+    {
+      "name": "bar",
+      "value": "4.5rem"
+    },
+    {
+      "name": "domains",
+      "value": "4.75rem"
+    },
+    {
+      "name": "header",
+      "value": "4rem"
+    },
+    {
+      "name": "rail",
+      "value": "13rem"
+    },
+    {
+      "name": "page-width",
+      "value": "66rem"
+    },
+    {
+      "name": "space-xs",
+      "value": "0.25rem"
+    },
+    {
+      "name": "space-sm",
+      "value": "0.5rem"
+    },
+    {
+      "name": "space-md",
+      "value": "1rem"
+    },
+    {
+      "name": "space-lg",
+      "value": "1.5rem"
+    },
+    {
+      "name": "space-xl",
+      "value": "2rem"
+    },
+    {
+      "name": "stroke",
+      "value": "1px"
+    },
+    {
+      "name": "stripe",
+      "value": "0.25rem"
+    },
+    {
+      "name": "focus-width",
+      "value": "3px"
+    },
+    {
+      "name": "focus-offset",
+      "value": "3px"
+    },
+    {
+      "name": "leading",
+      "value": "1.55"
+    },
+    {
+      "name": "heading-leading",
+      "value": "1.15"
+    },
+    {
+      "name": "heading-weight",
+      "value": "500"
+    },
+    {
+      "name": "brand-tracking",
+      "value": "0.05em"
+    },
+    {
+      "name": "label-tracking",
+      "value": "0.08em"
+    },
+    {
+      "name": "icon-stroke",
+      "value": "1.7"
+    },
+    {
+      "name": "weight",
+      "value": "600"
+    },
+    {
+      "name": "icon",
+      "value": "1.4rem"
+    },
+    {
+      "name": "logo-height",
+      "value": "2.7rem"
+    },
+    {
+      "name": "ring",
+      "value": "11rem"
+    },
+    {
+      "name": "orbit-radius",
+      "value": "8rem"
+    },
+    {
+      "name": "motion",
+      "value": "160ms"
+    },
+    {
+      "name": "safe",
+      "value": "env(safe-area-inset-bottom,0px)"
+    }
+  ],
+  "contrast": [
+    {
+      "pair": "text / page",
+      "ratio": 16.13,
+      "use": "Text"
+    },
+    {
+      "pair": "muted / page",
+      "ratio": 5.88,
+      "use": "Text"
+    },
+    {
+      "pair": "primary / page",
+      "ratio": 12.07,
+      "use": "Text"
+    },
+    {
+      "pair": "accent / page",
+      "ratio": 4.77,
+      "use": "Text"
+    },
+    {
+      "pair": "text / surface",
+      "ratio": 17.31,
+      "use": "Text"
+    },
+    {
+      "pair": "muted / surface",
+      "ratio": 6.31,
+      "use": "Text"
+    },
+    {
+      "pair": "primary / surface",
+      "ratio": 12.95,
+      "use": "Text"
+    },
+    {
+      "pair": "accent / surface",
+      "ratio": 5.11,
+      "use": "Text"
+    },
+    {
+      "pair": "primary / primary-soft",
+      "ratio": 10.99,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "accent / accent-soft",
+      "ratio": 4.59,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "success / success-bg",
+      "ratio": 6.26,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "warning / warning-bg",
+      "ratio": 6.2,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "danger / danger-bg",
+      "ratio": 6.74,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "pending / pending-bg",
+      "ratio": 5.43,
+      "use": "Text and status symbol"
+    },
+    {
+      "pair": "surface / primary",
+      "ratio": 12.95,
+      "use": "Button label"
+    },
+    {
+      "pair": "surface / success",
+      "ratio": 7.11,
+      "use": "Button label"
+    },
+    {
+      "pair": "surface / danger",
+      "ratio": 7.69,
+      "use": "Button label"
+    },
+    {
+      "pair": "control / surface",
+      "ratio": 4.07,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / surface",
+      "ratio": 5.11,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / page",
+      "ratio": 3.79,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / page",
+      "ratio": 4.77,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / primary-soft",
+      "ratio": 3.45,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / primary-soft",
+      "ratio": 4.34,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / pending-bg",
+      "ratio": 3.51,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / pending-bg",
+      "ratio": 4.4,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / accent-soft",
+      "ratio": 3.66,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / accent-soft",
+      "ratio": 4.59,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / success-bg",
+      "ratio": 3.59,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / success-bg",
+      "ratio": 4.5,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / warning-bg",
+      "ratio": 3.79,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / warning-bg",
+      "ratio": 4.76,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "control / danger-bg",
+      "ratio": 3.57,
+      "use": "Control boundary"
+    },
+    {
+      "pair": "focus / danger-bg",
+      "ratio": 4.48,
+      "use": "Focus outline"
+    },
+    {
+      "pair": "violet / night",
+      "ratio": 8.68,
+      "use": "Reserved; not active in F0"
+    },
+    {
+      "pair": "luminous / night",
+      "ratio": 18.91,
+      "use": "Reserved; not active in F0"
+    },
+    {
+      "pair": "moon / night",
+      "ratio": 11.63,
+      "use": "Reserved; not active in F0"
+    },
+    {
+      "pair": "line / surface",
+      "ratio": 1.42,
+      "use": "Decorative only, never a control"
+    }
+  ]
+}

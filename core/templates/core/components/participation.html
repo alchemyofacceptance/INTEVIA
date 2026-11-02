@@ -1,0 +1,8 @@
+<section class="card" aria-label="{{ vote.labels.process }} participation">
+<h2>{{ vote.labels.process }}</h2>
+{% if vote.mode == 'orbit' and not vote.anonymous %}<div class="orbit"><div class="orbit-centre"><strong>{{ vote.total }}</strong>people</div>
+{% for person in vote.people %}<div class="orbit-node" style="--x:calc({{ person.x }} * var(--orbit-radius));--y:calc({{ person.y }} * var(--orbit-radius))">{% include 'core/components/badge.html' with name=person.name initials=person.initials only %}<span>{{ person.role }}</span><span class="answer {{ person.answer }}" aria-label="{{ person.label }}">{{ person.symbol }}</span></div>{% endfor %}</div>
+{% else %}<div class="participation-ring"><strong>{{ vote.total }}</strong><span>people</span></div>{% endif %}
+<div class="counts">{% for answer in vote.counts %}<p><span class="answer {{ answer.key }}">{{ answer.symbol }} {{ answer.label }}</span> <strong>{{ answer.count }}</strong></p>{% endfor %}</div>
+{% if vote.anonymous %}<p>Anonymous participation. Individual names and answers are not shown.</p>{% else %}<details open><summary>Members and answers</summary><ul class="member-list">{% for person in vote.people %}<li>{{ person.name }}{% if person.role %} · {{ person.role }}{% endif %} <span class="answer {{ person.answer }}">{{ person.symbol }} {{ person.label }}</span></li>{% empty %}<li>No participants are shown.</li>{% endfor %}</ul></details>{% endif %}
+</section>
