@@ -3,6 +3,16 @@
 MAINTENANCE: a packet that adds a core migration declares its head in REQUIRED_TRIGGER_COUNT, with the ground for the
 count. Until it does, the route reports isolation NOT ESTABLISHED at CP-0 for that head: the declaration is part of the
 packet, not an assumption of the route.
+Non-core apps declare net non-internal trigger changes per migration in
+NON_CORE_TRIGGER_DELTAS, with the trigger names and DDL ground. CP-0 adds only
+entries present in its captured django_migrations ledger to the core baseline.
+A reversing migration therefore removes its contribution without changing any
+core-head count. A later migration adding/dropping triggers declares its own
+signed delta; do not overwrite an earlier declaration or count the same trigger
+in both the core baseline and an app delta. Count-neutral migrations need no
+entry. Undeclared count changes still fail REQ-T2; the expected count is never
+learned from observed triggers. This count check retains its existing scope;
+it does not prove trigger-body correctness.
 
 v0.3 changes one thing: the schema version is declared, not assumed. The run declares its expected core
 migration head in VERIFICATION_EXPECTED_CORE_HEAD; the head must be exactly that (not merely present), and the
@@ -30,7 +40,7 @@ from django.db import connection
 # ---------------------------------------------------------------- declared requirements
 # REQ-T1  every non-internal trigger in the schema is enabled ('O')
 #         ground: no migration 0001-0022 disables a trigger or enables one in another mode [D]
-# REQ-T2  non-internal trigger count equals REQUIRED_TRIGGER_COUNT for the declared head
+# REQ-T2  non-internal trigger count equals the core-head baseline plus applied non-core migration deltas
 #         0022: 322 - D-S015-PKT-A-3 section 7 (0021's 246 + 0022's 76) [S]; U0 runs 2 and 3 observed 322 [O]
 #         0023: 322 - 0023 creates and drops no trigger (it replaces two functions and five CHECKs) [D]
 #         0024: 322 - 0024 creates and drops no trigger (it replaces two function bodies) [D]
@@ -134,6 +144,13 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0051_sr_role_definitions": 483,
                           "0052_sr_office_guard_widening": 483,
                           "0053_sr_office_safeguards": 483}
+# Non-core contributions, keyed by exact (app_label, migration_name).
+# email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)
+# and ema_template_truncate_immutable (TRUNCATE), both on
+# email_foundation_templateversion. Reverse drops both with the table. [D]
+NON_CORE_TRIGGER_DELTAS = {
+    ("email_foundation", "0001_initial"): 2,
+}
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
 OBSERVATION_KEYS = ("sequence_discipline",)
 
@@ -549,8 +566,18 @@ def check_requirements(s, required_guardians):
     head = os.environ.get(EXPECTED_HEAD_ENV)
     if head not in REQUIRED_TRIGGER_COUNT:
         v.append("REQ-D4 expected core head %r is not declared or not known to this instrument" % head)
-    elif len(s["triggers"]) != REQUIRED_TRIGGER_COUNT[head]:
-        v.append("REQ-T2 trigger count %d, required %d at %s" % (len(s["triggers"]), REQUIRED_TRIGGER_COUNT[head], head))
+    else:
+        applied_migrations = {tuple(row) for row in s["migrations"]}
+        app_delta = sum(
+            delta for migration, delta in NON_CORE_TRIGGER_DELTAS.items()
+            if migration in applied_migrations
+        )
+        required_count = REQUIRED_TRIGGER_COUNT[head] + app_delta
+        if len(s["triggers"]) != required_count:
+            v.append(
+                "REQ-T2 trigger count %d, required %d at %s (non-core delta %+d)"
+                % (len(s["triggers"]), required_count, head, app_delta)
+            )
     present = {(t, n): e for t, n, e, _, _, _ in s["triggers"]}
     for table, name in required_guardians.items():
         if present.get((table, name)) != "O":

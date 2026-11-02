@@ -59,3 +59,11 @@ urlpatterns = [
     path('logout/', views.product_logout, name='logout'),
     path('admin/', admin.site.urls),
 ]
+
+# Register no operator route in the ordinary/production URL configuration.
+from django.conf import settings  # noqa: E402
+
+if (settings.SETTINGS_MODULE in {"intevia.peek_settings", "intevia.email_local_settings"}
+        and settings.DEBUG and settings.INTEVIA_EMAIL_OUTBOX_PAGE):
+    from email_foundation.views import outbox
+    urlpatterns += [path("development/email-outbox/", outbox, name="ema-outbox")]

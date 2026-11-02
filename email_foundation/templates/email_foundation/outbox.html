@@ -1,0 +1,25 @@
+{% extends "core/base.html" %}
+{% block title %}Local email outbox{% endblock %}
+{% block content %}
+<h1>Local email outbox</h1>
+<p>Disposable development only. Read-only; showing the latest 100 intents.</p>
+<p><strong>CAPTURED_LOCAL means captured on this computer. No email was sent, delivered or read.</strong> PROVIDER_ACCEPTED is an acceptance state, never proof of delivery. ACCEPTANCE_UNCERTAIN requires investigation; do not resend blindly.</p>
+<p>Email status does not change the originating act. This page cannot send or retry messages. The operator can use the <code>email_outbox check</code> and <code>email_outbox recover</code> management commands; unresolved uncertainty remains held for investigation.</p>
+<p>Verification codes are visible here only so the local operator can rehearse the inbox journey. Do not share this page.</p>
+{% for row in rows %}
+<article>
+<h2>{{ row.subject|default:"Message payload erased" }}</h2>
+<dl>
+<dt>Intent</dt><dd>{{ row.intent_id }}</dd>
+<dt>Recipient</dt><dd>{{ row.to_address|default:"Erased" }}</dd>
+<dt>Category</dt><dd>{{ row.category }}</dd>
+<dt>State</dt><dd>{{ row.state }} — {{ row.last_code }}</dd>
+<dt>Originating act</dt><dd>{{ row.origin_reference }}</dd>
+<dt>Template</dt><dd>{{ row.template.name }} version {{ row.template.version }}</dd>
+<dt>Attempts</dt><dd>{{ row.attempt_count }}</dd>
+<dt>Created</dt><dd>{{ row.created_at }}</dd>
+</dl>
+<pre>{{ row.body }}</pre>
+</article>
+{% empty %}<p>No email intents have been recorded.</p>{% endfor %}
+{% endblock %}

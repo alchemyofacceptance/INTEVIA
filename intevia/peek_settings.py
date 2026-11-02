@@ -19,3 +19,10 @@ DEBUG = True
 ALLOWED_HOSTS = [host,"127.0.0.1","localhost"]
 CSRF_TRUSTED_ORIGINS = [f"http://{host}:8000"]
 INTEVIA_DESIGN_CATALOGUE = True
+
+# Only named operator Identities may inspect disposable captured messages.
+INTEVIA_EMAIL_OUTBOX_PAGE = True
+INTEVIA_EMAIL_OPERATOR_IDENTITIES = tuple(
+    item.strip() for item in os.environ.get("INTEVIA_EMAIL_OPERATOR_IDENTITIES", "").split(",")
+    if item.strip()
+)

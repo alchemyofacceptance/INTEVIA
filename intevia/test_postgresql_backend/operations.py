@@ -27,6 +27,7 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 # Guardians the reset has always been required to find (0019/0020). Kept as a required
 # minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
+    "email_foundation_templateversion": "ema_template_truncate_immutable",
     "core_authorityprincipal": "s015_authorityprincipal_truncate_immutable",
     "core_authoritybasis": "s015_authoritybasis_truncate_immutable",
     "core_emergencyauthorityenvelope": (
@@ -572,7 +573,11 @@ $s015$;
                 [_TRUNCATE_TRIGGER_BIT, list(tables)],
             )
             found = cursor.fetchall()
-        if any(not trigger.startswith("s015_") for _, trigger, _ in found):
+        if any(
+            not trigger.startswith("s015_")
+            and S015_TRUNCATE_GUARDIANS.get(table) != trigger
+            for table, trigger, _ in found
+        ):
             raise ImproperlyConfigured(
                 "S015 reset refuses a truncate trigger that is not an S015 guardian"
             )

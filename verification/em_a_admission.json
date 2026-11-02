@@ -1,0 +1,108 @@
+[
+  {
+    "id": "EMA-01",
+    "test": "tests.test_em_a.EmailFoundationTests.test_01_atomic_intent_and_one_request",
+    "kind": "python",
+    "target": "email_foundation.worker._outside_transaction",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": "if connection.in_atomic_block:",
+    "new": "if False:",
+    "defect": "Allow the worker inside an uncommitted act transaction."
+  },
+  {
+    "id": "EMA-02",
+    "test": "tests.test_em_a.EmailFoundationTests.test_02_outage_bounded_and_uncertain_not_retried",
+    "kind": "python",
+    "target": "email_foundation.worker.deliver",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": "state, code = Outbox.State.ACCEPTANCE_UNCERTAIN, \"ACCEPTANCE_UNKNOWN\"",
+    "new": "state, code = Outbox.State.QUEUED, \"ACCEPTANCE_UNKNOWN\"",
+    "defect": "Treat uncertain acceptance as queued for resend."
+  },
+  {
+    "id": "EMA-03",
+    "test": "tests.test_em_a.EmailFoundationTests.test_03_expired_claim_fenced_and_workers_overlap",
+    "kind": "python",
+    "target": "email_foundation.worker.recover",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": "code = \"CLAIM_RECOVERED\" if pre_send else \"LEASE_RECOVERED\"",
+    "new": "state = Outbox.State.FAILED\n                code = \"CLAIM_RECOVERED\" if pre_send else \"LEASE_RECOVERED\"",
+    "defect": "Discard an abandoned final-slot pre-send claim instead of immediately renewing it."
+  },
+  {
+    "id": "EMA-04",
+    "test": "tests.test_em_a.EmailFoundationTests.test_04_reserved_capacity_and_marketing_refusal",
+    "kind": "python",
+    "target": "email_foundation.worker.claim",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": "bucket.notice_used >= total - reserve",
+    "new": "bucket.notice_used >= total",
+    "defect": "Allow NOTICE to consume the essential reserve."
+  },
+  {
+    "id": "EMA-05",
+    "test": "tests.test_em_a.EmailFoundationTests.test_05_verification_expiry_single_use_and_resend",
+    "kind": "python",
+    "target": "email_foundation.service.request_verification",
+    "source_path": "email_foundation/service.py",
+    "source_sha256": "888d20576deac50dec05db3a77e3de8d8eb253d35d13f52564c4ec68895b268a",
+    "old": "record.requests_today >= limit",
+    "new": "False",
+    "defect": "Bypass the per-UTC-day five-challenge cap while retaining the resend interval."
+  },
+  {
+    "id": "EMA-06",
+    "test": "tests.test_em_a.EmailFoundationTests.test_06_audience_and_content_boundaries",
+    "kind": "python",
+    "target": "email_foundation.contracts.qualify",
+    "source_path": "email_foundation/contracts.py",
+    "source_sha256": "7940dcca2075a886d90b01e3c89abcc2f0eeff0be2c82f791cf9ad8a91082d95",
+    "old": "is True",
+    "new": "is not None",
+    "defect": "Treat an audience adapter refusal as permission."
+  },
+  {
+    "id": "EMA-07",
+    "test": "tests.test_em_a.EmailFoundationTests.test_07_recheck_address_before_capture",
+    "kind": "python",
+    "target": "email_foundation.worker._allowed",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": " or row.to_address != address.verified_address",
+    "new": "",
+    "defect": "Send a queued notice to an address superseded before delivery."
+  },
+  {
+    "id": "EMA-08",
+    "test": "tests.test_em_a.EmailFoundationTests.test_08_housekeeping_preserves_governed_evidence_and_dedupe",
+    "kind": "python",
+    "target": "email_foundation.worker.housekeeping",
+    "source_path": "email_foundation/worker.py",
+    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "old": "number(\"INTEVIA_EMAIL_RETENTION_DAYS\", 180)",
+    "new": "3650",
+    "defect": "Keep operational payloads beyond the specified retention window."
+  },
+  {
+    "id": "EMA-09",
+    "test": "tests.test_em_a.EmailFoundationTests.test_09_operator_view_local_only_and_read_only",
+    "kind": "python",
+    "target": "email_foundation.views.outbox",
+    "source_path": "email_foundation/views.py",
+    "source_sha256": "f4a2cf54f50e996a5679de588dfe25fdc2ef8d7b45693165521334efecc5bcb8",
+    "old": "settings.SETTINGS_MODULE\n        not in {\"intevia.peek_settings\", \"intevia.email_local_settings\"}",
+    "new": "False",
+    "defect": "Expose the operator view under ordinary production settings if its flag is enabled."
+  },
+  {
+    "id": "EMA-10",
+    "test": "tests.test_em_a.EmailFoundationTests.test_10_template_immutability_and_provider_seam",
+    "kind": "sql",
+    "defect": "Make the template-version update guard silently allow the attempted update.",
+    "sql": "CREATE OR REPLACE FUNCTION public.ema_template_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END; $$;"
+  }
+]
