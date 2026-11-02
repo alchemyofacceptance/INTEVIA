@@ -1,7 +1,15 @@
-# S015 verification route in CI (workflow v0.11, Change C design v0.5).
+# S015 verification route in CI (workflow v0.12, Change C design v0.5).
 #
 # Author : Vision Chamber (Claude Opus 5), UFUND-5, 18 September 2026. Human Governor: Carmian Owen.
 # Against: CONSUMER_REQUIREMENT_v0_5.md, sha256 995073dbf74a8722dbdb03a55d68acba29893534360e5e8e5364f903a3aafd20
+#
+# v0.12 change from v0.11, and only this:
+#
+#   1. NODE 24 ACTIONS. The three GitHub actions move from their Node 20 releases (checkout@v4, setup-python@v5,
+#      upload-artifact@v4, which GitHub now deprecates) to their Node 24 releases, each pinned to the full commit
+#      of its release tag rather than a movable tag: checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2.
+#      Their inputs used here are unchanged. No step, input, gate or job is changed.
+#      Human Governor direction, 2 Nov 2026: "I'm not a fan of maintaining deprecated functionality in a stack."
 #
 # v0.11 change from v0.10, and only this:
 #
@@ -95,7 +103,7 @@ jobs:
       BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
     steps:
       - name: Check out the candidate commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
@@ -127,7 +135,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -282,7 +290,7 @@ jobs:
 
       - name: Retain the whole run root, decision record included
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s015-verification-evidence-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: |
@@ -323,10 +331,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - name: Bind source and verify committed styles
@@ -341,7 +349,7 @@ jobs:
           echo "F0 stylesheet job work: $((SECONDS-started)) seconds" | tee -a f0-styles.log
       - name: Retain F0 stylesheet evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: F0-styles-${{ github.run_id }}-${{ github.run_attempt }}
           path: f0-styles.log
