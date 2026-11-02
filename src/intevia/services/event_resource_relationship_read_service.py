@@ -47,11 +47,27 @@ from src.intevia.services.library_exact_version_contract import (
 
 @dataclass(frozen=True, slots=True)
 class EventResourcePresentation:
+    """What a viewer is shown for one related resource: the version's
+    content and the purpose's display label. No ids are included."""
     content: str
     purpose: str
 
 
 class EventResourceRelationshipReadService:
+    """Project current resource relations after evidence and disclosure.
+
+    Require the implemented history/evidence checks and a CURRENT head,
+    then qualifying live Library and EVENT disclosure responses for the
+    viewer. Explicit failed checks omit entries; selected viewer/input
+    failures return an empty tuple. Only AttributeError, TypeError and
+    ValueError inside per-relationship processing are silently skipped.
+    Other errors, and errors outside that block, can propagate.
+
+    The read path makes no direct writes. It locks the viewer Identity,
+    not the relationship history, and relies on injected evaluators for
+    their live disclosure contracts. Evidence consistency is not proof
+    that an authorised policy originally produced the stored bytes.
+    """
     def __init__(
         self,
         *,
@@ -59,6 +75,10 @@ class EventResourceRelationshipReadService:
         relationship_disclosure: EventRelationshipDisclosure,
         database_alias: str = "default",
     ) -> None:
+        """Keep the Library contract, the EVENT disclosure evaluator and the
+        alias. Either evaluator None raises TypeError; a Library contract on
+        another alias raises ValueError. The disclosure evaluator's alias and
+        methods are not checked."""
         if library_contract is None or relationship_disclosure is None:
             raise TypeError("Library and EVENT disclosure evaluators are required")
         if library_contract.database_alias != database_alias:
@@ -69,10 +89,18 @@ class EventResourceRelationshipReadService:
 
     @staticmethod
     def _canonical_time(value: datetime) -> str:
+        """Format a time as UTC text with microseconds and "Z". No awareness
+        check is made; a naive value is converted as local time."""
         return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     @staticmethod
     def _canonical_object(payload: bytes) -> dict[str, object] | None:
+        """Parse stored payload bytes as one JSON object, or return None.
+
+        None for bytes that are not UTF-8 or not JSON, for a top-level value
+        that is not an object, or for a repeated key at any level. The
+        values are not otherwise checked here.
+        """
         def object_pairs(pairs):
             result = {}
             for name, value in pairs:
@@ -97,6 +125,26 @@ class EventResourceRelationshipReadService:
         assertion: EventResourceAssertion,
         transition: EventResourceRelationshipTransition,
     ) -> bool:
+        """Compare stored EVENT authority evidence with its history context.
+
+        Return False for failed parsing, a field set other than the 22
+        authority fields, different re-encoded bytes, or a failed comparison.
+        TypeError and ValueError during re-encoding become False; byte
+        conversion, related-row access and later comparisons are not under
+        that catch and can raise.
+
+        Check fixed schema/policy/profile/result metadata, both hashes,
+        the transition's authority reference and actor/epoch, absent viewer
+        and request/consumer fields, and the recorded binding references.
+        Match payload action, scope, actor, resource/version, purposes,
+        Event/relationship, predecessor context and canonical UTC times.
+        CREATE uses None for relationship and predecessor context.
+
+        event_state must be a payload field but its value is not compared.
+        No binding is resolved or authority re-evaluated here. Matching
+        unkeyed digests and stored context establish consistency, not that
+        the claimed policy produced or authorised the evidence.
+        """
         canonical = bytes(evidence.canonical_payload)
         payload = cls._canonical_object(canonical)
         predecessor = transition.from_assertion
@@ -169,6 +217,23 @@ class EventResourceRelationshipReadService:
         assertion: EventResourceAssertion,
         transition: EventResourceRelationshipTransition,
     ) -> bool:
+        """Compare a stored Library determination with its command context.
+
+        Return False for failed parsing, TypeError or ValueError while
+        building DeterminationPayload, re-encoding or making its envelope,
+        different canonical bytes, an unsupported kind, or a failed
+        metadata/context comparison. Other errors can propagate; converting
+        stored bytes and accessing later related context are outside that
+        construction catch.
+
+        Require AUTHORITY/QUALIFIED, LINKABILITY/LINKABLE or
+        DISCLOSURE/CONTENT_VISIBLE according to evidence kind. Match row
+        metadata, references, digest, time and identity axes to the payload;
+        match resource and exact version to the relationship/assertion.
+        Authority binds the transition actor, action and request/consumer;
+        disclosure binds its actor as viewer; linkability binds neither axis.
+        This checks recorded claims, not current Library policy or provenance.
+        """
         canonical = bytes(evidence.canonical_payload)
         values = cls._canonical_object(canonical)
         if values is None:
@@ -257,6 +322,17 @@ class EventResourceRelationshipReadService:
         relationship: EventResourceRelationship,
         transition: EventResourceRelationshipTransition,
     ) -> bool:
+        """Check one stored EVENT disclosure evidence row; return a bool.
+
+        False unless the transition has a predecessor and the payload parses
+        to exactly the 13 disclosure fields and re-encodes to the stored
+        bytes. The row must be VISIBLE under the disclosure policy, with
+        matching digests and the transition's actor as viewer and no actor
+        fields. The payload must name this Event, relationship and the
+        predecessor assertion, its state and purpose, VISIBLE and
+        EXISTENCE_VISIBLE, the viewer and epoch, and the row's evaluated_at
+        in isoformat (not canonical UTC).
+        """
         canonical = bytes(evidence.canonical_payload)
         payload = cls._canonical_object(canonical)
         predecessor = transition.from_assertion
@@ -308,6 +384,28 @@ class EventResourceRelationshipReadService:
         assertions: list[EventResourceAssertion],
         transition: EventResourceRelationshipTransition,
     ) -> bool:
+        """Compare correction evidence in the caller's VOID history context.
+
+        Require the seven correction fields, matching local canonical bytes
+        and a VoidReason. JSON parsing, re-encoding and VoidReason conversion
+        TypeError or ValueError give False; initial byte conversion can raise.
+        OTHER_GOVERNED_CORRECTION is always False.
+        Look up the first EVENT authority row; a successful result needs it.
+
+        For DUPLICATE_ASSERTION, NO_SURVIVOR requires a None assertion id
+        and an exact str rationale, which may be empty. Otherwise convert
+        the survivor id with int and find it in the supplied assertions;
+        require this relationship's id, an earlier revision distinct from
+        the predecessor, and the same version and purpose. No survivor-state
+        check is made. Other reasons require both survivor fields to be None.
+
+        Match row schema/profile, reason result, authority-row policy,
+        digests, actor/epoch and absent viewer fields. Match transition id,
+        isoformat occurrence and canonical UTC evaluation/occurrence times.
+        correction_evidence_reference is carried but not substantively
+        validated. No VOID action check is made here. Uncaught conversion,
+        related-row, attribute and database errors can propagate.
+        """
         canonical = bytes(evidence.canonical_payload)
         payload = cls._canonical_object(canonical)
         expected_fields = {
@@ -383,6 +481,21 @@ class EventResourceRelationshipReadService:
         assertions: list[EventResourceAssertion],
         transitions: list[EventResourceRelationshipTransition],
     ) -> bool:
+        """Check the action-specific evidence set for each paired history row.
+
+        Require exactly one of each required kind and no others. CREATE and
+        SUPERSEDE_VERSION require EVENT authority, Library authority and
+        linkability. AMEND_PURPOSE requires EVENT and Library authority plus
+        both disclosure eligibilities. RETIRE requires EVENT authority;
+        VOID requires EVENT authority and correction evidence.
+
+        Return False on an unknown action, a wrong or duplicate kind set,
+        or a failed row check; otherwise return True. Validators' unhandled
+        errors propagate. Pair with strict zip: unequal lengths raise
+        ValueError only if iteration reaches the mismatch; an earlier False
+        or exception can occur first. Two empty lists return True here;
+        the reconstruction caller separately rejects empty history.
+        """
         required = {
             EventResourceRelationshipTransition.Action.CREATE: {
                 EventResourceRelationshipEvidence.Kind.EVENT_AUTHORITY,
@@ -444,6 +557,29 @@ class EventResourceRelationshipReadService:
     def _reconstruct(
         relationship: EventResourceRelationship,
     ) -> EventResourceAssertion | None:
+        """Check stored chains and evidence; return the last assertion or None.
+
+        Load assertions by revision/pk and transitions by sequence/pk.
+        Return None for empty assertions, unequal counts or a head pointer
+        not naming the last assertion. Check relationship membership,
+        consecutive numbering from one, predecessor/previous-transition
+        links, and each transition's from/resulting assertion links.
+
+        The first pair must be CREATE to CURRENT. SUPERSEDE_VERSION then
+        requires a different version id, unchanged purpose, CURRENT result
+        and SUPERSEDED prior disposition. AMEND_PURPOSE requires the same
+        version, changed purpose, CURRENT result and CURRENT prior
+        disposition. RETIRE or VOID requires unchanged version/purpose and
+        the corresponding terminal result. Other actions fail. Return None
+        for a failed action predicate or evidence-lineage check; otherwise
+        return the last assertion, including a terminal head.
+
+        Do not check predecessor state, chronological order or all model
+        invariants. CREATE, RETIRE and VOID prior dispositions are not
+        checked here; a changed version need not have a higher number.
+        Acquire no locks. Database and unhandled validation-helper errors
+        propagate; present separately catches selected per-item exceptions.
+        """
         assertions = list(relationship.assertions.order_by("revision", "pk"))
         transitions = list(relationship.transitions.order_by("sequence", "pk"))
         if not assertions or len(assertions) != len(transitions):
@@ -519,6 +655,10 @@ class EventResourceRelationshipReadService:
         return assertions[-1]
 
     def _same_viewer(self, viewer: Identity) -> bool:
+        """Re-read the viewer, unlocked; return whether it is unchanged and
+        may view: same identity, credential and epoch, ACTIVE, credential
+        active. Missing gives False. Staff and superuser are not checked
+        here."""
         try:
             current = Identity.objects.using(self.database_alias).select_related(
                 "credential"
@@ -540,6 +680,33 @@ class EventResourceRelationshipReadService:
         event: Event,
         evaluated_at: datetime,
     ) -> tuple[EventResourcePresentation, ...]:
+        """Return sorted presentations admitted by the read-path checks.
+
+        Return () unless evaluated_at is a datetime with non-None tzinfo;
+        utcoffset is not checked here. In atomic on database_alias, lock the
+        viewer Identity by pk, identity id and credential id. A missing row,
+        changed epoch, non-ACTIVE Identity or inactive credential returns ().
+        Staff and superuser flags are not independently checked here.
+
+        For each relationship of the supplied Event, require reconstruction
+        to return a CURRENT head. Ask Library about its exact version;
+        require CONTENT_VISIBLE and matching viewer id/epoch, then re-read
+        the viewer. Ask EVENT disclosure about this head; require the exact
+        VISIBLE and EXISTENCE_VISIBLE enums and matching viewer id/epoch,
+        then re-read the viewer again. Any failed predicate skips the entry.
+
+        Only AttributeError, TypeError and ValueError raised inside this
+        per-relationship block are caught and skipped. Other errors escape;
+        initial viewer/input access, candidate iteration, transaction exit
+        and final sorting are outside this catch. No skipped-entry reason
+        is returned or directly logged here.
+
+        Append exact-version content and purpose display text; sort by
+        purpose then content and return a tuple. Make no direct writes or
+        history locks. Trust the injected live evaluators' target, time and
+        payload contracts beyond the result/viewer comparisons above;
+        their response digests and other target fields are not rechecked.
+        """
         if not isinstance(evaluated_at, datetime) or evaluated_at.tzinfo is None:
             return ()
         with transaction.atomic(using=self.database_alias):

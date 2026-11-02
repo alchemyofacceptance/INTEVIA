@@ -43,12 +43,21 @@ class EventService:
     }
 
     def __init__(self, *, authority: ContributionAuthority) -> None:
+        """Keep the authority. It must be a ContributionAuthority
+        (isinstance; TypeError otherwise); its capability is not checked."""
         if not isinstance(authority, ContributionAuthority):
             raise TypeError("authority must preserve the existing capability contract")
         self.authority = authority
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
+        """Use the supplied time, or timezone.now() when the value is falsy.
+
+        Require tzinfo and a non-None UTC offset, else raise Django's
+        ValidationError. No explicit datetime type check is made; attribute
+        or time-zone errors propagate. Return the value without converting
+        to UTC or comparing it with earlier Event times.
+        """
         value = value or timezone.now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("timestamp must be timezone-aware")
@@ -56,12 +65,19 @@ class EventService:
 
     @staticmethod
     def _text(value: str, name: str) -> str:
+        """Return the text stripped; a non-str or blank value raises Django's
+        ValidationError naming the field. No length or format is checked."""
         if not isinstance(value, str) or not value.strip():
             raise ValidationError(f"{name} is required")
         return value.strip()
 
     @staticmethod
     def _locked(event_id: str) -> Event:
+        """Lock and return the Event with this event_id (select_for_update).
+
+        A missing Event raises Event.DoesNotExist, unconverted. The caller
+        holds the transaction.
+        """
         return Event.objects.select_for_update().get(event_id=event_id)
 
     @staticmethod
@@ -76,6 +92,14 @@ class EventService:
         occurred_at: datetime,
         rationale_reference: str | None = None,
     ) -> EventTransition:
+        """Append one EventTransition and return it.
+
+        Links it to the Event's last transition by occurred_at then key
+        (not locked separately), stores the states' values, and gives it a
+        random lineage_reference ("event-transition:" plus a UUID4); the
+        reference is not derived from the row. Nothing is validated here
+        beyond what the model's create does.
+        """
         previous = event.transitions.order_by("occurred_at", "pk").last()
         prior = prior.value if hasattr(prior, "value") else prior
         new = new.value if hasattr(new, "value") else new
@@ -103,6 +127,22 @@ class EventService:
         description: str = "",
         occurred_at: datetime | None = None,
     ) -> Event:
+        """Create a DRAFT Event with its transition and evidence atomically.
+
+        Use an aware occurrence time, defaulting to now for a falsy value.
+        Require nonblank event_id, title and evidence_reference and strip
+        those strings; invalid forms raise Django's ValidationError.
+        Ask ContributionAuthority to evaluate create_event against event_id;
+        its refusals and capability exceptions propagate.
+
+        Use the returned actor as owner, record creation to DRAFT, and add
+        creation evidence. description.strip() is called without a str
+        check, so missing or failing strip behaviour propagates. No Event
+        full_clean is called by this service. A database uniqueness failure
+        for event_id propagates as IntegrityError. Transition and evidence
+        saves run their own validation; their ValidationError and database
+        errors are not converted.
+        """
         occurred_at = self._at(occurred_at)
         event_id = self._text(event_id, "event_id")
         title = self._text(title, "title")
@@ -153,6 +193,24 @@ class EventService:
         rationale_reference: str | None = None,
         occurred_at: datetime | None = None,
     ) -> EventTransition:
+        """Apply the one allowed command for the Event's current state.
+
+        Inside atomic, resolve the occurrence time and lock the Event;
+        a missing row raises Event.DoesNotExist. Allow publish_event from
+        DRAFT, activate_event from PUBLISHED, complete_event from ACTIVE,
+        and archive_event from COMPLETED. Other commands or states raise
+        InvalidEventTransition before authority evaluation.
+
+        Evaluate authority, update state and updated_at, set archived_at
+        when archiving, then append and return the transition. Authority,
+        capability, model ValidationError and database errors propagate.
+        An escaping write failure rolls back this atomic block's changes.
+
+        The service does not compare occurrence with earlier transitions,
+        check ownership independently of the capability, or strip rationale.
+        updated_at uses the model's automatic time; the transition and
+        archived_at use occurred_at. No command replay is provided here.
+        """
         occurred_at = self._at(occurred_at)
         event = self._locked(event_id)
         expected = self._TRANSITIONS.get(event.state)
@@ -193,6 +251,8 @@ class EventService:
         participant: Identity,
         occurred_at: datetime | None = None,
     ) -> EventParticipation:
+        """Retired: always raises EventParticipationWritesRetired and writes
+        nothing. Use governed Event registration instead."""
         raise EventParticipationWritesRetired(
             "EventParticipation writes are retired; use governed Event registration"
         )

@@ -58,6 +58,14 @@ _COMPOUND_ENTRY_VALUES = tuple(entry.value for entry in COMPOUND_ENTRIES)
 
 
 class ChildEntry(str, Enum):
+    """Entries that exist only as stages derived from another request.
+
+    REQUEST_STAGE and ADMIT_STAGE are the two stages of a compound
+    request (DECIDE_GOVERNANCE_SEAT_COMPOUND or SEAT_GOVERNANCE_CIRCLE),
+    derived by BoundRequest.child; each maps to its public entry for
+    shaping and to a fixed action. BIRTHING_ELECTION and
+    AUTOMATIC_ADMISSION are declared but not used in this module.
+    """
     BIRTHING_ELECTION = "BIRTHING_ELECTION"
     AUTOMATIC_ADMISSION = "AUTOMATIC_ADMISSION"
     REQUEST_STAGE = "REQUEST_STAGE"
@@ -101,6 +109,9 @@ def _require_verified_compound_parent(bound: BoundRequest) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ActorRef:
+    """The admitted actor: Identity primary key, identity UUID, and the
+    access epoch read at admission (see _resolve_actor).
+    """
     pk: int
     identity_id: UUID
     access_epoch: int
@@ -108,6 +119,15 @@ class ActorRef:
 
 @dataclass(frozen=True, slots=True)
 class IntakeShape:
+    """The command projection supplied to admission and fingerprinting.
+
+    idempotency_key and request_reference identify the request. target
+    and command hold its projected content. omitted is a tuple of field
+    names fingerprinted alongside them; it removes nothing from either
+    dictionary. target_organism_id is stored only for
+    compound entries. action supplies the choice for gateway entries;
+    a fixed entry action may be omitted or supplied consistently.
+    """
     idempotency_key: str
     request_reference: str
     target: dict[str, object]
@@ -119,6 +139,29 @@ class IntakeShape:
 
 @dataclass(frozen=True, slots=True)
 class BoundRequest:
+    """An immutable request binding for later execution checks.
+
+    Admission creates or recovers a binding to an intake row; child
+    derives a stage sharing its parent's row and receipt time. for_test
+    instead supplies a test binding without a row. Construction requires
+    the private sentinel or raises TypeError; that check alone does not
+    prove admission.
+
+    Carries the request identifiers, content fingerprint, actor identity
+    and access epoch, receipt time, intake id and compound target.
+    first marks a newly inserted intake row. parent is set only on a
+    derived stage and is the compound request it was derived from.
+    content_verified marks a copy checked by verify_content.
+
+    verify_content checks the served entry, parent and command binding,
+    returning a content-verified copy. verify additionally checks the
+    actor and access epoch and, when the binding has an intake id, the
+    stored row (the parent's row for a stage); a test binding without an
+    intake id is not compared with any row.
+    Binding mismatches raise IntakeAdmissionTechnicalFailure; an epoch
+    mismatch raises the entry family's authority-unavailable exception.
+    These methods do not execute the command or grant its authority.
+    """
     entry: IntakeEntry | ChildEntry
     action: str
     idempotency_key: str
@@ -136,6 +179,9 @@ class BoundRequest:
     content_verified: bool = False
 
     def __post_init__(self, _sentinel: object) -> None:
+        """Refuse construction without the intake boundary's private
+        sentinel (TypeError).
+        """
         if _sentinel is not _CONSTRUCTOR_SENTINEL:
             raise TypeError("BoundRequest must be created by the intake boundary")
 
@@ -148,6 +194,19 @@ class BoundRequest:
         received_at: datetime,
         actor: ActorRef,
     ) -> BoundRequest:
+        """Build a test binding without admitting or storing a request.
+
+        Requires a truthy settings.INTEVIA_TEST_CONTEXT; otherwise raises
+        IntakeAdmissionTechnicalFailure. Uses intake_shape, _action_for and
+        intake_fingerprint, and validates the supplied received_at.
+        Delegated validation errors propagate unchanged.
+
+        Uses the supplied ActorRef without resolving it. Does not run
+        admission-state, _normalise_shape or history checks. Sets intake_id
+        and parent to None, first and content_verified to False.
+        verify_content permits the missing intake id only while the test
+        context is enabled; its other content checks still apply.
+        """
         if not getattr(settings, "INTEVIA_TEST_CONTEXT", False):
             raise IntakeAdmissionTechnicalFailure(
                 "test-only bound requests require INTEVIA_TEST_CONTEXT"
@@ -346,6 +405,12 @@ class BoundRequest:
 
 @dataclass(frozen=True, slots=True)
 class Slot:
+    """One (action, request key) pair of an intake binding, with the
+    clause that produces it: "D" (the entry's own action), "C1" (the
+    Birthing-child slot: the entitlement election under the same key)
+    or "C2" (a compound stage's derived key). A C1 slot never accounts
+    for a receipt (accounts_for, run_activation_step).
+    """
     action: str
     idempotency_key: str
     clause: str
@@ -353,6 +418,9 @@ class Slot:
 
 @dataclass(frozen=True, slots=True)
 class IntakeBinding:
+    """A stored intake row as the history check reads it: actor, entry,
+    action, request key, compound target and receipt time.
+    """
     actor_id: int
     entry: IntakeEntry
     action: str
@@ -363,6 +431,11 @@ class IntakeBinding:
 
 @dataclass(frozen=True, slots=True)
 class IntakeRecord:
+    """A receipt or authority decision found under a candidate slot.
+
+    kind is "receipt" (core_organismcommandreceipt) or "decision"
+    (core_authoritydecision); evaluated_at is set only for decisions.
+    """
     id: int
     actor_id: int
     action: str
@@ -373,6 +446,12 @@ class IntakeRecord:
 
 @dataclass(frozen=True, slots=True)
 class UnaccountedRecord:
+    """An unaccounted receipt or decision returned by run_activation_step.
+
+    Carries the actor id, action, request key, record kind and record id
+    for an item not recognised by the stored intake slots in the
+    activation namespace.
+    """
     actor_id: int
     action: str
     idempotency_key: str
@@ -395,6 +474,12 @@ class IntakeUnexpectedHistory(IntakeAdmissionTechnicalFailure):
         unaccounted_action: str,
         unaccounted_idempotency_key: str,
     ) -> None:
+        """Set the refusal message and name the unaccounted record.
+
+        The message states that this attempt made no changes and kept no new
+        intake record. The record's kind, id, action and request key are kept
+        as attributes for reporting.
+        """
         super().__init__(
             "A record for this request key exists without a corresponding intake binding; "
             "this attempt made no changes and kept no new intake record. Report it."
@@ -517,12 +602,21 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
 
 
 def _request_binding_mismatch() -> IntakeAdmissionTechnicalFailure:
+    """Return (not raise) the refusal used when an executed request is
+    not the admitted one: nothing was done.
+    """
     return IntakeAdmissionTechnicalFailure(
         "The request being executed is not the request that was admitted; nothing was done."
     )
 
 
 def _canonical_value(value: object) -> object:
+    """Convert a value for fingerprinting, recursively.
+
+    Datetimes become canonical timestamps, UUIDs strings and enums their
+    values; dicts keep their keys; lists and tuples become lists. Other
+    values pass through unchanged.
+    """
     if isinstance(value, datetime):
         return canonical_timestamp(value)
     if isinstance(value, UUID):
@@ -565,6 +659,12 @@ def intake_fingerprint(
 
 
 def _action_for(entry: IntakeEntry, action: str | None) -> str:
+    """Resolve the action an entry records.
+
+    An entry with a fixed action in ENTRY_ACTIONS returns it; a supplied
+    action that differs raises ValueError. The gateway entries (no fixed
+    action) require one of the three gateway effect actions.
+    """
     expected = ENTRY_ACTIONS[entry]
     if expected is not None:
         if action is not None and action != expected:
@@ -699,6 +799,11 @@ def _resolve_actor(alias: str, credential: object) -> ActorRef:
 
 
 def _existing_row(alias: str, actor_pk: int, action: str, key: str):
+    """Read the intake row for (actor, action, request key), or None.
+
+    Returns id, entry, request reference, fingerprint, fingerprint
+    schema, receipt time and compound target, in that order, unlocked.
+    """
     with connections[alias].cursor() as cursor:
         cursor.execute(
             """
@@ -717,6 +822,9 @@ def _history_records(
     actor_pk: int,
     candidate_slots: tuple[Slot, ...],
 ) -> list[IntakeRecord]:
+    """List the actor's receipts and authority decisions under the
+    given slots, as IntakeRecords; empty when there are no slots.
+    """
     if not candidate_slots:
         return []
     pair_sql = " OR ".join(
@@ -759,6 +867,11 @@ def _candidate_bindings(
     actor_pk: int,
     candidate_slots: tuple[Slot, ...],
 ) -> list[IntakeBinding]:
+    """List the actor's intake rows that could account for the slots.
+
+    Selects every compound-entry row of the actor (their stage slots use
+    derived keys) and every row whose action and key match a slot.
+    """
     pair_sql = " OR ".join(
         "(action = %s AND idempotency_key = %s)" for _ in candidate_slots
     )
@@ -803,6 +916,18 @@ def _refuse_unexpected_history(
     action: str,
     shape: IntakeShape,
 ):
+    """Check slot history when admission has not found an intake row.
+
+    Read the actor's receipts and decisions under the request's slots.
+    Return None if none exist or all are recognised by accounts_for.
+    Otherwise reread the intake row for this actor, action and key.
+    Return it if present, allowing the caller to check a binding that
+    may have appeared concurrently; this does not recheck the history.
+
+    If that row is absent, raise IntakeUnexpectedHistory naming the
+    first unaccounted record in the query result. No ordering is
+    guaranteed. This helper performs no writes or exception translation.
+    """
     candidate_slots = slots(
         entry,
         shape.idempotency_key,
@@ -833,6 +958,19 @@ def _refuse_unexpected_history(
 
 
 def _normalise_shape(entry: IntakeEntry, shape: IntakeShape) -> str:
+    """Validate the supplied shape and return its resolved action.
+
+    Require non-empty exact str keys and references, exact dict target
+    and command, and an exact tuple of exact str omission names.
+    Compound entries require a UUID target_organism_id; other entries
+    require None. Resolve the fixed or supported gateway action via
+    _action_for. Invalid keys, references, target_organism_id or action
+    choices raise ValueError; invalid container/name types raise
+    TypeError.
+
+    Does not alter the shape, strip strings, check key lengths or
+    validate the contents of target and command.
+    """
     action = _action_for(entry, shape.action)
     if type(shape.idempotency_key) is not str or not shape.idempotency_key:
         raise ValueError("idempotency_key must be a non-empty canonical string")
@@ -857,6 +995,18 @@ def _application_keys_and_times(
     effective_at: object,
     received_at: object,
 ) -> tuple[str, str, datetime, datetime]:
+    """Check the keys and times shared by most shape builders.
+
+    Used by the application, gateway, effect, assignment and
+    office-consent shapes; membership repeats the checks inline.
+
+    request_reference (at most 128) and idempotency_key (at most 120)
+    must already be canonical keys (_canonical_key: TypeError or
+    ValueError otherwise). occurred_at and effective_at must be exact
+    timezone-aware datetimes and are returned in UTC. A supplied
+    received_at raises ValueError: INTEVIA assigns it. Returns
+    (request_reference, idempotency_key, occurred_at, effective_at).
+    """
     request_reference = _canonical_key(request_reference, "request_reference", 128)
     idempotency_key = _canonical_key(idempotency_key, "idempotency_key", 120)
     occurred_at = _validate_timestamp(occurred_at, "occurred_at")
@@ -867,6 +1017,14 @@ def _application_keys_and_times(
 
 
 def _submit_application_shape(command: object) -> IntakeShape:
+    """Project a SubmitApplicationCommand (exact type, else TypeError).
+
+    Check keys and times via _application_keys_and_times. Require exact
+    UUIDs for living_organism_id and any predecessor_reference, else
+    TypeError. Target: the living organism UUID. Command: UTC occurred_at
+    and effective_at, predecessor_reference or None, and answer as given.
+    The answer's content is not checked here.
+    """
     from src.intevia.services.organism_application_service import SubmitApplicationCommand
 
     if type(command) is not SubmitApplicationCommand:
@@ -900,6 +1058,12 @@ def _submit_application_shape(command: object) -> IntakeShape:
 
 
 def _withdraw_application_shape(command: object) -> IntakeShape:
+    """Project a WithdrawApplicationCommand (exact type, else TypeError).
+
+    Check keys and times via _application_keys_and_times. Require an
+    exact application_uuid UUID, else TypeError. Target: that UUID.
+    Command: occurred_at and effective_at converted to UTC.
+    """
     from src.intevia.services.organism_application_service import WithdrawApplicationCommand
 
     if type(command) is not WithdrawApplicationCommand:
@@ -923,6 +1087,12 @@ def _withdraw_application_shape(command: object) -> IntakeShape:
 
 
 def _claim_application_shape(command: object) -> IntakeShape:
+    """Project a ClaimApplicationCommand (exact type, else TypeError).
+
+    Check keys and times via _application_keys_and_times. Require an
+    exact application_uuid UUID, else TypeError. Target: that UUID.
+    Command: occurred_at and effective_at converted to UTC.
+    """
     from src.intevia.services.organism_application_service import ClaimApplicationCommand
 
     if type(command) is not ClaimApplicationCommand:
@@ -946,6 +1116,13 @@ def _claim_application_shape(command: object) -> IntakeShape:
 
 
 def _reassign_application_shape(command: object) -> IntakeShape:
+    """Project a ReassignApplicationCommand (exact type, else TypeError).
+
+    Check keys and times via _application_keys_and_times. Require an
+    exact application_uuid UUID, else TypeError. Target: that UUID.
+    Command: occurred_at and effective_at converted to UTC.
+    The new assignee is not part of the shape.
+    """
     from src.intevia.services.organism_application_service import ReassignApplicationCommand
 
     if type(command) is not ReassignApplicationCommand:
@@ -969,6 +1146,15 @@ def _reassign_application_shape(command: object) -> IntakeShape:
 
 
 def _decide_application_shape(command: object) -> IntakeShape:
+    """Project a DecideApplicationCommand (exact type, else TypeError).
+
+    Check outcome first: require exact str (TypeError otherwise), with
+    canonical value ACCEPT or DECLINE (ValueError otherwise). Then check
+    keys and times via _application_keys_and_times and require an exact
+    application_uuid UUID (TypeError otherwise).
+    Target: that UUID. Command: UTC occurred_at and effective_at, and
+    the outcome.
+    """
     from src.intevia.services.organism_application_service import DecideApplicationCommand
 
     if type(command) is not DecideApplicationCommand:
@@ -1011,6 +1197,24 @@ def application_shape(entry: IntakeEntry, command: object) -> IntakeShape:
 
 
 def _gateway_draft_shape(command: object) -> IntakeShape:
+    """Project a GatewayDraftCommand (exact type, else TypeError).
+
+    In this order: require an action recognised by _VERSION_KINDS (an
+    unknown relation raises ValueError); check keys and times via
+    _application_keys_and_times; require an exact living_organism_id
+    UUID (TypeError); require fields to be a dict with keys allowed for
+    the relation's version kind (S015ApplicationRefused); then require
+    version_uuid as None or an exact UUID (TypeError).
+
+    TypeError or ValueError while canonicalising and serialising the
+    times and fields becomes S015ApplicationRefused; the earlier key,
+    time and UUID errors propagate unchanged.
+
+    Target: organism UUID and version_uuid. Command: UTC occurred_at and
+    effective_at, and the original fields dictionary. Field meanings
+    are not validated. The shape's action is the gateway effect action.
+    No version is read or written here.
+    """
     from src.intevia.services.organism_application_service import (
         GatewayDraftCommand,
         S015ApplicationRefused,
@@ -1088,6 +1292,17 @@ def _gateway_draft_shape(command: object) -> IntakeShape:
 
 
 def _effect_gateway_version_shape(command: object) -> IntakeShape:
+    """Project an EffectGatewayVersionCommand (exact type, else
+    TypeError).
+
+    Require an action recognised by _VERSION_KINDS; an unknown relation
+    raises ValueError. Check keys and times via
+    _application_keys_and_times. Require exact living_organism_id and
+    version_uuid UUIDs, else TypeError.
+    Target: organism UUID and version_uuid. Command: UTC occurred_at and
+    effective_at. The shape's action is the gateway effect action.
+    No version is looked up or made effective here.
+    """
     from src.intevia.services.organism_application_service import (
         EffectGatewayVersionCommand,
         _VERSION_KINDS,
@@ -1118,6 +1333,21 @@ def _effect_gateway_version_shape(command: object) -> IntakeShape:
 
 
 def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    """Project an open or transition membership command.
+
+    The entry and the exact command type must match (OPEN_MEMBERSHIP
+    with OpenMembershipCommand, TRANSITION_MEMBERSHIP with
+    TransitionMembershipCommand), else TypeError. Keys, times and
+    received_at are checked as for the application commands; reason_class
+    must be a canonical key of at most 48 characters.
+
+    Open: target is the organism and the member identity UUIDs;
+    command is occurred_at, effective_at and reason_class.
+    Transition: target is the membership UUID; command adds
+    resulting_state, checked against the state vocabulary by
+    _validate_member_state, whose refusals propagate. No edge from the
+    current membership, consent or authority is checked here.
+    """
     from src.intevia.services.organism_membership_service import (
         OpenMembershipCommand,
         TransitionMembershipCommand,
@@ -1176,6 +1406,24 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
 
 
 def _assignment_shape(entry: IntakeEntry, command: object) -> IntakeShape:
+    """Project a propose or transition assignment command.
+
+    Require the matching entry and exact command type: PROPOSE_ASSIGNMENT
+    with ProposeAssignmentCommand, or TRANSITION_ASSIGNMENT with
+    TransitionAssignmentCommand; otherwise TypeError. Check keys and
+    times via _application_keys_and_times and require exact target UUIDs.
+
+    Propose targets the membership and role definition and validates the
+    term. Transition targets the assignment and validates action and
+    resulting state separately. ASSIGN requires effective_until_state
+    and validates the term; other validated actions require both term
+    fields to be None. These branch refusals raise
+    S015AssignmentTermRefused; delegated validator errors propagate.
+
+    Return the validated times, term and, for transitions, action and
+    resulting state in the command projection. Do not check the current
+    assignment, a permitted transition edge, consent or authority here.
+    """
     from src.intevia.services.organism_role_service import (
         ProposeAssignmentCommand,
         S015AssignmentTermRefused,
@@ -1261,6 +1509,13 @@ def _assignment_shape(entry: IntakeEntry, command: object) -> IntakeShape:
 
 
 def _office_consent_shape(command: object) -> IntakeShape:
+    """Project a RecordOfficeConsentCommand (exact type, else TypeError).
+
+    Keys and times are checked as for the application commands, then
+    action must be an exact str among the service's consent actions
+    (ValueError). Target: the assignment and proposal event UUIDs.
+    Command: occurred_at, effective_at and the action.
+    """
     from src.intevia.services.organism_office_consent_service import (
         RecordOfficeConsentCommand,
         _ACTIONS,
@@ -1758,6 +2013,19 @@ def _bound_from_row(
     fingerprint: str,
     first: bool,
 ) -> BoundRequest:
+    """Build a BoundRequest from a caller-selected intake row.
+
+    The caller must supply the row for this actor, action and request
+    key, as read by _existing_row or formed from a fresh insert.
+    This helper does not query the database or recheck that selection.
+
+    A different fingerprint schema raises S015CommandReplayMismatch.
+    So does a different entry, request reference, supplied fingerprint
+    or compound target. Otherwise use the stored receipt time, intake
+    id and target, the supplied actor and first flag, and no parent.
+    content_verified remains False. No fingerprint is recomputed and
+    no authority or current actor-state check is performed here.
+    """
     _, stored_entry, reference, stored_fingerprint, stored_schema, received_at, target = row
     if stored_schema != FINGERPRINT_SCHEMA:
         raise S015CommandReplayMismatch(
@@ -1897,6 +2165,13 @@ def admit_request(
 
 
 def _activation_entries(entries: Iterable[IntakeEntry]) -> frozenset[IntakeEntry]:
+    """Expand requested entries to whole activation groups.
+
+    Each requested entry is converted to IntakeEntry (ValueError for an
+    unknown value); none requested raises ValueError. Any group
+    (ACTIVATION_GROUPS) holding a requested entry is added in full;
+    entries in no group stay as requested.
+    """
     requested = frozenset(IntakeEntry(entry) for entry in entries)
     if not requested:
         raise ValueError("activation requires at least one entry")
@@ -1908,6 +2183,13 @@ def _activation_entries(entries: Iterable[IntakeEntry]) -> frozenset[IntakeEntry
 
 
 def _namespace_actions(entries: frozenset[IntakeEntry]) -> list[str]:
+    """Return the sorted actions whose history activation must check.
+
+    Each entry contributes its fixed action, or all three gateway effect
+    actions for a gateway entry; BIRTHING adds the entitlement election;
+    the compound entries add the request-seat and admit actions of their
+    stages.
+    """
     actions: set[str] = set()
     for entry in entries:
         action = ENTRY_ACTIONS[entry]
@@ -1928,6 +2210,19 @@ def _namespace_actions(entries: frozenset[IntakeEntry]) -> list[str]:
 
 
 def _materialise_slots(alias: str) -> None:
+    """Build the temporary slot table used by an activation check.
+
+    The caller supplies the transaction; this helper does not open or
+    check one. run_activation_step calls it inside transaction.atomic.
+    Drop any pg_temp.h100_intake_slot and recreate it ON COMMIT DROP.
+    Read all intake rows for all actors and materialise every derived
+    slot with its intake id, actor, action, key, receipt time and clause.
+
+    Keep the rows and derived values in memory before insertion. Write
+    only the temporary table, not permanent records. Return None;
+    database and slot-construction errors propagate. This helper does
+    not decide whether history is accounted for.
+    """
     with connections[alias].cursor() as cursor:
         cursor.execute("DROP TABLE IF EXISTS pg_temp.h100_intake_slot")
         cursor.execute(
