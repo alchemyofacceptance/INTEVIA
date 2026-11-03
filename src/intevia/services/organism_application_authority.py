@@ -1089,7 +1089,7 @@ class ProductionApplicationAuthorityProvider:
         lo_state = self._lo_state(organism, request)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state not in {"ACTIVE", "DORMANT"}:
+        if lo_state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         head = _latest_transition(
             self.database_alias,
@@ -1164,13 +1164,18 @@ class ProductionApplicationAuthorityProvider:
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
-        if lo_state == "DORMANT":
+        from src.intevia.services.organism_recovery import episode_id, live_episode
+
+        episode = live_episode(self.database_alias, organism, request.effective_at, request.evaluated_at)
+        if lo_state == "DORMANT" and not episode:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state != "ACTIVE":
+        if episode and request.target.get("k2_episode") != episode_id(episode):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if lo_state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
-        if self._eligible_coordinator_count(organism, request) == 0:
+        if episode is None and self._eligible_coordinator_count(organism, request) == 0:
             return self._refuse(
                 request,
                 S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
@@ -1188,6 +1193,8 @@ class ProductionApplicationAuthorityProvider:
         named_role = OrganismRoleDefinition.objects.using(self.database_alias).filter(
             role_uuid=role_uuid, living_organism=organism, scope="LIVING_ORGANISM",
         ).first()
+        if lo_state == "RESTRICTED_CONTINUITY" and episode is None:
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         if named_role is not None:
             expected_source = "CONFIGURATION" if named_role.code == "COORDINATOR" else "DEFINITION"
             if request.target.get("nomination_rule_source", "CONFIGURATION") != expected_source:
@@ -1213,6 +1220,8 @@ class ProductionApplicationAuthorityProvider:
         ) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
 
+        if episode and (role.code != "COORDINATOR" or proposer.pk != nominee.pk):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         if role.code != "COORDINATOR":
             # New nominations use the family's current rule, while the target
             # keeps the exact version named. C5 owns its post-authority stale check.
@@ -1400,7 +1409,7 @@ class ProductionApplicationAuthorityProvider:
         Called by _qualify_role_proposal for those three event actions. Folds
         use request.effective_at and request.evaluated_at. In order, require:
         - LO capacity, else C_LO_NO_CAPACITY; then ACTIVE folded state:
-          DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another state
+          DORMANT outside the K-2 exceptions is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another state
           is C_LO_NO_CAPACITY;
         - a parseable assignment_uuid, else UNRECOGNISED_ACTION;
         - an assignment and active LIVING_ORGANISM-scope COORDINATOR
@@ -1442,11 +1451,20 @@ class ProductionApplicationAuthorityProvider:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
         departure = "departure_decision" in request.target
-        if lo_state == "DORMANT" and not departure:
+        from src.intevia.services.organism_recovery import (
+            episode_id, live_episode, proposal_in_episode, window_at_both_cuts,
+        )
+
+        episode = live_episode(self.database_alias, organism, request.effective_at, request.evaluated_at)
+        resigning_in_window = False
+        if lo_state == "DORMANT" and not (departure or episode) and request.target.get("event_action") == "END":
+            window, _ = window_at_both_cuts(self.database_alias, organism, request.effective_at, request.evaluated_at)
+            resigning_in_window = bool(window and window.action == "K2_DEACTIVATE")
+        if lo_state == "DORMANT" and not (departure or episode or resigning_in_window):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state not in {"ACTIVE", "DORMANT"}:
+        if lo_state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         try:
             assignment_uuid = UUID(request.target["assignment_uuid"])
@@ -1479,6 +1497,11 @@ class ProductionApplicationAuthorityProvider:
             ).exists() or assignment.membership.identity_id != request.actor_pk:
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         role = assignment.role_definition
+        holder_resignation = event_action == "END" and assignment.membership.identity_id == request.actor_pk
+        if resigning_in_window and not holder_resignation:
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
+        if lo_state == "RESTRICTED_CONTINUITY" and not (episode or departure or holder_resignation):
+            return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         if role.code.startswith("INTEVIA_"):
             return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
         if role.code == "COORDINATOR" and not role.active:
@@ -1506,7 +1529,13 @@ class ProductionApplicationAuthorityProvider:
             request.effective_at, request.evaluated_at,
         ) != expected_state:
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
-        if event_action == "ASSIGN" and self._eligible_coordinator_count(organism, request) == 0:
+        volunteering = bool(episode and event_action == "ASSIGN" and role.code == "COORDINATOR"
+                            and request.target.get("k2_episode") == episode_id(episode)
+                            and nominee.identity_id == request.actor_pk
+                            and proposal_in_episode(self.database_alias, episode, proposal, nominee, request.actor_pk))
+        if episode and not (volunteering or departure or holder_resignation):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if event_action == "ASSIGN" and not volunteering and self._eligible_coordinator_count(organism, request) == 0:
             return self._refuse(
                 request,
                 S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED,
@@ -1536,7 +1565,7 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOMINEE_NOT_ELIGIBLE)
 
         holder_act = actor_membership.pk == nominee.pk
-        if event_action != "END" or not holder_act:
+        if not volunteering and (event_action != "END" or not holder_act):
             office = self._effective_coordinator_office(request, actor_membership)
             if office is None:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
@@ -1549,7 +1578,7 @@ class ProductionApplicationAuthorityProvider:
             request.effective_at,
             request.evaluated_at,
         )
-        if departure:
+        if departure or volunteering:
             from src.intevia.services.clock import database_now
 
             now = database_now(self.database_alias)
@@ -1628,7 +1657,7 @@ class ProductionApplicationAuthorityProvider:
         The dispatcher checks the event action and canonical target UUIDs.
         Folds use request.effective_at and request.evaluated_at. In order:
         - require LO capacity, else C_LO_NO_CAPACITY; then ACTIVE folded
-          state: DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another
+          state: DORMANT outside the K-2 exceptions is C_LO_PAUSED, CLOSED is C_LO_CLOSED, and another
           state is C_LO_NO_CAPACITY;
         - parse the assignment, membership and proposal UUIDs, else
           UNRECOGNISED_ACTION;
@@ -1666,11 +1695,14 @@ class ProductionApplicationAuthorityProvider:
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
-        if lo_state == "DORMANT":
+        from src.intevia.services.organism_recovery import live_episode, proposal_in_episode
+
+        episode = live_episode(self.database_alias, organism, request.effective_at, request.evaluated_at)
+        if lo_state == "DORMANT" and not episode:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state != "ACTIVE":
+        if lo_state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         try:
             assignment_uuid = UUID(request.target["assignment_uuid"])
@@ -1686,6 +1718,8 @@ class ProductionApplicationAuthorityProvider:
         ).select_related("membership", "role_definition").first()
         if assignment is not None:
             role = assignment.role_definition
+            if lo_state == "RESTRICTED_CONTINUITY" and episode is None:
+                return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
             if role.code.startswith("INTEVIA_"):
                 return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
             if role.code == "COORDINATOR" and not role.active:
@@ -1717,6 +1751,9 @@ class ProductionApplicationAuthorityProvider:
         ):
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         event_action = request.target["event_action"]
+        if episode and (role.code != "COORDINATOR" or event_action != "WITHDRAW"
+                        or not proposal_in_episode(self.database_alias, episode, proposal, nominee, request.actor_pk)):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         prior_rows = list(OfficeAppointmentConsent.objects.using(self.database_alias).filter(
             assignment=assignment,
             proposal_event=proposal,
@@ -1965,13 +2002,24 @@ class ProductionApplicationAuthorityProvider:
     def _lo_state(self, organism: LivingOrganism, request: S015AuthorityRequest) -> str | None:
         """Return the LO's state folded at the request's effective_at and
         evaluated_at (_fold_state), or None when no LO event is eligible."""
-        return _fold_state(
-            self.database_alias,
-            "core_livingorganism",
-            organism.pk,
-            request.effective_at,
-            request.evaluated_at,
-        )
+        from src.intevia.services.organism_recovery import head_at, projected
+        from src.intevia.services.clock import database_now
+
+        head = head_at(self.database_alias, organism, request.effective_at, request.evaluated_at)
+        state = projected(head, request.effective_at)
+        # A late worker or a backdated intake must not extend a governed window.
+        now = database_now(self.database_alias)
+        current = head_at(self.database_alias, organism, now, now)
+        if current and current.action in {"WITHOUT_COORDINATOR", "K2_DEACTIVATE", "K2_DISSOLVE"}:
+            current_state = projected(current, now)
+            if state == "ACTIVE" or current_state in {"DORMANT", "CLOSED"}:
+                return current_state
+        if state == "ACTIVE" and not organism.platform_root:
+            from src.intevia.services.organism_coverage import coordinator_covered
+            for at, known in ((request.effective_at, request.evaluated_at), (now, now)):
+                if not coordinator_covered(self.database_alias, organism, at, known):
+                    return "RESTRICTED_CONTINUITY"
+        return state
 
     def _submit(
         self,
@@ -2245,7 +2293,7 @@ class ProductionApplicationAuthorityProvider:
         evaluated_at = request.evaluated_at
         lo_state = self._lo_state(organism, request)
         if request.action is OrganismAction.REQUEST_GOVERNANCE_SEAT:
-            if lo_state in {"DORMANT", "CLOSED"}:
+            if lo_state in {"DORMANT", "CLOSED", "RESTRICTED_CONTINUITY"}:
                 return self._refuse(request, S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE)
             return self._qualify_governance_seat_request(request, organism)
         if (
@@ -2254,7 +2302,7 @@ class ProductionApplicationAuthorityProvider:
                 OrganismAction.CREATE_DORMANT_CIRCLE,
                 OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
             }
-            and lo_state in {"DORMANT", "CLOSED"}
+            and lo_state in {"DORMANT", "CLOSED", "RESTRICTED_CONTINUITY"}
         ):
             return self._refuse(request, S015AuthorityRefusalCode.SBG_LO_NOT_ACTIVE)
         if not self._lo_capacity(organism, request):
@@ -2287,7 +2335,7 @@ class ProductionApplicationAuthorityProvider:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
         if (
             lo_state != "ACTIVE"
-            and not first_configuration
+            and not (first_configuration and lo_state != "RESTRICTED_CONTINUITY")
             and not formation_gateway_change
             and not formation_governance_act
         ):
@@ -3444,6 +3492,16 @@ class ProductionApplicationAuthorityProvider:
                 self.database_alias, assignment.pk, request.effective_at, request.evaluated_at,
             ):
                 continue
+            from src.intevia.services.clock import database_now
+            now = database_now(self.database_alias)
+            lo = membership.living_organism
+            with connections[self.database_alias].cursor() as cursor:
+                cursor.execute("""
+                    SELECT EXISTS(SELECT FROM public.c2_seat_facts(%s,%s,%s) WHERE assignment_id=%s AND standing='QUALIFIED')
+                       AND EXISTS(SELECT FROM public.c2_seat_facts(%s,%s,%s) WHERE assignment_id=%s AND standing='QUALIFIED')
+                    """, [lo.pk, request.effective_at, request.evaluated_at, assignment.pk, lo.pk, now, now, assignment.pk])
+                if not cursor.fetchone()[0]:
+                    continue
             return assignment
         return None
 
@@ -3463,40 +3521,11 @@ class ProductionApplicationAuthorityProvider:
         processing (with CQ active, any count but one refuses
         C_ROUTE_IS_CQ, except for a decision). Reads only, without locks.
         """
-        count = 0
-        memberships = OrganismMembership.objects.using(self.database_alias).filter(living_organism=organism)
-        for membership in memberships:
-            if _fold_state(
-                self.database_alias, "core_organismmembership", membership.pk,
-                request.effective_at, request.evaluated_at,
-            ) == "ACTIVE":
-                assignments = ContextualRoleAssignment.objects.using(self.database_alias).filter(
-                    membership=membership,
-                    role_definition__code="COORDINATOR",
-                    role_definition__scope="LIVING_ORGANISM",
-                    role_definition__active=True,
-                )
-                if any(
-                    _fold_state(
-                        self.database_alias, "core_contextualroleassignment", assignment.pk,
-                        request.effective_at, request.evaluated_at,
-                    ) == "ACTIVE"
-                    and self._term_in_effect(assignment, request)
-                    for assignment in assignments
-                ):
-                    count += 1
-        return count
-
-    def _term_in_effect(self, assignment: ContextualRoleAssignment, request: S015AuthorityRequest) -> bool:
-        """Return _assignment_term_in_effect for the assignment at the
-        request's effective_at and evaluated_at. Used by
-        _eligible_coordinator_count."""
-        return _assignment_term_in_effect(
-            self.database_alias,
-            assignment.pk,
-            request.effective_at,
-            request.evaluated_at,
-        )
+        with connections[self.database_alias].cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.c2_occupants(%s,%s,%s) "
+                           "WHERE role_scope='LIVING_ORGANISM' AND role_code='COORDINATOR'",
+                           [organism.pk, request.effective_at, request.evaluated_at])
+            return cursor.fetchone()[0]
 
     def _qualify_application_processing(
         self,

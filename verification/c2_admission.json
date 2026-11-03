@@ -1,0 +1,117 @@
+[
+  {
+    "id": "S-01",
+    "test": "tests.test_c2_determinations.ScopedFindingTests.test_target_and_hard_expiry",
+    "kind": "sql",
+    "source_path": "core/migrations/0055_c2_coverage.py",
+    "source_sha256": "e1ffee809e651324394eb29ea89372c3496fc485b9af70168b226694aa597c9e",
+    "old": "IF expires<=at_time OR",
+    "new": "IF expires<at_time OR",
+    "defect": "Let the finding remain usable at its exact expiry.",
+    "signature": "public.c2_finding_problem(core_governeddetermination,uuid,timestamptz,timestamptz)"
+  },
+  {
+    "id": "S-02",
+    "test": "tests.test_c2_determinations.ScopedFindingTests.test_derived_authority",
+    "kind": "sql",
+    "source_path": "core/migrations/0055_c2_coverage.py",
+    "source_sha256": "e1ffee809e651324394eb29ea89372c3496fc485b9af70168b226694aa597c9e",
+    "old": "IF EXISTS(SELECT id FROM public.c2_lineage(s.id,known) INTERSECT SELECT id FROM public.c2_lineage(b.id,known)) THEN",
+    "new": "IF false THEN",
+    "defect": "Treat distinct instruments from the same root as independent.",
+    "signature": "public.c2_finding_problem(core_governeddetermination,uuid,timestamptz,timestamptz)"
+  },
+  {
+    "id": "S-03",
+    "test": "tests.test_c2_determinations.ScopedFindingTests.test_beneficiary_cannot_determine",
+    "kind": "sql",
+    "source_path": "core/migrations/0055_c2_coverage.py",
+    "source_sha256": "e1ffee809e651324394eb29ea89372c3496fc485b9af70168b226694aa597c9e",
+    "old": "f.determiner_id IN (f.tested_actor_id,f.safeguard_beneficiary_id)",
+    "new": "f.determiner_id=f.tested_actor_id",
+    "defect": "Ignore the beneficiary conflict when the tested actor differs.",
+    "signature": "public.c2_finding_problem(core_governeddetermination,uuid,timestamptz,timestamptz)"
+  },
+  {
+    "id": "S-04",
+    "test": "tests.test_c2_determinations.ScopedFindingTests.test_contested_finding_preserves_history",
+    "kind": "sql",
+    "source_path": "core/migrations/0055_c2_coverage.py",
+    "source_sha256": "e1ffee809e651324394eb29ea89372c3496fc485b9af70168b226694aa597c9e",
+    "old": "OR public.c2_contested(f.id,at_time,known)",
+    "new": "OR false",
+    "defect": "Continue to rely on a contested finding.",
+    "signature": "public.c2_finding_problem(core_governeddetermination,uuid,timestamptz,timestamptz)"
+  },
+  {
+    "id": "C2-01",
+    "test": "tests.test_c2_recovery.RecoveryTests.test_departure_and_recovery_roll_back_together",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_departure.py",
+    "source_sha256": "70d968b2360d3c8b4349e0c1f99b10552d6ee323c1d1a9877b5a78afa96d349a",
+    "old": "if self.start_recovery:",
+    "new": "if False:",
+    "defect": "Omit opening the recovery window inside departure finalisation.",
+    "module": "src.intevia.services.organism_departure",
+    "qualname": "Departure.finish"
+  },
+  {
+    "id": "C2-02",
+    "test": "tests.test_c2_recovery.RecoveryTests.test_seating_coordinator_restores_active_with_governance_office_still_vacant",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_role_service.py",
+    "source_sha256": "4fc8972b342ea210fa63869a1e3810a64303865124ac5fd8d156894abe3521c8",
+    "old": "or coverage.coordinator_result != \"SATISFIED\"",
+    "new": "or coverage.result != \"SATISFIED\"",
+    "defect": "Require full roster coverage to restore the LO. The remaining Board vacancy then refuses the Coordinator appointment and leaves K-2 in effect.",
+    "module": "src.intevia.services.organism_role_service",
+    "qualname": "OrganismRoleService._execute_transition"
+  },
+  {
+    "id": "C2-03",
+    "test": "tests.test_c2_recovery.RecoveryTests.test_volunteer_consent_then_fresh_assessment_restores",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_recovery.py",
+    "source_sha256": "4cb8b0767c092a43b0d40ad4b012500e591c83f1cd05c04d46c7ae1c2f22d155",
+    "old": "f\"coverage-assessment:{assessment_uuid}\"",
+    "new": "f\"coverage-assessment:{lo.organism_id}\"",
+    "defect": "Restore against an organisation ID instead of the fresh assessment.",
+    "module": "src.intevia.services.organism_recovery",
+    "qualname": "restore"
+  },
+  {
+    "id": "C2-04",
+    "test": "tests.test_c2_recovery.RecoveryTests.test_second_window_volunteer_reactivates_before_exclusive_end",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_recovery.py",
+    "source_sha256": "4cb8b0767c092a43b0d40ad4b012500e591c83f1cd05c04d46c7ae1c2f22d155",
+    "old": "first.action in {\"WITHOUT_COORDINATOR\", \"K2_DEACTIVATE\"}",
+    "new": "first.action == \"WITHOUT_COORDINATOR\"",
+    "defect": "Close the volunteer route for the second window while it still has time to run.",
+    "module": "src.intevia.services.organism_recovery",
+    "qualname": "window_at_both_cuts"
+  },
+  {
+    "id": "C2-05",
+    "test": "tests.test_c2_recovery.RecoveryTests.test_existing_roster_cannot_certify_a_false_assessment",
+    "kind": "sql",
+    "source_path": "core/migrations/0055_c2_coverage.py",
+    "source_sha256": "e1ffee809e651324394eb29ea89372c3496fc485b9af70168b226694aa597c9e",
+    "old": "IF NEW.result<>actual THEN",
+    "new": "IF false THEN",
+    "defect": "Accept a false shortage despite a fully covered roster.",
+    "signature": "public.c2_assessment_guard()"
+  },
+  {
+    "id": "C2-06",
+    "test": "tests.test_c2_recovery.TimedWorkerTests.test_worker_replays_both_boundaries_once",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_recovery.py",
+    "source_sha256": "4cb8b0767c092a43b0d40ad4b012500e591c83f1cd05c04d46c7ae1c2f22d155",
+    "old": "head.deadline + duration(lo, 2, head.deadline)",
+    "new": "now + duration(lo, 2, head.deadline)",
+    "defect": "Start the second clock at the late poll rather than the ruled boundary.",
+    "module": "src.intevia.services.organism_recovery",
+    "qualname": "advance"
+  }
+]

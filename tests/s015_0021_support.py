@@ -500,13 +500,13 @@ def register_test_learner(
     )
 
 
-def seed_authority(cur, tag, issuer_id):
+def seed_authority(cur, tag, issuer_id, *, scope_fingerprint=None):
     cur.execute("INSERT INTO core_authorityprincipal (principal_uuid, canonical_governed_source_id, governed_source_namespace, display_label, recorded_at) "
                 "VALUES (%s, %s, 'U21G_THROWAWAY', %s, now()) RETURNING id", (u(f"principal:{tag}"), f"urn:intevia:governed-source:u21g:{tag}", f"U21g principal {tag}"))
     principal_id = cur.fetchone()[0]
     cur.execute("INSERT INTO core_authoritybasis (basis_uuid, authority_class, scope_fingerprint, instrument_reference, evidence_reference, issued_at, effective_at, received_at, recorded_at, issuer_id, authority_principal_id, derivation_root_principal_id) "
                 "VALUES (%s, 'U21G_THROWAWAY', %s, %s, %s, now(), now(), now(), now(), %s, %s, %s) RETURNING id",
-                (u(f"basis:{tag}"), hx(f"scope:{tag}"), f"u21g:instrument:{tag}", f"u21g:evidence:{tag}", issuer_id, principal_id, principal_id))
+                (u(f"basis:{tag}"), scope_fingerprint or hx(f"scope:{tag}"), f"u21g:instrument:{tag}", f"u21g:evidence:{tag}", issuer_id, principal_id, principal_id))
     return principal_id, cur.fetchone()[0]
 
 
@@ -720,6 +720,8 @@ def found_organism(
     skip_refresh=frozenset(),
     identity_id=None,
     founding_assignment_overrides=None,
+    fixture_at=T0,
+    historical_terms=False,
 ):
     """Complete founding population for organism `tag`.
 
@@ -729,6 +731,7 @@ def found_organism(
     skip names limbs to omit for negative tests. assign_founder overrides whether INTEVIA_FOUNDER_STEWARD is assigned.
     """
     _require_disposable_fixture_database()
+    event_times = dict(eff=fixture_at, occ=fixture_at, rec=fixture_at)
     ids = {
         "identity": seed_identity(cur, tag) if identity_id is None else identity_id,
         "events": {},
@@ -738,7 +741,7 @@ def found_organism(
     lo_uuid = u(f"organism:{tag}")
     cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) "
                 "VALUES (%s, %s, 'FOUNDING_PENDING', now(), %s, %s, %s, %s, %s) RETURNING id",
-                (lo_uuid, f"u21g-{tag}", T0, T0, empty_fp(cur, "core_livingorganism", lo_uuid), f"u21g:spine:{tag}", root))
+                (lo_uuid, f"u21g-{tag}", fixture_at, fixture_at, empty_fp(cur, "core_livingorganism", lo_uuid), f"u21g:spine:{tag}", root))
     ids["lo"] = lo = cur.fetchone()[0]
     act, basis = ids["identity"], ids["basis"]
     cur.execute(
@@ -749,11 +752,14 @@ def found_organism(
     if (terms_version_table is None) != (terms_acceptance_table is None):
         raise RuntimeError("fixture platform-terms tables are only partially installed")
     if terms_version_table is not None:
+        # A back-dated founding can precede the clone's normal development terms.
+        # Its isolated, short-lived fixture version is recorded before the founding event.
+        label = "FIXTURE-" + hx(lo_uuid)[:24] if historical_terms else "FIXTURE-DEV-1"
         cur.execute(
             "SELECT id, is_fixture, published_by_authority_reference "
             "FROM public.core_platformtermsversion "
             "WHERE version_label = %s ORDER BY id LIMIT 1",
-            ("FIXTURE-DEV-1",),
+            (label,),
         )
         terms_version = cur.fetchone()
         if terms_version is None:
@@ -761,21 +767,23 @@ def found_organism(
             cur.execute(
                 "INSERT INTO public.core_platformtermsversion "
                 "(terms_version_uuid, version_label, text_commitment, text_body, cited_rulings, "
-                "published_by_authority_reference, is_fixture, effective_from) "
-                "VALUES (%s, 'FIXTURE-DEV-1', %s, %s, '[]'::jsonb, "
-                "'fixture:development', TRUE, %s) RETURNING id",
+                "published_by_authority_reference, is_fixture, effective_from, effective_until) "
+                "VALUES (%s, %s, %s, %s, '[]'::jsonb, "
+                "'fixture:development', TRUE, %s, %s) RETURNING id",
                 (
-                    u("platform-terms-version:FIXTURE-DEV-1"),
+                    u(f"platform-terms-version:{label}"),
+                    label,
                     "s015r1:" + hx(terms_body),
                     terms_body,
-                    T0,
+                    fixture_at,
+                    fixture_at + dt.timedelta(days=1) if historical_terms else None,
                 ),
             )
             terms_version_id = cur.fetchone()[0]
         else:
             terms_version_id, is_fixture, publisher_reference = terms_version
             if not is_fixture or publisher_reference != "fixture:development":
-                raise RuntimeError("FIXTURE-DEV-1 must remain a labelled fixture terms version")
+                raise RuntimeError(f"{label} must remain a labelled fixture terms version")
         if "terms_acceptance" not in skip:
             cur.execute("SELECT access_epoch FROM public.core_identity WHERE id = %s", (act,))
             founder_access_epoch = cur.fetchone()[0]
@@ -792,13 +800,13 @@ def found_organism(
                     f"living-organism:{lo_uuid}",
                     act,
                     founder_access_epoch,
-                    T0,
-                    T0,
+                    fixture_at,
+                    fixture_at,
                     "s015r1:" + hx(f"fixture-acceptance:{lo_uuid}"),
                 ),
             )
     if "lo_event" not in skip:
-        ids["lo_event"] = append_event(cur, "core_livingorganismevent", lo, 1, "FOUND", None, "ACTIVE", act, basis, tag)[0]
+        ids["lo_event"] = append_event(cur, "core_livingorganismevent", lo, 1, "FOUND", None, "ACTIVE", act, basis, tag, **event_times)[0]
         ids["events"]["core_livingorganismevent"] = ids["lo_event"]
         cur.execute(
             "SELECT event_uuid, authority_decision_reference "
@@ -808,12 +816,12 @@ def found_organism(
         ids["founding_event_uuid"], ids["founding_authority_decision_reference"] = cur.fetchone()
     m_uuid = u(f"membership:{tag}")
     cur.execute("INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
-                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, T0, T0, empty_fp(cur, "core_organismmembership", m_uuid), act, lo))
+                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, fixture_at, fixture_at, empty_fp(cur, "core_organismmembership", m_uuid), act, lo))
     ids["membership"] = cur.fetchone()[0]
     if "membership_event" not in skip:
         ids["events"]["core_organismmembershiptransition"] = append_event(
             cur, "core_organismmembershiptransition", ids["membership"], 1, "JOIN", None, "ACTIVE", act, basis, tag,
-            extra={"reason_class": "FOUNDING"}
+            extra={"reason_class": "FOUNDING"}, **event_times
         )[0]
     inventory = active_versions or {c: [(1, True)] for c in (codes if codes is not None else (SIX_CODES if root else ["COORDINATOR"]))}
     ids["roles"] = {}
@@ -849,7 +857,7 @@ def found_organism(
             assignment_state = assignment_states.get(code, "ACTIVE")
             a_uuid = u(f"assignment:{tag}:{code}")
             cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
-                        "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, T0, T0, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
+                        "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, fixture_at, fixture_at, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
             ids["assignments"][code] = cur.fetchone()[0]
             if "assignment_event" not in skip:
                 assignment_event_overrides = None
@@ -867,32 +875,32 @@ def found_organism(
                     assignment_event_overrides.update(founding_assignment_overrides or {})
                 event_id = append_event(
                     cur, "core_contextualroleassignmentstateevent", ids["assignments"][code], 1, "ASSIGN", None,
-                    assignment_state, act, basis, f"{tag}:{code}", overrides=assignment_event_overrides
+                    assignment_state, act, basis, f"{tag}:{code}", overrides=assignment_event_overrides, **event_times
                 )[0]
                 ids["assignment_events"][code] = event_id
                 ids["events"].setdefault("core_contextualroleassignmentstateevent", event_id)
         if reserved_codes and do_refresh and "core_contextualroleassignment" not in skip_refresh:
             for a in ids["assignments"].values():
-                refresh(cur, "core_contextualroleassignment", a)
+                refresh(cur, "core_contextualroleassignment", a, fixture_at)
     if "requirement" not in skip:
         cur.execute("INSERT INTO core_essentialcoveragerequirement (requirement_uuid, roster_version, responsibility_domain_code, qualifying_role_code, minimum_active_occupants, scope, effective_from, effective_until, living_organism_id) "
-                    "VALUES (%s, 1, 'GOVERNANCE', 'COORDINATOR', 1, 'LIVING_ORGANISM', %s, NULL, %s) RETURNING id", (u(f"req:{tag}"), T_MINUS_1D, lo))
+                    "VALUES (%s, 1, 'GOVERNANCE', 'COORDINATOR', 1, 'LIVING_ORGANISM', %s, NULL, %s) RETURNING id", (u(f"req:{tag}"), fixture_at - dt.timedelta(days=1), lo))
         ids["requirement"] = cur.fetchone()[0]
     if "coverage_case" not in skip:
         cur.execute("INSERT INTO core_essentialcoveragecase (case_uuid, living_organism_id) VALUES (%s, %s) RETURNING id", (u(f"covcase:{tag}"), lo))
         ids["coverage_case"] = cur.fetchone()[0]
         if "assessment" not in skip:
             ids["assessment"] = append_event(cur, "core_coverageassessment", ids["coverage_case"], 1, "ASSESS", None, "SATISFIED", act, basis, tag,
-                                             extra={"roster_version": 1, "evaluated_state_at": T0, "evaluated_known_at": T0, "determiner_capacity_reference": f"u21g:capacity:{tag}"})[0]
+                                             extra={"roster_version": 1, "evaluated_state_at": fixture_at, "evaluated_known_at": fixture_at, "determiner_capacity_reference": f"u21g:capacity:{tag}"}, **event_times)[0]
             ids["events"]["core_coverageassessment"] = ids["assessment"]
     if do_refresh:
         if "core_livingorganism" not in skip_refresh:
-            refresh(cur, "core_livingorganism", lo)
+            refresh(cur, "core_livingorganism", lo, fixture_at)
         if "core_organismmembership" not in skip_refresh:
-            refresh(cur, "core_organismmembership", ids["membership"])
+            refresh(cur, "core_organismmembership", ids["membership"], fixture_at)
         if "core_contextualroleassignment" not in skip_refresh:
             for a in ids["assignments"].values():
-                refresh(cur, "core_contextualroleassignment", a)
+                refresh(cur, "core_contextualroleassignment", a, fixture_at)
     if "completion" not in skip:
         cur.execute("UPDATE core_livingorganism SET founding_authority_basis_id=%s, founder_identity_id=%s WHERE id=%s", (basis, act, lo))
     return ids

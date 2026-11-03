@@ -259,6 +259,9 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
             raise IntakeAdmissionTechnicalFailure("RECORD_OFFICE_CONSENT is not active")
         shape = intake_shape(entry, command)
         actor_ref = _resolve_actor(self._alias, command.credential)
+        from src.intevia.services.organism_recovery import notice_before_office_intake
+        notice_before_office_intake(self._alias, actor_ref.pk, shape.idempotency_key,
+                                    assignment_uuid=command.assignment_uuid, action="RECORD_OFFICE_CONSENT")
         bound = admit_request(self._alias, entry, actor_ref, shape)
         return self._execute_record_office_consent(command, bound)
 

@@ -238,22 +238,14 @@ class DepartureTests(TransactionTestCase):
         error, _ = _attempt(
             lambda: self.service.leave_organism(self.command(self.fx.founder_member))
         )
-        self.assertIs(
-            type(error),
-            memberships.S015MembershipEdgeRefused,
-            "A probationer keeps the organisation in being.",
-        )
-        self.assertIn(
-            "handover",
-            str(error),
-            "Loss of essential coverage must explain the available handover.",
-        )
+        self.assertIsNone(error, f"The last Coordinator should be able to leave while a probationer remains. Got {type(error).__name__}.")
         self.fx.organism.refresh_from_db()
-        self.assertEqual(
-            self.fx.organism.state,
-            "ACTIVE",
-            "An organisation with a probationary member cannot dissolve.",
-        )
+        remaining.refresh_from_db()
+        self.assertEqual((self.fx.organism.state, remaining.state), ("RESTRICTED_CONTINUITY", "PROBATIONARY"),
+                         "The probationer keeps this organisation in being while the Coordinator office is vacant.")
+        self.assertFalse(models.ContextualRoleAssignment.objects.filter(membership=remaining, state="ACTIVE",
+                             role_definition__code="COORDINATOR").exists(),
+                         "Leaving must never appoint the remaining probationer to the Coordinator office.")
 
     def _state(self, anchor, token, table, state):
         at = fixtures.database_now()

@@ -825,10 +825,10 @@ class SROfficeGuardTests(TransactionTestCase):
     # -- 9. the migration (W-13) -------------------------------------------------
 
     def test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused(self):
-        """With no C1b data, 0054 reverses first. On a founding-only database the SR migrations
+        """With founding-only data, C2 and C1b reverse first. On a founding-only database the SR migrations
         reverse to 0051 and reapply with the expected guard bodies and trigger count.
         With an occupied office, both SR reversal checks must refuse at 0053, name the
-        populated records and preserve the 0053 facts and office state. Restore 0054 at the end.
+        populated records and preserve the 0053 facts and office state. Restore the C2 head at the end.
         Obligation O-53 (partial witness). The sr-c2-attribution-gate mutation covers the
         initial installed-body assertion. Reverse behaviour has a separate source-fault kit."""
         migration = import_module("core.migrations.0052_sr_office_guard_widening")
@@ -851,24 +851,28 @@ class SROfficeGuardTests(TransactionTestCase):
             }
 
         at_head = facts()
-        self.assertEqual(at_head["head"], "0054_c1b_relationships", msg="The migration rehearsal must start on the received C1b head.")
+        self.assertEqual(at_head["head"], "0055_c2_coverage", msg="The migration rehearsal must start on the received C2 head.")
         self.assertEqual(at_head["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY, msg="At 0053, the installed definition-insert safeguard should match its complete candidate body; it differs.")
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
         self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
         self.assertEqual(at_head["attribution"], safeguard.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="At 0053, the installed office-attribution safeguard should match its complete candidate body; it differs.")
         self.assertEqual(at_head["consent"], migration.NEW_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="At 0053, the consent safeguard should remain the exact 0052 body; it differs.")
-        migrate_to_target_with_restore(self, ("core", HEAD_0052))
+        migrate_to_target_with_restore(self, ("core", "0053_sr_office_safeguards"))
+        sr_triggers = facts()["triggers"]
+        self.assertGreater(at_head["triggers"], sr_triggers,
+                           msg="Reversing the C2 migration must remove its extra coverage and qualification guards.")
+        MigrationExecutor(connection).migrate([("core", HEAD_0052)])
         at_0052 = facts()
         self.assertEqual(at_0052["attribution"], migration.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="After reversing to 0052, the attribution safeguard should be the exact 0052 body; it differs.")
         self.assertEqual(at_0052["definition_insert"], safeguard.BODIES["sr_definition_insert_guard"][0], msg="After reversing to 0052, the definition-insert safeguard should be its exact earlier body; it differs.")
         self.assertEqual(at_0052["definition_update"], safeguard.BODIES["sr_definition_update_guard"][0], msg="After reversing to 0052, the definition-update safeguard should be its exact earlier body; it differs.")
-        self.assertEqual(at_0052["triggers"], at_head["triggers"], msg="Reversing to 0052 should preserve the observed trigger count; the count changed.")
+        self.assertEqual(at_0052["triggers"], sr_triggers, msg="Reversing to 0052 should preserve the observed trigger count; the count changed.")
         MigrationExecutor(connection).migrate([("core", HEAD_0051)])
         at_0051 = facts()
         self.assertEqual(at_0051["head"], HEAD_0051, msg="After reversing to 0051, the recorded migration head should be 0051; it differs.")
         self.assertEqual(at_0051["attribution"], migration.PREVIOUS_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="After reversing to 0051, the attribution safeguard should be its exact pre-0052 body; it differs.")
         self.assertEqual(at_0051["consent"], migration.PREVIOUS_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="After reversing to 0051, the consent safeguard should be its exact pre-0052 body; it differs.")
-        self.assertEqual(at_0051["triggers"], at_head["triggers"], msg="Reversing to 0051 should preserve the observed trigger count; the count changed.")
+        self.assertEqual(at_0051["triggers"], sr_triggers, msg="Reversing to 0051 should preserve the observed trigger count; the count changed.")
         self.restore_received_migrations()
         again = facts()
         self.assertEqual(again, at_head, msg="Restoring the received migrations should restore every compared body, head and trigger count; the recorded facts differ.")
@@ -898,7 +902,7 @@ class SROfficeGuardTests(TransactionTestCase):
         self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
         self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
         self.restore_received_migrations()
-        self.assertEqual(facts()["head"], "0054_c1b_relationships", msg="The populated rehearsal must finish on the received C1b head.")
+        self.assertEqual(facts()["head"], "0055_c2_coverage", msg="The populated rehearsal must finish on the received C2 head.")
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 

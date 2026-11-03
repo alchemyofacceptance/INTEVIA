@@ -3,18 +3,14 @@
 from dataclasses import dataclass
 
 from django.db import connections
-from django.db.models import Q
 
 from core.models import (
     ContextualRoleAssignment,
-    CoverageAssessment,
-    EssentialCoverageRequirement,
     LivingOrganismEvent,
     OrganismMembership,
     OrganismMembershipTransition,
 )
 from src.intevia.services.organism_application_authority import (
-    _assignment_term_in_effect,
     _fold_state,
 )
 from src.intevia.services.organism_authority import authority_target_fingerprint
@@ -30,65 +26,29 @@ def refuse(reason):
 
 
 def coverage_assessment(alias, member, at, known):
-    return (
-        CoverageAssessment.objects.using(alias)
-        .filter(
-            case__living_organism_id=member.living_organism_id,
-            effective_at__lte=at,
-            recorded_at__lte=known,
-            received_at__lte=known,
-        )
-        .order_by(
-            "-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence"
-        )
-        .first()
-    )
+    from src.intevia.services.organism_coverage import roster_at
+
+    return roster_at(alias, member.living_organism, at, known)
 
 
 def _check_coverage(alias, member, assessment, at, known):
-    if assessment is None:
-        refuse(
-            "The effective essential roster could not be established. Coverage recovery awaits C2/C3."
-        )
-    requirements = (
-        EssentialCoverageRequirement.objects.using(alias)
-        .filter(
-            living_organism_id=member.living_organism_id,
-            roster_version=assessment.roster_version,
-            effective_from__lte=at,
-        )
-        .filter(Q(effective_until__isnull=True) | Q(effective_until__gt=at))
-    )
-    if not requirements:
-        refuse("The current roster has no effective coverage requirements. Coverage recovery awaits C2/C3.")
-    for rule in requirements:
-        occupants = set()
-        alternatives = (
-            ContextualRoleAssignment.objects.using(alias)
-            .filter(
-                membership__living_organism_id=member.living_organism_id,
-                role_definition__scope=rule.scope,
-                role_definition__code=rule.qualifying_role_code,
-            )
-            .exclude(membership=member)
-        )
-        for other in alternatives:
-            if (
-                _fold_state(alias, "core_contextualroleassignment", other.pk, at, known)
-                == "ACTIVE"
-                and _fold_state(
-                    alias, "core_organismmembership", other.membership_id, at, known
-                )
-                == "ACTIVE"
-                and _assignment_term_in_effect(alias, other.pk, at, known)
-            ):
-                occupants.add(other.membership_id)
-        if len(occupants) < rule.minimum_active_occupants:
-            refuse(
-                f"The continuing organisation needs {rule.qualifying_role_code} coverage under roster "
-                f"{rule.roster_version}. Arrange a qualified handover first where available. "
-                "Last-Coordinator and recovery routes await C2/C3."
-            )
+    from src.intevia.services.organism_coverage import assess
+    from src.intevia.services.organism_recovery import head_at, projected
+
+    lo = member.living_organism
+    current = assess(alias, lo, at, known)
+    remaining = assess(alias, lo, at, known, excluding=member.pk)
+    if assessment is None or assessment.roster_version != remaining.version or remaining.coordinator_result == "UNKNOWN":
+        refuse("The effective essential roster could not be established. Check its governed record.")
+    head = head_at(alias, lo, at, known)
+    if head and projected(head, at) == "CLOSED":
+        refuse("The organisation's dissolution boundary has passed. Check its closing record.")
+    if remaining.coordinator_vacancy:
+        if head and head.action in {"WITHOUT_COORDINATOR", "K2_DEACTIVATE"}:
+            return False
+        if current.coordinators == {member.pk} and head and head.resulting_state == "ACTIVE":
+            return True
+    return False
 
 
 @dataclass
@@ -102,6 +62,7 @@ class Departure:
     fingerprint: str
     offices: list
     closing_head: object
+    start_recovery: bool
 
     def end_offices(self):
         for assignment, qualified in self.offices:
@@ -139,6 +100,17 @@ class Departure:
         from src.intevia.services.organism_conditions import end_departing_relationships
 
         end_departing_relationships(self, transition)
+        from src.intevia.services.organism_coverage import Cause, record_coverage
+        from src.intevia.services.organism_recovery import start
+
+        cause = Cause(self.actor, transition.authority_basis_id, self.decision.authority_decision_reference,
+                      f"membership-ending:{transition.event_uuid}", self.command, self.fingerprint, self.received_at)
+        if self.closing_head is None:
+            result, _ = record_coverage(self.roles._alias, self.member.living_organism, cause)
+            if self.start_recovery:
+                if not result.coordinator_vacancy:
+                    refuse("Coverage changed while leaving. Check the current roster and try again.")
+                start(self.roles._alias, self.member.living_organism, cause)
         if self.closing_head is not None:
             append_relationship_event(
                 alias=self.roles._alias,
@@ -181,7 +153,7 @@ def prepare_departure(
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT clock_timestamp()")
         (known,) = cursor.fetchone()
-    if lo.state not in {"ACTIVE", "DORMANT"} or lo.platform_root:
+    if lo.state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"} or lo.platform_root:
         refuse(
             "This organisation cannot use ordinary self-departure in its current state."
         )
@@ -251,14 +223,16 @@ def prepare_departure(
     if continuing != has_continuing_member(known, known):
         refuse(dissolution_refusal)
     closing_head = None
+    opening = False
     if continuing:
         current_roster = coverage_assessment(alias, membership, known, known)
         if roster is None or current_roster is None or roster.pk != current_roster.pk:
             refuse(
                 "The essential roster is missing or changed since receipt. Check coverage and submit a fresh request."
             )
-        _check_coverage(alias, membership, roster, effective_at, received_at)
-        _check_coverage(alias, membership, current_roster, known, known)
+        opening = _check_coverage(alias, membership, roster, effective_at, received_at)
+        if opening != _check_coverage(alias, membership, current_roster, known, known):
+            refuse("Office coverage changed after receipt. Check the current roster and confirm again.")
     else:
         closing_head = (
             LivingOrganismEvent.objects.using(alias)
@@ -316,4 +290,5 @@ def prepare_departure(
         fingerprint,
         qualified,
         closing_head,
+        opening,
     )

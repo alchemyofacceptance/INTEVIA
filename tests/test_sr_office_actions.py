@@ -90,9 +90,10 @@ class SROfficeActionTests(TransactionTestCase):
             action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, version_uuid=draft.version_uuid,
             request_reference="c5-effect:"+key, idempotency_key=key, occurred_at=at, effective_at=at))
 
-    def _member(self):
+    def _member(self, *, effective_at=None):
         identity = fixtures.register_test_learner(username="c5-member-"+uuid4().hex)
-        at = fixtures.database_now(); member_uuid = uuid4()
+        at = effective_at or fixtures.database_now()
+        member_uuid = uuid4()
         with transaction.atomic(), connection.cursor() as cursor:
             cursor.execute("""INSERT INTO core_organismmembership
                 (membership_uuid,state,created_at,current_state_effective_at,state_known_at,

@@ -889,7 +889,7 @@ OFFICE_REFUSAL_RULE_NAMES = {
     'DENIED': 'you do not have authority for this action, and no further reason can be given',
     'UNRECOGNISED_ACTION': 'the requested office action or its supplied references are not recognised',
     'E_NOT_EFFECTIVE_COORDINATOR': 'this action requires an effective Coordinator of this organisation',
-    'C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED': 'there is no eligible Coordinator and the required recovery route is not implemented',
+    'C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED': 'there is no eligible Coordinator and no current K-2 volunteer window for this request',
     'C_ROUTE_IS_CQ': 'this organisation uses Collective Questioning for this action',
     'C_OFFICE_CONSENT_ABSENT_OR_WITHDRAWN': 'the required consent is absent, withdrawn or does not permit this action',
     'C_LO_NO_CAPACITY': 'this organisation lacks the required recorded capacity',
@@ -1068,6 +1068,8 @@ class OrganismRoleService(_OrganismCommandService):
             raise IntakeAdmissionTechnicalFailure("PROPOSE_ASSIGNMENT is not active")
         shape = intake_shape(entry, command)
         actor_ref = _resolve_actor(self._alias, command.credential)
+        from src.intevia.services.organism_recovery import notice_before_office_intake
+        notice_before_office_intake(self._alias, actor_ref.pk, shape.idempotency_key, membership_uuid=command.membership_uuid)
         bound = admit_request(self._alias, entry, actor_ref, shape)
         return self._execute_propose_assignment(command, bound)
 
@@ -1118,6 +1120,8 @@ class OrganismRoleService(_OrganismCommandService):
             raise IntakeAdmissionTechnicalFailure("TRANSITION_ASSIGNMENT is not active")
         shape = intake_shape(entry, command)
         actor_ref = _resolve_actor(self._alias, command.credential)
+        from src.intevia.services.organism_recovery import notice_before_office_intake
+        notice_before_office_intake(self._alias, actor_ref.pk, shape.idempotency_key, assignment_uuid=command.assignment_uuid)
         bound = admit_request(self._alias, entry, actor_ref, shape)
         return self._execute_transition_assignment(command, bound)
 
@@ -1377,6 +1381,12 @@ class OrganismRoleService(_OrganismCommandService):
             unavailable=S015AssignmentAuthorityUnavailable,
         )
 
+        from src.intevia.services.organism_recovery import episode_id, head_at
+
+        origin = head_at(self._alias, organism, effective_at, received_at)
+        if (recovery_episode := episode_id(origin)) is not None:
+            target["k2_episode"] = recovery_episode
+            target_fingerprint = authority_target_fingerprint(target)
         decision = self._evaluate_authority(
             actor=actor,
             actor_membership=actor_membership,
@@ -1680,6 +1690,12 @@ class OrganismRoleService(_OrganismCommandService):
             unavailable=S015AssignmentAuthorityUnavailable,
         )
 
+        from src.intevia.services.organism_recovery import episode_id, head_at
+
+        origin = head_at(self._alias, organism, effective_at, received_at)
+        if (recovery_episode := episode_id(origin)) is not None:
+            target["k2_episode"] = recovery_episode
+            target_fingerprint = authority_target_fingerprint(target)
         decision = self._evaluate_authority(
             actor=actor,
             actor_membership=actor_membership,
@@ -1847,6 +1863,32 @@ class OrganismRoleService(_OrganismCommandService):
             decision=decision,
             effective_at=effective_at,
         )
+        from core.models import EssentialCoverageRequirement
+        from src.intevia.services.organism_coverage import Cause, record_coverage
+        from src.intevia.services.organism_recovery import restore
+        from src.intevia.services.clock import database_now
+
+        essential = EssentialCoverageRequirement.objects.using(self._alias).filter(
+            living_organism=organism, scope=role_definition.scope,
+            qualifying_role_code=role_definition.code).exists()
+        if essential:
+            event = ContextualRoleAssignmentStateEvent.objects.using(self._alias).get(pk=event_id)
+            cause = Cause(actor, basis.pk, decision.authority_decision_reference, f"office:{event.event_uuid}",
+                          command, command_fingerprint, received_at)
+            coverage, assessment = record_coverage(self._alias, organism, cause)
+            in_window = bool(target.get("k2_episode"))
+            if event_action == "ASSIGN" and in_window:
+                now = database_now(self._alias)
+                current = head_at(self._alias, organism, now, now)
+                from src.intevia.services.organism_coverage import assess
+                current_facts = assess(self._alias, organism, now, now)
+                if (not current or current.event_uuid != origin.event_uuid or now >= current.deadline
+                        or coverage.coordinator_result != "SATISFIED" or current_facts.coordinator_result != "SATISFIED"
+                        or assignment.membership_id not in coverage.coordinators & current_facts.coordinators):
+                    raise S015AssignmentEdgeRefused(
+                        "The recovery record changed before the appointment could take effect. "
+                        "The office is unchanged. Check current coverage and the recovery deadline.")
+                restore(self._alias, organism, cause, assessment)
         return self._finalise(
             actor=actor,
             request_reference=request_reference,

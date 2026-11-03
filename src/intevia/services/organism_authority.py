@@ -1463,7 +1463,8 @@ class S015Authority:
             if type(disclosed_refusal_code) is not S015AuthorityRefusalCode:
                 raise S015AuthorityMalformed("disclosed refusal code is invalid")
             if disclosed_refusal_code is S015AuthorityRefusalCode.C_COORDINATOR_RECOVERY_NOT_IMPLEMENTED:
-                message = "the required recovery route is not yet implemented"
+                message = ("The office action was refused. No eligible Coordinator or current volunteer window "
+                           "supports this request. No appointment changed. Check the organisation’s recovery record.")
             elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED:
                 message = "membership transition is not yet implemented"
             elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED:

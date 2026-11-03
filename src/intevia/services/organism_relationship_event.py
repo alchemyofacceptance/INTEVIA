@@ -23,12 +23,14 @@ def append_relationship_event(
     fingerprint,
     received_at,
     composing_rule=None,
+    until=None,
 ):
-    from core.models import LivingOrganism, MembershipCondition
+    from core.models import DeterminationContestCase, LivingOrganism, MembershipCondition
 
     table, fk = {
         LivingOrganism: ("core_livingorganismevent", "living_organism_id"),
         MembershipCondition: ("core_membershipconditionstateevent", "condition_id"),
+        DeterminationContestCase: ("core_determinationcontestevent", "case_id"),
     }[type(anchor)]
     event = uuid4()
     composed = composing_rule is not None
@@ -50,6 +52,17 @@ def append_relationship_event(
                 f"SELECT l1_commitment FROM public.{table} WHERE id=%s", [head.pk]
             )
             (previous,) = cursor.fetchone()
+        prior = None
+        if head is not None:
+            cursor.execute(
+                f"SELECT resulting_state FROM public.{table} WHERE {fk}=%s "
+                "AND (effective_at,occurred_at,received_at) <= (%s,%s,%s) "
+                "ORDER BY effective_at DESC,occurred_at DESC,received_at DESC,recorded_at DESC,"
+                "sequence DESC,event_uuid DESC LIMIT 1",
+                [anchor.pk, effective_at, command.occurred_at, received_at],
+            )
+            row = cursor.fetchone()
+            prior = row[0] if row else None
         columns = {
             fk: anchor.pk,
             "event_uuid": event,
@@ -57,7 +70,7 @@ def append_relationship_event(
             "predecessor_id": head.pk if head else None,
             "predecessor_sequence": head.sequence if head else None,
             "action": action,
-            "prior_state": head.resulting_state if head else None,
+            "prior_state": prior,
             "resulting_state": state,
             "actor_state": "NONE" if composed else "PARTY",
             "actor_id": None if composed else actor.pk,
@@ -69,8 +82,8 @@ def append_relationship_event(
             "composing_rule_reference": composing_rule,
             "composer_state": "REFERENCE" if composed else "NA_TRANSPORT",
             "composer_identity_id": actor.pk if composed else None,
-            "effective_until_state": "NONE",
-            "effective_until": None,
+            "effective_until_state": "FIXED" if until else "NONE",
+            "effective_until": until,
             "authority_basis_id": basis_id,
             "authority_decision_reference": decision_reference,
             "evidence_reference": evidence,
@@ -96,7 +109,9 @@ def append_relationship_event(
         )
         if type(anchor) is LivingOrganism:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s,%s,%s,clock_timestamp())",
-                ["core_livingorganism", anchor.pk, effective_at],
+                "SELECT public.s015_refresh_governed_cache('core_livingorganism',id,"
+                "greatest(current_state_effective_at,least(%s,clock_timestamp())),clock_timestamp()) "
+                "FROM public.core_livingorganism WHERE id=%s",
+                [effective_at, anchor.pk],
             )
     return event
