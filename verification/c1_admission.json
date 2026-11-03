@@ -1,0 +1,62 @@
+[
+  {
+    "id": "C1-01",
+    "test": "tests.test_c1_rejoin.RejoinTests.test_01_new_period_preserves_old_chain",
+    "kind": "python",
+    "module": "src.intevia.services.organism_application_service",
+    "qualname": "OrganismApplicationService._admit",
+    "source_path": "src/intevia/services/organism_application_service.py",
+    "source_sha256": "3c18df59f0347bcc8971c6077e99250865a1abcdd73cb5311a50fcb74603629e",
+    "old": "prior_state=None if ended_predecessor is None else \"ENDED\"",
+    "new": "prior_state=None",
+    "defect": "Misattribute the new period proposal as a first-ever proposal with no prior state."
+  },
+  {
+    "id": "C1-02",
+    "test": "tests.test_c1_rejoin.RejoinTests.test_02_application_at_ending_time_refuses",
+    "kind": "python",
+    "module": "src.intevia.services.organism_membership_periods",
+    "qualname": "rejoin_predecessor",
+    "source_path": "src/intevia/services/organism_membership_periods.py",
+    "source_sha256": "1c06b6b47b301ca1c7ba06c4fc00dc41cc6b34685311628a8bcaac367d46d849",
+    "old": "application_effective_at <= head.effective_at",
+    "new": "application_effective_at < head.effective_at",
+    "defect": "Allow an application effective at the exact ending time by changing only <= to <."
+  },
+  {
+    "id": "C1-03",
+    "test": "tests.test_c1_rejoin.RejoinTests.test_03_old_condition_blocks_acceptance",
+    "kind": "python",
+    "module": "src.intevia.services.organism_membership_periods",
+    "qualname": "rejoin_predecessor",
+    "source_path": "src/intevia/services/organism_membership_periods.py",
+    "source_sha256": "1c06b6b47b301ca1c7ba06c4fc00dc41cc6b34685311628a8bcaac367d46d849",
+    "old": "if MembershipCondition.objects.using(database_alias).filter(",
+    "new": "if False and MembershipCondition.objects.using(database_alias).filter(",
+    "defect": "Ignore old condition links at the rejoin qualification gate."
+  },
+  {
+    "id": "C1-04",
+    "test": "tests.test_c1_rejoin.RejoinTests.test_04_unfinished_office_is_not_inherited",
+    "kind": "python",
+    "module": "src.intevia.services.organism_membership_periods",
+    "qualname": "rejoin_predecessor",
+    "source_path": "src/intevia/services/organism_membership_periods.py",
+    "source_sha256": "1c06b6b47b301ca1c7ba06c4fc00dc41cc6b34685311628a8bcaac367d46d849",
+    "old": "if ContextualRoleAssignment.objects.using(database_alias).filter(",
+    "new": "if False and ContextualRoleAssignment.objects.using(database_alias).filter(",
+    "defect": "Ignore a still-proposed old office nomination at the rejoin qualification gate."
+  },
+  {
+    "id": "C1-05",
+    "test": "tests.test_c1_rejoin.RejoinTests.test_05_competing_rejoins_leave_one_application",
+    "kind": "python",
+    "module": "src.intevia.services.organism_membership_periods",
+    "qualname": "rejoin_predecessor",
+    "source_path": "src/intevia/services/organism_membership_periods.py",
+    "source_sha256": "1c06b6b47b301ca1c7ba06c4fc00dc41cc6b34685311628a8bcaac367d46d849",
+    "old": "return head",
+    "new": "raise MembershipPeriodUnavailable(\"C1 admission fault: eligible rejoin refused\")",
+    "defect": "Wrongly refuse every eligible rejoin; the two-request race must retain one surviving application."
+  }
+]

@@ -62,6 +62,9 @@ from src.intevia.services.organism_command_support import (
     serve_replay,
     WithheldField,
 )
+from src.intevia.services.organism_membership_periods import (
+    MembershipPeriodUnavailable, rejoin_predecessor,
+)
 from src.intevia.services.organism_membership_service import S015OperationNotYetImplemented
 from src.intevia.services.organism_role_service import OrganismRoleService
 from src.intevia.services.organism_formation_service import _sbg_readiness_message
@@ -2277,8 +2280,8 @@ class OrganismApplicationService:
         organism lock and the applicant-LO pair lock are taken, and the
         gateway row is read FOR SHARE. Authority is qualified
         (_authorise, at received_at). A current (ACTIVE or PROBATIONARY)
-        member is refused; an ENDED membership raises
-        not-yet-implemented IL-1. Without a gateway, "S3FU gateway
+        member is refused; an ENDED membership must pass C1a's known-ended
+        head, later-application and old-dependency checks. Without a gateway, "S3FU gateway
         closed".
 
         gateway_at is the database's clock_timestamp(). The settings and
@@ -2375,7 +2378,13 @@ class OrganismApplicationService:
                 if membership.state in {"ACTIVE", "PROBATIONARY"}:
                     raise S015ApplicationRefused("applicant is already a current member")
                 if membership.state == "ENDED":
-                    raise S015OperationNotYetImplemented("rejoin_by_application", "IL-1", "S4")
+                    try:
+                        rejoin_predecessor(
+                            membership, application_effective_at=effective_at,
+                            application_received_at=received_at, database_alias=self._alias,
+                        )
+                    except MembershipPeriodUnavailable as exc:
+                        raise S015ApplicationRefused(str(exc)) from exc
             if not gateway_exists:
                 raise S015ApplicationRefused("S3FU gateway closed")
             with connections[self._alias].cursor() as cursor:
@@ -2973,9 +2982,11 @@ class OrganismApplicationService:
         command receipt.
 
         Reads the applicant's Identity and any membership of theirs in
-        the LO. An ENDED membership raises not-yet-implemented IL-1; any
-        state other than PROPOSED is refused ("applicant already has a
-        current membership"). The LO needs a founding authority basis,
+        the LO. C1a qualifies an ENDED head against the NEW application's
+        times and refuses unresolved old condition/office dependencies. An
+        eligible rejoin appends ENDED -> PROPOSED on the same anchor before
+        admission; no old transition is edited. States other than ENDED or
+        PROPOSED are refused ("applicant already has a current membership"). The LO needs a founding authority basis,
         or S015ApplicationAuthorityUnavailable.
 
         With no membership, creates one in state PROPOSED (effective at
@@ -2987,7 +2998,9 @@ class OrganismApplicationService:
         reference and times, evidence "application:<uuid>", and
         context's keys and fingerprint. Then refreshes the membership.
         An existing PROPOSED membership skips this creation and first
-        transition.
+        transition. An eligible ENDED membership skips anchor creation but
+        appends a fresh APPLICATION proposal using its ended predecessor.
+        All of these writes share the accepting act's transaction.
 
         The admission must not sort before the membership's head
         transition by (effective_at, occurred_at, received_at), or
@@ -3004,13 +3017,21 @@ class OrganismApplicationService:
         membership = OrganismMembership.objects.using(self._alias).filter(
             identity=applicant, living_organism_id=application.living_organism_id,
         ).first()
+        ended_predecessor = None
         if membership is not None and membership.state == "ENDED":
-            raise S015OperationNotYetImplemented("rejoin_by_application", "IL-1", "S4")
-        if membership is not None and membership.state != "PROPOSED":
+            try:
+                ended_predecessor = rejoin_predecessor(
+                    membership, application_effective_at=application.effective_at,
+                    application_received_at=application.received_at, database_alias=self._alias,
+                )
+            except MembershipPeriodUnavailable as exc:
+                raise S015ApplicationRefused(str(exc)) from exc
+        if membership is not None and membership.state not in {"PROPOSED", "ENDED"}:
             raise S015ApplicationRefused("applicant already has a current membership")
         basis_id = application.living_organism.founding_authority_basis_id
         if basis_id is None:
             raise S015ApplicationAuthorityUnavailable("LO founding authority basis is required")
+        opening_period = membership is None or ended_predecessor is not None
         if membership is None:
             membership_uuid = uuid4()
             membership = OrganismMembership.objects.using(self._alias).create(
@@ -3022,9 +3043,11 @@ class OrganismApplicationService:
                     anchor_uuid=membership_uuid,
                 ),
             )
+        if opening_period:
             _insert_admission_transition(
-                database_alias=self._alias, membership=membership, predecessor=None, actor=applicant,
-                enterer=context.enterer, basis_id=basis_id, prior_state=None, resulting_state="PROPOSED",
+                database_alias=self._alias, membership=membership, predecessor=ended_predecessor, actor=applicant,
+                enterer=context.enterer, basis_id=basis_id,
+                prior_state=None if ended_predecessor is None else "ENDED", resulting_state="PROPOSED",
                 reason_class="APPLICATION", evidence_reference=f"application:{application.application_uuid}",
                 authority_decision_reference=application.authority_decision_reference,
                 request_reference=context.request_reference, idempotency_key=context.idempotency_key,
