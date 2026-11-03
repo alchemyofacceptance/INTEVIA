@@ -29,9 +29,13 @@ from src.intevia.services.organism_authority import (
 )
 from src.intevia.services.organism_command_support import S015CommandReplayMismatch
 from src.intevia.services.organism_membership_service import (
-    OrganismMembershipService, TransitionMembershipCommand,
+    OrganismMembershipService, LeaveOrganismCommand,
 )
-from src.intevia.services.organism_role_service import OrganismRoleService, ProposeAssignmentCommand
+from src.intevia.services.organism_office_consent_service import (
+    OfficeAppointmentConsentService, RecordOfficeConsentCommand, S015OfficeConsentCommandError,
+)
+from src.intevia.services.organism_role_service import (OrganismRoleService, ProposeAssignmentCommand,
+    TransitionAssignmentCommand, S015AssignmentMembershipRefused)
 from tests.s015_0021_support import append_event, database_now, found_nonroot, seed_identity, seed_test_gateway
 
 
@@ -130,10 +134,10 @@ class RejoinTests(TransactionTestCase):
 
     def _leave(self):
         now = database_now()
-        OrganismMembershipService(authority=self.authority, clock=database_now).transition_membership(
-            TransitionMembershipCommand(
+        OrganismMembershipService(authority=self.authority, clock=database_now).leave_organism(
+            LeaveOrganismCommand(
                 credential=self.applicant.credential, membership_uuid=self.membership.membership_uuid,
-                occurred_at=now, effective_at=now, resulting_state="ENDED",
+                occurred_at=now, effective_at=now, confirmed=True,
                 reason_class="VOLUNTARY", **self._keys(),
             )
         )
@@ -145,6 +149,14 @@ class RejoinTests(TransactionTestCase):
 
     def test_01_new_period_preserves_old_chain(self):
         """C1-01: a new application creates a distinct period on the unchanged anchor."""
+        with transaction.atomic(), connection.cursor() as cursor:
+            old_condition = MembershipCondition.objects.create(
+                condition_kind="MENTORSHIP", subject_membership_id=self.ids["membership"], mentor_membership=self.membership,
+            )
+            at = database_now()
+            append_event(cursor, "core_membershipconditionstateevent", old_condition.pk, 1,
+                         "OPEN", None, "ACTIVE", self.coordinator.pk, self.ids["basis"], uuid4().hex,
+                         eff=at, occ=at, rec=at)
         ended = self._leave()
         old = list(self._events().values())
         original_effect = ApplicationDecisionEffect.objects.get(decision__application=self.first_application)
@@ -158,6 +170,9 @@ class RejoinTests(TransactionTestCase):
         mismatch, _ = _attempt(lambda: self.service.decide_application(replace(self.accept_command, outcome="DECLINE")))
         self.assertIs(type(mismatch), S015CommandReplayMismatch,
                       f"Changing the accepted request under its existing key must refuse without a new period; got {mismatch}.")
+        old_condition.refresh_from_db()
+        self.assertEqual(old_condition.head_state_event.resulting_state, "MENTOR_UNRESOLVED",
+                         "A former mentor may rejoin without renewing the old mentoring task.")
         original_effect.refresh_from_db()
         self.assertEqual(original_effect.transition_id, original_transition,
                          "The first application's decision effect must still name its original admission transition.")
@@ -208,14 +223,14 @@ class RejoinTests(TransactionTestCase):
             )
         error, _ = _attempt(lambda: self._decide_accept(second))
         self.assertIs(type(error), S015ApplicationRefused,
-                      f"C1a must refuse admission with old condition history, including a link added after submission; got {error}.")
+                      f"Admission must refuse an unbound condition origin, including a link added after submission; got {error}.")
         self.assertIn("condition or mentor history", str(error),
                       "The acceptance refusal must identify the membership's condition or mentor history.")
         self.assertFalse(ApplicationDecision.objects.filter(application=second).exists(),
                          "A refused condition-dependent admission must roll back its acceptance decision.")
         self.membership.refresh_from_db()
         self.assertEqual(self.membership.head_transition_id, ended.pk,
-                         "Refused C1a admission must retain the ended head without a half-created period.")
+                         "Refused admission must retain the ended head without a half-created period.")
 
     def test_04_unfinished_office_is_not_inherited(self):
         """C1-04: an unfinished old office anchor cannot become a new-period nomination."""
@@ -235,13 +250,28 @@ class RejoinTests(TransactionTestCase):
         )
         self.assertEqual(nomination.head_state_event.resulting_state, "PROPOSED",
                          "The Coordinator's nomination must still be proposed after the applicant leaves.")
-        error, _ = _attempt(lambda: self._submit(self._submission()))
-        self.assertIs(type(error), S015ApplicationRefused,
-                      f"An unfinished old office must prevent C1a rejoin instead of becoming a new nomination; got {error}.")
-        self.assertIn("nomination without a recorded ending", str(error),
-                      "The submission refusal must identify the unfinished office or nomination.")
-        self.assertEqual(Application.objects.filter(applicant=self.applicant, living_organism=self.lo).count(), 1,
-                         "The old-office refusal must create no new application or membership period.")
+        second = self._submit(self._submission())
+        self._accept(second)
+        at = database_now()
+        self.assertNotIn(
+            nomination, roles.open_nominations(self.lo.organism_id, effective_at=at, known_at=at),
+            "A new membership period must exclude the old proposal from open nominations.",
+        )
+        consent = OfficeAppointmentConsentService(authority=self.authority, clock=database_now)
+        with self.assertRaisesRegex(S015OfficeConsentCommandError, "fresh nomination"):
+            consent.record_office_consent(RecordOfficeConsentCommand(
+                credential=self.applicant.credential, assignment_uuid=nomination.assignment_uuid,
+                proposal_event_uuid=nomination.head_state_event.event_uuid, action="CONSENT",
+                occurred_at=at, effective_at=at, **self._keys(),
+            ))
+        error, _ = _attempt(lambda: roles.transition_assignment(TransitionAssignmentCommand(
+            credential=self.coordinator.credential, assignment_uuid=nomination.assignment_uuid,
+            action="ASSIGN", resulting_state="ACTIVE", occurred_at=at, effective_at=at,
+            effective_until_state="NONE", effective_until=None, **self._keys(),
+        )))
+        self.assertIs(type(error), S015AssignmentMembershipRefused,
+                      f"After rejoin the historical nomination must require a fresh proposal. Received {error}.")
+        self.assertIn("fresh nomination", str(error), "The refusal must explain how to nominate in the new period.")
 
     def test_05_competing_rejoins_leave_one_application(self):
         """C1-05: competing new requests leave one open application and one second period."""

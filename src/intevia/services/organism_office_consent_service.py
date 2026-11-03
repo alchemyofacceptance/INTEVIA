@@ -437,6 +437,14 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
             sequence=1,
             action="PROPOSE",
         )
+        from core.models import OrganismMembershipTransition
+        if OrganismMembershipTransition.objects.using(self._alias).filter(
+            membership_id=nomination.membership_id, resulting_state="ENDED", recorded_at__gt=proposal.recorded_at,
+        ).exists():
+            raise S015OfficeConsentCommandError(
+                "This nomination belongs to a membership period that ended. Consent is unchanged. "
+                "Use a fresh nomination for the current membership period."
+            )
         previous_ordinal = OfficeAppointmentConsent.objects.using(self._alias).filter(
             assignment=nomination,
         ).order_by("-ordinal").values_list("ordinal", flat=True).first() or 0

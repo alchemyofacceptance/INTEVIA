@@ -93,6 +93,15 @@ from src.intevia.services.organism_formation_authority import founding_acceptanc
 # the two equal.
 _COMPOUND_ADMISSION_KEY_PREFIX = "sbg:admit:"
 
+class ConditionQualificationSource(Protocol):
+    """Trusted rule reader. Resolve the exact adopted rule/version, LO use,
+    evidence, actor capacity, subject and mentor eligibility at both cuts.
+    Return the durable qualification reference, or None if any fact is absent.
+    Command data itself is never the qualification source.
+    """
+    def reference_at(self, request, *, effective_at, known_at) -> str | None: ...
+
+
 class BirthingFactSource(Protocol):
     """Where the provider learns whether an LO has been born.
 
@@ -288,6 +297,7 @@ _POST_ACTIONS = {
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.RECORD_ROLE_DEFINITION,
     OrganismAction.TRANSITION_MEMBERSHIP,
+    OrganismAction.TRANSITION_MEMBERSHIP_CONDITION,
     OrganismAction.TRANSITION_LIVING_ORGANISM,
     OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
     OrganismAction.CREATE_DORMANT_CIRCLE,
@@ -489,6 +499,7 @@ class ProductionApplicationAuthorityProvider:
         birthing_source: BirthingFactSource | None = None,
         registration_source: GovernedRegistrationFactSource | None = None,
         nomination_entitlement_source: CoordinatorNominationEntitlementFactSource | None = None,
+        condition_source: ConditionQualificationSource | None = None,
     ) -> None:
         """Bind the provider's database alias and three fact sources.
 
@@ -508,6 +519,8 @@ class ProductionApplicationAuthorityProvider:
         self.registration_source = registration_source or ProductionGovernedRegistrationFactSource(
             database_alias=database_alias,
         )
+        from src.intevia.services.organism_condition_rules import V10ConditionQualificationSource
+        self.condition_source = V10ConditionQualificationSource(self) if condition_source is None else condition_source
         self.nomination_entitlement_source = (
             nomination_entitlement_source or ProductionCoordinatorNominationEntitlementFactSource()
         )
@@ -592,6 +605,8 @@ class ProductionApplicationAuthorityProvider:
                 S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
                 S015AuthorityRefusalCode.C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED,
             )
+        if request.action is OrganismAction.TRANSITION_MEMBERSHIP_CONDITION:
+            return self._condition_decision(request)
         target_organism_matches = False
         if request.target is not None and request.living_organism_id is not None:
             if request.action in {
@@ -998,33 +1013,50 @@ class ProductionApplicationAuthorityProvider:
             authority_reference=authority_reference,
         )
 
+    def _condition_decision(self, request):
+        from src.intevia.services.clock import database_now
+        from src.intevia.services.organism_condition_rules import encoded, instant
+
+        target = request.target or {}
+        if (target.get("organism_uuid") != str(request.living_organism_id)
+                or target.get("action") != request.action.value
+                or target.get("kind") not in {"MENTORSHIP", "PROBATION"}
+                or request.effective_at is None or not self._identity_active(request)):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        organism = LivingOrganism.objects.using(self.database_alias).filter(organism_id=request.living_organism_id).first()
+        actor_member = OrganismMembership.objects.using(self.database_alias).filter(
+            living_organism=organism, identity_id=request.actor_pk).first()
+        if (not organism or not actor_member or self._lo_state(organism, request) != "ACTIVE" or
+                not self._locked_heads_match(request, actor_member)):
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        now = database_now(self.database_alias)
+        if target.get("operation") in {"ACCEPT", "DECLINE"}:
+            from src.intevia.services.organism_conditions import qualified_offer
+            offer = qualified_offer(request, actor_member, now, self.database_alias)
+            if offer is None:
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+            return self._qualified(request, {"q": f"mentor-offer:{offer.head_state_event.event_uuid}"})
+        if target["kind"] == "PROBATION":
+            from src.intevia.services.organism_entitlement_service import entitlement_effective
+
+            if not all(entitlement_effective(organism.organism_id, "PROBATION", at=cut,
+                                             database_alias=self.database_alias) for cut in (request.effective_at, now)):
+                return self._refuse(request, S015AuthorityRefusalCode.C_CONDITION_RULE_UNAVAILABLE)
+        original = self.condition_source.reference_at(request, effective_at=request.effective_at, known_at=request.evaluated_at)
+        current = self.condition_source.reference_at(request,effective_at=now,known_at=now)
+        if not original or original != current:
+            return self._refuse(request, S015AuthorityRefusalCode.C_CONDITION_RULE_UNAVAILABLE)
+        cuts = encoded(instant(request.effective_at) + instant(request.evaluated_at) + instant(now))
+        return self._qualified(request, {"q": f"{original}:{cuts}"})
+
     def _qualify_membership_departure(
         self,
         request: S015PostFoundingAuthorityRequest,
         organism: LivingOrganism,
     ) -> S015AuthorityResult:
-        """Qualify a member leaving the LO (TRANSITION_MEMBERSHIP to ENDED).
-
-        evaluate_organism_authority has checked the canonical
-        target["membership_uuid"] and the ENDED resulting state. In order:
-        - membership_uuid parses, else UNRECOGNISED_ACTION;
-        - the membership is in this LO and is the actor's own, else DENIED;
-        - it folds ACTIVE or PROBATIONARY at the time cuts, else
-          C_MEMBERSHIP_TRANSITION_NOT_IMPLEMENTED;
-        - the request's locked heads match it (_locked_heads_match), else
-          DENIED;
-        - it holds no office: an assignment of any role whose row state is
-          ACTIVE, with a head event, refuses
-          C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED, disclosed as itself,
-          with that head event as fact "o";
-        - the LO has capacity (_lo_capacity), else C_LO_NO_CAPACITY, and folds
-          ACTIVE: DORMANT is C_LO_PAUSED, CLOSED is C_LO_CLOSED and any other
-          state C_LO_NO_CAPACITY.
-
-        The office check reads the assignment rows' current state, not a fold
-        at effective_at. Other codes are disclosed by _refuse's rule.
-        Qualified facts: "k" MEMBERSHIP_DEPARTURE and "m" the membership's
-        effective head event (_latest_transition). Reads only.
+        """Qualify confirmed self-departure for an ACTIVE or PROBATIONARY member.
+        An ACTIVE or DORMANT LO must have capacity. Each dependent office END
+        has its own holder qualification under the caller's same transaction.
         """
         try:
             membership_uuid = UUID(request.target["membership_uuid"])
@@ -1050,26 +1082,14 @@ class ProductionApplicationAuthorityProvider:
             )
         if not self._locked_heads_match(request, membership):
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
-        active_office = ContextualRoleAssignment.objects.using(self.database_alias).filter(
-            membership=membership,
-            state="ACTIVE",
-            head_state_event__isnull=False,
-        ).select_related("head_state_event").order_by("pk").first()
-        if active_office is not None:
-            return self._refuse(
-                request,
-                S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
-                S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED,
-                facts={"o": str(active_office.head_state_event.event_uuid)},
-            )
+        if request.target.get("confirmed") is not True:
+            return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
-        if lo_state == "DORMANT":
-            return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state != "ACTIVE":
+        if lo_state not in {"ACTIVE", "DORMANT"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         head = _latest_transition(
             self.database_alias,
@@ -1421,11 +1441,12 @@ class ProductionApplicationAuthorityProvider:
         if not self._lo_capacity(organism, request):
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         lo_state = self._lo_state(organism, request)
-        if lo_state == "DORMANT":
+        departure = "departure_decision" in request.target
+        if lo_state == "DORMANT" and not departure:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_PAUSED)
         if lo_state == "CLOSED":
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_CLOSED)
-        if lo_state != "ACTIVE":
+        if lo_state not in {"ACTIVE", "DORMANT"}:
             return self._refuse(request, S015AuthorityRefusalCode.C_LO_NO_CAPACITY)
         try:
             assignment_uuid = UUID(request.target["assignment_uuid"])
@@ -1440,6 +1461,23 @@ class ProductionApplicationAuthorityProvider:
         ).select_related("membership", "role_definition").first()
         if assignment is None:
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if departure:
+            from core.models import AuthorityDecision
+
+            # An ordinary END has no parent. A departure END must match the
+            # qualified parent and its still-locked member; a flag cannot grant capacity.
+            if request.target.get("event_action") != "END" or not AuthorityDecision.objects.using(
+                self.database_alias
+            ).filter(
+                decision_reference=request.target["departure_decision"], outcome="QUALIFIED",
+                action="TRANSITION_MEMBERSHIP", actor_id=request.actor_pk,
+                request_reference=request.request_reference, idempotency_key=request.idempotency_key,
+                effective_at=request.effective_at, evaluated_at=request.evaluated_at,
+                target__confirmed=True, target__resulting_state="ENDED",
+                target__living_organism_id=str(organism.organism_id),
+                target__membership_uuid=str(assignment.membership.membership_uuid),
+            ).exists() or assignment.membership.identity_id != request.actor_pk:
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         role = assignment.role_definition
         if role.code.startswith("INTEVIA_"):
             return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
@@ -1511,6 +1549,15 @@ class ProductionApplicationAuthorityProvider:
             request.effective_at,
             request.evaluated_at,
         )
+        if departure:
+            from src.intevia.services.clock import database_now
+
+            now = database_now(self.database_alias)
+            current_config = _effective_version(
+                self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, now, now,
+            )
+            if current_config is not None and current_config.cq_active is True:
+                return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
         if configuration is not None and configuration.cq_active is True:
             return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
 

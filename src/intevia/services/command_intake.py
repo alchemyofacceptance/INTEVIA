@@ -507,6 +507,7 @@ ENTRY_ACTIONS: dict[IntakeEntry, str | None] = {
     IntakeEntry.DECIDE_APPLICATION: OrganismAction.DECIDE_APPLICATION.value,
     IntakeEntry.SAVE_GATEWAY_DRAFT: None,
     IntakeEntry.EFFECT_GATEWAY_VERSION: None,
+    IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION: OrganismAction.TRANSITION_MEMBERSHIP_CONDITION.value,
     IntakeEntry.OPEN_MEMBERSHIP: OrganismAction.TRANSITION_MEMBERSHIP.value,
     IntakeEntry.TRANSITION_MEMBERSHIP: OrganismAction.TRANSITION_MEMBERSHIP.value,
     IntakeEntry.PROPOSE_ASSIGNMENT: OrganismAction.TRANSITION_CONTEXTUAL_ROLE.value,
@@ -581,6 +582,7 @@ ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
         IntakeEntry.DECIDE_APPLICATION,
         IntakeEntry.OPEN_MEMBERSHIP,
         IntakeEntry.TRANSITION_MEMBERSHIP,
+        IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION,
         IntakeEntry.PROPOSE_ASSIGNMENT,
         IntakeEntry.TRANSITION_ASSIGNMENT,
         IntakeEntry.RECORD_OFFICE_CONSENT,
@@ -1349,6 +1351,7 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     current membership, consent or authority is checked here.
     """
     from src.intevia.services.organism_membership_service import (
+        LeaveOrganismCommand,
         OpenMembershipCommand,
         TransitionMembershipCommand,
         _canonical_reason,
@@ -1376,7 +1379,7 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
             "effective_at": effective_at,
             "reason_class": reason_class,
         }
-    elif entry is IntakeEntry.TRANSITION_MEMBERSHIP and type(command) is TransitionMembershipCommand:
+    elif entry is IntakeEntry.TRANSITION_MEMBERSHIP and type(command) in (TransitionMembershipCommand, LeaveOrganismCommand):
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
         reason_class = _canonical_reason(command.reason_class)
@@ -1393,6 +1396,10 @@ def _membership_shape(entry: IntakeEntry, command: object) -> IntakeShape:
             "resulting_state": _validate_member_state(command.resulting_state),
             "reason_class": reason_class,
         }
+        if type(command) is LeaveOrganismCommand:
+            if type(command.confirmed) is not bool:
+                raise ValueError("Leaving needs an explicit yes or no. Membership is unchanged.")
+            payload["confirmed"] = command.confirmed
     else:
         raise TypeError(f"{entry.value} requires its exact membership command type")
     return IntakeShape(
@@ -1921,6 +1928,9 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     The office-definition branch includes the requested definition content through its own projection. This helper checks representation and binds retries; it does not decide authority or write an office."""
     if type(entry) is not IntakeEntry:
         raise ValueError("entry must be an IntakeEntry")
+    if entry is IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION:
+        from src.intevia.services.organism_conditions import condition_shape
+        return condition_shape(command)
     if entry is IntakeEntry.SAVE_GATEWAY_DRAFT:
         return _gateway_draft_shape(command)
     if entry is IntakeEntry.EFFECT_GATEWAY_VERSION:
@@ -1964,6 +1974,9 @@ def _authority_unavailable(entry: IntakeEntry | ChildEntry):
     """Return the authority-epoch refusal class for the served entry family.
     
     Office-definition requests use their own unavailable-authority exception. This selection does not establish why authority was unavailable or create a support ticket."""
+    if entry is IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION:
+        from src.intevia.services.organism_conditions import ConditionRefused
+        return ConditionRefused
     if entry in {
         IntakeEntry.REQUEST_GOVERNANCE_SEAT,
         IntakeEntry.DECIDE_GOVERNANCE_SEAT,

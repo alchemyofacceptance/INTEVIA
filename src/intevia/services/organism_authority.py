@@ -200,6 +200,7 @@ class S015AuthorityRefusalCode(str, Enum):
     C_CHANGE_SELF_AUTHORISING = "C_CHANGE_SELF_AUTHORISING"
     C_TERMINAL_ROW_STANDS = "C_TERMINAL_ROW_STANDS"
     C_APPLICATION_OPEN = "C_APPLICATION_OPEN"
+    C_CONDITION_RULE_UNAVAILABLE = "C_CONDITION_RULE_UNAVAILABLE"
     C_LO_PAUSED = "C_LO_PAUSED"
     C_LO_CLOSED = "C_LO_CLOSED"
     C_LO_NO_CAPACITY = "C_LO_NO_CAPACITY"
@@ -949,6 +950,7 @@ _APPLICATION_ACTIONS = frozenset({
     OrganismAction.RECORD_OFFICE_CONSENT,
     OrganismAction.RECORD_ROLE_DEFINITION,
     OrganismAction.TRANSITION_MEMBERSHIP,
+    OrganismAction.TRANSITION_MEMBERSHIP_CONDITION,
     OrganismAction.ADOPT_GOVERNING_INSTRUMENT,
     OrganismAction.CREATE_DORMANT_CIRCLE,
     OrganismAction.ADMIT_CIRCLE_PARTICIPANT,
@@ -1466,6 +1468,9 @@ class S015Authority:
                 message = "membership transition is not yet implemented"
             elif disclosed_refusal_code is S015AuthorityRefusalCode.C_MEMBERSHIP_LEAVE_WITH_OFFICE_NOT_IMPLEMENTED:
                 message = "leaving while holding an office is not yet implemented (IL-2)"
+            elif disclosed_refusal_code is S015AuthorityRefusalCode.C_CONDITION_RULE_UNAVAILABLE:
+                message = ("The condition was not recorded. The effective LO rule, entitlement or mentor qualification "
+                           "could not be established. No relationship changed. Check the rule and eligibility evidence.")
             elif disclosed_refusal_code is S015AuthorityRefusalCode.C_FOUNDER_PROTECTED:
                 message = C_FOUNDER_PROTECTED_MESSAGE
             else:

@@ -30,7 +30,7 @@ participations starting by departure that have no existing ending row
 (PKT-B SB-G build commission, section 8).
 
 Local checks retain named limits for admission, probation transitions,
-rejoining, leaving with an ACTIVE role assignment, and a transition whose
+generic rejoining and a transition whose
 (effective_at, occurred_at, received_at) tuple precedes the head's.
 Authority qualification or another earlier check can refuse first.
 
@@ -227,6 +227,13 @@ class TransitionMembershipCommand:
     membership_uuid: UUID
     resulting_state: str
     reason_class: str
+
+
+@dataclass(frozen=True, slots=True)
+class LeaveOrganismCommand(TransitionMembershipCommand):
+    """Voluntary self-departure. Confirmation is exact boolean request content."""
+    resulting_state: str = field(default="ENDED", init=False)
+    confirmed: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -767,27 +774,14 @@ def _validate_member_state(value: object) -> str:
     return state
 
 
-def _validate_edge(current_state: str, target_state: str, membership: OrganismMembership) -> None:
-    """Check one membership edge against the v1.0 edge rules; raise or return None.
-
-    In order: S015MembershipStateUnused if either state is unused in v1.0;
-    S015OperationNotYetImplemented for ENDED to PROPOSED (rejoining, limit
-    IL-1); S015OperationNotYetImplemented for an ENDED target from ACTIVE or
-    PROBATIONARY while the membership has a contextual role assignment
-    whose stored state is ACTIVE (leaving while holding an office, limit
-    IL-2); S015MembershipEdgeRefused for any other edge not in
-    _STATE_ALLOWED. The office check reads stored assignment states; it does
-    not fold assignment events at an effective time.
-    """
+def _validate_edge(current_state: str, target_state: str) -> None:
+    """Validate the state edge. Confirmed departure qualifies its effects separately."""
     if current_state in _STATE_UNUSED or target_state in _STATE_UNUSED:
         raise S015MembershipStateUnused(
             f"membership state {current_state}->{target_state} is unused by v1.0 (⟨B.049⟩)"
         )
     if current_state == "ENDED" and target_state == "PROPOSED":
         raise S015OperationNotYetImplemented("rejoin", "IL-1", "S4")
-    if target_state == "ENDED" and current_state in {"ACTIVE", "PROBATIONARY"}:
-        if membership.contextual_role_assignments.filter(state="ACTIVE").exists():
-            raise S015OperationNotYetImplemented("leave_with_office", "IL-2", "S5")
     allowed = _STATE_ALLOWED.get(current_state)
     if allowed is None or target_state not in allowed:
         raise S015MembershipEdgeRefused(
@@ -819,31 +813,6 @@ def _target_fingerprint_open(
             "member_identity_id": str(member_identity_id),
             "reason_class": reason_class,
             "resulting_state": _OPEN_STATE,
-            "schema": _TARGET_SCHEMA,
-        }
-    )
-
-
-def _target_fingerprint_transition(
-    *,
-    membership_uuid: UUID,
-    living_organism_id: UUID,
-    resulting_state: str,
-    reason_class: str,
-) -> str:
-    """Return the authority target fingerprint for a membership transition.
-
-    Passes authority_target_fingerprint the action (TRANSITION_MEMBERSHIP),
-    the LO and membership UUIDs as strings, the reason class, the requested
-    resulting state and the target schema.
-    """
-    return authority_target_fingerprint(
-        {
-            "action": _ACTION.value,
-            "living_organism_id": str(living_organism_id),
-            "membership_uuid": str(membership_uuid),
-            "reason_class": reason_class,
-            "resulting_state": resulting_state,
             "schema": _TARGET_SCHEMA,
         }
     )
@@ -1241,6 +1210,11 @@ class OrganismMembershipService(_OrganismCommandService):
             received_at=bound.received_at,
         )
 
+    def leave_organism(self, command: LeaveOrganismCommand) -> MembershipCommandResult:
+        if type(command) is not LeaveOrganismCommand:
+            raise TypeError("Leaving requires a LeaveOrganismCommand.")
+        return self.transition_membership(command)
+
     def transition_membership(
         self,
         command: TransitionMembershipCommand,
@@ -1531,54 +1505,12 @@ class OrganismMembershipService(_OrganismCommandService):
         *,
         bound: BoundRequest,
     ) -> MembershipCommandResult:
-        """Carry out one membership transition; called by transition_membership.
+        """Serve a bound replay or qualify the fresh transition under its locks.
 
-        Runs inside the caller's authority_atomic transaction with a bound
-        request, in this order:
-
-        1. Locks the actor's Identity row, verifies the command against the
-           binding and takes the command mutex; the canonical keys, reason,
-           membership UUID, timestamps and requested state were validated
-           before admission, and received_at is the binding's.
-        2. Reads the membership (S015MembershipNotFound if absent) and computes the
-           target and command fingerprints. If _attempt_replay returns a result,
-           returns it with no further work.
-        3. Takes the registered organism lock, then locks the membership row
-           itself, without locking its joined Identity or LivingOrganism rows
-           through that query. Locks the actor's membership context, which
-           requires ACTIVE membership, or ACTIVE or PROBATIONARY when the actor
-           is ending their own membership, and a non-null head transition.
-        4. Calls _evaluate_authority before _validate_edge and the subsequent
-           local named-limit checks. An authority refusal stops this path before
-           those checks; successful qualification does not bypass them.
-        5. Validates the edge (_validate_edge), then refuses PROPOSED to ACTIVE,
-           PROPOSED to PROBATIONARY and PROBATIONARY to ACTIVE as named limits
-           (S015OperationNotYetImplemented). The edges this method completes are
-           therefore those to ENDED.
-        6. If the membership has no head transition, raises
-           S015MembershipNotFound ("membership head transition not found")
-           before reading any predecessor. Otherwise refuses, as a named limit
-           (IL-3), a command whose (effective_at, occurred_at, received_at) sorts
-           strictly before the head's; for an ENDED target, records the member's
-           display name (or username) and the LO's slug in departure_context and
-           raises the refusal from _departure_precedes_participation, if any; and
-           reads the id of the LO's founding authority basis.
-        7. If the assigned founding basis id is null, raises
-           S015MembershipAuthorityUnavailable. Otherwise locks the basis row
-           and writes the transition with the predecessor's sequence plus one,
-           the same Identity as actor and enterer, entry_mode TRANSPORT, the
-           decision's references, and a lineage_reference hashed from the
-           constructed lineage payload. Refreshes the governed cache at the
-           transition's effective_at with the database's clock_timestamp(),
-           then re-reads the membership and transition.
-        8. For an ENDED target, composes the participation endings
-           (_compose_current_participation_endings).
-        9. Builds the result and returns it through _finalise.
-
-        A membership whose head_transition_id is None is refused at step 6 as
-        not found, before this method reads that predecessor or inserts its
-        transition. Earlier authority, edge and named-limit checks may refuse
-        first. This branch does not itself establish why the head is missing.
+        A confirmed self-departure locks the LO before its relationships, retains
+        the roster in its decision, qualifies all ordinary office ENDs before any
+        effect, and composes offices, membership, seats, conditions and dissolution
+        before finalising its one receipt. All writes share the parent transaction.
         """
         request_reference = _canonical_key(command.request_reference, "request_reference", 128)
         idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
@@ -1613,12 +1545,17 @@ class OrganismMembershipService(_OrganismCommandService):
         except OrganismMembership.DoesNotExist as exc:
             raise S015MembershipNotFound("membership not found") from exc
 
-        target_fingerprint = _target_fingerprint_transition(
-            membership_uuid=membership_uuid,
-            living_organism_id=membership.living_organism.organism_id,
-            resulting_state=target_state,
-            reason_class=reason_class,
-        )
+        confirmation = {"confirmed": command.confirmed} if type(command) is LeaveOrganismCommand else {}
+        target = {
+            "action": _ACTION.value,
+            "living_organism_id": str(membership.living_organism.organism_id),
+            "membership_uuid": str(membership_uuid),
+            "reason_class": reason_class,
+            "resulting_state": target_state,
+            "schema": _TARGET_SCHEMA,
+            **confirmation,
+        }
+        target_fingerprint = authority_target_fingerprint(target)
         command_fingerprint = self._command_fingerprint(
             actor=actor,
             request_reference=request_reference,
@@ -1635,6 +1572,7 @@ class OrganismMembershipService(_OrganismCommandService):
                 "membership_uuid": str(membership_uuid),
                 "reason_class": reason_class,
                 "resulting_state": target_state,
+                **confirmation,
                 "effective_at": canonical_timestamp(effective_at),
                 "received_at": canonical_timestamp(received_at),
                 "schema": _COMMAND_SCHEMA,
@@ -1651,10 +1589,19 @@ class OrganismMembershipService(_OrganismCommandService):
         if replay is not None:
             return replay
 
+        if target_state == "ENDED" and confirmation.get("confirmed") is not True:
+            raise S015MembershipEdgeRefused(
+                "Leaving was not confirmed. Your membership, offices and Circle places are unchanged. "
+                "To leave, submit a new confirmed departure request."
+            )
+
         _lock_registered_organism(
             database_alias=self._alias,
             organism_id=membership.living_organism.organism_id,
         )
+        if target_state == "ENDED":
+            # The office ASSIGN route also serialises on the LO row.
+            LivingOrganism.objects.using(self._alias).select_for_update().get(pk=membership.living_organism_id)
         membership = (
             OrganismMembership.objects.using(self._alias)
             .select_for_update(of=("self",))
@@ -1671,6 +1618,17 @@ class OrganismMembershipService(_OrganismCommandService):
             ),
         )
 
+        from src.intevia.services.organism_departure import coverage_assessment, prepare_departure
+
+        roster = None
+        if target_state == "ENDED":
+            roster = coverage_assessment(self._alias, membership, effective_at, received_at)
+            target["intake_fingerprint"] = bound.request_fingerprint
+            target["departure_rule"] = "C0:O-16/O-20:v1.2"
+            target["coverage_assessment"] = str(roster.event_uuid) if roster else None
+            target["roster_version"] = roster.roster_version if roster else None
+            target_fingerprint = authority_target_fingerprint(target)
+
         decision = self._evaluate_authority(
             actor=actor,
             actor_membership=actor_membership,
@@ -1680,19 +1638,15 @@ class OrganismMembershipService(_OrganismCommandService):
             target_fingerprint=target_fingerprint,
             received_at=received_at,
             effective_at=effective_at,
-            target={
-                "action": _ACTION.value,
-                "living_organism_id": str(membership.living_organism.organism_id),
-                "membership_uuid": str(membership_uuid),
-                "reason_class": reason_class,
-                "resulting_state": target_state,
-                "schema": _TARGET_SCHEMA,
-            },
+            target=target,
             living_organism_id=membership.living_organism.organism_id,
         )
 
+        if target_state == "ENDED" and actor.pk != membership.identity_id:
+            raise S015MembershipEdgeRefused("Only the member may confirm leaving. Membership is unchanged.")
+
         current_state = _canonical_key(membership.state, "membership.state", 19)
-        _validate_edge(current_state, target_state, membership)
+        _validate_edge(current_state, target_state)
         if (current_state, target_state) == ("PROPOSED", "ACTIVE"):
             raise S015OperationNotYetImplemented("membership_admission", "S1-IL-ADMISSION", "S3")
         if (current_state, target_state) in {("PROPOSED", "PROBATIONARY"), ("PROBATIONARY", "ACTIVE")}:
@@ -1760,6 +1714,14 @@ class OrganismMembershipService(_OrganismCommandService):
             'sequence': sequence,
         })).hexdigest()}"
 
+        departure = prepare_departure(
+            service=self, membership=membership, actor=actor, actor_role_refs=actor_role_refs,
+            decision=decision, effective_at=effective_at, occurred_at=occurred_at,
+            received_at=received_at, command=command, fingerprint=command_fingerprint,
+            event_uuid=transition_event_uuid, roster=roster,
+        )
+        departure.end_offices()
+
         transition_id = _insert_membership_transition_row(
             database_alias=self._alias,
             event_uuid=transition_event_uuid,
@@ -1815,6 +1777,8 @@ class OrganismMembershipService(_OrganismCommandService):
                 effective_at=effective_at,
                 received_at=received_at,
             )
+
+        departure.finish(transition)
 
         result = _result_from_membership(
             membership=membership,
@@ -1944,6 +1908,7 @@ __all__ = [
     "S015MembershipStateUnused",
     "S015OperationNotYetImplemented",
     "TransitionMembershipCommand",
+    "LeaveOrganismCommand",
     "acquire_organism_command_mutex",
     "command_mutex_key",
     "qualify_completed_replay",

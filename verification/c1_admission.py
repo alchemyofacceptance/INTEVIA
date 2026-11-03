@@ -1,8 +1,10 @@
-"""Once-only C1a v1.2 fault admission using the existing owned TT-1 clone machinery.
+"""Once-only C1a and C1b v1.3 fault admission using the existing owned TT-1 clone machinery.
 
-No product test is executed by the producer. No persistent source edit; the fault is installed after clone qualification and
+No persistent source edit. The fault is installed after clone qualification and
 restored on teardown. Not imported by the recurring CI mutation registry.
 """
+
+from __future__ import annotations
 
 import hashlib
 import importlib
@@ -32,9 +34,9 @@ class C1AdmissionRunner(
             or os.environ.get("VERIFICATION_TEMPLATE_POLICY") != "reuse-only"
         ):
             raise RuntimeError(
-                "C1a admission needs the run's existing TT-1 template in clone/reuse-only mode. No fresh fallback is allowed."
+                "C1 admission needs the run's existing TT-1 template in clone/reuse-only mode. No fresh fallback is allowed."
             )
-        entries = json.loads(Path(__file__).with_suffix(".json").read_text())
+        entries = json.loads(Path(__file__).with_suffix(".json").read_text(encoding="utf-8"))
         selected = os.environ.get("C1_ADMISSION_CASE")
         self.entry = next((e for e in entries if e["id"] == selected), None)
         self.phase = os.environ.get("C1_ADMISSION_PHASE")
@@ -44,7 +46,7 @@ class C1AdmissionRunner(
             )
         if list(test_labels) != [self.entry["test"]]:
             raise RuntimeError(
-                "C1a admission requires exactly the declared target test; no test ran."
+                "C1 admission requires exactly the declared target test; no test ran."
             )
         self.restore_code = None
         try:
@@ -57,7 +59,7 @@ class C1AdmissionRunner(
         MutationRunner.verify_clone_matches_template(self)
         if self.phase == "fault":
             if self.entry["kind"] != "python":
-                raise RuntimeError("C1a v1.2 requires a candidate-bound Python admission fault.")
+                raise RuntimeError("C1 requires a candidate-bound Python admission fault.")
             module = importlib.import_module(self.entry["module"])
             owner = module
             parts = self.entry["qualname"].split(".")
@@ -66,16 +68,16 @@ class C1AdmissionRunner(
             name = parts[-1]
             path = Path(module.__file__)
             if (
-                hashlib.sha256(path.read_bytes()).hexdigest()
+                hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
                 != self.entry["source_sha256"]
             ):
                 raise RuntimeError(
-                    "C1a source fault does not match its exact candidate bytes."
+                    "C1 source fault does not match its LF-normalised candidate source."
                 )
             function = inspect.unwrap(getattr(owner, name))
             source = textwrap.dedent(inspect.getsource(function))
             if source.count(self.entry["old"]) != 1:
-                raise RuntimeError("C1a fault anchor is missing or ambiguous.")
+                raise RuntimeError("C1 fault anchor is missing or ambiguous.")
             namespace = dict(module.__dict__)
             exec(
                 compile(

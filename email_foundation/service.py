@@ -99,9 +99,14 @@ def _enqueue(*, request_key, fingerprint, **values):
 
 
 def request_message(
-    *, category, recipient, template, version, context, origin, request_key
+    *, category, recipient, template, version, context, origin, request_key,
+    organism_lock_held=False,
 ):
     """Call inside the originating act's atomic block, after its persisted evidence.
+
+    organism_lock_held=True declares that the caller already holds an organism lock.
+    Until a recipient check that works under rule I-3 exists, such a request is
+    always refused before any recipient lock is taken.
 
     The caller catches MailRefused per recipient inside its outer act transaction,
     with a recipient savepoint, and records the notice refusal separately. An
@@ -138,6 +143,13 @@ def request_message(
             "Email was not requested: the organisation reference must be a UUID or absent. No intent was created; the calling package must supply its recorded organisation identifier."
         )
     path = context_path(context, spec)
+    if organism_lock_held:
+        # C1b has already acquired its LO lock. I-2/I-3 prohibit this recipient
+        # lock. Preserve EM-a's fence until a compatible adapter is qualified.
+        raise MailRefused(
+            "Email was not requested because the approved recipient check cannot run "
+            "inside this organisation act. No intent was created. The recorded act is available."
+        )
     identity = Identity.objects.select_for_update().get(pk=recipient.pk)
     if is_severed(identity):
         raise MailRefused(

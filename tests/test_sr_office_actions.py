@@ -508,15 +508,16 @@ class SROfficeActionTests(TransactionTestCase):
         self._start_organism()
         seated,created=self._seat_founder()
         participation=models.CircleParticipation.objects.get(participation_uuid=seated.participation_uuid)
-        self._member()  # departure is not the last membership
+        successor = self._member()  # continuing LO retains qualified Coordinator coverage
         coordinator=models.ContextualRoleAssignment.objects.get(membership=self.founder_member,role_definition__code="COORDINATOR")
+        self._appoint(coordinator.role_definition, successor)
         self.roles.transition_assignment(self._transition_command(coordinator,"END",self.actor))
-        from src.intevia.services.organism_membership_service import OrganismMembershipService, TransitionMembershipCommand
+        from src.intevia.services.organism_membership_service import OrganismMembershipService, LeaveOrganismCommand
         at=fixtures.database_now();key=uuid4().hex
-        OrganismMembershipService(authority=self.authority,clock=fixtures.database_now).transition_membership(TransitionMembershipCommand(
+        OrganismMembershipService(authority=self.authority,clock=fixtures.database_now).leave_organism(LeaveOrganismCommand(
             credential=self.actor.credential,request_reference="c5-leave:"+key,idempotency_key=key,
             occurred_at=at,effective_at=at,membership_uuid=self.founder_member.membership_uuid,
-            resulting_state="ENDED",reason_class="LEAVE"))
+            confirmed=True,reason_class="LEAVE"))
         self.assertTrue(models.CircleParticipationEnd.objects.filter(participation=participation).exists(),
                         "Leaving the organisation should end the member's GOVERNANCE participation; no ending was recorded.")
         at=fixtures.database_now()

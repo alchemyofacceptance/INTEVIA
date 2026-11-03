@@ -1206,12 +1206,18 @@ class OrganismRoleService(_OrganismCommandService):
                 "CROSS JOIN LATERAL public.s015_effective_state("
                 "'core_contextualroleassignment', a.id, %s, %s) folded "
                 "WHERE m.living_organism_id = %s AND folded.projection = 'PROPOSED' "
+                "AND NOT EXISTS (SELECT 1 FROM public.core_organismmembershiptransition ended "
+                "JOIN public.core_contextualroleassignmentstateevent proposal ON proposal.assignment_id=a.id "
+                "AND proposal.sequence=1 WHERE ended.membership_id=m.id AND ended.resulting_state='ENDED' "
+                "AND ended.recorded_at>proposal.recorded_at AND ended.effective_at<=%s "
+                "AND ended.recorded_at<=%s AND ended.received_at<=%s) "
                 "AND NOT EXISTS ("
                 "SELECT 1 FROM public.core_officeappointmentconsent c "
                 "WHERE c.assignment_id = a.id AND c.action IN ('DECLINE', 'WITHDRAW') "
                 "AND c.effective_at <= %s AND c.recorded_at <= %s) "
                 "ORDER BY a.id",
-                [effective_moment, known_moment, organism.pk, effective_moment, known_moment],
+                [effective_moment, known_moment, organism.pk, effective_moment, known_moment, known_moment,
+                 effective_moment, known_moment],
             )
             assignment_ids = [row[0] for row in cursor.fetchall()]
         assignments = ContextualRoleAssignment.objects.using(self._alias).filter(

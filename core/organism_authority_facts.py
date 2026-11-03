@@ -536,6 +536,9 @@ _ROWS: dict[OrganismAction, ActionFacts] = {
             "o": _ref(_STATE_EVENT),
         },
     ),
+    OrganismAction.TRANSITION_MEMBERSHIP_CONDITION: _undiscriminated(
+        {"q": _ref("condition-qualification", required=True)},
+    ),
     # 15. TRANSITION_MEMBERSHIP — _qualify_membership_departure
     OrganismAction.TRANSITION_MEMBERSHIP: _undiscriminated(
         {

@@ -49,7 +49,7 @@
     "kind": "python",
     "target": "email_foundation.service.request_verification",
     "source_path": "email_foundation/service.py",
-    "source_sha256": "888d20576deac50dec05db3a77e3de8d8eb253d35d13f52564c4ec68895b268a",
+    "source_sha256": "854c4725b7df072fca14edb07f084bd6921ed81d02d3ce2d72986c67a882d169",
     "old": "record.requests_today >= limit",
     "new": "False",
     "defect": "Bypass the per-UTC-day five-challenge cap while retaining the resend interval."

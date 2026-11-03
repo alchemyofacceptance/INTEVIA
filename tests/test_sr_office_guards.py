@@ -825,13 +825,12 @@ class SROfficeGuardTests(TransactionTestCase):
     # -- 9. the migration (W-13) -------------------------------------------------
 
     def test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused(self):
-        """Claim: from a founding-only state 0053 reverses through 0052 to 0051 restoring both installed bodies exactly
-        (0044's attribution body; 0037's consent body) and re-applies to SR-H's bodies, the
-        non-internal trigger count unchanged throughout; with one non-COORDINATOR LO office written,
-        the reverse is refused naming the count and deletes nothing. Obligation: O-53 (a schema
-        change refuses an unsafe reversal) - a partial witness, recorded as such. Layer: migration.
-        Mutation: sr-c2-attribution-gate witnesses sensitivity of the initial installed-body
-        assertion only. Reverse behaviour has a separate source-fault qualification kit."""
+        """With no C1b data, 0054 reverses first. On a founding-only database the SR migrations
+        reverse to 0051 and reapply with the expected guard bodies and trigger count.
+        With an occupied office, both SR reversal checks must refuse at 0053, name the
+        populated records and preserve the 0053 facts and office state. Restore 0054 at the end.
+        Obligation O-53 (partial witness). The sr-c2-attribution-gate mutation covers the
+        initial installed-body assertion. Reverse behaviour has a separate source-fault kit."""
         migration = import_module("core.migrations.0052_sr_office_guard_widening")
         safeguard = import_module("core.migrations.0053_sr_office_safeguards")
 
@@ -852,7 +851,7 @@ class SROfficeGuardTests(TransactionTestCase):
             }
 
         at_head = facts()
-        self.assertEqual(at_head["head"], safeguard.MIGRATION, msg="The migration rehearsal should start at 0053; another head is installed.")
+        self.assertEqual(at_head["head"], "0054_c1b_relationships", msg="The migration rehearsal must start on the received C1b head.")
         self.assertEqual(at_head["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY, msg="At 0053, the installed definition-insert safeguard should match its complete candidate body; it differs.")
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
         self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
@@ -881,6 +880,9 @@ class SROfficeGuardTests(TransactionTestCase):
             self._assign(cur, assignment_id, assignment_uuid, proposal_id, _later(at, 2), f"{self.tag}:populated")
 
         self._commits(office)
+        migrate_to_target_with_restore(self, ("core", "0053_sr_office_safeguards"))
+        at_0053 = facts()
+        self.assertEqual(at_0053["head"], "0053_sr_office_safeguards", msg="The populated reversal checks must start at 0053.")
         before = self._state()
         with self.assertRaises(RuntimeError, msg="The new migration should refuse rollback while an office remains; it allowed rollback.") as refused:
             MigrationExecutor(connection).migrate([("core", HEAD_0051)])
@@ -893,8 +895,10 @@ class SROfficeGuardTests(TransactionTestCase):
                 migration.restore_guards(None, editor)
         self.assertIn("SR 0052 reverse refused", str(prior_refused.exception), msg="The retained 0052 preflight should name its own populated-state refusal; another error was reported.")
         self.assertIn("1 non-COORDINATOR LO-scoped assignment(s) carrying 2 state event(s)", str(prior_refused.exception), msg="The 0052 refusal should identify one assignment carrying its two state events; its account differs.")
-        self.assertEqual(facts(), at_head, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
+        self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
         self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
+        self.restore_received_migrations()
+        self.assertEqual(facts()["head"], "0054_c1b_relationships", msg="The populated rehearsal must finish on the received C1b head.")
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 
