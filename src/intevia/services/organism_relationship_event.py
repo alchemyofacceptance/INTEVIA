@@ -24,10 +24,12 @@ def append_relationship_event(
     received_at,
     composing_rule=None,
     until=None,
+    invalidation_kind=None,
 ):
-    from core.models import DeterminationContestCase, LivingOrganism, MembershipCondition
+    from core.models import AuthorityBasis, DeterminationContestCase, LivingOrganism, MembershipCondition
 
     table, fk = {
+        AuthorityBasis: ("core_authorityinvalidationevent", "basis_id"),
         LivingOrganism: ("core_livingorganismevent", "living_organism_id"),
         MembershipCondition: ("core_membershipconditionstateevent", "condition_id"),
         DeterminationContestCase: ("core_determinationcontestevent", "case_id"),
@@ -102,6 +104,8 @@ def append_relationship_event(
             "predecessor_l1_commitment": previous,
             "parts_commitment": parts,
         }
+        if type(anchor) is AuthorityBasis:
+            columns["kind"] = invalidation_kind
         cursor.execute(
             f"INSERT INTO public.{table} ({', '.join(columns)}) "
             f"VALUES ({', '.join(['%s'] * len(columns))})",

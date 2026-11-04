@@ -6,7 +6,7 @@
     "module": "src.intevia.services.organism_application_service",
     "qualname": "OrganismApplicationService._admit",
     "source_path": "src/intevia/services/organism_application_service.py",
-    "source_sha256": "3c18df59f0347bcc8971c6077e99250865a1abcdd73cb5311a50fcb74603629e",
+    "source_sha256": "2f88c1cd89ed6831bff68b6eb58723b5b0a62b28d37f0ff64c1c8119d42f87a1",
     "old": "prior_state=None if ended_predecessor is None else \"ENDED\"",
     "new": "prior_state=None",
     "defect": "Misattribute the new period proposal as a first-ever proposal with no prior state."
@@ -177,7 +177,7 @@
     "old": "return None if row is None else str(row[0])",
     "new": "return None",
     "defect": "Withhold genuine governance participation evidence from office qualification.",
-    "source_sha256": "aca1fa5ebf3cb4bc1c2c5b583dcf83b7cce2d15663f98fc5a29c7901d2145070"
+    "source_sha256": "d37e790a12e00c65e460af43432084d29a4fe9cac83a8b68f1318cf4684203e6"
   },
   {
     "id": "C1B-10",

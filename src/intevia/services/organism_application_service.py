@@ -723,8 +723,8 @@ def _engagement_settings_basis(
     Raises S015ApplicationRefused "effective governance configuration
     and application settings are required" if either is None.
     Otherwise returns "governance-configuration-version:<uuid>;"
-    followed by "application-settings-version:<uuid>". Claim and
-    reassignment record it on their LO_CSA engagement.
+    followed by "application-settings-version:<uuid>". The first claim
+    records it on the LO_CSA engagement.
     """
     with connections[database_alias].cursor() as cursor:
         cursor.execute("SELECT clock_timestamp()")
@@ -2756,7 +2756,7 @@ class OrganismApplicationService:
         No assignment or a failed check raises S015ApplicationRefused
         with "effective Coordinator office is required".
 
-        Reads the settings basis (_engagement_settings_basis), ends the
+        Reads the first engagement’s settings basis, ends the
         current claim (CSAAssignmentEnd), and creates a replacement
         claim of the actor's membership and office that replaces it, due
         27 days after effective_at; both are reloaded for their
@@ -2766,13 +2766,15 @@ class OrganismApplicationService:
         Finishes with the replacement's UUID, its recorded_at and the
         due time.
 
-        This method does not require a different assignee: the existing
-        assignee can replace their own claim. The new due time is always
-        this command's effective_at plus 27 days.
+        CSA-REASSIGN-1 (Human Governor, 23 October) forbids self-reassignment.
+        C3 requires a different, currently qualified assignee under independent
+        case evidence. The replacement retains the first engagement's settings
+        and configuration. The existing completion interval still applies.
         """
+        from src.intevia.services.authority_lifecycle import governed_write
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias, received_at=bound.received_at):
+        with governed_write(self._alias, command.application_uuid), _authority_atomic(self._alias, received_at=bound.received_at):
             context = self._coordinator_start(
                 command,
                 OrganismAction.REASSIGN_APPLICATION,
@@ -2790,9 +2792,14 @@ class OrganismApplicationService:
             if engagement is None or engagement.engagement_reference != str(previous.assignment_uuid):
                 raise S015ApplicationRefused("current engagement does not match claim")
             office = self._coordinator_office(context)
-            settings_basis = _engagement_settings_basis(
-                self._alias, context.application.living_organism, context.effective_at,
-            )
+            from src.intevia.services import authority_lifecycle as lifecycle
+            first = lifecycle.first_engagement(context.application)
+            if not lifecycle.scalar(self._alias, "SELECT public.c3_pin_valid(%s,%s,%s)",
+                                    [context.application.pk, first.settings_basis, first.deciding_party_id]):
+                raise lifecycle.CaseHeld(context.application, "The historical rule references do not agree.")
+            settings_basis = first.settings_basis
+            finding_id = lifecycle.replacement_finding(self._alias, previous, office, context.actor,
+                                                       context.effective_at, context.received_at)
             ending = CSAAssignmentEnd.objects.using(self._alias).create(
                 assignment=previous, actor=context.actor, enterer=context.actor,
                 occurred_at=context.occurred_at, effective_at=context.effective_at,
@@ -2801,7 +2808,7 @@ class OrganismApplicationService:
             ending.refresh_from_db(using=self._alias)
             due_at = context.effective_at + timedelta(days=27)
             replacement = CSAAssignment.objects.using(self._alias).create(
-                application=context.application, replaces=previous,
+                application=context.application, replaces=previous, lifecycle_finding_id=finding_id,
                 assignee_membership=context.membership, assignee_office=office,
                 actor=context.actor, enterer=context.actor, completion_due_at=due_at,
                 occurred_at=context.occurred_at, effective_at=context.effective_at,
@@ -2901,9 +2908,10 @@ class OrganismApplicationService:
         Coordinator as enterer. Finishes with the decision's UUID and
         recorded_at.
         """
+        from src.intevia.services.authority_lifecycle import governed_write
         from src.intevia.services.command_intake import IntakeEntry
 
-        with _authority_atomic(self._alias, received_at=bound.received_at):
+        with governed_write(self._alias, command.application_uuid), _authority_atomic(self._alias, received_at=bound.received_at):
             outcome = _canonical_key(command.outcome, "outcome", 7)
             if outcome not in {"ACCEPT", "DECLINE"}:
                 raise ValueError("outcome must be ACCEPT or DECLINE")
@@ -2919,6 +2927,8 @@ class OrganismApplicationService:
                 return context
             self._open_for_coordinator(context)
             claim = self._current_claim(context)
+            from src.intevia.services.authority_lifecycle import require_holder
+            require_holder(self._alias, claim, context.effective_at, context.received_at)
             if claim.actor_id != context.actor.pk or claim.assignee_membership_id != context.membership.pk:
                 raise S015ApplicationRefused("only the current self-assignee may decide")
             office = self._coordinator_office(context)

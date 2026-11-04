@@ -5121,6 +5121,7 @@ class Application(_S015AppendOnly):
 
 
 class CSAAssignment(_S015AppendOnly):
+    lifecycle_finding = models.ForeignKey(GovernedDetermination, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     assignment_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     application = models.ForeignKey(Application, on_delete=models.PROTECT, related_name="csa_assignments")
     replaces = models.OneToOneField("self", on_delete=models.PROTECT, null=True, blank=True, related_name="replacement")

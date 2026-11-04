@@ -3549,12 +3549,12 @@ class ProductionApplicationAuthorityProvider:
         - select the eligible engagement with highest ordinal. LO_CQ,
           CIRCLE_CQ and CIRCLE_CSA refuse C_ROUTE_IS_CQ; another
           route except LO_CSA refuses UNRECOGNISED_ROUTE;
-        - for DECIDE_APPLICATION require an LO_CSA engagement, else
-          UNRECOGNISED_ROUTE, and resolve its recorded settings basis
-          through _settings_basis_versions. Otherwise resolve
+        - for reassignment and decision require an LO_CSA engagement with the
+          same rule and party as the first engagement. Resolve that first
+          engagement's original versions. For a first claim resolve
           configuration and settings at the request's cuts. A missing
           version is C_CONFIGURATION_NOT_ESTABLISHED;
-        - except for a decision, require processing_responsibility LO
+        - for the first claim, require processing_responsibility LO
           and, when CQ is True, exactly one eligible Coordinator
           member. Either failure is C_ROUTE_IS_CQ.
 
@@ -3576,9 +3576,8 @@ class ProductionApplicationAuthorityProvider:
         and recorded cuts, without separate received_at predicates.
         Terminal reads use recorded time alone. Version selection has
         its own receipt and recorded predicates through
-        _effective_version. For decisions its cuts are the
-        engagement's effective_at and recorded_at; other version
-        selection uses the request's cuts.
+        _effective_version. Reassignment and decision authenticate the
+        pin at the first engagement's own cut.
 
         Qualified facts extend _coordinator_facts: claims add "k": C
         and "t": CQ_INACTIVE or SOLE_COORDINATOR; reassignments and
@@ -3616,10 +3615,14 @@ class ProductionApplicationAuthorityProvider:
             return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
         if engagement is not None and engagement.route != "LO_CSA":
             return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ROUTE)
-        if request.action is OrganismAction.DECIDE_APPLICATION:
+        if request.action in {OrganismAction.REASSIGN_APPLICATION, OrganismAction.DECIDE_APPLICATION}:
             if engagement is None or engagement.route != "LO_CSA":
                 return self._refuse(request, S015AuthorityRefusalCode.UNRECOGNISED_ROUTE)
-            configuration, settings = self._settings_basis_versions(engagement, organism)
+            first = engagements.filter(engagement_ordinal=1).first()
+            if (first is None or first.route != engagement.route or first.settings_basis != engagement.settings_basis
+                    or first.deciding_party_id != engagement.deciding_party_id):
+                return self._refuse(request, S015AuthorityRefusalCode.C_CONFIGURATION_NOT_ESTABLISHED)
+            configuration, settings = self._settings_basis_versions(first, organism)
         else:
             settings = _effective_version(
                 self.database_alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS,
@@ -3631,7 +3634,7 @@ class ProductionApplicationAuthorityProvider:
             )
         if settings is None or configuration is None:
             return self._refuse(request, S015AuthorityRefusalCode.C_CONFIGURATION_NOT_ESTABLISHED)
-        if request.action is not OrganismAction.DECIDE_APPLICATION:
+        if request.action is OrganismAction.CLAIM_APPLICATION:
             if settings.processing_responsibility != "LO":
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
             if configuration.cq_active is True and self._eligible_coordinator_count(organism, request) != 1:
@@ -3938,7 +3941,7 @@ class ProductionApplicationAuthorityProvider:
         settings (_effective_version) at the engagement's own effective_at
         and recorded_at, else (None, None).
 
-        Used for DECIDE_APPLICATION, so a decision stands on the basis
+        Used for reassignment and decision, so each stands on the basis
         recorded at engagement rather than the versions in effect at the
         request. Reads only, without locks.
         """

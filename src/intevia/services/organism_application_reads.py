@@ -223,6 +223,42 @@ class OrganismApplicationReader:
             recorded_at=application.recorded_at,
         )
 
+    def read_authority_hold(self, application_uuid: UUID, reader: Identity):
+        """Read the current case hold at the ordinary application audience. Never disclose conflict evidence."""
+        from src.intevia.services import authority_lifecycle as lifecycle
+
+        application = self._application(application_uuid)
+        now = self._database_time()
+        self._authorise_read(application, reader, now)
+        return lifecycle.held_at(self._alias, application, now)
+
+    def governance_holds(self, organism_pk: int, reader: Identity):
+        """The existing processing audience can pick up this LO's preserved work. No new recipient or grant."""
+        from src.intevia.services import authority_lifecycle as lifecycle
+        from src.intevia.services.organism_application_service import S015ApplicationRefused
+
+        now = self._database_time()
+        _, _, processing = _present_application_audiences(
+            application=None, reader=reader, organism_pk=organism_pk, at=now, database_alias=self._alias)
+        if not processing:
+            raise S015ApplicationRefused("Access to this organisation's application processing is required.")
+        applications = Application.objects.using(self._alias).filter(
+            living_organism_id=organism_pk, decision__isnull=True, withdrawal__isnull=True,
+            engagements__engagement_ordinal=1, engagements__route="LO_CSA").order_by("pk")
+        holds = []
+        for application in applications:
+            can_process = lifecycle.scalar(self._alias, """
+                SELECT EXISTS(SELECT FROM public.core_contextualroleassignment a
+                JOIN public.core_organismmembership m ON m.id=a.membership_id
+                WHERE m.identity_id=%s AND m.living_organism_id=%s
+                AND public.c3_seat(%s,a.id,m.identity_id,%s,%s))
+            """, [reader.pk, organism_pk, application.pk, now, now])
+            if can_process:
+                hold = lifecycle.held_at(self._alias, application, now)
+                if hold is not None:
+                    holds.append(hold)
+        return tuple(holds)
+
     def read_application_history(
         self, application_uuid: UUID, reader: Identity,
     ) -> tuple[HistoryRow, ...]:

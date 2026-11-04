@@ -1,0 +1,71 @@
+[
+  {
+    "id": "C3-01",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
+    "defect": "Trust the office after its authority basis ends.",
+    "source_path": "core/migrations/0056_c3_authority_lifecycle.py",
+    "source_sha256": "21109d527ad596d4377776a6fbb9d7889e0e1c9c8b4b08e1e135ebb8bc33d0f6",
+    "old": "AND public.c2_basis_in_force(public.c3_term(office,at_time,known),at_time,known)",
+    "new": "AND true",
+    "kind": "sql",
+    "signature": "public.c3_seat(bigint,bigint,bigint,timestamptz,timestamptz)"
+  },
+  {
+    "id": "C3-02",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
+    "defect": "Skip the act-time recheck of a replacement qualification.",
+    "source_path": "core/migrations/0056_c3_authority_lifecycle.py",
+    "source_sha256": "21109d527ad596d4377776a6fbb9d7889e0e1c9c8b4b08e1e135ebb8bc33d0f6",
+    "old": "IF c.replaces_id IS NOT NULL AND",
+    "new": "IF false AND",
+    "kind": "sql",
+    "signature": "public.c3_act_problem(core_csaassignment,timestamptz,timestamptz)"
+  },
+  {
+    "id": "C3-03",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_recusal_is_local_and_derived_reviewer_refuses",
+    "defect": "Keep a step-aside on an earlier basis in force despite a lawful release on another basis.",
+    "source_path": "core/migrations/0056_c3_authority_lifecycle.py",
+    "source_sha256": "21109d527ad596d4377776a6fbb9d7889e0e1c9c8b4b08e1e135ebb8bc33d0f6",
+    "old": "AND mandate.id IS NOT NULL",
+    "new": "AND mandate.id IS NOT NULL\n    AND NOT EXISTS (SELECT FROM public.c3_findings(app,'STEP_ASIDE',person,'UNAVAILABILITY_DETERMINATION',at_time,known) earlier\n                    WHERE earlier.scope_fingerprint<>f.scope_fingerprint AND earlier.result='QUALIFIED')",
+    "kind": "sql",
+    "signature": "public.c3_available(bigint,bigint,timestamptz,timestamptz)"
+  },
+  {
+    "id": "C3-04",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_replacement_retains_original_rule_after_change",
+    "defect": "Select current settings for the replacement engagement.",
+    "source_path": "src/intevia/services/organism_application_service.py",
+    "source_sha256": "2f88c1cd89ed6831bff68b6eb58723b5b0a62b28d37f0ff64c1c8119d42f87a1",
+    "old": "settings_basis = first.settings_basis",
+    "new": "settings_basis = _engagement_settings_basis(self._alias, context.application.living_organism, context.effective_at)",
+    "kind": "python",
+    "module": "src.intevia.services.organism_application_service",
+    "qualname": "OrganismApplicationService._execute_reassign_application"
+  },
+  {
+    "id": "C3-05",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_no_replacement_preserves_work_and_routes_hold",
+    "defect": "Drop the qualified governance destination from the held-work response.",
+    "source_path": "src/intevia/services/authority_lifecycle.py",
+    "source_sha256": "270a0981087356720410b73919f64e6fb35c449987f0ee804feb6ada02037b41",
+    "old": "return CaseHeld(application, reason).result",
+    "new": "return None",
+    "kind": "python",
+    "module": "src.intevia.services.authority_lifecycle",
+    "qualname": "held_at"
+  },
+  {
+    "id": "C3-06",
+    "test": "tests.test_c3_lifecycle.LifecycleTests.test_title_cannot_supply_procedural_mandate",
+    "defect": "Silently report procedural completion without checking the instrument or issuing a finding.",
+    "source_path": "src/intevia/services/authority_lifecycle.py",
+    "source_sha256": "270a0981087356720410b73919f64e6fb35c449987f0ee804feb6ada02037b41",
+    "old": "return s.record(alias=alias, scope=scope,",
+    "new": "if operation == \"PROCEDURAL_REVIEW\":\n            return None\n        return s.record(alias=alias, scope=scope,",
+    "kind": "python",
+    "module": "src.intevia.services.authority_lifecycle",
+    "qualname": "record_case_finding"
+  }
+]
