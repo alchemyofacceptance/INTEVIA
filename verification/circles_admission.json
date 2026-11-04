@@ -1,0 +1,106 @@
+[
+  {
+    "id": "CIR-01",
+    "test": "tests.test_circle_prerequisites.CirclePrerequisiteTests.test_purpose_is_bound_to_dormant_creation",
+    "kind": "python",
+    "source_path": "src/intevia/services/organism_governance_service.py",
+    "source_sha256": "23195ce0cd66ea295abf11430b2430f1d4459d0fe405d45a82b9ee759d6a300a",
+    "module": "src.intevia.services.organism_governance_service",
+    "qualname": "OrganismGovernanceService._write_circle",
+    "old": "\"circle-purpose:\" + purpose",
+    "new": "\"circle-purpose:unspecified\"",
+    "defect": "Drop the submitted purpose when constructing the creation event."
+  },
+  {
+    "id": "CIR-02",
+    "test": "tests.test_circle_prerequisites.CirclePrerequisiteTests.test_member_can_read_only_their_own_circle_place",
+    "kind": "python",
+    "source_path": "src/intevia/services/circle_participation.py",
+    "source_sha256": "4909e36b7a2ae8de36326d0431245440f075418aebaf11abfb160ed714520abc",
+    "module": "src.intevia.services.circle_participation",
+    "qualname": "my_places",
+    "old": "WHERE identity_id=%(actor)s",
+    "new": "WHERE %(actor)s IS NOT NULL",
+    "defect": "Return every LO place to an authenticated member."
+  },
+  {
+    "id": "CIR-03",
+    "test": "tests.test_circle_prerequisites.CirclePrerequisiteTests.test_service_finding_names_its_role_and_confers_no_circle_office",
+    "kind": "python",
+    "source_path": "src/intevia/services/circle_participation.py",
+    "source_sha256": "4909e36b7a2ae8de36326d0431245440f075418aebaf11abfb160ed714520abc",
+    "module": "src.intevia.services.circle_participation",
+    "qualname": "service_role_scope",
+    "old": "\"CIRCLE_SERVICE:\" + role",
+    "new": "\"CIRCLE_SERVICE\" if role else role",
+    "defect": "Make every nonempty SERVICE role name select the same S scope."
+  },
+  {
+    "id": "CIR-04",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_two_places_one_person_foreign_membership_hidden",
+    "source_path": "src/intevia/services/circle_participation.py",
+    "source_sha256": "4909e36b7a2ae8de36326d0431245440f075418aebaf11abfb160ed714520abc",
+    "kind": "python",
+    "old": "SELECT DISTINCT i.identity_id",
+    "new": "SELECT i.identity_id",
+    "defect": "Count each place separately.",
+    "module": "src.intevia.services.circle_participation",
+    "qualname": "people_in_places"
+  },
+  {
+    "id": "CIR-05",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_admission_direct_write_requires_source_and_rolls_back",
+    "source_path": "core/migrations/0059_operating_circles.py",
+    "source_sha256": "614efc2ce58a636e629f9e214b61d4caf12c1a20e374913b737fbe43488c1750",
+    "kind": "sql",
+    "old": "OR EXISTS(SELECT FROM (SELECT NEW.effective_at,NEW.recorded_at UNION ALL SELECT t,t FROM clock_timestamp() t) cuts(t,k)",
+    "new": "OR false AND EXISTS(SELECT FROM (SELECT NEW.effective_at,NEW.recorded_at UNION ALL SELECT t,t FROM clock_timestamp() t) cuts(t,k)",
+    "defect": "Permit another applicant\u2019s office decision to be reused for an ordinary Application.",
+    "signature": "public.sbg_guard_circleadmissiondecision()"
+  },
+  {
+    "id": "CIR-06",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity",
+    "source_path": "core/migrations/0059_operating_circles.py",
+    "source_sha256": "614efc2ce58a636e629f9e214b61d4caf12c1a20e374913b737fbe43488c1750",
+    "kind": "sql",
+    "old": "IF NOT EXISTS(SELECT FROM public.core_circleparticipation p",
+    "new": "IF false AND NOT EXISTS(SELECT FROM public.core_circleparticipation p",
+    "defect": "Permit a voluntary ending without its own personal leave event.",
+    "signature": "public.sbg_guard_circleparticipationend()"
+  },
+  {
+    "id": "CIR-07",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_owned_work_waits_for_an_authorised_parent",
+    "source_path": "src/intevia/services/circle_work.py",
+    "source_sha256": "e7b3e94008a73e4df4fc4a526b692e3440713e4b23aeee2ca5176a3de777dde0",
+    "kind": "python",
+    "old": "status = \"WAITING_FOR_PARENT_GOVERNANCE\"",
+    "new": "status = \"AVAILABLE\"",
+    "defect": "Show uncovered work as available to claim.",
+    "module": "src.intevia.services.circle_work",
+    "qualname": "parent_work"
+  },
+  {
+    "id": "CIR-08",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_circle_coordinator_operating_journey",
+    "source_path": "core/migrations/0060_circle_coordinators.py",
+    "kind": "sql",
+    "old": "IF expected_ref IS NULL OR NEW.evidence_reference IS DISTINCT FROM expected_ref THEN",
+    "new": "IF expected_ref IS NULL THEN",
+    "defect": "Skip the stored standing-reference comparison. A substituted founder place must fail the named storage-refusal assertion.",
+    "signature": "public.circle_coordinator_event()",
+    "source_sha256": "df2e685703c3d46ae6b51216b19d33fdf3212617d3df123dd54b459e0fee10a8"
+  },
+  {
+    "id": "CIR-08-OFFICE",
+    "test": "tests.test_circle_operations.CircleOperationsTests.test_circle_coordinator_operating_journey",
+    "source_path": "core/migrations/0060_circle_coordinators.py",
+    "kind": "sql",
+    "old": "IF decision IS NULL OR NEW.authority_decision_reference IS DISTINCT FROM decision THEN",
+    "new": "IF (CASE WHEN office.kind='GENERIC' AND NEW.action='ASSIGN'\n              THEN public.circle_lo_office(office.lo_id,NEW.enterer_identity_id,cut,known) IS NULL\n              ELSE (decision IS NULL OR NEW.authority_decision_reference IS DISTINCT FROM decision) END) THEN",
+    "defect": "At appointment use the actor\u2019s LO office in place of their holding in the exact Circle.",
+    "signature": "public.circle_coordinator_event()",
+    "source_sha256": "df2e685703c3d46ae6b51216b19d33fdf3212617d3df123dd54b459e0fee10a8"
+  }
+]

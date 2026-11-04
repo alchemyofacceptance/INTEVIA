@@ -1826,7 +1826,8 @@ def _governance_act_shape(entry: IntakeEntry, command: object) -> IntakeShape:
         target = {
             "living_organism_uuid": _canonical_uuid(
                 command.living_organism_uuid, "living_organism_uuid"
-            )
+            ),
+            **command.purpose_fields(),
         }
     else:
         raise ValueError("entry is not a governance act")

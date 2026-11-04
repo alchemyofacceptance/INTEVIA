@@ -127,6 +127,14 @@ MUTATIONS = {
             "CREATE OR REPLACE FUNCTION public.s015_0022_guard_resolution_reuse()\n               RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$\n               BEGIN\n                   IF EXISTS (SELECT 1 FROM public.core_identityresolutionsevered s WHERE s.identity_id = NEW.identity_id) THEN\n                       RAISE EXCEPTION 'VERIFICATION MUTATION: an unrelated refusal' USING ERRCODE = 'integrity_constraint_violation';\n                   END IF;\n                   RETURN NEW;\n               END;\n               $$"
         ]
     },
+    "g4-direct-activation-without-coverage": {
+        "follow_up": "G4 recurring alternate-write control",
+        "intended": "A correctly attributed direct ACTIVE with a place and a mandate still needs a qualified Circle Coordinator.",
+        "targets": ["test_circle_operations.CircleOperationsTests.test_owned_work_waits_for_an_authorised_parent"],
+        "sql": [
+            "DO $mutation$\nDECLARE body text; marker text := 'IF NOT EXISTS (SELECT FROM public.circle_holders(c_id,cut,as_known)) THEN';\nBEGIN\n SELECT pg_get_functiondef('public.circle_activation_problem(bigint,bigint,uuid,text,text,timestamptz,timestamptz,timestamptz)'::regprocedure)\n INTO STRICT body;\n IF length(body)-length(replace(body,marker,''))<>length(marker) THEN\n    RAISE EXCEPTION 'G4 recurring fault requires the unique Coordinator coverage check';\n END IF;\n EXECUTE replace(body,marker,'IF false THEN');\nEND $mutation$"
+        ],
+    },
     "fu-b3-unrelated-circle-check": {
         "follow_up": "FU-B3 (A1 review O-2)",
         "intended": "the circle event resulting-state vocabulary CHECK s015_0021_circleevent_resulting_state_vocab_ck (0021)",
@@ -135,7 +143,7 @@ MUTATIONS = {
         ],
         "sql": [
             "ALTER TABLE public.core_circlestateevent DROP CONSTRAINT s015_0021_circleevent_resulting_state_vocab_ck",
-            "ALTER TABLE public.core_circlestateevent ADD CONSTRAINT verification_mutation_unrelated_ck CHECK (resulting_state <> 'ACTIVE')"
+            "ALTER TABLE public.core_circlestateevent ADD CONSTRAINT verification_mutation_unrelated_ck CHECK (resulting_state <> 'UNKNOWN_CIRCLE')"
         ]
     },
     "sr-c2-propose-entitlement": {

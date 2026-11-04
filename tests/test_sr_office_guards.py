@@ -745,18 +745,14 @@ class SROfficeGuardTests(TransactionTestCase):
     # -- 8. the widened bodies are bound to scope and organism (lessons 1 and 2) --
 
     def test_sr_c2_08_circle_scope_unguarded_and_other_holdings_do_not_count_as_held(self):
-        """Claim: (a) a CIRCLE-scoped assignment is not guarded by the widened bodies (S4-C's): a
-        party-written CIRCLE office commits; (b) the same person's ACTIVE holding of the same code in
-        another organism does not make this LO's ASSIGN "already held" - the H48 lookup is bound to
-        this LO's membership, which belongs to one organism only (and to LO scope; one LO cannot define one code in two scopes,
-        s015_role_definition_version_uniq, so that clause has no same-LO witness). Obligation: O-21.
-        Layer: database. Mutation: sr-c2-held-cross-organism (ADMISSION).
-        This does not challenge borrowed authority/consent. The 0021 Structure
-        tests remain the negative cross-organism and scope-binding regressions."""
+        """SR C2-08, historical label. G4 refuses an unsigned Circle office in a dormant Circle.
+        A valid holding of the same code in another LO still cannot block a lawful local appointment.
+        The recurring sr-c2-held-cross-organism mutation targets this latter assertion.
+        """
         at = self.at
 
         def circle(cur):
-            # (a) a CIRCLE-scoped office held by the member, party-written (S4-C's scope, unguarded here)
+            # A party attempts to give the member a live office without a governed office source.
             c_uuid = u(f"circle:{self.tag}")
             cur.execute(
                 "INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, "
@@ -807,9 +803,8 @@ class SROfficeGuardTests(TransactionTestCase):
                            at=_later(at, 2), tag=f"{self.tag}:other")
             return assignment_id
 
-        circle_assignment_id = self._commits(circle)
+        self._refuses(circle, contains="CIRCLE_G4_OFFICE_SOURCE")
         other_assignment_id = self._commits(other_lo)
-        self.assertEqual(ContextualRoleAssignment.objects.get(pk=circle_assignment_id).state, "ACTIVE")
         self.assertEqual(ContextualRoleAssignment.objects.get(pk=other_assignment_id).state, "ACTIVE")
 
         def this_lo(cur):
@@ -851,7 +846,7 @@ class SROfficeGuardTests(TransactionTestCase):
             }
 
         at_head = facts()
-        self.assertEqual(at_head["head"], "0057_shared_event_append", msg="The migration rehearsal must start on the received C1-16 head.")
+        self.assertEqual(at_head["head"], "0061_circle_qualified_activation", msg="The migration rehearsal must start on the Circles candidate head.")
         self.assertEqual(at_head["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY, msg="At 0053, the installed definition-insert safeguard should match its complete candidate body; it differs.")
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
         self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
@@ -902,7 +897,7 @@ class SROfficeGuardTests(TransactionTestCase):
         self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
         self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
         self.restore_received_migrations()
-        self.assertEqual(facts()["head"], "0057_shared_event_append", msg="The populated rehearsal must finish on the received C1-16 head.")
+        self.assertEqual(facts()["head"], "0061_circle_qualified_activation", msg="The populated rehearsal must finish on the Circles candidate head.")
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 

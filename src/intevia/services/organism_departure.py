@@ -63,10 +63,20 @@ class Departure:
     offices: list
     closing_head: object
     start_recovery: bool
+    membership_event_uuid: object
 
     def end_offices(self):
         for assignment, qualified in self.offices:
             head = assignment.head_state_event
+            if assignment.circle_id is not None:
+                from uuid import uuid5
+                from src.intevia.services.circle_commands import write_event
+
+                write_event(self.roles._alias, assignment, self.actor, "END", "ENDED",
+                            self.decision.authority_decision_reference, "lo-leave:" + str(self.membership_event_uuid),
+                            uuid5(self.membership_event_uuid, str(assignment.assignment_uuid)), self.command.effective_at,
+                            composed="CIRCLES:G2:U3", occurred=self.command.occurred_at, received=self.received_at)
+                continue
             self.roles._write_event(
                 assignment=assignment,
                 actor=self.actor,
@@ -188,6 +198,11 @@ def prepare_departure(
             refuse(
                 "An office change starts after the requested date or lacks a head. Check the leaving date."
             )
+        if assignment.circle_id is not None and head.resulting_state != "ENDED":
+            if (effective_at, occurred_at, received_at) < (head.effective_at, head.occurred_at, head.received_at):
+                refuse("A later Circle office change is recorded. Resolve the timing before leaving.")
+            offices.append(assignment)
+            continue
         if head.resulting_state in {"ENDED", "PROPOSED"}:
             continue
         if (
@@ -257,6 +272,9 @@ def prepare_departure(
     )
     qualified = []
     for assignment in offices:
+        if assignment.circle_id is not None:
+            qualified.append((assignment, decision))
+            continue
         target = {
             "action": roles._action.value,
             "assignment_uuid": str(assignment.assignment_uuid),
@@ -291,4 +309,5 @@ def prepare_departure(
         qualified,
         closing_head,
         opening,
+        event_uuid,
     )

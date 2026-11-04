@@ -444,6 +444,17 @@ class CreateGovernanceCircleCommand:
     request_reference: str
     idempotency_key: str
     effective_at: datetime | None = None
+    purpose: str | None = None
+
+    def purpose_fields(self):
+        """Keep pre-Circles intake fingerprints replayable when no purpose was supplied."""
+        if self.purpose is None:
+            return {}
+        if (not isinstance(self.purpose, str) or not self.purpose.strip()
+                or len("circle-purpose:" + self.purpose) > 255 or "\x00" in self.purpose):
+            raise ValueError("Give a Circle purpose of 1 to 240 characters.")
+        return {"purpose": _canonical_key(self.purpose, "Circle purpose", 240)}
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -1052,7 +1063,7 @@ class OrganismGovernanceService:
             action=OrganismAction.CREATE_DORMANT_CIRCLE,
             subtype=_CIRCLE_SUBTYPE,
             organism_uuid=organism_uuid,
-            payload={"kind": "GOVERNANCE"},
+            payload={"kind": "GOVERNANCE", **command.purpose_fields()},
             bound=bound,
         )
         if not isinstance(result, GovernanceActResult):
@@ -2536,10 +2547,13 @@ class OrganismGovernanceService:
                     received_at=received_at,
                 )
             elif action is OrganismAction.CREATE_DORMANT_CIRCLE:
+                from src.intevia.services.circle_commands import check_creation_allowance
+                check_creation_allowance(self._alias, organism, received_at)
                 result = self._write_circle(
                     organism=organism,
                     actor=actor,
                     circle_uuid=UUID(payload["circle_uuid"]),
+                    purpose=payload.get("purpose"),
                     decision=decision,
                     fingerprint=fingerprint,
                     request_reference=request_reference,
@@ -3643,6 +3657,7 @@ class OrganismGovernanceService:
         organism: LivingOrganism,
         actor: Identity,
         circle_uuid: UUID,
+        purpose: str | None,
         decision: QualifiedS015AuthorityDecision,
         fingerprint: str,
         request_reference: str,
@@ -3657,7 +3672,7 @@ class OrganismGovernanceService:
         with resulting state DORMANT, the LO as institutional actor in
         TRANSPORT mode, and the supplied actor Identity as enterer.
 
-        The event carries evidence living-organism:<organism_uuid>, the
+        The event carries the supplied purpose or the legacy LO evidence reference, the
         authority-decision reference, the request reference, idempotency key,
         payload fingerprint and a lineage reference from _lineage.
 
@@ -3683,62 +3698,15 @@ class OrganismGovernanceService:
             head_event=None,
         )
         event_uuid = uuid4()
-        temporal_kind, temporal_reference = _resulting_temporal_basis(
-            payload_fingerprint=fingerprint,
-            effective_at=effective_at,
-            received_at=received_at,
-        )
-        lineage_reference = _lineage("CREATE_DORMANT_CIRCLE", event_uuid, circle_uuid, fingerprint)
+        evidence = f"living-organism:{organism.organism_id}" if purpose is None else "circle-purpose:" + purpose
         with connections[self._alias].cursor() as cursor:
-            cursor.execute(
-                "SELECT public.s015_0022_digest('s015p1', "
-                "public.s015_0022_parts_preimage(%s, %s::uuid))",
-                ["core_circlestateevent", event_uuid],
-            )
-            parts_commitment = cursor.fetchone()[0]
-            columns = {
-                "event_uuid": event_uuid,
-                "circle_id": circle.pk,
-                "sequence": 1,
-                "predecessor_id": None,
-                "predecessor_sequence": None,
-                "action": "CREATE_DORMANT",
-                "prior_state": None,
-                "resulting_state": "DORMANT",
-                "actor_id": None,
-                "actor_state": "LIVING_ORGANISM",
-                "actor_access_epoch": None,
-                "actor_capacity": "STANDING",
-                "entry_mode": "TRANSPORT",
-                "enterer_identity_id": actor.pk,
-                "composing_rule_state": "NA_TRANSPORT",
-                "composing_rule_reference": None,
-                "composer_state": "NA_TRANSPORT",
-                "composer_identity_id": None,
-                "effective_until": None,
-                "effective_until_state": "NONE",
-                "authority_basis_id": organism.founding_authority_basis_id,
-                "authority_decision_reference": decision.authority_decision_reference,
-                "evidence_reference": f"living-organism:{organism.organism_id}",
-                "request_reference": request_reference,
-                "idempotency_key": idempotency_key,
-                "payload_fingerprint": fingerprint,
-                "lineage_reference": lineage_reference,
-                "temporal_basis_kind": temporal_kind,
-                "temporal_basis_reference": temporal_reference,
-                "occurred_at": effective_at,
-                "effective_at": effective_at,
-                "received_at": received_at,
-                "recorded_at": None,
-                "predecessor_l1_commitment": None,
-                "l2_commitment": None,
-                "parts_commitment": parts_commitment,
-            }
-            cursor.execute(
-                f"INSERT INTO public.core_circlestateevent ({', '.join(columns)}) "
-                f"VALUES ({', '.join(['%s'] * len(columns))}) RETURNING id",
-                list(columns.values()),
-            )
+            cursor.execute("""
+                SELECT public.s015_append_event(
+                    'core_circle',%s,'CREATE_DORMANT','DORMANT',%s,%s,%s,%s,%s,%s,%s,%s,%s,'{}',NULL,
+                    %s,NULL,NULL,NULL,NULL,%s)
+            """, [circle.pk, effective_at, effective_at, received_at, actor.pk,
+                  organism.founding_authority_basis_id, decision.authority_decision_reference,
+                  evidence, request_reference, fingerprint, event_uuid, idempotency_key])
             event_id = cursor.fetchone()[0]
             cursor.execute(
                 "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",

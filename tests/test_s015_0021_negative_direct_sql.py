@@ -269,12 +269,13 @@ class VocabulariesAndShapes(_S015NegativeBase):
             c = str(uuid.uuid4())
             cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'ACTIVE', now(), %s, %s, %s, 'f', %s)",
                         (c, T0, T0, empty_fp(cur, "core_circle", c), ids["lo"]))
-        self.refuses(attempt, contains="circle_state_vocab_ck")
+        self.refuses(attempt, contains="CIRCLE_G4_ACTIVE_SEED")
 
     def test_neg_circle_active_on_event(self):
+        """FU-B3 retains its registry label. UNKNOWN_CIRCLE is outside the vocabulary after G4."""
         ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
         head = self._circle_head(ids)
-        self.refuses(lambda cur: append_event(cur, "core_circlestateevent", ids["circle"], 2, "X", "DORMANT", "ACTIVE", ids["identity"], ids["basis"], fresh(), pred_id=head),
+        self.refuses(lambda cur: append_event(cur, "core_circlestateevent", ids["circle"], 2, "X", "DORMANT", "UNKNOWN_CIRCLE", ids["identity"], ids["basis"], fresh(), pred_id=head),
                      contains="s015_0021_circleevent_resulting_state_vocab_ck")  # FU-B3 (Change C; A1 O-2): the circle vocabulary CHECK itself
 
     def _circle_head(self, ids):

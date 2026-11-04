@@ -29,7 +29,7 @@ from typing import Protocol
 from uuid import UUID, uuid5
 
 from django.db import connections
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from core.models import (
     Application,
@@ -1662,7 +1662,8 @@ class ProductionApplicationAuthorityProvider:
         - parse the assignment, membership and proposal UUIDs, else
           UNRECOGNISED_ACTION;
         - refuse DENIED unless the assignment and its active
-          LIVING_ORGANISM-scope COORDINATOR definition belong to this LO,
+          office definition belong to this LO (Circle scope requires COORDINATOR,
+          the selected Circle in this LO and the nominee’s exact live place),
           the nominee membership belongs to this LO and holds the assignment,
           the actor is that nominee, and the membership folds ACTIVE. The
           named proposal must be the assignment's sequence-1 PROPOSE event
@@ -1714,7 +1715,10 @@ class ProductionApplicationAuthorityProvider:
             assignment_uuid=assignment_uuid,
             membership__living_organism=organism,
             role_definition__living_organism=organism,
-            role_definition__scope="LIVING_ORGANISM",
+        ).filter(
+            Q(role_definition__scope="LIVING_ORGANISM")
+            | Q(role_definition__scope="CIRCLE", role_definition__code="COORDINATOR",
+                circle__parent_organism=organism, membership__identity_id=request.actor_pk)
         ).select_related("membership", "role_definition").first()
         if assignment is not None:
             role = assignment.role_definition
@@ -1750,6 +1754,15 @@ class ProductionApplicationAuthorityProvider:
             or nominee.identity_id != request.actor_pk
         ):
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+        if assignment.circle_id is not None:
+            with connections[self.database_alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT public.circle_office_place(%s,%s,%s,%s,%s)",
+                    [assignment.circle_id, nominee.pk, proposal.evidence_reference,
+                     request.effective_at, request.evaluated_at],
+                )
+                if not cursor.fetchone()[0]:
+                    return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         event_action = request.target["event_action"]
         if episode and (role.code != "COORDINATOR" or event_action != "WITHDRAW"
                         or not proposal_in_episode(self.database_alias, episode, proposal, nominee, request.actor_pk)):

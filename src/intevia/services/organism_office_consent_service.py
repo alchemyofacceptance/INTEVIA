@@ -1,4 +1,4 @@
-"""PKT-B R2 / SR C4 nominee consent for LO-scoped office nominations."""
+"""SR nominee consent for LO offices and eligible Circle Coordinator nominations."""
 from __future__ import annotations
 
 import hashlib
@@ -9,6 +9,7 @@ from uuid import UUID
 
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Q
 
 from core.models import (
     ContextualRoleAssignment,
@@ -189,7 +190,7 @@ class OfficeConsentCommandResult:
 
 
 class OfficeAppointmentConsentService(_OrganismCommandService):
-    """The command service for a nominee's consent to an LO-scoped office
+    """The command service for a nominee's consent to a scoped office
     nomination (RECORD_OFFICE_CONSENT).
 
     Declares, for the shared _OrganismCommandService, the action
@@ -343,6 +344,7 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
             nomination = (
                 ContextualRoleAssignment.objects.using(self._alias)
                 .select_related("membership__living_organism")
+                .filter(Q(circle__isnull=True) | Q(membership__identity=actor))
                 .get(assignment_uuid=assignment_uuid)
             )
         except ContextualRoleAssignment.DoesNotExist as exc:

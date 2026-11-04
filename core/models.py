@@ -4423,8 +4423,8 @@ class Circle(_S015ImmutableAnchor):
     )
 
     class Meta:
-        # ACTIVE is excluded at the database (specification §6.1 item 4); the TextChoices entry is shipped and retained.
-        constraints = _s015_cache_anchor_constraints("circle", ["DORMANT", "ELIGIBLE", "SUSPENDED", "CLOSED"]) + [
+        # Migration 0061 qualifies entry to ACTIVE on the Circle chain before the cache can reflect it.
+        constraints = _s015_cache_anchor_constraints("circle", ["DORMANT", "ELIGIBLE", "ACTIVE", "SUSPENDED", "CLOSED"]) + [
             models.CheckConstraint(
                 condition=models.Q(kind__in=("GENERIC", "GOVERNANCE", "APPLICATION", "FINANCE", "OPERATIONS")),
                 name="sbg_circle_kind_vocab_ck",
@@ -4612,6 +4612,12 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
         "received_at",
     )
 
+    @property
+    def office_label(self):
+        if self.code == "COORDINATOR":
+            return "Circle Coordinator" if self.scope == self.Scope.CIRCLE else "LO Coordinator"
+        return self.code
+
     def clean(self):
         if (
             self.code.startswith("INTEVIA_")
@@ -4626,13 +4632,24 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
         """Declare definition identity and closed-value constraints for the offices fields. Database triggers add the decision, history and citation checks; these declarations alone are not complete authority enforcement."""
         constraints = [
             models.UniqueConstraint(
-                fields=("living_organism", "code", "definition_version"),
+                fields=("living_organism", "code", "scope", "definition_version"),
+                condition=Q(code="COORDINATOR"),
                 name="s015_role_definition_version_uniq",
             ),
             models.UniqueConstraint(
-                fields=("living_organism", "code"),
-                condition=Q(active=True),
+                fields=("living_organism", "code", "scope"),
+                condition=Q(code="COORDINATOR", active=True),
                 name="s015_0021_role_active_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("living_organism", "code", "definition_version"),
+                condition=~Q(code="COORDINATOR"),
+                name="cir_other_role_version_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=("living_organism", "code"),
+                condition=Q(active=True) & ~Q(code="COORDINATOR"),
+                name="cir_other_role_active_uniq",
             ),
             # closed domain on scope (specification §6.1 item 8; constraint addition permitted under U21g-4)
             models.CheckConstraint(
@@ -5885,7 +5902,7 @@ class CircleJoinRequest(_S015AppendOnly):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(initiated_by__in=("APPLICANT", "DECIDER")),
+                condition=models.Q(initiated_by__in=("APPLICANT", "DECIDER", "CIRCLE_MEMBER")),
                 name="sbg_circlejoinrequest_initiator_ck",
             ),
         ]
@@ -5934,7 +5951,7 @@ class CircleAdmissionDecision(_S015AppendOnly):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(route__in=("CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL")),
+                condition=models.Q(route__in=("CIRCLE_FOUNDING", "GOVERNANCE_CONSTITUTIONAL", "ORDINARY", "APPLICATION_MODE")),
                 name="sbg_circledecision_route_ck",
             ),
             models.CheckConstraint(
@@ -5949,11 +5966,16 @@ class CircleAdmissionDecision(_S015AppendOnly):
                         constitutional_route="APPOINTMENT",
                         deciding_party="office:LO_COORDINATOR",
                     )
+                    | models.Q(route="ORDINARY", constitutional_route="INSTRUMENT", deciding_party="INSTRUMENT")
+                    | models.Q(route="APPLICATION_MODE", constitutional_route="APPLICATION",
+                               deciding_party="office:CIRCLE_COORDINATOR", outcome__in=("ACCEPT", "DECLINE"))
+                    | models.Q(route="APPLICATION_MODE", constitutional_route="APPLICATION",
+                               deciding_party="APPLICANT", outcome="WITHDRAWN")
                 ),
                 name="sbg_circledecision_route_shape_ck",
             ),
             models.CheckConstraint(
-                condition=models.Q(outcome__in=("ACCEPT", "DECLINE")),
+                condition=models.Q(outcome__in=("ACCEPT", "DECLINE")) | models.Q(route="APPLICATION_MODE", outcome="WITHDRAWN"),
                 name="sbg_circledecision_outcome_ck",
             ),
             models.CheckConstraint(
@@ -5967,7 +5989,10 @@ class CircleAdmissionDecision(_S015AppendOnly):
                     composing_rule_reference__isnull=True,
                     composer_state="NA_TRANSPORT",
                     composer_identity__isnull=True,
-                ),
+                ) | models.Q(route="APPLICATION_MODE", outcome="WITHDRAWN", actor_state="PARTY",
+                             actor__isnull=False, actor_access_epoch__isnull=False, actor_capacity="STANDING",
+                             entry_mode="TRANSPORT", composing_rule_state="NA_TRANSPORT",
+                             composing_rule_reference__isnull=True, composer_state="NA_TRANSPORT", composer_identity__isnull=True),
                 name="sbg_circledecision_transport_ck",
             ),
         ]
@@ -5979,7 +6004,9 @@ class CircleParticipation(_S015AppendOnly):
     membership = models.ForeignKey(OrganismMembership, on_delete=models.PROTECT, related_name="+")
     seat_rule_uuid = models.UUIDField()
     seat_id = models.CharField(max_length=64)
-    decision = models.OneToOneField(CircleAdmissionDecision, on_delete=models.PROTECT, related_name="+")
+    recovery_office = models.ForeignKey(ContextualRoleAssignment, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    birth_event = models.OneToOneField(CircleStateEvent, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    decision = models.OneToOneField(CircleAdmissionDecision, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     actor_state = models.CharField(max_length=24)
     actor = models.ForeignKey(
         Identity,
@@ -6009,6 +6036,10 @@ class CircleParticipation(_S015AppendOnly):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(condition=(models.Q(decision__isnull=True, birth_event__isnull=False, recovery_office__isnull=True)
+                                               | models.Q(decision__isnull=False, birth_event__isnull=True, recovery_office__isnull=True)
+                                               | models.Q(decision__isnull=True, birth_event__isnull=True, recovery_office__isnull=False)),
+                                   name="circle_place_one_source"),
             models.CheckConstraint(
                 condition=models.Q(
                     actor_state="LIVING_ORGANISM",
@@ -6082,6 +6113,11 @@ class CircleParticipationEnd(_S015AppendOnly):
                     composer_state="REFERENCE",
                     composer_identity__isnull=False,
                     composed_from_event_uuid__isnull=False,
+                ) | models.Q(
+                    actor_state="PARTY", actor__isnull=False, actor_access_epoch__isnull=False,
+                    actor_capacity="STANDING", entry_mode="TRANSPORT", composing_rule_state="NA_TRANSPORT",
+                    composing_rule__isnull=True, composing_rule_reference__isnull=True,
+                    composer_state="NA_TRANSPORT", composer_identity__isnull=True, composed_from_event_uuid__isnull=False,
                 ),
                 name="sbg_circleparticipationend_composed_ck",
             ),

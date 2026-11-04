@@ -54,7 +54,8 @@ new nominations and appointments require the current definition, and a new
 non-Coordinator appointment refuses an already-held office across its versions.
 Existing appointments retain their version for END and REASSIGN.
 
-Local implementation limits cover non-LO-scoped definitions,
+The Circle Coordinator methods use scoped mandates and the shared assignment chain.
+The general LO commands still defer non-LO-scoped definitions,
 role suspension and events whose
 (effective_at, occurred_at, received_at) precedes the head's.
 A non-founder cannot END or REASSIGN an assignment recognised as the
@@ -75,6 +76,7 @@ from django.db import connections, transaction
 
 from core.models import (
     AuthorityBasis,
+    CircleParticipation,
     ContextualRoleAssignment,
     ContextualRoleAssignmentStateEvent,
     Identity,
@@ -951,6 +953,42 @@ def office_action_support_details(error, action="Changing this office"):
     return "C", support_pending
 
 
+def _circle_mandate(alias, lo, circle, act, actor, beneficiary, at, assignment_uuid):
+    # Disclose private nomination or consent details only after the caller qualifies for this act.
+    from src.intevia.services import circle_commands as circles
+    from src.intevia.services import scoped_determinations as scoped
+    from src.intevia.services.circle_participation import CircleAccessRefused
+
+    with connections[alias].cursor() as cur:
+        cur.execute("""SELECT EXISTS (SELECT FROM core_organismmembership m
+                       WHERE m.living_organism_id=%s AND m.identity_id=%s
+                       AND public.s015_fold_effective_state('core_organismmembership',m.id,%s,%s)='ACTIVE')""",
+                    [lo.pk, actor.pk, at, at])
+        if not cur.fetchone()[0]:
+            circles.unavailable()
+    if circle.kind == "GENERIC":
+        return circles._office_source(alias, "SELECT public.circle_appointing_office(%s,%s,%s,%s,%s,%s)",
+            [circle.pk, actor.pk, beneficiary.pk, assignment_uuid, at, at], circle.circle_uuid, act, actor, beneficiary)[1]
+    try:
+        return circles.evidence(alias, lo, circle.circle_uuid, act, actor, beneficiary, at)[1]
+    except (scoped.QualificationRefused, CircleAccessRefused):
+        pass
+    circles.unavailable()
+
+
+def _circle_coordinator_definition(alias, lo, actor, source, at):
+    definitions = OrganismRoleDefinition.objects.using(alias)
+    row = definitions.filter(living_organism=lo, code="COORDINATOR", scope="CIRCLE", active=True).first()
+    if row is not None:
+        return row
+    # The deferred guard binds this first version to the nomination in the same transaction.
+    return definitions.create(
+        living_organism=lo, code="COORDINATOR", scope="CIRCLE", definition_version=1, active=True,
+        kind="COORDINATOR", participation_required=True, enterer=actor, enterer_access_epoch=actor.access_epoch,
+        authority_decision_reference=source, effective_at=at, received_at=at, occurred_at=at,
+    )
+
+
 class OrganismRoleService(_OrganismCommandService):
     """The office command service: propose_assignment and transition_assignment, and two reads.
 
@@ -1030,6 +1068,111 @@ class OrganismRoleService(_OrganismCommandService):
             target=target,
             command=command,
         )
+
+    def nominate_circle_coordinator(self, *, credential, organism_uuid, circle_uuid, participation_uuid, assignment_uuid, request_uuid):
+        """Open a nomination on the SR assignment chain under the exact Circle's nomination mandate."""
+        from src.intevia.services import circle_commands as circles
+        from src.intevia.services.circle_participation import CircleAccessRefused
+
+        alias = self._alias
+        assignment_uuid = _canonical_uuid(assignment_uuid, "assignment_uuid")
+        request_uuid = _canonical_uuid(request_uuid, "request_uuid")
+        with circles.command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
+            place = CircleParticipation.objects.using(alias).select_related("circle", "membership__identity").filter(
+                circle__parent_organism=lo, circle__circle_uuid=circle_uuid, participation_uuid=participation_uuid
+            ).first()
+            if place is None:
+                circles.unavailable()
+            circle, member = place.circle, place.membership
+            ref = "place:" + str(place.participation_uuid)
+            prior = ContextualRoleAssignmentStateEvent.objects.using(alias).filter(event_uuid=request_uuid).first()
+            if prior is not None:
+                if (prior.action == "PROPOSE" and prior.actor_id == actor.pk and prior.evidence_reference == ref
+                        and prior.assignment.assignment_uuid == assignment_uuid and prior.assignment.circle_id == circle.pk):
+                    return assignment_uuid
+                circles.unavailable()
+            source = _circle_mandate(alias, lo, circle, f"NOMINATE:{assignment_uuid}:{ref}", actor, member.identity, at, assignment_uuid)
+            with connections[alias].cursor() as cur:
+                cur.execute("SELECT public.circle_office_place(%s,%s,%s,%s,%s)", [circle.pk, member.pk, ref, at, at])
+                if not cur.fetchone()[0]:
+                    raise CircleAccessRefused("The nominee needs an active LO membership and a current place in this Circle.")
+            if ContextualRoleAssignment.objects.using(alias).filter(assignment_uuid=assignment_uuid).exists():
+                circles.unavailable()
+            definition = _circle_coordinator_definition(alias, lo, actor, source, at)
+            office = ContextualRoleAssignment.objects.using(alias).create(
+                assignment_uuid=assignment_uuid, membership=member, role_definition=definition, circle=circle,
+                state="PROPOSED", current_state_effective_at=at, state_known_at=at,
+                state_source_event_set_fingerprint=_empty_anchor_fingerprint(
+                    database_alias=alias, anchor_token="core_contextualroleassignment", anchor_uuid=assignment_uuid),
+            )
+            circles.write_event(alias, office, actor, "PROPOSE", "PROPOSED", source, ref, request_uuid, at)
+            return assignment_uuid
+
+
+    def appoint_circle_coordinator(self, *, credential, organism_uuid, circle_uuid, assignment_uuid, request_uuid,
+                effective_until_state="NONE", effective_until=None):
+        """Record the institutional ASSIGN after current consent, an appointment mandate and independent standing."""
+        from src.intevia.services import circle_commands as circles
+        from src.intevia.services import scoped_determinations as scoped
+        from src.intevia.services.circle_participation import CircleAccessRefused
+
+        alias = self._alias
+        if effective_until_state not in {"FIXED", "NONE"} or (effective_until_state == "FIXED") != (effective_until is not None):
+            raise CircleAccessRefused("Specify the term authorised for this appointment.")
+        term = canonical_timestamp(effective_until) if effective_until is not None else "NONE"
+        request_uuid = _canonical_uuid(request_uuid, "request_uuid")
+        with circles.command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
+            office = ContextualRoleAssignment.objects.using(alias).select_related(
+                "circle", "membership__identity", "role_definition", "head_state_event"
+            ).filter(assignment_uuid=assignment_uuid, circle__parent_organism=lo, circle__circle_uuid=circle_uuid,
+                     membership__living_organism=lo, role_definition__living_organism=lo,
+                     role_definition__scope="CIRCLE", role_definition__code="COORDINATOR").first()
+            if office is None:
+                circles.unavailable()
+            if office.circle.kind == "GENERIC" and effective_until_state != "NONE":
+                raise CircleAccessRefused("GENERIC Circle Coordinator service has no fixed term.")
+            # Physical attribution and term are not ORM fields. Exact retries may occur after term expiry.
+            with connections[alias].cursor() as cur:
+                cur.execute("""SELECT assignment_id,action,enterer_identity_id,effective_until_state,effective_until
+                               FROM core_contextualroleassignmentstateevent WHERE event_uuid=%s""", [request_uuid])
+                prior = cur.fetchone()
+            if prior is not None:
+                if prior == (office.pk, "ASSIGN", actor.pk, effective_until_state, effective_until):
+                    return request_uuid
+                circles.unavailable()
+            member = office.membership
+            source = _circle_mandate(alias, lo, office.circle, f"APPOINT:{office.assignment_uuid}:{term}", actor, member.identity, at, office.assignment_uuid)
+            if lo.platform_root:
+                raise CircleAccessRefused("This appointment needs INTEVIA's APPLICATION Circle or governed initial appointment route.")
+            _, until = _validate_term(effective_until_state=effective_until_state, effective_until=effective_until,
+                                      effective_at=at)
+            proposal = office.head_state_event
+            if proposal is None or proposal.sequence != 1 or proposal.action != "PROPOSE" or not office.role_definition.active:
+                raise CircleAccessRefused("This appointment needs an open nomination under the current definition.")
+            with connections[alias].cursor() as cur:
+                cur.execute("""SELECT public.circle_office_place(%s,%s,%s,%s,%s),
+                                      public.circle_office_consent(%s,%s,%s)""",
+                            [office.circle_id, member.pk, proposal.evidence_reference, at, at, office.pk, at, at])
+                has_place, consent_uuid = cur.fetchone()
+            if not has_place or consent_uuid is None:
+                raise CircleAccessRefused("This appointment needs the nominee's original live place and current consent.")
+            if office.circle.kind == "GENERIC":
+                with connections[alias].cursor() as cur:
+                    cur.execute("""SELECT public.circle_standing_text(src,%s,%s,public.c1b_period_at(%s,%s,%s),%s)
+                                    ||public.circle_appointment_marker(%s,%s,%s,%s,src,%s,%s,%s)
+                          FROM public.circle_appointing_office(%s,%s,%s,%s,%s,%s) src""",
+                        [proposal.evidence_reference, consent_uuid, member.pk, at, at, request_uuid, office.circle_id,
+                         office.assignment_uuid, actor.pk, member.identity_id, proposal.evidence_reference, at, at, office.circle_id, actor.pk, member.identity_id,
+                         office.assignment_uuid, at, at])
+                    ref, = cur.fetchone()
+                if ref is None:
+                    raise CircleAccessRefused("The appointment needs a qualified office, membership, place and consent.")
+            else:
+                standing = scoped.qualified(alias, circles.case_scope(lo, office.assignment_uuid, "COUNT_OFFICE",
+                                                                       member.identity, member.identity), at, at)
+                ref = f"consent:{consent_uuid}|standing:{standing.determination_uuid}"
+            return circles.write_event(alias, office, actor, "ASSIGN", "ACTIVE", source, ref, request_uuid, at,
+                                       deadline=until)
 
     def propose_assignment(self, command: ProposeAssignmentCommand) -> AssignmentCommandResult:
         """Execute once and attach the SUPPORT classification without changing the outcome."""
@@ -1210,6 +1353,8 @@ class OrganismRoleService(_OrganismCommandService):
                 "CROSS JOIN LATERAL public.s015_effective_state("
                 "'core_contextualroleassignment', a.id, %s, %s) folded "
                 "WHERE m.living_organism_id = %s AND folded.projection = 'PROPOSED' "
+                "AND NOT EXISTS (SELECT FROM core_organismroledefinition d WHERE d.id=a.role_definition_id "
+                "AND d.scope='CIRCLE' AND d.code='COORDINATOR') "
                 "AND NOT EXISTS (SELECT 1 FROM public.core_organismmembershiptransition ended "
                 "JOIN public.core_contextualroleassignmentstateevent proposal ON proposal.assignment_id=a.id "
                 "AND proposal.sequence=1 WHERE ended.membership_id=m.id AND ended.resulting_state='ENDED' "
@@ -1597,6 +1742,7 @@ class OrganismRoleService(_OrganismCommandService):
             assignment = (
                 ContextualRoleAssignment.objects.using(self._alias)
                 .select_related("membership__living_organism", "membership__identity", "role_definition")
+                .exclude(role_definition__scope="CIRCLE", role_definition__code="COORDINATOR")
                 .get(assignment_uuid=assignment_uuid)
             )
         except ContextualRoleAssignment.DoesNotExist as exc:

@@ -42,7 +42,7 @@
     "module": "src.intevia.services.organism_role_service",
     "qualname": "OrganismRoleService._execute_transition",
     "source_path": "src/intevia/services/organism_role_service.py",
-    "source_sha256": "4fc8972b342ea210fa63869a1e3810a64303865124ac5fd8d156894abe3521c8",
+    "source_sha256": "12685b61964a176d094d1e5923f975fb9c34af22842f68b7f90310a784f3a5bc",
     "old": "recorded_at__gt=proposal_recorded_at,",
     "new": "pk__lt=0,",
     "defect": "Ignore the ending separating an old nomination from the current membership period."
@@ -81,7 +81,7 @@
     "old": "for assignment, qualified in self.offices:",
     "new": "for assignment, qualified in self.offices[:1]:",
     "defect": "Leave the second qualified office untouched.",
-    "source_sha256": "70d968b2360d3c8b4349e0c1f99b10552d6ee323c1d1a9877b5a78afa96d349a"
+    "source_sha256": "fc20f501f297a10237c220836b9ee6d71b426fde31eadfa59ac329a7f4817652"
   },
   {
     "id": "C1B-03",
@@ -93,7 +93,7 @@
     "old": "in {\"ACTIVE\", \"PROBATIONARY\"}",
     "new": "in {\"ACTIVE\"}",
     "defect": "Ignore the remaining probationer when determining dissolution.",
-    "source_sha256": "70d968b2360d3c8b4349e0c1f99b10552d6ee323c1d1a9877b5a78afa96d349a"
+    "source_sha256": "fc20f501f297a10237c220836b9ee6d71b426fde31eadfa59ac329a7f4817652"
   },
   {
     "id": "C1B-04",
@@ -117,7 +117,7 @@
     "old": "if head is not None and head.recorded_at > received_at:",
     "new": "if False:",
     "defect": "Ignore an office withdrawal recorded after intake and allow the stale leave.",
-    "source_sha256": "70d968b2360d3c8b4349e0c1f99b10552d6ee323c1d1a9877b5a78afa96d349a"
+    "source_sha256": "fc20f501f297a10237c220836b9ee6d71b426fde31eadfa59ac329a7f4817652"
   },
   {
     "id": "C1B-06",
@@ -177,7 +177,7 @@
     "old": "return None if row is None else str(row[0])",
     "new": "return None",
     "defect": "Withhold genuine governance participation evidence from office qualification.",
-    "source_sha256": "d37e790a12e00c65e460af43432084d29a4fe9cac83a8b68f1318cf4684203e6"
+    "source_sha256": "9830274039075a08373b61bed52c84e9b0b73e38667fab82dee6bbef3d4b692b"
   },
   {
     "id": "C1B-10",
