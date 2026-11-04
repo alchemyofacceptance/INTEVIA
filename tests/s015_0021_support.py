@@ -910,8 +910,8 @@ def add_remaining_aggregates(cur, ids, tag, do_refresh=True):
     """Circle, condition, invalidation, contest, continuity, grant, obligation, planning — one anchor + one event each."""
     lo, act, basis = ids["lo"], ids["identity"], ids["basis"]
     c_uuid = u(f"circle:{tag}")
-    cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) "
-                "VALUES (%s, 'DORMANT', now(), %s, %s, %s, %s, %s) RETURNING id", (c_uuid, T0, T0, empty_fp(cur, "core_circle", c_uuid), f"u21g:circle:{tag}", lo))
+    cur.execute("INSERT INTO core_circle (circle_uuid, kind, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) "
+                "VALUES (%s, 'OPERATIONS', 'DORMANT', now(), %s, %s, %s, %s, %s) RETURNING id", (c_uuid, T0, T0, empty_fp(cur, "core_circle", c_uuid), f"u21g:circle:{tag}", lo))
     ids["circle"] = cur.fetchone()[0]
     ids["events"]["core_circlestateevent"] = append_event(
         cur, "core_circlestateevent", ids["circle"], 1, "CREATE_DORMANT", None, "DORMANT", act, basis, tag
