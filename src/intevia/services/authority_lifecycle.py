@@ -46,6 +46,8 @@ def governed_write(alias, application_uuid=None):
     try:
         yield
     except IntegrityError as error:
+        if connections[alias].in_atomic_block:
+            raise
         cause = error.__cause__
         diagnostic = getattr(cause, "diag", None)
         message = getattr(diagnostic, "message_primary", "") or ""

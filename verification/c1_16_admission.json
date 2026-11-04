@@ -1,0 +1,24 @@
+[
+  {
+    "id": "C1-16-01",
+    "test": "tests.test_shared_event_append.SharedAppendTests.test_trigger_then_departure_continue_one_chain",
+    "kind": "sql",
+    "source_path": "core/migrations/0057_shared_event_append.py",
+    "source_sha256": "0a187ad1b9c28fe7925e42a80caff3e90a7077a1b86371fc347818d4158813e8",
+    "old": "lineage:=encode(sha256(convert_to(event::text||':'||payload,'UTF8')),'hex');",
+    "new": "lineage:=encode(sha256(convert_to(event::text||'/'||payload,'UTF8')),'hex');",
+    "defect": "Change the delimiter in the C2 lineage preimage. The row remains well formed but has the wrong lineage reference.",
+    "signature": "public.s015_append_event(text,bigint,text,text,timestamptz,timestamptz,timestamptz,bigint,bigint,text,text,text,text,jsonb,timestamptz,uuid,bigint,integer,bigint,text,text)"
+  },
+  {
+    "id": "C1-16-02",
+    "test": "tests.test_shared_event_append.SharedAppendTests.test_personal_offer_retains_attribution_and_distinct_keys",
+    "kind": "sql",
+    "source_path": "core/migrations/0057_shared_event_append.py",
+    "source_sha256": "0a187ad1b9c28fe7925e42a80caff3e90a7077a1b86371fc347818d4158813e8",
+    "old": "lineage:=public.c2_target(format('{\"event\":\"%s\",\"request\":%s}',event,to_json(payload)));",
+    "new": "lineage:=public.c2_target(format('{\"event\":\"%s\",\"payload\":%s}',event,to_json(payload)));",
+    "defect": "Rename request to payload in the command lineage preimage, changing a valid-looking lineage digest.",
+    "signature": "public.s015_append_event(text,bigint,text,text,timestamptz,timestamptz,timestamptz,bigint,bigint,text,text,text,text,jsonb,timestamptz,uuid,bigint,integer,bigint,text,text)"
+  }
+]
