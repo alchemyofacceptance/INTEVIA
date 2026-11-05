@@ -124,6 +124,8 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0063_root_circles": {"core_governedrule": 3},
     "0064_root_publication_declaration": {"core_governedrule": 3},
     "0065_root_continuity": {"core_governedrule": 3},
+    "0067_law_acts": {"core_governedrule": 3},
+    "0066_law_records": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -167,7 +169,9 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0062_root_genesis": 524,
                           "0063_root_circles": 530,
                           "0064_root_publication_declaration": 533,
-                          "0065_root_continuity": 548}  # R: measured on a fresh PostgreSQL 17 build at each head
+                          "0065_root_continuity": 548,
+                          "0066_law_records": 568,
+                          "0067_law_acts": 579}  # 20 register and 11 operation triggers; VC measures on PG17
 # Non-core contributions, keyed by exact (app_label, migration_name).
 # email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)
 # and ema_template_truncate_immutable (TRUNCATE), both on

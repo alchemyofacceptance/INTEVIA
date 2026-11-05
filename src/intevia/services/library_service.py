@@ -65,6 +65,17 @@ class LibraryService:
             raise ValidationError(f"{name} is required")
         return value.strip()
 
+    @classmethod
+    def _content(cls, value: str, exact: bool) -> str:
+        if type(exact) is not bool:
+            raise TypeError("exact_content must be a boolean")
+        if exact:
+            # A UTF-8 signature is preserved but cannot supply the document body.
+            if not isinstance(value, str) or not value.replace("\ufeff", "").strip():
+                raise ValidationError("content is required")
+            return value
+        return cls._text(value, "content")
+
     @staticmethod
     def _locked(resource_id: str) -> LibraryResource:
         return LibraryResource.objects.select_for_update().get(
@@ -133,10 +144,11 @@ class LibraryService:
         content: str,
         evidence_reference: str,
         occurred_at: datetime | None = None,
+        exact_content: bool = False,
     ) -> LibraryResource:
         occurred_at = self._at(occurred_at)
         resource_id = self._text(resource_id, "resource_id")
-        content = self._text(content, "content")
+        content = self._content(content, exact_content)
         evidence_reference = self._text(
             evidence_reference,
             "evidence_reference",
@@ -193,9 +205,10 @@ class LibraryService:
         content: str,
         evidence_reference: str,
         occurred_at: datetime | None = None,
+        exact_content: bool = False,
     ) -> LibraryResourceVersion:
         occurred_at = self._at(occurred_at)
-        content = self._text(content, "content")
+        content = self._content(content, exact_content)
         evidence_reference = self._text(
             evidence_reference,
             "evidence_reference",

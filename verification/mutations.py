@@ -27,6 +27,24 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "l-overlapping-law-windows": {
+        "follow_up": "L-01 G5 recurring control",
+        "intended": "Two LAW versions of the same instrument in the same scope overlap.",
+        "targets": ["test_law_records.LawRecordTests.test_overlapping_versions_and_competing_first_windows"],
+        # Preserve the constraint's name, type and deferred SET CONSTRAINTS interface.
+        # Only its coverage changes. The second insert must survive the named check,
+        # so L-01 fails with its intended assertion instead of an undefined-name error.
+        "sql": ["""ALTER TABLE public.core_organismlawbinding
+                   DROP CONSTRAINT l_one_version_per_scope,
+                   ADD CONSTRAINT l_one_version_per_scope EXCLUDE USING gist
+                   (numrange(resource_id::numeric,resource_id::numeric,'[]') WITH &&,
+    int4range((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),
+              (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),'[]') WITH &&,
+    numrange((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,
+             (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,'[]') WITH &&,
+    tstzrange(in_force_from,in_force_until,'[)') WITH &&)
+                   WHERE (false) DEFERRABLE INITIALLY DEFERRED"""],
+    },
     "r-nomination-without-activation": {
         "follow_up": "R G5 recurring control",
         "intended": "A named Guiding successor receives publication authority from nomination alone.",

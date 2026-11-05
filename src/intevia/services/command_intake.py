@@ -494,6 +494,7 @@ ENTRY_ACTIONS: dict[IntakeEntry, str | None] = {
     IntakeEntry.FOUND_LIVING_ORGANISM: OrganismAction.FOUND_LIVING_ORGANISM.value,
     IntakeEntry.ADVANCE_PHASE: OrganismAction.TRANSITION_LIVING_ORGANISM.value,
     IntakeEntry.BIRTHING: OrganismAction.TRANSITION_LIVING_ORGANISM.value,
+    IntakeEntry.ADOPT_LAW: OrganismAction.ADOPT_LAW.value,
     IntakeEntry.ADOPT_GOVERNING_INSTRUMENT: OrganismAction.ADOPT_GOVERNING_INSTRUMENT.value,
     IntakeEntry.CREATE_GOVERNANCE_CIRCLE: OrganismAction.CREATE_DORMANT_CIRCLE.value,
     IntakeEntry.REQUEST_GOVERNANCE_SEAT: OrganismAction.REQUEST_GOVERNANCE_SEAT.value,
@@ -575,6 +576,7 @@ ACTIVATION_GROUPS: dict[str, frozenset[IntakeEntry]] = {
 }
 ACTIVE_ENTRIES: frozenset[IntakeEntry] = frozenset(
     {
+        IntakeEntry.ADOPT_LAW,
         IntakeEntry.SUBMIT_APPLICATION,
         IntakeEntry.WITHDRAW_APPLICATION,
         IntakeEntry.CLAIM_APPLICATION,
@@ -1929,6 +1931,9 @@ def intake_shape(entry: IntakeEntry, command: object) -> IntakeShape:
     The office-definition branch includes the requested definition content through its own projection. This helper checks representation and binds retries; it does not decide authority or write an office."""
     if type(entry) is not IntakeEntry:
         raise ValueError("entry must be an IntakeEntry")
+    if entry is IntakeEntry.ADOPT_LAW:
+        from src.intevia.services.law_acts import law_shape
+        return law_shape(command)
     if entry is IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION:
         from src.intevia.services.organism_conditions import condition_shape
         return condition_shape(command)
@@ -1975,6 +1980,9 @@ def _authority_unavailable(entry: IntakeEntry | ChildEntry):
     """Return the authority-epoch refusal class for the served entry family.
     
     Office-definition requests use their own unavailable-authority exception. This selection does not establish why authority was unavailable or create a support ticket."""
+    if entry is IntakeEntry.ADOPT_LAW:
+        from src.intevia.services.law_acts import LawUnavailable
+        return LawUnavailable
     if entry is IntakeEntry.TRANSITION_MEMBERSHIP_CONDITION:
         from src.intevia.services.organism_conditions import ConditionRefused
         return ConditionRefused

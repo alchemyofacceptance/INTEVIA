@@ -4936,6 +4936,7 @@ class IntakeEntry(models.TextChoices):
     # intake CHECK only.
     RECORD_ROLE_DEFINITION = "RECORD_ROLE_DEFINITION", "Record role definition"
     TRANSITION_MEMBERSHIP_CONDITION = "TRANSITION_MEMBERSHIP_CONDITION", "Transition membership condition"
+    ADOPT_LAW = "ADOPT_LAW", "Adopt law"
 
 
 _H100_COMPOUND_ENTRIES = (

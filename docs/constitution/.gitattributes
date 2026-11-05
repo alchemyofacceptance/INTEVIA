@@ -1,0 +1,3 @@
+# Ratified UTF-8 source bytes include the BOM and final LF on every checkout.
+FREE_WILL_CHARTER.md text eol=lf
+CARE_CONSTITUTIONAL_CHARTER.md text eol=lf

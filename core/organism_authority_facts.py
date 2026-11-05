@@ -547,6 +547,15 @@ _ROWS: dict[OrganismAction, ActionFacts] = {
         },
         {"o": _ref(_STATE_EVENT)},
     ),
+    OrganismAction.ADOPT_LAW: ActionFacts(
+        Selector.NONE,
+        (_entry(None, {"kind": "LAW_VERSION"}, {
+            "route": _literal("FOUNDER_STEWARD", "FOUNDER_CONSTITUTIVE", "COORDINATOR_ROUTE",
+                              "SOLE_MEMBER_COORDINATOR", "UNANIMOUS_PAIR", "GOVERNANCE_INTERIM",
+                              required=True),
+        }),),
+        _freeze({None: _refusal({})}),
+    ),
     # 16. ADOPT_GOVERNING_INSTRUMENT — _qualify_governance_adoption
     OrganismAction.ADOPT_GOVERNING_INSTRUMENT: ActionFacts(
         Selector.NONE,

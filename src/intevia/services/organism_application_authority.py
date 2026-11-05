@@ -286,6 +286,7 @@ _VERSION_SPECS = {
 
 _OWN_ACTIONS = {OrganismAction.SUBMIT_APPLICATION, OrganismAction.WITHDRAW_APPLICATION}
 _POST_ACTIONS = {
+    OrganismAction.ADOPT_LAW,
     OrganismAction.CLAIM_APPLICATION,
     OrganismAction.REASSIGN_APPLICATION,
     OrganismAction.DECIDE_APPLICATION,
@@ -565,6 +566,20 @@ class ProductionApplicationAuthorityProvider:
         checks can raise exceptions; this method does not translate them.
         It writes no decision and acquires no explicit command locks.
         """
+        if (type(request) in (S015PreFoundingAuthorityRequest, S015PostFoundingAuthorityRequest)
+                and request.action is OrganismAction.ADOPT_LAW):
+            from src.intevia.services.law_acts import law_authority_facts
+
+            if not self._identity_active(request):
+                return self._refuse(request, S015AuthorityRefusalCode.E_IDENTITY_INACTIVE)
+            facts = law_authority_facts(request)
+            if facts is None:
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
+            if type(request) is S015PreFoundingAuthorityRequest:
+                reference = self._encode_facts(request, facts, refusal_code=None)
+                return S015PreFoundingAuthorityResponse(**asdict(request), authority_reference=reference)
+            return self._qualified(request, facts)
+
         if type(request) is S015PreFoundingAuthorityRequest:
             return self._evaluate_founding(request)
         if type(request) is S015OwnApplicantAuthorityRequest:
