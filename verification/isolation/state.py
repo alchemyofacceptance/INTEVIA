@@ -120,6 +120,10 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0059_operating_circles": {"core_governedrule": 3},
     "0060_circle_coordinators": {"core_governedrule": 3},
     "0061_circle_qualified_activation": {"core_governedrule": 3},
+    "0062_root_genesis": {"core_governedrule": 3},
+    "0063_root_circles": {"core_governedrule": 3},
+    "0064_root_publication_declaration": {"core_governedrule": 3},
+    "0065_root_continuity": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
 REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_canonical_form_s015f4": 322,
@@ -159,7 +163,11 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0058_circle_creation_writer": 503,
                           "0059_operating_circles": 507,
                           "0060_circle_coordinators": 510,
-                          "0061_circle_qualified_activation": 514}  # three G4 guards plus composition on final place ending
+                          "0061_circle_qualified_activation": 514,  # three G4 guards plus composition on final place ending
+                          "0062_root_genesis": 524,
+                          "0063_root_circles": 530,
+                          "0064_root_publication_declaration": 533,
+                          "0065_root_continuity": 548}  # R: measured on a fresh PostgreSQL 17 build at each head
 # Non-core contributions, keyed by exact (app_label, migration_name).
 # email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)
 # and ema_template_truncate_immutable (TRUNCATE), both on

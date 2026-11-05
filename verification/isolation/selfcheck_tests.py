@@ -122,8 +122,9 @@ class IsolationSelfChecks(TransactionTestCase):
 
     def test_v5c_protection_check_detects_unvalidated_constraint(self):
         def mutate(cur):
-            cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT s015_platform_root_unset_ck")
-            cur.execute("ALTER TABLE public.core_livingorganism ADD CONSTRAINT s015_platform_root_unset_ck CHECK (NOT platform_root) NOT VALID")
+            cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT s015_0021_livingorganism_fp_shape_ck")
+            cur.execute("ALTER TABLE public.core_livingorganism ADD CONSTRAINT s015_0021_livingorganism_fp_shape_ck "
+                        "CHECK ((state_source_event_set_fingerprint)::text ~ '^s015f4:[0-9a-f]{64}$') NOT VALID")
         self.detect_inside_rollback(mutate, expect_protection=True)
 
     def test_v5d_protection_check_detects_replaced_function_body(self):
@@ -140,7 +141,7 @@ class IsolationSelfChecks(TransactionTestCase):
 
     def test_v5f_protection_check_detects_missing_constraint(self):
         self.detect_inside_rollback(
-            lambda cur: cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT s015_platform_root_unset_ck"),
+            lambda cur: cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT s015_0021_livingorganism_fp_shape_ck"),
             expect_protection=True)
 
     # ---------------------------------------------------------------- seed restoration on the qualified connection
