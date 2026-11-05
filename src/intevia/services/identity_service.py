@@ -27,6 +27,7 @@ from core.models import (
 )
 from core.organism_contract import (
     ORIGINATING_INTEVIA_LO_REFERENCE,
+    ORIGINATING_MEMBERSHIP_REFERENCES,
     ORIGINATING_MEMBERSHIP_CONTRACT_VERSION,
 )
 from src.intevia.services.organism_application_authority import (
@@ -261,7 +262,7 @@ class IdentityLifecycleService:
         later attempt on the same intent is not considered.
         """
         request = identity.originating_membership_requests.filter(
-            organism_reference=ORIGINATING_INTEVIA_LO_REFERENCE,
+            organism_reference__in=ORIGINATING_MEMBERSHIP_REFERENCES,
             contract_version=ORIGINATING_MEMBERSHIP_CONTRACT_VERSION,
             superseded_at__isnull=True,
         ).first()
@@ -530,7 +531,7 @@ class OriginatingMembershipProvisioningService:
         requested_at = IdentityLifecycleService._at(requested_at)
         locked = Identity.objects.select_for_update().get(pk=identity.pk)
         existing = locked.originating_membership_requests.filter(
-            organism_reference=ORIGINATING_INTEVIA_LO_REFERENCE,
+            organism_reference__in=ORIGINATING_MEMBERSHIP_REFERENCES,
             superseded_at__isnull=True,
         ).first()
         if existing is not None:

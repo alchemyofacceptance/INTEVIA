@@ -1142,7 +1142,7 @@ class OrganismRoleService(_OrganismCommandService):
                 circles.unavailable()
             member = office.membership
             source = _circle_mandate(alias, lo, office.circle, f"APPOINT:{office.assignment_uuid}:{term}", actor, member.identity, at, office.assignment_uuid)
-            if lo.platform_root:
+            if lo.platform_root and (office.circle.kind != "GENERIC" or not circles.qualified_root(alias, lo, at)):
                 raise CircleAccessRefused("This appointment needs INTEVIA's APPLICATION Circle or governed initial appointment route.")
             _, until = _validate_term(effective_until_state=effective_until_state, effective_until=effective_until,
                                       effective_at=at)

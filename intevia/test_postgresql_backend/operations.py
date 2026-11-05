@@ -27,6 +27,15 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 # Guardians the reset has always been required to find (0019/0020). Kept as a required
 # minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
+    "core_rootgenesis": "s015_r_no_truncate",
+    "core_rootsuccessornomination": "s015_r_no_truncate",
+    "core_circlebirthdescription": "s015_r_no_truncate",
+    "core_rootcirclebatch": "s015_r_no_truncate",
+    "core_rootpublicationdeclaration": "s015_r_no_truncate",
+    "core_rootvaluedecision": "s015_r_no_truncate",
+    "core_rootlossconfirmation": "s015_r_no_truncate",
+    "core_rootcontinuityactivation": "s015_r_no_truncate",
+    "core_rootcapacityrestoration": "s015_r_no_truncate",
     "email_foundation_templateversion": "ema_template_truncate_immutable",
     "core_authorityprincipal": "s015_authorityprincipal_truncate_immutable",
     "core_authoritybasis": "s015_authoritybasis_truncate_immutable",

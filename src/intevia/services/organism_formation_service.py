@@ -3007,7 +3007,7 @@ class OrganismBirthingService(_OrganismCommandService):
             - founding content: version 1, effective by effective_at
               and recorded by received_at;
             - founding event: sequence 1, with no time filter;
-            - founder's FOUNDING acceptance for this LO: recorded by
+            - founder's FOUNDING acceptance (GENESIS for the root) for this LO: recorded by
               received_at, latest by recorded time and primary key;
               no accepted-time or effective-time predicate;
             - GOVERNANCE_CONSTITUTION, only when GOVERNANCE is True:
@@ -3236,7 +3236,7 @@ class OrganismBirthingService(_OrganismCommandService):
                     sequence=1,
                 ).first()
                 acceptance = PlatformTermsAcceptance.objects.using(self._alias).filter(
-                    acceptance_kind=PlatformTermsAcceptance.Kind.FOUNDING,
+                    acceptance_kind=(PlatformTermsAcceptance.Kind.GENESIS if organism.platform_root else PlatformTermsAcceptance.Kind.FOUNDING),
                     subject_reference=f"living-organism:{organism.organism_id}",
                     accepted_by_identity_id=organism.founder_identity_id,
                     recorded_at__lte=received_at,

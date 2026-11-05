@@ -1,0 +1,209 @@
+```
+INTEVIA v1.0 — S015 PKT-A AUTHORITY, IDEMPOTENCY AND SCHEMA SUBSTRATE — EXTERNAL IMPLEMENTER INVOCATION
+
+Human Governor: Carmian Owen
+Programme: INTEVIA v1.0
+Slice: S015
+Packet: S015-PKT-A AUTHORITY_IDEMPOTENCY_AND_SCHEMA_SUBSTRATE
+Receiver role: S015_PKT_A_EXTERNAL_IMPLEMENTER
+Delegation mode: NONE
+Active protocol: IDOP v0.9.5
+Mutation authority: BOUNDED PKT-A PRODUCT WORKTREE MUTATION ONLY
+Commit / Push / PR authority: NONE
+
+I, Carmian Owen, Human Governor for INTEVIA v1.0, directly issue and adopt this exact invocation and the attached carrier for one bounded PKT-A implementation attempt:
+
+INTEVIA_V1_0_S015_PKT_A_EXTERNAL_IMPLEMENTER_CARRIER_v1.zip
+
+Expected raw carrier identity:
+
+Byte length: 108748
+SHA-256: f985ab01a47711abeb50d62eb5e683af1ff0c86666221173b27886b0d485d331
+
+Treat any receiver-added attachment suffix such as “(1)” only as transport disambiguation. Qualify identity from the raw received bytes. This posting is the fresh Human authority event for this attempt. Possession, storage, copying, quotation, forwarding, automated replay or model-generated repetition does not create authority for any other attempt.
+
+## 1. Controlling state and exact starting anchors
+
+The issuing channel is operationally booted under `IDOP_V0_9_5: CONTROLLING`. The receiver does not need a separate IDOP boot. The receiver must obey this invocation first, then the carrier manifest and declared members in manifest order.
+
+PKT-00 is Human-accepted and complete at:
+
+`S015_PKT_00_HUMAN_RECONCILIATION_ACCEPTED_AND_CARRY_FORWARD_AUTHORISED`
+
+The accepted repository anchor is:
+
+- branch: `main`
+- commit: `64288333d57e5466493443667fdd8b2a15907edc`
+- tree: `527c36c261adfa75485239a27a87f85db0eec1ad`
+- remote relation at PKT-00: `origin/main`, `+0 -0`
+- required starting worktree: clean and unexplained-change free
+
+The accepted persistent SQLite objects are read-only inputs and must remain byte-identical:
+
+- live SQLite: 1,613,824 bytes; SHA-256 `28ed60376116a0aed2e5d91995245f0016b6a5ba8877d550988c5652e9a03c2f`
+- preserved backup: 905,216 bytes; SHA-256 `ed9aef48d8f967801ba71150593d0c556f53f5c23f3403a6d417eb781b25f3ed`
+- accepted core leaf: `0018_s014_education_course_foundation`
+
+The exact source-derived migration anchor is:
+
+- new migration: `core/migrations/0019_s015_living_organism_foundation.py`
+- mandatory dependency: `0018_s014_education_course_foundation`
+
+Before any product mutation, mechanically requalify the carrier, repository commit/tree/branch/remote/worktree, both SQLite identities, migration leaf/name/dependency, each permitted path’s existence state, the service export topology, PostgreSQL 17 disposable-test capability, output custody and cleanup ownership. A mismatch, ambiguous repository state, unexpected path, unqualified runtime, dirty worktree or changed persistent object yields HOLD before mutation. Do not repair, reset, stash, checkout, pull, merge or clean an unexplained state.
+
+## 2. Exact Human genesis identity for PKT-A
+
+For the reserved single-bootstrap representation and disposable test evidence, I name:
+
+- attributable genesis authority: `Carmian Owen, Human Governor for INTEVIA v1.0`
+- canonical governed-source identity: `urn:intevia:governed-source:reserved-genesis:human-governor:carmian-owen:intevia-v1.0`
+- reserved namespace discriminator: `INTEVIA_RESERVED_GENESIS_AUTHORITY_V1`
+- qualifier Identity: `Carmian Owen`
+- qualifier capacity: `EXECUTION_AUTHORITY`
+- invocation evidence identity: the raw byte length and SHA-256 of this received invocation file, computed and recorded by the receiver before mutation
+
+For the bootstrap alone, the `C` and `E` planes are exactly:
+
+`NOT_APPLICABLE_WITH_REASON:GENESIS_BOOTSTRAP_NAMED_BY_HUMAN_INVOCATION`
+
+These names authorise implementation and disposable test representation only. They do not authorise creation of production genesis data, a production Identity, production authority rows, a Living Organism, membership, founding, constitutional activation or any runtime product-state command. Overlap between named Human authority and qualifier must be represented truthfully and must not be presented as independent qualification.
+
+## 3. Authorised PKT-A outcome
+
+Implement only the candidate-v9 PKT-A substrate:
+
+1. canonical S015 enums, helpers, transition/echo contracts and bounded domain constants;
+2. schema-only migration `0019`, dependent exactly on `0018_s014_education_course_foundation` and containing no data seeding;
+3. authority principal, canonical governed-source registry, unresolved alias review, append-only derivation, authority basis, determination and invalidation substrate;
+4. command-class-specific frozen echo request/response structures and exhaustive five-state qualification-plane matrix;
+5. physical-database-scoped pre-provider advisory-mutex and idempotent receipt substrate, with lock before provider call/effect and exact replay behavior;
+6. common append-only recorded-chain, bitemporal-fold/cache and four-time structures needed by the schema substrate;
+7. PostgreSQL guardians required by candidate v9 for PKT-A, including the reserved-namespace partial unique singleton, exact-invocation/namespace-empty checks, append-only enforcement, closed eight-model/51-column immutable-anchor UPDATE/DELETE/TRUNCATE perimeter, complete `PROTECT` graph, database-only `founding_insert_xid`, paired same-transaction completion exception and deferred founding completeness;
+8. focused PKT-A tests and evidence for every route made live by this packet; and
+9. an ephemeral database-level complete-founding fixture only for the P47 positive control. It must commit inside a disposable test database and be discarded afterward. It does not authorise a product founding command or persistent founding data.
+
+PKT-A must not implement a production founding service or execute any product-state command. It must not seed a Living Organism, Circle, member, role, roster, coverage state, authority source, basis or determination into the live SQLite database or any persistent PostgreSQL database.
+
+## 4. Closed product path boundary
+
+The following are the only product repository paths that may be created or modified:
+
+- `core/models.py`
+- `core/organism_contract.py`
+- `src/intevia/services/__init__.py`
+- `src/intevia/services/organism_authority.py`
+- `src/intevia/services/organism_membership_service.py` — shared advisory-mutex/idempotency substrate only; no founding, membership-transition, role, mentorship, roster or coverage command
+- `core/migrations/0019_s015_living_organism_foundation.py`
+- `tests/test_s015_models.py`
+- `tests/test_s015_migrations.py`
+- `tests/test_s015_authority.py`
+- `tests/test_s015_membership_service.py` — PKT-A substrate tests only
+- `tests/test_s015_postgresql_guardians.py`
+- `tests/test_s015_packet_guardians.py`
+
+No other repository path may change. In particular, do not create `organism_governance_service.py` or `organism_queries.py`; do not modify architecture documents, the Current Implementation Crosswalk, README, roadmap, changelog, Datacron, settings, dependencies, lockfiles, CI, deployment or provider configuration.
+
+Generated bytecode, test caches and reports must be redirected to the authorised disposable staging root or removed under explicit ownership before return. Never delete or clean an object not created by this attempt.
+
+## 5. Explicit non-authorisations
+
+This unit does not authorise:
+
+- PKT-B, PKT-C, PKT-D, PKT-E or S016 work;
+- production founding, membership, role, mentorship, roster, coverage, governance, continuity, obligation, privacy, query, Circle or CQ behavior;
+- migration of the live SQLite database or mutation of its backup;
+- a persistent PostgreSQL database, production database or reused non-disposable test database;
+- external provider calls, dependency installation/update, network writes, secrets changes, container-image changes or persistent environment mutation;
+- expanded Quality Assurance, exploratory redesign or scope widening;
+- Commit, Push, PR, branch publication, merge, deployment, promotion, activation, S015 acceptance or closure.
+
+## 6. Execution order and stop conditions
+
+Use the least-cost qualified sequence:
+
+1. qualify inputs and all exact anchors before live product access;
+2. copy the qualified carrier and invocation into the attempt’s `INPUT` custody area without normalising or reconstructing them;
+3. record the invocation’s raw bytes and SHA-256 for genesis evidence;
+4. capture before-state repository, SQLite and environment identities;
+5. mutate only the closed PKT-A path set;
+6. perform static compile/import and migration-plan inspection;
+7. run focused PKT-A tests, including required negative/positive and PostgreSQL concurrency/direct-SQL controls, in a fresh isolated disposable PostgreSQL 17 test database;
+8. only after the route/evidence preflight is complete, run the ordinary full repository regression using fresh dynamic discovery; this is normal packet validation, not expanded Quality Assurance;
+9. preserve the uncommitted prospective patch and prospective tree identities;
+10. remove only attempt-owned disposable databases, containers and temporary objects; preserve the product worktree changes for independent review;
+11. requalify the repository diff, persistent SQLite objects, environment, absence of residue and output files; and
+12. stop for independent review without Commit or Push.
+
+Any failing test, missing required test/evidence path, unclassified live route, conflict with candidate v9, dependency reversal, out-of-bound path need, unsafe cleanup uncertainty, provider requirement, persistent-state mutation, inability to prove exact invocation identity or inability to produce durable output yields:
+
+`PKT_A_IMPLEMENTATION_HOLD_REQUIRES_HUMAN_RECONCILIATION`
+
+Do not silently redesign, weaken a guardian, mark a live route not applicable, omit a required control, repeat expensive execution without cause, or widen paths. Preserve the bounded uncommitted work and exact evidence on HOLD unless leaving it in place would itself be unsafe; report the state precisely.
+
+## 7. Assurance-route accounting
+
+Reconcile all 47 candidate-v9 rows. PKT-A owns P02, P09–P12, P19, P25, P31–P33, P36, P39, P41, P42, P45 and P47 as applicable to the exact routes constructed.
+
+For every row, record exactly one of:
+
+- `APPLICABLE_COMPLETE`
+- `PARTIALLY_APPLICABLE_ROUTE_LOCAL_COMPLETE`
+- `NOT_YET_APPLICABLE`
+- `INTEGRATED_RECHECK_REQUIRED`
+
+A live route without route-local negative, positive and raw evidence is a HOLD. `NOT_YET_APPLICABLE` is permitted only where PKT-A implements none of the row’s named routes. No prior green result is inherited. P47 remains allocated to PKT-A; its positive complete-founding fixture is disposable database evidence and does not make the PKT-B production founding route live.
+
+Do not create fake evidence files for tests not executed. Evidence must distinguish source presence, test-definition presence, execution result and future integrated recheck.
+
+## 8. Required durable output
+
+Use a new attempt-owned Windows staging directory under:
+
+`C:\Users\Carewen\INTEVIA_AGENT_STAGING\S015_PKT_A_EXTERNAL_IMPLEMENTER_001\<UTC_OR_SEQUENCE>`
+
+Create `INPUT`, `TEMP`, `EVIDENCE` and `RETURN` beneath that directory. The product repository is the only authorised product mutation surface; the staging directory is the only authorised durable output surface.
+
+Return exactly:
+
+1. `INTEVIA_V1_0_S015_PKT_A_EXTERNAL_IMPLEMENTER_RETURN_v1.md`
+2. `INTEVIA_V1_0_S015_PKT_A_EVIDENCE_CARRIER_v1.zip`
+
+The evidence carrier must have one safe outer root, `MANIFEST.json` read first, self-excluded manifest identity, exact per-member bytes/SHA-256, clean CRC and no symlinks/path collisions. It must contain at minimum:
+
+- raw qualified carrier and invocation copies or exact immutable references to the INPUT copies with their byte identities;
+- before/after repository, branch, HEAD, tree, remote relation and worktree inventory;
+- exact enumerated modified/created/deleted path inventory;
+- `git diff --binary --full-index` prospective patch with bytes/SHA-256;
+- prospective tree identity computed without committing;
+- migration plan, dependency/leaf qualification and trigger/constraint/index inventory;
+- exact genesis authority, canonical identity, qualifier identity/capacity and raw invocation identity record;
+- focused test discovery and complete focused execution logs/results;
+- ordinary full-regression dynamic discovery and complete execution logs/results;
+- PostgreSQL database/version/isolation, direct-SQL, concurrency and disposable complete-founding fixture evidence;
+- `S015_ASSURANCE_RECONCILIATION.json` with all 47 unique rows, route statuses, guardian, negative/positive nodes and raw evidence identities;
+- persistent SQLite before/after byte identities proving no mutation;
+- provider/dependency/environment non-mutation record;
+- attempt-owned object inventory and cleanup receipt;
+- observations, unknowns, conflicts and Human choices; and
+- final disposition.
+
+The Markdown return must cite the carrier and invocation identities, exact patch and prospective tree, modified path set, test totals/results, route-status totals, cleanup state, findings/HOLDs and one exact disposition. It must end with:
+
+`S015_PKT_A_EXTERNAL_IMPLEMENTER_COMPLETE`
+
+The only PASS disposition is:
+
+`PKT_A_IMPLEMENTATION_PASS_READY_FOR_INDEPENDENT_REVIEW`
+
+PASS means the bounded uncommitted PKT-A implementation and evidence are ready for independent review only. It does not authorise Commit, Push or PKT-B.
+
+## 9. Mandatory receiver acknowledgement
+
+Before product mutation, state exactly:
+
+`S015_PKT_A_BOUNDED_OPERATING_CONTRACT_ACKNOWLEDGED`
+
+Then proceed autonomously within this contract. Do not delegate. Do not ask for routine confirmation. Stop only on an exact HOLD predicate or after producing the two durable return objects.
+```
+The carrier ZIP is in the Downloads folder.
+rg is not installed on this system.

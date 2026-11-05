@@ -8,7 +8,9 @@ from types import MappingProxyType
 from typing import Final, Mapping
 
 
-ORIGINATING_INTEVIA_LO_REFERENCE: Final = "intevia-originating-lo"
+ORIGINATING_INTEVIA_LO_REFERENCE: Final = "intevia-root-lo"
+# Identity provisioning reads historical intents under their original recorded reference.
+ORIGINATING_MEMBERSHIP_REFERENCES: Final = (ORIGINATING_INTEVIA_LO_REFERENCE, "intevia-originating-lo")
 ORIGINATING_MEMBERSHIP_CONTRACT_VERSION: Final = 1
 S015_CONTRACT_VERSION: Final = 1
 S015_AUTHORITY_ECHO_SCHEMA: Final = "S015_AUTHORITY_ECHO_V1"

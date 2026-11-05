@@ -44,20 +44,25 @@ class _S015NegativeBase(TransactionTestCase):
 
     def setUp(self):
         super().setUp()
+        from tests.s015_0021_support import root_scaffold_state, restore_root_scaffold
         self._uses_platform_root_scaffold = self._testMethodName not in self.NO_PLATFORM_ROOT_SCAFFOLD
         with connection.cursor() as cur:
+            original = root_scaffold_state(cur)
+            def restore():
+                with connection.cursor() as cleanup_cursor:
+                    restore_root_scaffold(cleanup_cursor, original)
+            self.addCleanup(restore)
             if self._uses_platform_root_scaffold:
                 drop_unset_check(cur)
-            else:
+            elif original["unset"]:
                 cur.execute("ALTER TABLE public.core_livingorganism VALIDATE CONSTRAINT s015_platform_root_unset_ck")
+            else:
+                self.assertEqual(len(original["guards"]), 3, "The replacement root guards must be installed.")
+                self.assertTrue(all(mode == "O" for _, _, mode in original["guards"]), "The root guards must start enabled.")
 
     def tearDown(self):
-        if self._uses_platform_root_scaffold:
-            with connection.cursor() as cur:
-                cur.execute(
-                    "ALTER TABLE public.core_livingorganism ADD CONSTRAINT "
-                    "s015_platform_root_unset_ck CHECK (NOT platform_root) NOT VALID"
-                )
+        # Exact schema restoration is registered in setUp, including on failure.
+        # These historical scaffold tests do not qualify R's real GENESIS route.
         super().tearDown()
 
     def refuses(self, fn, *, contains=None):

@@ -547,8 +547,10 @@ class SROfficeGuardTests(TransactionTestCase):
         self.assertEqual((action, actor_state, actor_id, enterer_id), ("ASSIGN", "LIVING_ORGANISM", None, self.founder_id), msg="The appointment should be attributed to the organisation and entered by the founder; its attribution differs.")
 
         body = self._installed_body("s2b_guard_office_attribution")
-        migration = import_module("core.migrations.0053_sr_office_safeguards")
-        self.assertEqual(body, migration.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="The installed attribution safeguard should be the exact 0053 body; it differs.")
+        root = import_module("core.migrations.0062_root_genesis")
+        installed = {signature: revised for signature, prior, revised in root.bodies()}
+        self.assertEqual(body, installed["public.s2b_guard_office_attribution()"],
+                         msg="The attribution safeguard must include precisely the 0062 GENESIS exception.")
         self.assertEqual(body.count("           AND v_role_code = 'COORDINATOR'\n"), 1, msg="The founding self-appointment branch should retain exactly one Coordinator condition; that condition is missing or repeated.")
         self.assertIn(
             "    IF NEW.action IN ('END', 'REASSIGN')\n"
@@ -845,15 +847,20 @@ class SROfficeGuardTests(TransactionTestCase):
                 "triggers": triggers,
             }
 
+        root = import_module("core.migrations.0062_root_genesis")
+        installed = {signature: revised for signature, prior, revised in root.bodies()}
         at_head = facts()
-        self.assertEqual(at_head["head"], "0061_circle_qualified_activation", msg="The migration rehearsal must start on the Circles candidate head.")
-        self.assertEqual(at_head["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY, msg="At 0053, the installed definition-insert safeguard should match its complete candidate body; it differs.")
+        self.assertEqual(at_head["head"], "0065_root_continuity", msg="The migration rehearsal must start on the root candidate head.")
+        self.assertEqual(at_head["definition_insert"], installed["public.sr_definition_insert_guard()"], msg="The installed definition-insert safeguard must match its 0062 body.")
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
         self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
-        self.assertEqual(at_head["attribution"], safeguard.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="At 0053, the installed office-attribution safeguard should match its complete candidate body; it differs.")
+        self.assertEqual(at_head["attribution"], installed["public.s2b_guard_office_attribution()"], msg="The installed attribution safeguard must match its 0062 body.")
         self.assertEqual(at_head["consent"], migration.NEW_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="At 0053, the consent safeguard should remain the exact 0052 body; it differs.")
         migrate_to_target_with_restore(self, ("core", "0053_sr_office_safeguards"))
-        sr_triggers = facts()["triggers"]
+        restored_sr = facts()
+        self.assertEqual(restored_sr["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY)
+        self.assertEqual(restored_sr["attribution"], safeguard.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY)
+        sr_triggers = restored_sr["triggers"]
         self.assertGreater(at_head["triggers"], sr_triggers,
                            msg="Reversing the C2 migration must remove its extra coverage and qualification guards.")
         MigrationExecutor(connection).migrate([("core", HEAD_0052)])
@@ -897,7 +904,7 @@ class SROfficeGuardTests(TransactionTestCase):
         self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
         self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
         self.restore_received_migrations()
-        self.assertEqual(facts()["head"], "0061_circle_qualified_activation", msg="The populated rehearsal must finish on the Circles candidate head.")
+        self.assertEqual(facts()["head"], "0065_root_continuity", msg="The populated rehearsal must finish on the root candidate head.")
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 

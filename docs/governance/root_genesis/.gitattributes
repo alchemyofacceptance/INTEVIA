@@ -1,0 +1,4 @@
+.gitattributes text eol=lf
+PRINCIPAL_INVOCATION_RECEIVED_v1.txt -text
+ROOT_DESIGNATION_INPUT_v1_0.md -text
+HG_RULINGS_R_P3_RD1_RD2_RD3_20261105_CAPTURE.txt -text

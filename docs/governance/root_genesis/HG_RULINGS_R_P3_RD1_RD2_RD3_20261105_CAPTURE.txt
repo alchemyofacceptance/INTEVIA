@@ -1,0 +1,36 @@
+HUMAN GOVERNOR RULINGS - PACKAGE R P3: R-D1 RESTORATION AFTER INCAPACITY, R-D2 THE CIRCLE OF STEWARDS IN ALPHA, R-D3 THE ROOT DESIGNATION INPUT - 5 November 2026 - CAPTURE
+
+Channel US015-C-2. Captured by the Vision Chamber. His words verbatim, each beneath the VC line he quoted. A capture records what was said; it is not a fresh authority event and decides nothing beyond the words captured. Final authority: Carmian Owen, Human Governor.
+
+Answers to: the VC's questions on Astra's P3 return R_CARRIER_RETURN_v1_0_P3.zip (604d30b9e80db21dc89a1eaf24639dff93111e3d8f314dcc0950778122c8af58), its decision list 02_DESIGN/R_DECISIONS_v1_0_P3.md, and the capture Astra placed in the candidate (01_EVIDENCE/HG_ADOPTION_CAPTURE_20261104.txt; 05_CHANGED/docs/governance/root_genesis/ROOT_DESIGNATION_INPUT_v1_0.md). The VC found no adopted instrument naming who decides restoration (RC-2 capture, C0 recovery decision sheet v1.2 l.35 and l.52, specification v0.16, the constitutional sources).
+
+=== HIS WORDS (verbatim) ===
+> R-D1. Who authorises your restoration after incapacity?
+> Recommended: you do, through one narrow act, once the named non-beneficiary confirmer independently confirms with fresh evidence that you have regained capacity. Both of you act on the record. Neither a login, a request on its own, elapsed time, nor the Emergency Steward's consent can complete it. The Emergency Steward's authority ends at that moment, and the acts made lawfully under it stand. If the confirmation is disputed, the restriction stays and the dispute goes to the contest route. This mirrors how incapacity is confirmed in the first place, so the person who benefits never decides.
+
+Accepted.
+
+> R-D2. How is the Circle of Stewards represented in alpha?
+> Recommended: through the founding office and Debra's nomination records, as Astra proposes. The record shows who is named, and nobody gets a vote or power from it. The Circle of Stewards gets its own GOVERNANCE Circle record later, through the designation and elections route.
+
+Accepted. In the case of investors and/or advisors coming on as Board members per investment agreements, I need the flexibility to directly add OLs to the CoS.
+
+> R-D3. Please confirm one thing Astra recorded from your overnight "Proceed". She wrote a capture into the candidate saying your "Proceed" adopted her root designation input. That document sets three things:
+
+Good catch. I missed that:
+
+* the root's identity - `intevia-root-lo`, named INTEVIA
+* Correct - me as Founder Steward, root Coordinator and initial Privacy Coordinator
+* Correct - Debra as nominated Guiding and Emergency Steward.
+
+
+> Recommended: yes, adopt it for alpha as written. I'll capture your words properly. Astra's own capture stays as evidence only.
+
+Yes.
+
+=== THE VISION CHAMBER'S READING (for his check) ===
+- R-D1: restoration after incapacity is his own narrow act, made only after the named non-beneficiary confirmer independently confirms regained capacity with fresh evidence; both act on the record; a login, a request alone, elapsed time or the Emergency Steward's consent cannot complete it; the Emergency Steward's authority ends at that moment; acts lawfully made under it stand; a disputed confirmation keeps the restriction and goes to the contest route.
+- R-D2: in alpha the Circle of Stewards is represented through the founding office and Debra's nomination records; no vote or power comes from them; its GOVERNANCE Circle record comes later through the designation and elections route. New requirement: he must be able to add OLs directly to the Circle of Stewards (for example investors or advisors joining as Board members under investment agreements); to the forward ledger with C1-47, not built in R.
+- R-D3: the root designation input is adopted for alpha with one correction: the root's canonical logical identity is `intevia-root-lo` (not `intevia-originating-lo`), product name INTEVIA. He is Founder Steward, root Coordinator and initial Privacy Coordinator; Debra Reyes is the nominated Guiding Steward and Emergency Steward. The VC notes that `intevia-originating-lo` is the value of the landed constant ORIGINATING_INTEVIA_LO_REFERENCE in core/organism_contract.py (used by identity_service.py); the correction changes that value. Astra's capture (HG_ADOPTION_CAPTURE_20261104.txt) is evidence of the overnight exchange only; this capture is the adoption record.
+
+Final authority remains with Carmian Owen, Human Governor.

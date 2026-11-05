@@ -4376,7 +4376,8 @@ class LivingOrganism(_S015ImmutableAnchor):
                 condition=Q(platform_root=True),
                 name="s015_platform_root_singleton_uniq",
             ),
-            models.CheckConstraint(condition=Q(platform_root=False), name="s015_platform_root_unset_ck"),
+            # 0062 replaces the false-only check with transaction-bound GENESIS
+            # designation and completion guards. The singleton remains above.
         ]
 
 
@@ -6341,3 +6342,145 @@ class OrganismEntitlementEvent(_S015AppendOnly):
                 name="se_entitlement_event_type_vocab_ck",
             ),
         ]
+
+
+class RootGenesis(_S015AppendOnly):
+    """The attributable, byte-bound root designation; never an ordinary grant.
+
+    0062 checks the exact issued alpha evidence, account mapping, founding
+    transaction and complete population. There is no UPDATE completion escape.
+    """
+    designation_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    canonical_reference = models.CharField(max_length=90, unique=True)
+    organism_uuid = models.UUIDField(unique=True)
+    scope = models.CharField(max_length=32)
+    founder = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name='+')
+    nominee = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name='+')
+    basis = models.ForeignKey(AuthorityBasis, on_delete=models.PROTECT, related_name='+')
+    principal_invocation = models.BinaryField()
+    designation_invocation = models.BinaryField()
+    adoption_capture = models.BinaryField()
+    request_bytes = models.BinaryField()
+    request_fingerprint = models.CharField(max_length=64)
+    decision_reference = models.CharField(max_length=71, unique=True)
+    request_reference = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=120, unique=True)
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+    insert_xid = FoundingTransactionIdField(null=True, blank=True, editable=False)
+
+
+class RootSuccessorNomination(_S015AppendOnly):
+    """A named successor nomination, with no activation or consent implied."""
+    nomination_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    genesis = models.ForeignKey(RootGenesis, on_delete=models.PROTECT, related_name='nominations')
+    definition = models.ForeignKey(OrganismRoleDefinition, on_delete=models.PROTECT, related_name='+')
+    nominee = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name='+')
+    entered_by = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name='+')
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('genesis', 'definition'), name='r_initial_nomination_uniq')]
+
+
+class CircleBirthDescription(_S015AppendOnly):
+    """Initial name/purpose bound to an ordinary GENERIC birth; not a rename command."""
+    circle = models.OneToOneField(Circle,on_delete=models.PROTECT,related_name='birth_description')
+    birth_event = models.OneToOneField(CircleStateEvent,on_delete=models.PROTECT,related_name='+')
+    name = models.CharField(max_length=90)
+    purpose = models.CharField(max_length=240)
+    enterer = models.ForeignKey(Identity,on_delete=models.PROTECT,related_name='+')
+    enterer_access_epoch = models.PositiveBigIntegerField()
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True,blank=True,editable=False)
+
+
+class RootCircleBatch(_S015AppendOnly):
+    batch_uuid = models.UUIDField(default=uuid.uuid4,unique=True,editable=False)
+    living_organism = models.OneToOneField(LivingOrganism,on_delete=models.PROTECT,related_name='root_circle_batch')
+    enterer = models.ForeignKey(Identity,on_delete=models.PROTECT,related_name='+')
+    circles = models.JSONField()
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True,blank=True,editable=False)
+
+
+class RootPublicationDeclaration(_S015AppendOnly):
+    """A deliberate founder Decision; no source document silently creates this record."""
+    declaration_uuid = models.UUIDField(default=uuid.uuid4,unique=True,editable=False)
+    living_organism = models.OneToOneField(LivingOrganism,on_delete=models.PROTECT,related_name='publication_declaration')
+    actor = models.ForeignKey(Identity,on_delete=models.PROTECT,related_name='+')
+    actor_access_epoch = models.PositiveBigIntegerField()
+    founder_office = models.ForeignKey(ContextualRoleAssignment,on_delete=models.PROTECT,related_name='+')
+    authority_basis = models.ForeignKey(AuthorityBasis,on_delete=models.PROTECT,related_name='+')
+    text = models.TextField()
+    text_sha256 = models.CharField(max_length=64)
+    source_hashes = models.JSONField()
+    record_class = models.CharField(max_length=8,default='DECISION')
+    prior_root_event = models.ForeignKey(LivingOrganismEvent,on_delete=models.PROTECT,related_name='+')
+    verification_reference = models.CharField(max_length=71)
+    access_posture = models.CharField(max_length=32)
+    decision_kind = models.CharField(max_length=32,default='PUBLICATION_EXCEPTION')
+    declared_capacity = models.CharField(max_length=64,default='HUMAN_GOVERNOR_AND_INTEVIA_FOUNDER_STEWARD')
+    request_uuid = models.UUIDField(unique=True)
+    effective_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True,blank=True,editable=False)
+
+
+class RootValueDecision(_S015AppendOnly):
+    """Founder decision recording the named person for one root succession value."""
+    request_uuid = models.UUIDField(unique=True)
+    organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    setting = models.CharField(max_length=24)
+    person = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor_epoch = models.PositiveBigIntegerField()
+    founder_office = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, related_name="+")
+    predecessor = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+
+class RootLossConfirmation(_S015AppendOnly):
+    """Independent evidence of death or incapacity, distinct from a grant to a successor."""
+    request_uuid = models.UUIDField(unique=True)
+    organism = models.ForeignKey(LivingOrganism, on_delete=models.PROTECT, related_name="+")
+    event_kind = models.CharField(max_length=12)
+    confirmer_value = models.ForeignKey(RootValueDecision, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor_epoch = models.PositiveBigIntegerField()
+    beneficiary = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    finding = models.OneToOneField(GovernedDetermination, on_delete=models.PROTECT, related_name="+")
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+
+class RootContinuityActivation(_S015AppendOnly):
+    """Exercise of the constitutional successor function within an independently qualified grant."""
+    request_uuid = models.UUIDField(unique=True)
+    confirmation = models.ForeignKey(RootLossConfirmation, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor_epoch = models.PositiveBigIntegerField()
+    grant = models.OneToOneField(GovernedDetermination, on_delete=models.PROTECT, related_name="+")
+    grant_basis = models.ForeignKey(AuthorityBasis, on_delete=models.PROTECT, related_name="+")
+    office_definition = models.ForeignKey(OrganismRoleDefinition, on_delete=models.PROTECT, related_name="+")
+    holder_finding = models.ForeignKey(GovernedDetermination, on_delete=models.PROTECT, related_name="+")
+    envelope = models.OneToOneField(EmergencyAuthorityEnvelope, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    domains = models.CharField(max_length=12)
+    bounds = models.CharField(max_length=240)
+    hard_expiry = models.DateTimeField(null=True, blank=True)
+    effective_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+
+class RootCapacityRestoration(_S015AppendOnly):
+    """The Founder's decision on the named confirmer's independent finding for one incapacity."""
+    request_uuid = models.UUIDField(unique=True)
+    loss = models.OneToOneField(RootLossConfirmation, on_delete=models.PROTECT, related_name="+")
+    finding = models.OneToOneField(GovernedDetermination, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    actor_epoch = models.PositiveBigIntegerField()
+    founder_office = models.ForeignKey(ContextualRoleAssignment, on_delete=models.PROTECT, related_name="+")
+    recorded_at = models.DateTimeField(null=True, blank=True, editable=False)

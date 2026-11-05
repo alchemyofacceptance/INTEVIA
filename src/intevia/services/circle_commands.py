@@ -23,6 +23,12 @@ from src.intevia.services.organism_entitlement_service import (
 )
 
 
+def qualified_root(alias, lo, at):
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT public.r_circle_root_qualified(%s,%s,%s)",[lo.pk,at,at])
+        return cursor.fetchone()[0] is True
+
+
 def check_creation_allowance(alias, lo, at):
     check = check_allowance(lo.organism_id, "circles", 1, at, database_alias=alias)
     if check.status != "within":
@@ -186,8 +192,13 @@ def form(
     purpose,
     request_uuid,
     alias="default",
+    name=None,
 ):
     """Birth a GENERIC Circle atomically, or prepare a functional designation on its existing route."""
+    if name is not None:
+        name = _canonical_key(name, "name", 90)
+        if kind != "GENERIC":
+            raise CircleAccessRefused("Initial named birth currently requires an ordinary GENERIC Circle.")
     purpose = _canonical_key(purpose, "purpose", 240)
     if kind not in {"GENERIC", "APPLICATION", "FINANCE", "OPERATIONS"}:
         raise CircleAccessRefused(
@@ -214,6 +225,9 @@ def form(
                         [previous.pk],
                     )
                     if cur.fetchone()[0] == actor.pk:
+                        description = models.CircleBirthDescription.objects.using(alias).filter(circle=previous.circle).first()
+                        if (description.name if description else None) != name:
+                            unavailable()
                         return previous.circle
             unavailable()
         act = "FORM:" + kind + ":" + sha256(purpose.encode()).hexdigest()
@@ -265,6 +279,10 @@ def form(
         if kind == "GENERIC":
             _seat_founder_and_activate(alias, lo, actor, credential, circle, request_uuid)
             circle.refresh_from_db(using=alias)
+            if name is not None:
+                models.CircleBirthDescription.objects.using(alias).create(circle=circle,
+                    birth_event=models.CircleStateEvent.objects.using(alias).get(circle=circle,event_uuid=request_uuid),
+                    name=name,purpose=purpose,enterer=actor,enterer_access_epoch=actor.access_epoch,effective_at=database_now(alias))
         return circle
 
 
@@ -306,7 +324,7 @@ def recover_circle(*, credential, organism_uuid, circle_uuid, request_uuid, alia
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
         member = models.OrganismMembership.objects.using(alias).filter(living_organism=lo, identity=actor, state="ACTIVE").first()
-        if member is None or circle.kind != "GENERIC" or lo.platform_root:
+        if member is None or circle.kind != "GENERIC" or (lo.platform_root and not qualified_root(alias,lo,at)):
             unavailable()
         existing = models.ContextualRoleAssignment.objects.using(alias).filter(assignment_uuid=assignment_uuid).first()
         if existing:
@@ -346,7 +364,7 @@ def operating_status(*, credential, organism_uuid, circle_uuid, alias="default")
     """The current participant or an effective parent Coordinator can see the Circle's operating state."""
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
-        if circle.kind != "GENERIC" or lo.platform_root:
+        if circle.kind != "GENERIC" or (lo.platform_root and not qualified_root(alias,lo,at)):
             unavailable()
         with connections[alias].cursor() as cur:
             cur.execute("""SELECT public.circle_lo_office(%s,%s,%s,%s) IS NOT NULL OR EXISTS(

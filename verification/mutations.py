@@ -27,6 +27,22 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "r-nomination-without-activation": {
+        "follow_up": "R G5 recurring control",
+        "intended": "A named Guiding successor receives publication authority from nomination alone.",
+        "targets": ["test_root_organism.RootOrganismTests.test_nomination_and_death_succession_authority"],
+        "sql": ["""DO $mutation$
+DECLARE definition text; marker text := 'IF activation IS NULL THEN RETURN NULL; END IF;';
+BEGIN
+ SELECT pg_get_functiondef('public.r_publication_capacity(bigint,bigint,text,timestamptz,timestamptz)'::regprocedure)
+ INTO STRICT definition;
+ IF length(definition)-length(replace(definition,marker,''))<>length(marker) THEN
+   RAISE EXCEPTION 'R G5 requires exactly one missing-activation refusal';
+ END IF;
+ EXECUTE replace(definition,marker,
+   'IF activation IS NULL THEN IF person=public.r_successor(lo,''DEATH'',cut,known) THEN RETURN ''NOMINATED''; END IF; RETURN NULL; END IF;');
+END $mutation$"""],
+    },
     "o24-terminal-refusal": {
         # RECURRING: the terminal-conflict test must discriminate the named guardian refusal.
         "follow_up": "O-24 TAR-3 recurring experiment",

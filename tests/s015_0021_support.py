@@ -530,7 +530,46 @@ def seed_fixture_substitute_authority(cur, tag):
 
 
 def drop_unset_check(cur):
+    """Historical root scaffold only; never the R/FW-11 GENESIS witness.
+
+    0062 replaces the old prohibition with insertion guards. Preserve the
+    old tests' explicit scaffold latitude by suspending only that replacement
+    boundary, in their disposable database. The caller must restore its exact
+    prior state (or roll back the enclosing transaction).
+    """
+    _require_disposable_fixture_database()
     cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT IF EXISTS s015_platform_root_unset_ck")
+    for table, name in ROOT_SCAFFOLD_GUARDS:
+        cur.execute("SELECT 1 FROM pg_trigger WHERE tgrelid=%s::regclass AND tgname=%s", (table, name))
+        if cur.fetchone():
+            cur.execute(f"ALTER TABLE public.{table} DISABLE TRIGGER {name}")
+
+
+ROOT_SCAFFOLD_GUARDS = (
+    ("core_livingorganism", "r_genesis_root_insert"),
+    ("core_livingorganismevent", "zz_r_genesis_found"),
+    ("core_organismroledefinition", "r_reserved_definition"),
+)
+
+
+def root_scaffold_state(cur):
+    cur.execute("SELECT EXISTS(SELECT FROM pg_constraint WHERE conrelid='public.core_livingorganism'::regclass AND conname='s015_platform_root_unset_ck')")
+    state = {"unset": cur.fetchone()[0], "guards": []}
+    for table, name in ROOT_SCAFFOLD_GUARDS:
+        cur.execute("SELECT tgenabled FROM pg_trigger WHERE tgrelid=%s::regclass AND tgname=%s", (table, name))
+        row = cur.fetchone()
+        if row:
+            state["guards"].append((table, name, row[0]))
+    return state
+
+
+def restore_root_scaffold(cur, state):
+    cur.execute("ALTER TABLE public.core_livingorganism DROP CONSTRAINT IF EXISTS s015_platform_root_unset_ck")
+    if state["unset"]:
+        cur.execute("ALTER TABLE public.core_livingorganism ADD CONSTRAINT s015_platform_root_unset_ck CHECK (NOT platform_root) NOT VALID")
+    modes = {"O": "ENABLE", "D": "DISABLE", "R": "ENABLE REPLICA", "A": "ENABLE ALWAYS"}
+    for table, name, mode in state["guards"]:
+        cur.execute(f"ALTER TABLE public.{table} {modes[mode]} TRIGGER {name}")
 
 
 def restore_unset_check(cur):
