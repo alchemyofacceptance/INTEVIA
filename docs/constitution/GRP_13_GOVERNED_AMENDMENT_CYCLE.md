@@ -94,6 +94,22 @@ It may correct, clarify, extend, or supersede only within an explicitly authoris
 
 It may not erase the fact that a prior version existed.
 
+## Charter amendment authority
+
+The change process for the Free Will Charter and the CARE Constitutional Charter requires an accountable decision by INTEVIA's root.
+
+The title INTEVIA Founder & Steward belongs to Carmian Owen alone. It passes to no one. No successor, Guiding Steward or other office holder exercises the powers this section gives him.
+
+Before the Circle of Stewards functions, the Founder & Steward may authorise a charter change. If he has died or cannot act during that period, protected root changes are held and existing law stays in force.
+
+The Circle of Stewards functions for this purpose when it has at least three members and CQ is built and active. Once it functions, the Circle proposes a charter change and the Founder & Steward authorises it. He may withhold authorisation. The functioning Circle authorises alone after his death, during his confirmed incapacity, or after his recorded handover. Record which route applied, its evidence, the proposed text and the authorising decision. Ruling 109 supplies INTEVIA's participation settings.
+
+The Emergency Steward office carries no authority to propose on behalf of the Circle or to authorise a charter change.
+
+Ending either charter's constitutional protection requires an explicit ruling, made outside the software under this cycle; no route in the software ends it. While the Founder & Steward can act, only he may give that ruling. After his death, during his confirmed incapacity, or after his recorded handover, only the functioning Circle of Stewards may give it, as a collective decision.
+
+Preparation, ratification, adoption into LAW and downstream publication each keep their own evidence.
+
 ## Human Governance Rule
 
 The Human Governor remains the final authority for:

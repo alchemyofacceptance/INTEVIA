@@ -473,7 +473,7 @@ class LawActTests(TransactionTestCase):
                     cmd = command(actor, retirement)
                     refused = law.OrganismLawService().adopt_law(cmd)
                     self.assertEqual(refused.status, "REFUSED")
-                    self.assertIn("explicit ruling from the INTEVIA Founder & Steward", refused.message)
+                    self.assertIn("explicit ruling made outside this route, under GRP-13", refused.message)
                     receipt = models.OrganismCommandReceipt.objects.get(actor=actor, action="ADOPT_LAW",
                                                                          idempotency_key=cmd.idempotency_key)
                     decision = models.AuthorityDecision.objects.get(decision_reference=receipt.authority_decision_reference)

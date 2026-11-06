@@ -1,9 +1,4 @@
-"""Founder declaration and fail-closed boundary for the still-absent content-evidence interface.
-
-This module does not substitute upload/ownership/latest-editor fields for authorship.
-No publish is reported until exact-release authorship and independent LO permission
-interfaces can be implemented against authoritative domain records.
-"""
+"""Root declaration and exact-version LIBRARY publication; EDUCATION remains closed."""
 from hashlib import sha256
 from uuid import UUID
 from django.db import connections
@@ -36,7 +31,8 @@ def declare(*,credential,organism_uuid,request_uuid:UUID,accept_declaration:bool
         office=_office(alias,lo,actor,at)
         old=models.RootPublicationDeclaration.objects.using(alias).filter(living_organism=lo).first()
         if old:
-            if old.request_uuid==request_uuid and old.actor_id==actor.pk:return old
+            if old.request_uuid==request_uuid and old.actor_id==actor.pk:
+                return old
             raise PublicationRefused('R_DECLARATION_ALREADY_RECORDED','The standing declaration is already recorded. Changes require their own governed act.')
         return models.RootPublicationDeclaration.objects.using(alias).create(living_organism=lo,actor=actor,
             actor_access_epoch=actor.access_epoch,founder_office_id=office,authority_basis=lo.founding_authority_basis,
@@ -45,15 +41,22 @@ def declare(*,credential,organism_uuid,request_uuid:UUID,accept_declaration:bool
             request_uuid=request_uuid,effective_at=at,received_at=at)
 
 
-def publish_own(*,credential,organism_uuid,domain,version_id,alias='default'):
-    """Refuse until the designed exact-version content-evidence adapter exists; no publish side effect.
+def publish_own(*,credential,organism_uuid,domain,version_id,alias='default',request_uuid=None):
+    """The approved root exception: two facts on an exactly attributed LIBRARY version.
 
-    This is not a successful publication implementation. It deliberately exposes the
-    absent interface instead of accepting caller-asserted authors or permissions.
-    Ordinary content publication services remain on their existing authority routes.
+    Existing callers retain deterministic exact-version retry identity when they do
+    not supply a request UUID. The EDUCATION release interface remains unavailable.
     """
     if domain not in ('EDUCATION','LIBRARY'):
         raise PublicationRefused('R_PUBLICATION_SCOPE','The exception covers EDUCATION and LIBRARY only.')
+    if domain == 'LIBRARY':
+        if alias != 'default':
+            raise PublicationRefused('R_DATABASE_ROUTE_UNAVAILABLE','This LIBRARY publication route currently uses the configured default database only.')
+        from src.intevia.services.library_policy import publish_root, PolicyRefused
+        try:
+            return publish_root(credential=credential,organism_uuid=organism_uuid,version_id=version_id,request_uuid=request_uuid)
+        except PolicyRefused as refusal:
+            raise PublicationRefused('R_PUBLICATION_EVIDENCE_REQUIRED', str(refusal)) from refusal
     from src.intevia.services.root_continuity import publication_capacity, ContinuityRefused
     with circles.command_context(alias,credential,organism_uuid) as (lo,actor,at):
         try:
@@ -63,8 +66,4 @@ def publish_own(*,credential,organism_uuid,domain,version_id,alias='default'):
         declaration=models.RootPublicationDeclaration.objects.using(alias).filter(living_organism=lo,effective_at__lte=at,recorded_at__lte=at).first()
         if declaration is None:
             raise PublicationRefused('R_DECLARATION_REQUIRED','Record your standing declaration before using this publication exception.')
-        if domain=='EDUCATION':
-            raise PublicationRefused('R_COURSE_RELEASE_INTERFACE_MISSING','The EDUCATION domain does not yet expose the exact Course Release and its complete Session Version set. A CourseVersion row is not a substitute.')
-        if not models.LibraryResourceVersion.objects.using(alias).filter(pk=version_id).exists():
-            raise PublicationRefused('R_EXACT_VERSION_REQUIRED','The exact content version is not recorded.')
-        raise PublicationRefused('R_AUTHORSHIP_INTERFACE_MISSING','Publication is unavailable: the domain does not yet expose verified authorship for the exact resource version or every Session Version in the exact Course Release, together with required independent LO permission.')
+        raise PublicationRefused('R_COURSE_RELEASE_INTERFACE_MISSING','The EDUCATION domain does not yet expose the exact Course Release and its complete Session Version set. A CourseVersion row is not a substitute.')

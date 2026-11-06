@@ -1,6 +1,7 @@
 """Scoped LAW register reads for governed callers. P2 owns the command route."""
 
 from datetime import datetime
+import json
 from uuid import UUID
 
 from django.db import connections
@@ -16,8 +17,26 @@ def _coordinates(organism_uuid, at, known_at):
 
 
 def _records(cursor):
+    """Decode PostgreSQL JSON columns at the shared raw-cursor boundary.
+
+    Use type OIDs (json=114, jsonb=3802), not field names or text contents:
+    deliberate ::text projections and document text must remain strings.
+    SQL NULL, decoded mappings/lists and non-string scalars pass through unchanged.
+    """
     names = [column[0] for column in cursor.description]
-    return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
+    json_columns = {
+        index for index, column in enumerate(cursor.description)
+        if column[1] in (114, 3802)
+    }
+    return [
+        dict(zip(names, (
+            json.loads(value)
+            if index in json_columns and isinstance(value, (str, bytes, bytearray))
+            else value
+            for index, value in enumerate(row)
+        ), strict=True))
+        for row in cursor.fetchall()
+    ]
 
 
 def laws_in_force(organism_uuid, *, at=None, known_at=None, database_alias="default"):

@@ -1,6 +1,8 @@
+Status: Historical. Superseded by the authorised charter amendment authority in ../constitution/GRP_13_GOVERNED_AMENDMENT_CYCLE.md (LIB P1).
+
 # GRP-13 · proposed amendment on charter authority
 
-**Draft awaiting Carmian Owen’s authorisation.** This is a proposal to amend the governed amendment cycle. It has no operational effect or LAW record. Package L carries it for review. Ratification of a future amendment, its commit and any downstream publication follow the existing cycle. [GRP-13 Governed Amendment Cycle](GRP_13_GOVERNED_AMENDMENT_CYCLE.md)
+**Draft awaiting Carmian Owen’s authorisation.** This is a proposal to amend the governed amendment cycle. It has no operational effect or LAW record. Package L carries it for review. Ratification of a future amendment, its commit and any downstream publication follow the existing cycle. [GRP-13 Governed Amendment Cycle](../constitution/GRP_13_GOVERNED_AMENDMENT_CYCLE.md)
 
 ## Proposed addition
 

@@ -27,6 +27,21 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "lib-wrong-law-text-version": {
+        "follow_up": "LIB-01 recurring control",
+        "intended": "Our laws leaks the latest text into the historical binding version.",
+        "targets": ["test_library_laws.LibraryLawsTests.test_our_laws_exact_versions_at_two_cuts"],
+        "sql": ["""DO $mutation$
+DECLARE definition text; marker text := 'v.id=l.version';
+BEGIN
+ SELECT pg_get_functiondef('public.lib_laws_at(uuid,timestamptz,timestamptz)'::regprocedure)
+ INTO STRICT definition;
+ IF length(definition)-length(replace(definition,marker,''))<>length(marker) THEN
+   RAISE EXCEPTION 'LIB requires exactly one binding-version text join';
+ END IF;
+ EXECUTE replace(definition,marker,'v.id=r.current_version_id');
+END $mutation$"""],
+    },
     "l-overlapping-law-windows": {
         "follow_up": "L-01 G5 recurring control",
         "intended": "Two LAW versions of the same instrument in the same scope overlap.",
