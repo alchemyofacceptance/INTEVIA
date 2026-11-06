@@ -84,6 +84,9 @@ _ELECTION_COMMAND_DOMAIN = (
 _ELECTION_EVENT_DOMAIN = (
     b"INTEVIA:S015:EFFECT_ENTITLEMENT_ELECTION:EVENT:v1\x00"
 )
+# Derived by 0072 from an effective subscriber grant; historical grants stay immutable.
+DISCUSSION_CATEGORY_CAPABILITY = "DISCUSSION_CUSTOM_CATEGORIES"
+
 _BETA_CAPABILITY_CODES = frozenset(
     {
         "APPLICATION_CIRCLE",

@@ -27,6 +27,17 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 # Guardians the reset has always been required to find (0019/0020). Kept as a required
 # minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
+    "core_discpostact": "s015_discp_no_truncate",
+    "core_discthread": "s015_discp_no_truncate",
+    "core_discpost": "s015_discp_no_truncate",
+    "core_discpostversion": "s015_discp_no_truncate",
+    "core_discbody": "s015_discp_no_truncate",
+
+    "core_discboard": "s015_disc_no_truncate",
+    "core_discact": "s015_disc_no_truncate",
+    "core_disccategory": "s015_disc_no_truncate",
+    "core_disccategoryversion": "s015_disc_no_truncate",
+
     "core_guidingintention": "s015_gi_no_truncate",
     "core_giact": "s015_gi_no_truncate",
     "core_giversion": "s015_gi_no_truncate",
@@ -95,6 +106,17 @@ S015_TRUNCATE_GUARDIANS = {
 # Django's flush lists only model tables; these must be reset with them.
 # 0021: s015_transaction_register. 0022: part, content, resolution and severance ledger.
 S015_UNMODELLED_RESET_TABLES = (
+    "core_discpostact",
+    "core_discthread",
+    "core_discpost",
+    "core_discpostversion",
+    "core_discbody",
+
+    "core_discboard",
+    "core_discact",
+    "core_disccategory",
+    "core_disccategoryversion",
+
     "core_guidingintention",
     "core_giact",
     "core_giversion",

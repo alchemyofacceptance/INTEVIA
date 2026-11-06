@@ -27,6 +27,19 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "disc-free-category-cap": {
+        "follow_up": "DISC1-04 recurring control",
+        "intended": "A free board accepts its tenth custom category.",
+        "targets": ["test_discussion_boards.DiscussionBoardTests.test_free_cap_beta_exception_and_lapse_projection"],
+        "sql": ["""DO $mutation$
+DECLARE definition text; marker text := 'IF v_count>=9 AND NOT public.s015_entitlement_effective(v_lo,''DISCUSSION_CUSTOM_CATEGORIES'',v_stamp) THEN -- DISC_FREE_CAP';
+BEGIN
+ SELECT pg_get_functiondef('public.disc_input()'::regprocedure) INTO STRICT definition;
+ IF length(definition)-length(replace(definition,marker,''))<>length(marker) THEN
+   RAISE EXCEPTION 'DISC1 requires exactly one cap predicate'; END IF;
+ EXECUTE replace(definition,marker,'IF false THEN -- DISC_FREE_CAP');
+END $mutation$"""],
+    },
     "gi-law-in-force-required": {
         "follow_up": "GI-01 recurring control",
         "intended": "A GI is recorded without any qualifying law in force.",
