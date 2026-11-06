@@ -27,6 +27,21 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "gi-law-in-force-required": {
+        "follow_up": "GI-01 recurring control",
+        "intended": "A GI is recorded without any qualifying law in force.",
+        "targets": ["test_guiding_intentions.GuidingIntentionTests.test_exact_local_law_required_for_lo_and_circle"],
+        "sql": ["""DO $mutation$
+DECLARE definition text; marker text := 'RETURN v_total>0 AND v_valid=v_total AND v_local>0; -- GI_LOCAL_LAW_REQUIRED';
+BEGIN
+ SELECT pg_get_functiondef('public.gi_laws_ok(uuid,bigint,jsonb,timestamptz,timestamptz)'::regprocedure)
+ INTO STRICT definition;
+ IF length(definition)-length(replace(definition,marker,''))<>length(marker) THEN
+   RAISE EXCEPTION 'GI requires exactly one local-law predicate';
+ END IF;
+ EXECUTE replace(definition,marker,'RETURN true; -- GI_LOCAL_LAW_REQUIRED');
+END $mutation$"""],
+    },
     "lib-wrong-law-text-version": {
         "follow_up": "LIB-01 recurring control",
         "intended": "Our laws leaks the latest text into the historical binding version.",
