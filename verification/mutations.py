@@ -38,11 +38,11 @@ MUTATIONS = {
                    DROP CONSTRAINT l_one_version_per_scope,
                    ADD CONSTRAINT l_one_version_per_scope EXCLUDE USING gist
                    (numrange(resource_id::numeric,resource_id::numeric,'[]') WITH &&,
-    int4range((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),
-              (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),'[]') WITH &&,
-    numrange((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,
-             (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,'[]') WITH &&,
-    tstzrange(in_force_from,in_force_until,'[)') WITH &&)
+                    int4range((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),
+                              (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN 1 ELSE 2 END),'[]') WITH &&,
+                    numrange((CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,
+                             (CASE scope_kind WHEN 'PLATFORM' THEN 0 WHEN 'CIRCLE' THEN scope_circle_id ELSE organism_id END)::numeric,'[]') WITH &&,
+                    tstzrange(in_force_from,in_force_until,'[)') WITH &&)
                    WHERE (false) DEFERRABLE INITIALLY DEFERRED"""],
     },
     "r-nomination-without-activation": {
