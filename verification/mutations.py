@@ -27,6 +27,19 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "cq-default-tie-refusal": {
+        "follow_up": "DISC2-11 recurring control",
+        "intended": "A quorate default tie incorrectly qualifies.",
+        "targets": ["test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases"],
+        "sql": ["""DO $mutation$
+DECLARE definition text; marker text := 'IF p_yes=p_no THEN v_kind:=''NOT_QUALIFIED_TIE''; -- CQ_DEFAULT_TIE';
+BEGIN
+ SELECT pg_get_functiondef('public.cq_count_decision(jsonb,integer,integer,integer,integer)'::regprocedure) INTO STRICT definition;
+ IF length(definition)-length(replace(definition,marker,''))<>length(marker) THEN
+   RAISE EXCEPTION 'DISC2 requires exactly one tie-result marker'; END IF;
+ EXECUTE replace(definition,marker,'IF p_yes=p_no THEN v_kind:=''QUALIFIED''; -- CQ_DEFAULT_TIE');
+END $mutation$"""],
+    },
     "disc-free-category-cap": {
         "follow_up": "DISC1-04 recurring control",
         "intended": "A free board accepts its tenth custom category.",

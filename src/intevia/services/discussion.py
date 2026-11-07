@@ -21,6 +21,12 @@ from src.intevia.services.organism_entitlement_service import (
 
 UNAVAILABLE = "This discussion is unavailable to you."
 MESSAGES = {
+    "CQ_WINDOW_LOCKED": "The Clarity window has ended. Its Coordinator can extend it. To change the wording otherwise, start a new Suggestion.",
+    "CQ_EDIT_DUE": "The response period has ended and CQ catch-up is due. To change the wording, start a new Suggestion.",
+    "CQ_CLOSED_LOCKED": "This Suggestion closed without a vote. To change its wording, start a new Suggestion.",
+    "CQ_RESPONSE_DUE": "The Coordinator response period has ended. Run CQ catch-up to record the rule outcome.",
+    "CQ_VOTE_LOCKED": "This wording is locked because voting has opened. Start a new Suggestion to change it.",
+    "CQ_LOCKED": "This wording is locked because clarity was reached on it. Start a new Suggestion to change it.",
     "DISC_POST_INPUT": "Supply a title of 1 to 90 characters, a topic, question or suggestion type, and Markdown text.",
     "DISC_POST_AUTHORITY": "You do not have permission to perform this act on this discussion. Suspended and restricted members cannot change discussions.",
     "DISC_CATEGORY_RETIRED": "This category is retired. Its history remains readable, but it accepts no new topics or replies.",

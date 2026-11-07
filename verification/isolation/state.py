@@ -131,6 +131,8 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0071_guiding_intentions": {"core_governedrule": 3},
     "0072_discussion_boards": {"core_governedrule": 3},
     "0073_discussion_posts": {"core_governedrule": 3},
+    "0075_cq_decisions": {"core_governedrule": 3, "core_cqreportingdefault": 1},
+    "0074_cq_clarity": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0066_law_records": {"core_governedrule": 3},
 }
 LEDGER_TABLES = ("django_migrations",)
@@ -183,7 +185,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0070_law_route_parameter_qualification": 596,
                           "0071_guiding_intentions": 613,
                           "0072_discussion_boards": 630,
-                          "0073_discussion_posts": 651}  # 20 register and 11 operation triggers; VC measures on PG17
+                          "0073_discussion_posts": 651,
+                          "0074_cq_clarity": 660, "0075_cq_decisions": 663}  # 20 register and 11 operation triggers; VC measures on PG17
 # Non-core contributions, keyed by exact (app_label, migration_name).
 # email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)
 # and ema_template_truncate_immutable (TRUNCATE), both on

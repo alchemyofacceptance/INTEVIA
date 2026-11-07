@@ -27,6 +27,8 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 # Guardians the reset has always been required to find (0019/0020). Kept as a required
 # minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
+    "core_cqreportingdefault": "s015_cq_default_no_truncate",
+    "core_cqact": "s015_cq_no_truncate",
     "core_discpostact": "s015_discp_no_truncate",
     "core_discthread": "s015_discp_no_truncate",
     "core_discpost": "s015_discp_no_truncate",
@@ -106,6 +108,8 @@ S015_TRUNCATE_GUARDIANS = {
 # Django's flush lists only model tables; these must be reset with them.
 # 0021: s015_transaction_register. 0022: part, content, resolution and severance ledger.
 S015_UNMODELLED_RESET_TABLES = (
+    "core_cqreportingdefault",
+    "core_cqact",
     "core_discpostact",
     "core_discthread",
     "core_discpost",
@@ -146,6 +150,7 @@ S015_MIGRATION_SEEDS = (
     ("core.migrations.0003_seed_triad_roles", "create_triad_roles"),
     ("core.migrations.0045_sbg_governance_formation", "restore_platform_rules"),
     ("core.migrations.0046_se_entitlement_foundation", "restore_entitlement_rules"),
+    ("core.migrations.0074_cq_clarity", "restore_reporting_default"),
 )
 
 _TRUNCATE_TRIGGER_BIT = 32  # pg_trigger.tgtype TRUNCATE event bit

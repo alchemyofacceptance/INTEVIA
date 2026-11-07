@@ -9,6 +9,7 @@ from uuid import UUID
 
 from django.db import IntegrityError, transaction
 
+from src.intevia.services import cq_reads
 from src.intevia.services import discussion as disc
 
 
@@ -33,9 +34,24 @@ def _command(*, credential, organism_uuid, category_uuid, thread_uuid, request_u
             stamp = disc._rows("SELECT statement_timestamp() AS stamp")[0]["stamp"]
             result = disc._rows("SELECT public.discp_execute(%s::jsonb,%s,%s,%s,%s) AS result",
                                [json.dumps(payload), markdown, actor.pk, actor.access_epoch, stamp])[0]["result"]
-            return {key: UUID(value) if value is not None else None for key, value in result.items()}
+            receipt = {key: UUID(value) if value is not None else None for key, value in result.items()}
+            if operation == "EDIT" and _edited_during_clarity(receipt):
+                receipt["clarity_notice"] = "The wording has changed. Clarity must be confirmed again on this version."
+            return receipt
     except IntegrityError as exc:
         disc.translate_refusal(exc)
+
+
+def _edited_during_clarity(receipt):
+    # Bind the notice to the original edit, including on replay after closure.
+    rows = disc._rows("""SELECT 1 FROM public.core_discpost p
+      JOIN public.core_livingorganismevent edit ON edit.event_uuid=%s
+      JOIN LATERAL (SELECT a.facts->>'phase' AS phase FROM public.core_cqact a
+        JOIN public.core_livingorganismevent event ON event.event_uuid=a.act_uuid
+        WHERE a.thread_uuid=p.thread_uuid AND a.facts ? 'phase' AND event.sequence<edit.sequence
+        ORDER BY a.ordinal DESC LIMIT 1) prior ON prior.phase='CLARITY'
+      WHERE p.post_uuid=%s AND p.post_number=1""", [receipt["act"], receipt["post"]])
+    return bool(rows)
 
 
 def start_topic(*, credential, organism_uuid, category_uuid, thread_uuid, post_uuid, request_uuid,
@@ -166,6 +182,9 @@ def read_thread(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
         topic = disc._rows("SELECT * FROM public.discp_threads WHERE thread_uuid=%s", [thread_uuid])[0]
         if posts[0]["topic_hidden"] and not coordinator:
             topic["title"] = None
+        results = cq_reads._thread_results(board["board_uuid"], thread_uuid, coordinator or not posts[0]["topic_hidden"])
+        if results:
+            posts = sorted([*posts, *results], key=lambda post: post["post_number"])
         return {"topic": topic, "posts": posts, "category_retired": category["retired"]}
 
 
