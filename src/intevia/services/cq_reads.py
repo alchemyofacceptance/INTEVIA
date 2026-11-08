@@ -8,6 +8,7 @@ from src.intevia.services.law_records import _records
 RESULT_LABELS = {
     "QUALIFIED": "Qualified.",
     "NOT_QUALIFIED_VOTE": "Not Qualified.",
+    "NO_DECISION_SLATE_CHANGED": "A candidate withdrew. A fresh election is required.",
     "NOT_QUALIFIED_TIE": "Not Qualified. The vote was tied.",
     "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION": "Insufficient participation. No decision was reached.",
     "NO_DECISION_FEWER_THAN_THREE": "Fewer than three eligible members remained. No decision was reached.",
@@ -69,7 +70,7 @@ def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
 # Explicit projection: the private opening roster, individual input acts and
 # commitment salts are never returned. Totals-only result facts contain no names.
 _RESULT = """SELECT a.act_uuid AS post_uuid,a.thread_uuid,(a.facts->>'post_number')::integer AS post_number,
- a.facts->'invalid_provisions' AS invalid_provisions, a.facts->'ballot' AS ballot,a.facts->'attempt' AS attempt,a.facts->'count' AS count,
+ a.facts->>'event_kind' AS event_kind, a.facts->'invalid_provisions' AS invalid_provisions, a.facts->'ballot' AS ballot,a.facts->'attempt' AS attempt,a.facts->'count' AS count,
  a.facts->'reporting_rule' AS reporting_rule,a.facts->'group_gaze' AS participants,
  a.facts->'opened_at' AS opened_at,a.facts->'deadline' AS deadline,a.facts->'closed_at' AS closed_at,
  a.facts->'settled_at' AS settled_at,a.facts->'restart' AS restarted,
@@ -94,7 +95,7 @@ def _present(row):
     if count["kind"] != "NO_DECISION_PROVISION_ENDED":
         row.pop("invalid_provisions")
     row["post_type"] = "GROUP_GAZE"
-    row["event_kind"] = "DECISION"
+    row["event_kind"] = row.get("event_kind") or "DECISION"
     row["hidden"] = False
     if row["ballot"] is None:
         row.pop("participants")
@@ -106,12 +107,19 @@ def _present(row):
                 f" {count['clarity_confirmed']} of {count['clarity_eligible']} confirmed clarity."
                 f" {count['clarity_required']} confirmations were required."
             )
-        row["reporting_link_label"] = "View reporting decision"
+        row["reporting_link_label"] = "Election ballot privacy" if row["event_kind"] == "ELECTION" else "View reporting decision"
         return row
     row["markdown"] = (
         f"{RESULT_LABELS[count['kind']]} {count['participated']} of "
         f"{count['eligible']} eligible took part. {count['required']} required."
     )
+    if row["event_kind"] == "ELECTION":
+        row.pop("participants", None)
+        row["reporting_link_label"] = "Election ballot privacy"
+        row["post_type"] = "GROUP_GAZE"
+        if count.get("winner"):
+            row["markdown"] += f" Elected member: {count['winner']}."
+        return row
     if row["reporting_rule"]["value"] == "TOTALS_ONLY":
         row.pop("participants")
         row["reporting_link_label"] = "Names not shown · View reporting decision"
@@ -220,6 +228,8 @@ def reporting_decision(
     if not rows:
         raise disc.DiscussionUnavailable()
     rule, circle = rows[0]["rule"], rows[0]["circle_id"]
+    if rule.get("origin") == "ELECTION":
+        return rule
     version = rule["version"]
     owner = board["organism_id"]
     if rule.get("origin") == "CONSTITUTION":
@@ -263,7 +273,8 @@ def vote_status(
     *, credential, organism_uuid, thread_uuid, ballot_uuid=None, circle_uuid=None
 ):
     """The latest or exact ballot. Before settlement the only live figures concern participation."""
-    board = _scope(disc._actor(credential), organism_uuid, circle_uuid, thread_uuid)
+    actor = disc._actor(credential)
+    board = _scope(actor, organism_uuid, circle_uuid, thread_uuid)
     if ballot_uuid is not None:
         disc._read_uuid(ballot_uuid)
     rows = disc._rows(
@@ -296,6 +307,13 @@ def vote_status(
         raise disc.DiscussionUnavailable()
     status = rows[0]
     read_at = status.pop("read_at")
+    if status["event_kind"] == "ELECTION":
+        receipts = disc._rows(
+            """SELECT act_uuid AS receipt FROM public.core_cqact
+               WHERE operation='ANSWER' AND request->>'ballot'=%s AND actor_id=%s""",
+            [str(status["ballot"]), actor.pk],
+        )
+        status["own_receipt"] = receipts[0]["receipt"] if receipts else None
     if status["result_uuid"] is not None:
         status["phase"] = "RESULT"
         status["result"] = _result(
@@ -394,6 +412,13 @@ def implementation_record(
         SELECT i.act_uuid AS implementation,i.authority_source,
                i.facts->'domain_plan'->>'domain' AS domain,
                g.act_uuid AS gi_act,g.version_uuid AS gi_version,
+               CASE WHEN i.facts->'domain_plan'->>'domain'='ELECTION' THEN jsonb_build_object(
+                   'result',i.request->'result','ballot',i.facts->'domain_plan'->'ballot',
+                   'winner',i.facts->'domain_plan'->'winner'->'person','nomination',i.facts->'domain_plan'->'winner'->'nomination',
+                   'consent',i.facts->'domain_plan'->'winner'->'consent','place',i.facts->'domain_plan'->'place',
+                   'body',i.facts->'domain_plan'->'body','binding',i.facts->'domain_plan'->'binding',
+                   'version',i.facts->'domain_plan'->'law_version','provision',i.facts->'domain_plan'->'provision',
+                   'start',i.facts->'domain_plan'->'start','end',i.facts->'domain_plan'->'end') END AS election,
                l.binding_uuid AS adopted_binding,ending.binding_id AS ended_binding,
                p.permission_uuid AS release_permission,p.authority_source AS permission_source,
                f.fact_uuid AS publication,s.act_uuid AS settings_version,

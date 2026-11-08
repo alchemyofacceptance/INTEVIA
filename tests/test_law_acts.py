@@ -42,7 +42,7 @@ def adoption(lo, doc, law_class="POLICY"):
                            operation="ADOPT", intent="ADOPT", law_class=law_class, version=1)
 
 
-def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0):
+def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elected=()):
     """Use the existing registration, founding, gateway, phases and Birthing commands."""
     tag = uuid4().hex
     founder = support.register_test_learner(username="law-founder-" + tag)
@@ -85,7 +85,7 @@ def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0):
             occurred_at=at, effective_at=at, request_reference="effect:" + key, idempotency_key=key))
     if board_seats:
         from tests.cq_authority_support import form_board
-        form_board(lo, founder, board_seats)
+        form_board(lo, founder, board_seats, elected)
     phase("GERMINATING", "BIRTHING")
     text = "Disposable L rehearsal offering. The founder elects the complimentary beta package."
     digest = sha256(text.encode()).hexdigest()

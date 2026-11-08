@@ -1466,6 +1466,7 @@ class OrganismMembershipService(_OrganismCommandService):
         existing_ending_ids = set(
             CircleParticipationEnd.objects.using(self._alias)
             .filter(participation_id__in=[item.pk for item in participations])
+            .exclude(composing_rule_reference__startswith="elect-term:", effective_at__gt=effective_at)
             .values_list("participation_id", flat=True)
         )
         composing_rule = GovernedRule.objects.using(self._alias).get(

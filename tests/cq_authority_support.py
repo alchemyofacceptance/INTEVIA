@@ -38,7 +38,7 @@ def command_args(lo, actor):
     }
 
 
-def form_board(lo, founder, size):
+def form_board(lo, founder, size, elected=()):
     service = governance.OrganismGovernanceService(
         authority=authority(), clock=support.database_now
     )
@@ -49,8 +49,8 @@ def form_board(lo, founder, size):
         {
             "seat_id": f"trustee-{number}",
             "eligibility": "LO_MEMBER",
-            "admission_route": "APPOINTMENT",
-            "deciding_body": "office:LO_COORDINATOR",
+            "admission_route": "ELECTION" if number in elected else "APPOINTMENT",
+            "deciding_body": "body:LO_MEMBERSHIP" if number in elected else "office:LO_COORDINATOR",
             "term": None,
             "vacancy_rule": "BY_SEAT_ROUTE",
             "effective_from": at.isoformat(),

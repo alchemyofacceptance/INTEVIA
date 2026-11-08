@@ -1566,13 +1566,25 @@ class ProductionApplicationAuthorityProvider:
         ) != "ACTIVE":
             return self._refuse(request, S015AuthorityRefusalCode.DENIED)
 
+        # A current constitutional vacancy can name an individual officeholder.
+        # All membership, consent, participation and decision checks still apply.
+        vacancy = None
+        if event_action == "ASSIGN" and role.kind == "BOARD_OFFICE" and request.request_reference.startswith("elect-vacancy:"):
+            with connections[self.database_alias].cursor() as cur:
+                cur.execute("SELECT to_regprocedure('public.elect_named_appointment(bigint,bigint,bigint,timestamptz,timestamptz)') IS NOT NULL")
+                if cur.fetchone()[0]:
+                    cur.execute("SELECT public.elect_named_appointment(%s,%s,%s,%s,%s)",
+                                [organism.pk, role.pk, request.actor_pk, request.effective_at, request.evaluated_at])
+                    vacancy, = cur.fetchone()
+            if vacancy is None or request.request_reference != f"elect-vacancy:{vacancy}":
+                return self._refuse(request, S015AuthorityRefusalCode.DENIED)
         alternative_route = False
         if event_action == "ASSIGN" and role.code != "COORDINATOR":
             if role.appointing_authority == "NAMED_BODY":
                 alternative_route = bool(role.alternative_route_reference) and role.provisions.filter(
                     relationship="ALTERNATIVE_ROUTE",
                 ).exists()
-                if not alternative_route:
+                if not alternative_route and vacancy is None:
                     return self._refuse(request, S015AuthorityRefusalCode.C_APPOINTING_ROUTE_NOT_IMPLEMENTED)
             elif role.appointing_authority != "LO_COORDINATOR_BODY":
                 return self._refuse(request, S015AuthorityRefusalCode.C_APPOINTING_ROUTE_NOT_IMPLEMENTED)
@@ -1580,7 +1592,7 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOMINEE_NOT_ELIGIBLE)
 
         holder_act = actor_membership.pk == nominee.pk
-        if not volunteering and (event_action != "END" or not holder_act):
+        if vacancy is None and not volunteering and (event_action != "END" or not holder_act):
             office = self._effective_coordinator_office(request, actor_membership)
             if office is None:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
@@ -1602,7 +1614,7 @@ class ProductionApplicationAuthorityProvider:
             )
             if current_config is not None and current_config.cq_active is True:
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
-        if configuration is not None and configuration.cq_active is True:
+        if configuration is not None and configuration.cq_active is True and vacancy is None:
             return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
 
         facts: dict[str, object] = {

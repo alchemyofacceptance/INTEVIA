@@ -27,6 +27,19 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "elect-result-person-seat": {
+        "follow_up": "ELECT-05 recurring control",
+        "intended": "A qualified election authorises someone else or another place.",
+        "targets": ["test_elections.ElectionTests.test_result_authorises_exact_person_and_place"],
+        "sql": ["""DO $fault$
+DECLARE original text; changed text; marker text:='AND d.plan->''winner''->>''person''=p_person::text AND d.plan->>''place''=p_place -- ELECT_EXACT_PERSON_PLACE';
+BEGIN
+ SELECT pg_get_functiondef('public.elect_authorises(uuid,bigint,uuid,text,timestamptz,timestamptz)'::regprocedure) INTO STRICT original;
+ IF strpos(original,marker)=0 THEN RAISE EXCEPTION 'Missing ELECT person and place discriminator'; END IF;
+ changed:=replace(original,marker,'AND true -- deliberate loss of exact person and place');
+ EXECUTE changed;
+END $fault$;"""],
+    },
     "cq-settings-result-reference": {
         "follow_up": "DISC4-01 recurring control",
         "intended": "The voted settings version cites itself instead of its qualifying result.",

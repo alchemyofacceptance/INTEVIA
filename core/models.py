@@ -5916,7 +5916,7 @@ class CircleAdmissionDecision(_S015AppendOnly):
     route = models.CharField(max_length=32)
     constitutional_route = models.CharField(max_length=32)
     deciding_party = models.CharField(max_length=64)
-    deciding_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+")
+    deciding_identity = models.ForeignKey(Identity, on_delete=models.PROTECT, related_name="+", null=True, blank=True)
     self_decision = models.BooleanField()
     outcome = models.CharField(max_length=16)
     authority_decision_reference = models.CharField(max_length=71)
@@ -5973,6 +5973,12 @@ class CircleAdmissionDecision(_S015AppendOnly):
                                deciding_party="office:CIRCLE_COORDINATOR", outcome__in=("ACCEPT", "DECLINE"))
                     | models.Q(route="APPLICATION_MODE", constitutional_route="APPLICATION",
                                deciding_party="APPLICANT", outcome="WITHDRAWN")
+                ) & models.Q(deciding_identity__isnull=False) | models.Q(
+                    route="GOVERNANCE_CONSTITUTIONAL", constitutional_route="ELECTION",
+                    deciding_party="body:LO_MEMBERSHIP", deciding_identity__isnull=True, outcome="ACCEPT",
+                ) | models.Q(
+                    route="GOVERNANCE_CONSTITUTIONAL", constitutional_route="COOPTION",
+                    deciding_party="body:GOVERNANCE", deciding_identity__isnull=True, outcome="ACCEPT",
                 ),
                 name="sbg_circledecision_route_shape_ck",
             ),
@@ -6060,7 +6066,7 @@ class CircleParticipation(_S015AppendOnly):
 
 
 class CircleParticipationEnd(_S015AppendOnly):
-    participation = models.OneToOneField(CircleParticipation, on_delete=models.PROTECT, related_name="+")
+    participation = models.ForeignKey(CircleParticipation, on_delete=models.PROTECT, related_name="+")
     actor_state = models.CharField(max_length=24)
     actor = models.ForeignKey(
         Identity,
@@ -6102,6 +6108,10 @@ class CircleParticipationEnd(_S015AppendOnly):
 
     class Meta:
         constraints = [
+            models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="elect-term:"),
+                                    name="elect_one_scheduled_end"),
+            models.UniqueConstraint(fields=("participation",), condition=~models.Q(composing_rule_reference__startswith="elect-term:"),
+                                    name="elect_one_other_end"),
             models.CheckConstraint(
                 condition=models.Q(
                     actor_state="NONE",

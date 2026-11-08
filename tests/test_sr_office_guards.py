@@ -445,6 +445,14 @@ class SROfficeFixture:
             action="ASSIGN", prior_state="PROPOSED", resulting_state="ACTIVE", at=at, tag=tag, decision=decision,
         )
 
+    @staticmethod
+    def _election_guard_bodies():
+        election = import_module("core.migrations.0079_elect_and_seat")
+        return {
+            election.name(new): new.split(" AS $$", 1)[1].rsplit("$$;", 1)[0]
+            for _, new in election.other_edits()
+        }
+
     def _installed_body(self, function_name):
         with connection.cursor() as cur:
             cur.execute(
@@ -586,9 +594,9 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
 
         body = self._installed_body("s2b_guard_office_attribution")
         root = import_module("core.migrations.0062_root_genesis")
-        installed = {signature: revised for signature, prior, revised in root.bodies()}
-        self.assertEqual(body, installed["public.s2b_guard_office_attribution()"],
-                         msg="The attribution safeguard must include precisely the 0062 GENESIS exception.")
+        self.assertEqual(body, self._election_guard_bodies()["s2b_guard_office_attribution"],
+                         msg="The installed attribution safeguard must match its 0079 body.")
+        self.assertIn(root.OFFICE_BRANCH, body, msg="The complete 0062 GENESIS office exception must survive.")
         self.assertEqual(body.count("           AND v_role_code = 'COORDINATOR'\n"), 1, msg="The founding self-appointment branch should retain exactly one Coordinator condition; that condition is missing or repeated.")
         self.assertIn(
             "    IF NEW.action IN ('END', 'REASSIGN')\n"
@@ -863,6 +871,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         """The installed office guards and populated 0052 veto survive at the received head."""
         from verification.isolation.state import NON_CORE_TRIGGER_DELTAS, REQUIRED_TRIGGER_COUNT
         migration = import_module("core.migrations.0052_sr_office_guard_widening")
+        guards = self._election_guard_bodies()
         safeguard = import_module("core.migrations.0053_sr_office_safeguards")
         root = import_module("core.migrations.0062_root_genesis")
         installed = {signature: revised for signature, prior, revised in root.bodies()}
@@ -872,8 +881,8 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The installed definition-update safeguard must retain its 0053 body.")
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertIn(("core", HEAD_0052), applied, msg="The migration history should retain 0052 beneath 0053; its record is missing.")
-        self.assertEqual(at_head["attribution"], installed["public.s2b_guard_office_attribution()"], msg="The installed attribution safeguard must match its 0062 body.")
-        self.assertEqual(at_head["consent"], migration.NEW_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="The installed consent safeguard must retain its 0052 body.")
+        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0079 body.")
+        self.assertEqual(at_head["consent"], guards["s2b_guard_assign_consent"], msg="The installed consent safeguard must match its 0079 body.")
         expected = REQUIRED_TRIGGER_COUNT[at_head["head"]] + sum(
             delta for key, delta in NON_CORE_TRIGGER_DELTAS.items() if key in applied
         )

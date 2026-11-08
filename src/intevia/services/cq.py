@@ -21,6 +21,24 @@ CLARITY_STAGE = {
     "Off: the vote opens by rule after preparation, and every eligible member may vote.",
 }
 
+ELECTION_METHOD_MESSAGES = {
+    "ELECT_METHOD_ROUTES": "The office definition and the cited provision give different nomination routes. Reconcile them before calling the election.",
+    "ELECT_METHOD_PLACE": "The cited provision must identify a supported electoral place, either a seat or an office.",
+    "ELECT_METHOD_FIELDS": "The cited electoral provision contains an unsupported field. Review the provision before calling the election.",
+    "ELECT_METHOD_COUNT_FIELDS": "Supply the counting instructions as an object containing only supported counting fields.",
+    "ELECT_METHOD_COUNT": "This counting method is unsupported. Hold the election before opening.",
+    "ELECT_METHOD_NOMINATION": "The cited nomination route is unsupported. Review who may nominate for this place.",
+    "ELECT_METHOD_TERM": "Review the term. Supply an end and any start with a time zone, with the end after the start or current time.",
+    "ELECT_METHOD_VALUE": "A value in the cited provision cannot be read. Check the representation of the provision and its dates.",
+    "ELECT_METHOD_WAIVER": "The electoral minimum-participation waiver must be true or false.",
+    "ELECT_METHOD_ABSTENTION": "The electoral abstention rule must be true or false.",
+    "ELECT_METHOD_BASE": "Specify a supported basis for counting votes under the cited provision.",
+    "ELECT_METHOD_TIE": "Specify the supported rule for a tied election under the cited provision.",
+    "ELECT_METHOD_QUORUM": "Review the electoral participation rule, its value and any minimum waiver in the cited provision.",
+    "ELECT_METHOD_THRESHOLD": "Review the qualification threshold and any fraction in the cited electoral provision.",
+}
+
+
 MESSAGES = {
     "CQ_SETTINGS_WORDING": "The attached wording differs from the proposed settings. Attach the exact change again.",
     "CQ_SETTINGS_REFERRAL": "Use the exact settings motion that closed below three eligible members. A Coordinator who declared a conflict cannot decide it.",
@@ -84,6 +102,35 @@ MESSAGES = {
     "CQ_CONFLICT_BASIS": "Supply the basis of your declared conflict.",
     "CQ_REQUEST": "This request identity already records a different CQ act.",
     "CQ_INPUT": "Supply exact CQ references and the fields required for this act.",
+    "ELECT_CITATION": "Cite the constitutional provision and version for this place, or enter the constitution in LIBRARY.",
+    **ELECTION_METHOD_MESSAGES,
+    "ELECT_GOVERNANCE": "Check the recorded Birthing choice and effective GOVERNANCE configuration before calling this election.",
+    "ELECT_GRANT_BODY": "Only the competent Board can adopt this transfer Policy.",
+    "ELECT_GRANT_SCOPE": "Identify one exact power, its holder, recipient and constitutional provision.",
+    "ELECT_GRANT_LAW": "Cite a current provision authorising this transfer, including a membership decision for a reserved power.",
+    "ELECT_GRANT_STALE": "The power has a different holder or predecessor. Review its latest transfer.",
+    "ELECT_GRANT_SAME": "This body already holds the named power.",
+    "ELECT_GRANT_RECIPIENT": "Choose an existing eligible Circle of this organisation or return the power to its constitutional holder.",
+    "ELECT_VACANCY_SOURCE": "Choose a recorded, effective vacancy for an operative election.",
+    "ELECT_VACANCY_HOLD": "The vacancy is recorded. Obtain direction on the constitutional route before filling it.",
+    "ELECT_VACANCY_ROUTE": "Use the filling route and body named for this vacancy.",
+    "ELECT_VACANCY_BOARD": "The constitution requires an active GOVERNANCE Board for this vacancy.",
+    "ELECT_VACANCY_USED": "This vacancy already has a call. Follow its recorded journey.",
+    "ELECT_VACANCY_APPOINTER": "Only the constitutionally named appointing authority may fill this vacancy.",
+    "ELECT_VACANCY_NOMINEE": "A Board appointment decides one consenting nominee. Resolve the slate before opening.",
+    "ELECT_VACANCY_LINK": "This place has a recorded vacancy. Start from its filling instruction.",
+    "ELECT_CALL": "This body cannot call this election. Use the authority named for this seat.",
+    "ELECT_NOMINATION": "This seat uses a different nomination route. Follow the cited provision.",
+    "ELECT_CANDIDATE": "Choose an eligible member for this place and cite their office proposal where required.",
+    "ELECT_SLATE_LOCKED": "The nomination window for this act has closed. Check the current election phase.",
+    "ELECT_OWN": "Only the nominee can consent to or withdraw this nomination.",
+    "ELECT_DUPLICATE": "This nomination or response is already recorded.",
+    "ELECT_EMPTY": "No eligible candidate has consented. Return to nominations.",
+    "ELECT_CHANGED": "The list changed. Review the slate and call a fresh election.",
+    "ELECT_CHOICE": "Choose a candidate on this ballot, or use a permitted confirmation or abstention.",
+    "ELECT_OCCUPIED": "This place is occupied. Review its recorded term before calling another election.",
+    "ELECT_RESULT": "This result does not authorise this person for this place. Use the applicable result.",
+    "ELECT_TERM": "This prospective succession needs the term-continuity route. Hold it for that route.",
     "CQ_COMPLETE": "The CQ act could not complete with its authority and complete lineage. No changes were committed.",
 }
 
@@ -384,7 +431,9 @@ def catch_up(*, credential):
               ORDER BY lo.organism_id,h.thread_uuid""",
                 [actor.pk],
             )
-        changed = False
+        from src.intevia.services.elections import catch_up_vacancies
+
+        changed = catch_up_vacancies(credential=credential)
         for item in due:
             with transaction.atomic():
                 actor = disc._actor(credential)
@@ -410,16 +459,25 @@ def catch_up(*, credential):
                     [item["thread_uuid"], item["act_uuid"], actor.pk],
                 )
                 if rows:
-                    _execute(
-                        actor,
-                        item["owner"],
-                        item["board_uuid"],
-                        item["thread_uuid"],
-                        operation,
-                        key,
-                        args,
-                        received,
-                    )
+                    try:
+                        with transaction.atomic():
+                            _execute(
+                                actor,
+                                item["owner"],
+                                item["board_uuid"],
+                                item["thread_uuid"],
+                                operation,
+                                key,
+                                args,
+                                received,
+                            )
+                    except IntegrityError as error:
+                        code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
+                        if code in ELECTION_METHOD_MESSAGES or code in {"ELECT_EMPTY", "ELECT_CHANGED", "ELECT_CITATION",
+                                    "ELECT_OCCUPIED", "ELECT_TERM", "ELECT_GOVERNANCE", "ELECT_VACANCY_BOARD",
+                                    "ELECT_VACANCY_LINK", "ELECT_VACANCY_NOMINEE", "ELECT_VACANCY_ROUTE", "ELECT_VACANCY_HOLD"}:
+                            continue
+                        raise
                     changed = True
         return "Due work recorded." if changed else "Nothing is due."
     except IntegrityError as exc:

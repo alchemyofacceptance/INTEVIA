@@ -315,6 +315,8 @@ def _authored_refusal_message(
         route = detail or "the founding route, which ends when the LO is born"
         if ":" in route:
             seat_id, route = route.split(":", 1)
+        if route == "election":
+            return with_tail(f"Nobody was seated{opening_end} Seat {seat_id} requires a members’ election. Cite the constitutional provision and call the election.")
         return with_tail(
             f"Nobody was seated{opening_end} Seat {seat_id} is filled by {route}. Use a seat "
             "the LO Coordinators appoint, or wait for that route."
@@ -2901,7 +2903,7 @@ class OrganismGovernanceService:
             ending = CircleParticipationEnd.objects.using(self._alias).filter(
                 participation=participation,
                 recorded_at__lte=received_at,
-            ).first()
+            ).order_by("effective_at", "pk").first()
             if ending is None or ending.effective_at > effective_at:
                 self._refuse(S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED, seat_id, act=act, opening_end=opening_end, tail=tail)
 
@@ -2913,7 +2915,7 @@ class OrganismGovernanceService:
             ending = CircleParticipationEnd.objects.using(self._alias).filter(
                 participation=participation,
                 recorded_at__lte=received_at,
-            ).first()
+            ).order_by("effective_at", "pk").first()
             if ending is None or ending.effective_at > effective_at:
                 self._refuse(S015AuthorityRefusalCode.SBG_ALREADY_SEATED, None, act=act, opening_end=opening_end, tail=tail)
         return circle, rule
@@ -3150,7 +3152,7 @@ class OrganismGovernanceService:
                 )
             if admission_route != "APPOINTMENT" or deciding_body != "office:LO_COORDINATOR":
                 unavailable_routes = {
-                    "ELECTION": "election, which waits for elections to be delivered",
+                    "ELECTION": "election",
                     "COOPTION": "co-option, which waits for an active GOVERNANCE",
                     "EX_OFFICIO": "ex officio attachment, which is not yet available",
                 }
@@ -3204,7 +3206,7 @@ class OrganismGovernanceService:
                 ending = CircleParticipationEnd.objects.using(self._alias).filter(
                     participation=participation,
                     recorded_at__lte=received_at,
-                ).first()
+                ).order_by("effective_at", "pk").first()
                 if ending is None or ending.effective_at > effective_at:
                     self._refuse(
                         S015AuthorityRefusalCode.SBG_SEAT_OCCUPIED,
@@ -3221,7 +3223,7 @@ class OrganismGovernanceService:
                 ending = CircleParticipationEnd.objects.using(self._alias).filter(
                     participation=participation,
                     recorded_at__lte=received_at,
-                ).first()
+                ).order_by("effective_at", "pk").first()
                 if ending is None or ending.effective_at > effective_at:
                     self._refuse(
                         S015AuthorityRefusalCode.SBG_ALREADY_SEATED,
