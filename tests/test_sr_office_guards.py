@@ -850,7 +850,7 @@ class SROfficeGuardTests(TransactionTestCase):
         root = import_module("core.migrations.0062_root_genesis")
         installed = {signature: revised for signature, prior, revised in root.bodies()}
         at_head = facts()
-        self.assertEqual(at_head["head"], "0075_cq_decisions", msg="The migration rehearsal must start on the DISC2 candidate head.")
+        self.assertEqual(at_head["head"], "0076_cq_authority", msg="The migration rehearsal must start on the DISC3 candidate head.")
         self.assertEqual(at_head["definition_insert"], installed["public.sr_definition_insert_guard()"], msg="The installed definition-insert safeguard must match its 0062 body.")
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
         self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
@@ -904,7 +904,7 @@ class SROfficeGuardTests(TransactionTestCase):
         self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
         self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
         self.restore_received_migrations()
-        self.assertEqual(facts()["head"], "0075_cq_decisions", msg="The populated rehearsal must finish on the DISC2 candidate head.")
+        self.assertEqual(facts()["head"], "0076_cq_authority", msg="The populated rehearsal must finish on the DISC3 candidate head.")
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 

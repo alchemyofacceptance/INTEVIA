@@ -671,6 +671,17 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="def
         if circle.kind == "GENERIC":
             office, decision = lo_source(alias, lo, circle.circle_uuid, act, actor, at)
             ref = f"formation:{opening.event_uuid}|office:{office}"
+        elif circle.kind == "GOVERNANCE":
+            # The office permits presentation. Birthing supplies the authority.
+            with connections[alias].cursor() as cur:
+                cur.execute("SELECT public.circle_lo_office(%s,%s,%s,%s)", [lo.pk, actor.pk, at, at])
+                if cur.fetchone()[0] is None:
+                    unavailable()
+                cur.execute("SELECT public.cq3_birth_proof(%s,%s,%s,%s)", [circle.pk, actor.pk, at, at])
+                ref, = cur.fetchone()
+                cur.execute("SELECT 's015d1:'||public.c2_target(%s::text||':'||%s::text||':'||%s::text)",
+                            [circle.circle_uuid, request_uuid, ref])
+                decision, = cur.fetchone()
         else:
             try:
                 finding, decision = evidence(alias, lo, circle.circle_uuid, act, actor, actor, at)
@@ -690,6 +701,7 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="def
                 "CIRCLE_G4_AUTHORITY": "Activation needs the authority for this Circle’s birth.",
                 "CIRCLE_G4_PLACE": "Activation needs a current member place in this Circle.",
                 "CIRCLE_G4_COVERAGE": "Appoint a qualified Coordinator in this Circle before activating it.",
+                "CIRCLE_G4_GOVERNANCE_SEATS": "Activation needs at least three current trustees in distinct constitutional seats who can vote.",
                 "CIRCLE_G4_OPERATIVE_VOTING": "The Birthing choice is recorded. Activation still needs operative voting.",
                 "CIRCLE_G4_GOVERNANCE_AUTHORITY": "GOVERNANCE needs its Birthing choice or whole-membership decision and operative voting.",
                 "CIRCLE_G4_DESIGNATION_AUTHORITY": "This functional Circle needs its founding choice or membership decision.",

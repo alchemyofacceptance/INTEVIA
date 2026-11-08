@@ -25,6 +25,7 @@ from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
 )
 from src.intevia.services.organism_authority import S015Authority
+from tests import cq_authority_support as board_support
 from tests import (
     discussion_support,
 )
@@ -36,7 +37,6 @@ from tests import (
     test_cq_clarity as clarity,
 )
 from tests import test_law_acts as fixtures
-from tests import test_sr_office_actions as offices
 
 
 class CQDecisionTests(TransactionTestCase):
@@ -984,187 +984,117 @@ class CQDecisionTests(TransactionTestCase):
 
     def test_governance_result_audience_for_unseated_member(self):
         """DISC2-20. An LO member without a seat can follow a GOVERNANCE result and its rule."""
-        fx = offices.SROfficeActionTests()
-        fx.setUp()
-        _, created = fx._seat_founder()
-        circle = models.Circle.objects.get(circle_uuid=created.record_uuid)
-        viewer = fx._member().identity
-        seated = {
-            "organism_uuid": fx.organism.organism_id,
-            "circle_uuid": circle.circle_uuid,
-            "credential": fx.actor.credential,
-        }
-        self.assertEqual(circle.state, "DORMANT")
-        journey, _, topic = self.topic(seated)
-        reader = journey | {"credential": viewer.credential}
-        with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
-            posts.read_thread(**reader)
-        with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
-            cq_reads.vote_status(**reader)
+        lo, scope, people, circle = board_support.ordinary(3, board=True)
+        viewer = fixtures.add_member(lo)
+        self.configure(scope, {"enabled": True})
+        board = scope | {"circle_uuid": circle.circle_uuid}
+        circle_commands.activate(**board, request_uuid=uuid4())
+        officer = people[1]
+        board_support.appoint_board_coordinator(lo, circle, people[0], officer)
+        board["credential"] = officer.credential
         outsider = support.register_test_learner(
-            username="cq-archive-reader-" + uuid4().hex
+            username="disc2-external-" + uuid4().hex
         )
-        # Historical read input for the as-yet unreachable opening. All membership,
-        # Circle, topic, category, identity and reporting-rule lookups are live.
-        # Only SELECTs in this reader receive these two archived act projections.
-        board = disc._board_id(fx.organism.organism_id, circle.circle_uuid)
-        ballot, result = uuid4(), uuid4()
-        rule = disc._rows(
-            "SELECT reporting_version AS version,reporting AS value FROM public.core_cqreportingdefault"
-        )[0]
-        count = {
-            "kind": "QUALIFIED",
-            "eligible": 3,
-            "participated": 3,
-            "required": 3,
-            "qualified": 2,
-            "not_qualified": 1,
-            "abstained": 0,
-            "cqt_applied": True,
-            "qualification_denominator": 3,
-        }
-        stamp = support.database_now().isoformat()
-        shared = {
-            "organism_id": fx.organism.pk,
-            "board_uuid": str(board),
-            "thread_uuid": str(topic["thread"]),
-            "effective_at": stamp,
-        }
-        evidence = {
-            "ballot": str(ballot),
-            "version": str(topic["version"]),
-            "reporting_rule": rule,
-            "event_kind": "DECISION",
-            "attempt": 1,
-            "deadline": stamp,
-        }
-        participants = [
+
+        def begin():
+            journey, _, topic = self.topic(board)
+            cq.put_forward(
+                **journey, version_uuid=topic["version"], request_uuid=uuid4()
+            )
+            window = cq.mark_prepared(**journey, request_uuid=uuid4())
+            return (
+                journey,
+                journey | {"credential": viewer.credential},
+                topic["version"],
+                window,
+            )
+
+        journey, reader, wording, _ = begin()
+        for read in (posts.read_thread, cq_reads.vote_status):
+            with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
+                read(**reader)
+        for trustee in people:
+            cq.confirm_clarity(
+                **(journey | {"credential": trustee.credential}),
+                version_uuid=wording,
+                request_uuid=uuid4(),
+            )
+        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        self.assertEqual(cq_reads.vote_status(**reader)["phase"], "VOTING")
+        for trustee, choice in zip(
+            people, ("QUALIFIED", "QUALIFIED", "NOT_QUALIFIED"), strict=True
+        ):
+            self.cast(journey, ballot, trustee, choice)
+        result = self.closed(reader, ballot)
+        self.assertEqual(
+            (result["count"]["qualified"], result["count"]["not_qualified"]), (2, 1)
+        )
+        self.assertEqual(
+            {p["identity"]: p["answer"] for p in result["participants"]},
             {
-                "identity": str(uuid4()),
-                "name": f"Archived participant {n}",
-                "answer": choice,
-            }
-            for n, choice in enumerate(("QUALIFIED", "QUALIFIED", "NOT_QUALIFIED"), 1)
-        ]
-        archive = json.dumps(
-            [
-                shared
-                | {
-                    "act_uuid": str(ballot),
-                    "operation": "OPEN_VOTE",
-                    "ordinal": 1,
-                    "facts": evidence,
-                },
-                shared
-                | {
-                    "act_uuid": str(result),
-                    "operation": "SETTLE",
-                    "ordinal": 2,
-                    "request": {"ballot": str(ballot)},
-                    "facts": evidence
-                    | {
-                        "post_number": 2,
-                        "count": count,
-                        "group_gaze": participants,
-                        "opened_at": stamp,
-                        "closed_at": stamp,
-                        "settled_at": stamp,
-                    },
-                },
-            ]
+                str(p.identity_id): ("NOT_QUALIFIED" if p == people[2] else "QUALIFIED")
+                for p in people
+            },
         )
+        rule = cq_reads.reporting_decision(**reader, result_uuid=result["post_uuid"])
+        self.assertEqual(str(rule["version"]), result["reporting_rule"]["version"])
+        for denied in (
+            reader | {"credential": outsider.credential},
+            reader | {"thread_uuid": uuid4()},
+        ):
+            with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
+                cq_reads.result_post(**denied, result_uuid=result["post_uuid"])
 
-        def archive_reads(execute, sql, params, many, context):
-            if sql.lstrip().startswith("SELECT") and "public.core_cqact" in sql:
-                sql = sql.replace("public.cq_phases", "archived_phases")
-                sql = (
-                    "WITH archived_cq AS (SELECT * FROM jsonb_populate_recordset(NULL::public.core_cqact,%s::jsonb)), "
-                    "archived_phases AS (SELECT DISTINCT ON (thread_uuid) thread_uuid,board_uuid,act_uuid,"
-                    "facts->>'phase' AS phase,(facts->>'deadline')::timestamptz AS deadline,"
-                    "(facts->>'response_deadline')::timestamptz AS response_deadline FROM archived_cq "
-                    "WHERE facts ? 'phase' ORDER BY thread_uuid,ordinal DESC) "
-                    + sql.replace("public.core_cqact", "archived_cq")
-                )
-                params = [archive, *params]
-            return execute(sql, params, many, context)
+        private, _, _ = self.topic(board, category="COORDINATION")
+        with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
+            cq_reads.result_post(
+                **(private | {"credential": viewer.credential}),
+                result_uuid=result["post_uuid"],
+            )
 
-        with connection.execute_wrapper(archive_reads):
-            self.assertEqual(
-                cq_reads.vote_status(**reader, ballot_uuid=ballot)["result_uuid"],
-                result,
-            )
-            post = cq_reads.result_post(**reader, result_uuid=result)
-            self.assertEqual(
-                (post["count"], post["participants"]), (count, participants)
-            )
-            self.assertEqual(
-                cq_reads.reporting_decision(**reader, result_uuid=result)["version"],
-                rule["version"],
-            )
-            for denied in (
-                journey | {"credential": outsider.credential},
-                reader | {"thread_uuid": uuid4()},
-            ):
-                with self.assertRaisesMessage(
-                    disc.DiscussionUnavailable, disc.UNAVAILABLE
-                ):
-                    cq_reads.result_post(**denied, result_uuid=result)
-        # Replace the archive entirely: neither closure has an OPEN_VOTE to grant the read.
         for operation, phase, kind in (
             ("NO_BALLOT", "RESULT", "NO_DECISION_FEWER_THAN_THREE"),
             ("CLOSE", "CLOSED", "NO_DECISION_COORDINATOR_CLOSED"),
         ):
-            archive = json.dumps(
-                [
-                    shared
-                    | {
-                        "act_uuid": str(result),
-                        "operation": operation,
-                        "ordinal": 1,
-                        "facts": {
-                            "phase": phase,
-                            "post_number": 2,
-                            "ballot": None,
-                            "version": str(topic["version"]),
-                            "reporting_rule": rule,
-                            "count": {"kind": kind, "cqt_applied": False},
-                            "closed_at": stamp,
-                        },
-                    }
-                ]
-            )
-            with connection.execute_wrapper(archive_reads):
-                history = cq.phase(**reader)
-                self.assertEqual(
-                    (
-                        history["phase"],
-                        [e["operation"] for e in history["phase_dates"]],
-                    ),
-                    (phase, [operation]),
+            motion, observer, version, window = begin()
+            if operation == "NO_BALLOT":
+                cq.declare_conflict(
+                    **(motion | {"credential": people[2].credential}),
+                    basis="Related party",
+                    request_uuid=uuid4(),
                 )
-                status = cq_reads.vote_status(**reader)
-                self.assertEqual(
-                    (status["ballot"], status["result_uuid"]), (None, result)
-                )
-                self.assertEqual(
-                    cq_reads.result_post(**reader, result_uuid=result)["count"]["kind"],
-                    kind,
-                )
-                self.assertEqual(
-                    cq_reads.reporting_decision(**reader, result_uuid=result)[
-                        "version"
-                    ],
-                    rule["version"],
-                )
-                with self.assertRaisesMessage(
-                    disc.DiscussionUnavailable, disc.UNAVAILABLE
-                ):
-                    cq_reads.result_post(
-                        **(journey | {"credential": outsider.credential}),
-                        result_uuid=result,
+                for trustee in people[:2]:
+                    cq.confirm_clarity(
+                        **(motion | {"credential": trustee.credential}),
+                        version_uuid=version,
+                        request_uuid=uuid4(),
                     )
-        self.assertFalse(
-            models.LivingOrganismEvent.objects.filter(
-                event_uuid__in=[ballot, result]
-            ).exists()
-        )
+                with clarity.elapsed_clarity(window, response_due=True):
+                    cq.catch_up(credential=officer.credential)
+            else:
+                with clarity.elapsed_clarity(window, response_due=False):
+                    cq.close_without_vote(**motion, request_uuid=uuid4())
+            history = cq.phase(**observer)
+            self.assertEqual(
+                (history["phase"], [e["operation"] for e in history["phase_dates"]]),
+                (phase, [operation]),
+            )
+            status = cq_reads.vote_status(**observer)
+            outcome = status["result_uuid"]
+            self.assertEqual(
+                (status["ballot"], status["result"]["count"]["kind"]), (None, kind)
+            )
+            self.assertEqual(
+                cq_reads.reporting_decision(**observer, result_uuid=outcome)["version"],
+                rule["version"],
+            )
+            self.assertTrue(
+                models.LivingOrganismEvent.objects.filter(event_uuid=outcome).exists()
+            )
+            with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
+                cq_reads.result_post(
+                    **(observer | {"credential": outsider.credential}),
+                    result_uuid=outcome,
+                )
+
+    test_governance_result_audience_for_unseated_member.ISOLATION_FULL_CAPTURE = True

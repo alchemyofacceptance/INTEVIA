@@ -7,7 +7,9 @@ from uuid import UUID, uuid4, uuid5
 from django.db import connections, transaction
 
 from core import models
+from src.intevia.services import cq_reads, discussion
 from src.intevia.services.contribution_authority import ContributionAuthority
+from src.intevia.services.library_laws import LawReadUnavailable, our_laws
 from src.intevia.services.library_service import LibraryService
 from src.intevia.services.law_records import _records
 from src.intevia.services.organism_command_support import _lock_actor, _lock_registered_organism
@@ -237,11 +239,23 @@ def declare_authorship(*, credential, version_id, content_sha256, authors, affir
         return _claim(version_id, actor.pk, actor, received)
 
 
+def _check_policy_route(lo, version_id, route, received):
+    reason = _rows(
+        "SELECT coalesce(public.cq3_policy_problem(%s,v.resource_id,%s,%s,%s),"
+        " public.cq3_policy_problem(%s,v.resource_id,%s,statement_timestamp(),statement_timestamp())) AS reason"
+        " FROM public.core_libraryresourceversion v WHERE v.id=%s",
+        [lo.pk, route, received, received, lo.pk, route, version_id],
+    )[0]["reason"]
+    if reason:
+        raise PolicyRefused(reason, code="LIB_BOARD_DECISION_REQUIRED")
+
+
 def _permission(version_id, lo, actor, route, received):
     source = _source(lo, actor, route, received)
     old = _rows('SELECT * FROM public.core_libreleasepermission WHERE version_id=%s', [version_id])
     if old:
         return old[0]['permission_uuid']
+    _check_policy_route(lo, version_id, route, received)
     key = uuid4()
     _rows('INSERT INTO public.core_libreleasepermission(permission_uuid,version_id,actor_id,actor_epoch,authority_source,received_at) '
           'VALUES(%s,%s,%s,%s,%s::jsonb,%s)', [key, version_id, actor.pk, actor.access_epoch, source, received])
@@ -302,6 +316,10 @@ def _publish(*, credential, organism_uuid, version_id, request_uuid, route, root
                    (version_id, actor.pk, lo.pk, route) for r in old):
                 raise PolicyRefused("This publication request already names a different act.")
             return {r['kind'].lower(): r['fact_uuid'] for r in old}
+        if not root:
+            if lo.pk != meta['organism_id']:
+                _refuse_version()
+            _check_policy_route(lo, version_id, route, received)
         if version.resource.current_version_id != version.pk or version.resource.state != 'draft':
             raise PolicyRefused("Publish the current draft's exact version, or retry its original publication request.")
         claims = _rows('SELECT author_id FROM public.core_libauthorclaim WHERE version_id=%s', [version_id])
@@ -341,3 +359,35 @@ def publish_policy(*, credential, organism_uuid, version_id, request_uuid, route
 def publish_root(*, credential, organism_uuid, version_id, request_uuid):
     return _publish(credential=credential, organism_uuid=organism_uuid, version_id=version_id,
                     request_uuid=request_uuid, route='ROOT_EXCEPTION', root=True)
+
+@transaction.atomic
+def policy_act_record(*, credential, organism_uuid, act_uuid, at=None, known_at=None):
+    """Read a release/publication under its visible CQ or the law reader's exact-version grant."""
+    try:
+        laws = our_laws(credential=credential, organism_uuid=organism_uuid, at=at, known_at=known_at)
+    except LawReadUnavailable:
+        raise discussion.DiscussionUnavailable() from None
+    actor = models.Identity.objects.only("id").get(credential=credential)
+    key = discussion._read_uuid(act_uuid)
+    rows = _rows("""
+        SELECT f.* FROM (
+           SELECT 'RELEASE'::text AS operation,p.permission_uuid AS act,p.version_id,p.authority_source,
+                  p.received_at,p.effective_at,p.recorded_at,m.organism_id
+             FROM public.core_libreleasepermission p JOIN public.core_libpolicyversion m ON m.version_id=p.version_id
+             WHERE p.permission_uuid=%s
+           UNION ALL
+           SELECT p.kind,p.fact_uuid,p.version_id,p.authority_source,p.received_at,p.effective_at,p.recorded_at,p.organism_id
+             FROM public.core_libpublicationfact p WHERE p.fact_uuid=%s
+        ) f JOIN public.core_livingorganism lo ON lo.id=f.organism_id
+        WHERE lo.organism_id=%s AND f.effective_at<=%s AND f.recorded_at<=%s
+        """, [key,key,organism_uuid,laws["at"],laws["known_at"]])
+    if not rows:
+        raise discussion.DiscussionUnavailable()
+    row = rows[0]
+    row.pop("organism_id")
+    row["authority_source"] = cq_reads._authority_trace(row["authority_source"],actor,organism_uuid)
+    if "result_post" not in row["authority_source"] and not any(
+        law["version"]==row["version_id"] and law["class_name"]=="POLICY" for law in laws["laws"]
+    ):
+        raise discussion.DiscussionUnavailable()
+    return row

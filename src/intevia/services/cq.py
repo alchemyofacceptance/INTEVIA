@@ -45,6 +45,13 @@ MESSAGES = {
     "CQ_PROBATION": "Probationary members may discuss but cannot perform CQ governance acts.",
     "CQ_INITIATOR": "Only this Suggestion's author, or a Coordinator where this Living Organism allows it, may put it forward for CQ.",
     "CQ_DISABLED": "CQ is switched off for this Living Organism.",
+    "CQ_GI_VERSION": "The GI predecessor is no longer current or the GI has retired.",
+    "CQ_GI_LAW": "A GI needs its exact applicable local law in force. Review its citations.",
+    "CQ_REFERRAL_BODY": "This referral cannot go to this body. Use the recorded destination.",
+    "CQ_REFERRAL_MATTER": "Carry the exact referred motion and attachment into the new Suggestion.",
+    "CQ_REFERRAL_USED": "This referral already has a receiving CQ journey.",
+    "CQ_BODY": "This board cannot decide this act. Put it forward in the body that owns it.",
+    "CQ_ATTACHMENT": "This board cannot carry out this exact proposal. Check the body, version and current law.",
     "CQ_SUGGESTION": "Only a Suggestion can be put forward for CQ.",
     "CQ_EXISTS": "This Suggestion already has a CQ journey.",
     "CQ_FULL_AUDIENCE": "This category does not give the full board electorate access to the Suggestion.",
@@ -172,6 +179,22 @@ def _command(
             )
             thread = _id(thread_uuid, nullable=operation == "SETTINGS")
             received = _lock(key, owner)
+            if "referral_result" in fields:
+                visibility, args = cq_reads.result_scope_query(
+                    actor, organism_uuid, circle_uuid, thread_uuid
+                )
+                if not any(
+                    row["thread_audience"] for row in disc._rows(visibility, args)
+                ):
+                    raise disc.DiscussionUnavailable()
+                source_key = _id(fields["referral_result"])
+                visible = disc._rows(
+                    "SELECT public.cq3_result_visible(%s,id,%s,statement_timestamp()) AS visible "
+                    "FROM public.core_livingorganism WHERE organism_id=%s",
+                    [source_key, actor.pk, owner],
+                )
+                if not visible or not visible[0]["visible"]:
+                    raise disc.DiscussionUnavailable()
             # Resolve visibility and role even if the caller supplied malformed
             # operation details. The writer rechecks the source at execution.
             disc._rows(
@@ -184,7 +207,13 @@ def _command(
                     "SELECT public.cq_answer_eligible(%s,%s,%s,%s,statement_timestamp())",
                     [board, thread, _id(fields["ballot"]), actor.pk],
                 )
-            for name in ("version", "predecessor", "previous_thread", "ballot"):
+            for name in (
+                "version",
+                "predecessor",
+                "previous_thread",
+                "ballot",
+                "referral_result",
+            ):
                 if name in fields:
                     fields[name] = _id(
                         fields[name], nullable=name not in ("version", "ballot")
@@ -233,6 +262,8 @@ def put_forward(
     request_uuid,
     circle_uuid=None,
     previous_thread=None,
+    attachment=None,
+    referral_result=None,
 ):
     return _command(
         credential,
@@ -243,6 +274,8 @@ def put_forward(
         circle_uuid=circle_uuid,
         version=version_uuid,
         previous_thread=previous_thread,
+        **({"attachment": attachment} if attachment is not None else {}),
+        **({"referral_result": referral_result} if referral_result is not None else {}),
     )
 
 
@@ -414,6 +447,27 @@ def phase(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
         if not rows:
             raise disc.DiscussionUnavailable()
         state = rows[0]
+        if board["thread_audience"]:
+            links = disc._rows(
+                """SELECT i.request->'attachment' AS attachment,
+                i.facts->>'attachment_fingerprint' AS fingerprint,
+                CASE WHEN public.cq3_result_visible(src.act_uuid,i.organism_id,%s,statement_timestamp())
+                  THEN jsonb_build_object('result_uuid',src.act_uuid,'thread_uuid',src.thread_uuid,
+                         'circle_uuid',c.circle_uuid,'wording_version',src.facts->'referral'->'wording_version') END AS referred_from
+                FROM public.core_cqact i LEFT JOIN public.core_cqact src ON src.act_uuid=(i.request->>'referral_result')::uuid
+                LEFT JOIN public.core_discboard b ON b.board_uuid=src.board_uuid LEFT JOIN public.core_circle c ON c.id=b.circle_id
+                WHERE i.thread_uuid=%s AND i.board_uuid=%s AND i.operation='INITIATE'
+                  AND (i.request ? 'attachment' OR i.request ? 'referral_result')""",
+                [actor.pk, thread_uuid, board["board_uuid"]],
+            )
+            if links:
+                state.update(
+                    {
+                        name: value
+                        for name, value in links[0].items()
+                        if value is not None
+                    }
+                )
         state["phase_dates"] = disc._rows(
             """SELECT operation,facts->>'phase' AS phase,effective_at AS entered_at,
                       (facts->>'deadline')::timestamptz AS deadline,(facts->>'response_deadline')::timestamptz AS response_deadline,(facts->>'closed_at')::timestamptz AS closed_at

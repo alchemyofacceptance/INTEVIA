@@ -2,6 +2,7 @@
 
 from django.db import connections, transaction
 
+from src.intevia.services.cq_reads import _project_authorities
 from src.intevia.services.law_records import _coordinates, _records
 from src.intevia.services.organism_command_support import (
     _lock_actor,
@@ -87,6 +88,7 @@ def our_laws(
         if not rows:
             raise LawReadUnavailable("Reading these laws requires current membership in this organisation.")
         evaluated_at = rows[0]["evaluated_at"]
+        _project_authorities(rows, actor, organism_uuid, database_alias)
         records = []
         for row in rows:
             if row["binding"] is None:

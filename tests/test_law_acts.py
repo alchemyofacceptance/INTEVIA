@@ -42,7 +42,7 @@ def adoption(lo, doc, law_class="POLICY"):
                            operation="ADOPT", intent="ADOPT", law_class=law_class, version=1)
 
 
-def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA"):
+def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0):
     """Use the existing registration, founding, gateway, phases and Birthing commands."""
     tag = uuid4().hex
     founder = support.register_test_learner(username="law-founder-" + tag)
@@ -65,7 +65,7 @@ def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA"):
     service = gateway.OrganismApplicationService(
         authority=S015Authority(provider=ProductionApplicationAuthorityProvider()), clock=support.database_now)
     settings = (
-        (OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, dict(cq_active=False, governance_enabled=False,
+        (OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, dict(cq_active=False, governance_enabled=bool(board_seats),
             inherit_portal_cq_settings=False, require_cq_to_change_lo_settings=False,
             require_cq_to_change_application_question=False)),
         (OrganismAction.EFFECT_APPLICATION_SETTINGS, dict(applications_open=True, automatic_acceptance=False,
@@ -83,6 +83,9 @@ def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA"):
         service.effect_gateway_version(gateway.EffectGatewayVersionCommand(credential=founder.credential,
             living_organism_id=lo.organism_id, action=action, version_uuid=draft.version_uuid,
             occurred_at=at, effective_at=at, request_reference="effect:" + key, idempotency_key=key))
+    if board_seats:
+        from tests.cq_authority_support import form_board
+        form_board(lo, founder, board_seats)
     phase("GERMINATING", "BIRTHING")
     text = "Disposable L rehearsal offering. The founder elects the complimentary beta package."
     digest = sha256(text.encode()).hexdigest()

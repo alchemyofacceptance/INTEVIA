@@ -46,6 +46,7 @@ class LawProposal:
     feature: str | None = None
     affected_reference: str | None = None
     resolution: str | None = None
+    referral_result: UUID | None = None
 
     def content(self):
         for name in ("organism", "proposal", "predecessor", "circle"):
@@ -63,7 +64,12 @@ class LawProposal:
             raise ValueError("A LIBRARY version is a positive integer.")
         if type(self.reserves_bylaws) is not bool:
             raise TypeError("An Article reservation must be true or false.")
-        return {k: str(v) if isinstance(v, UUID) else v for k, v in asdict(self).items()}
+        fields = asdict(self)
+        if self.referral_result is None:
+            fields.pop("referral_result")
+        else:
+            _canonical_uuid(self.referral_result, "referral_result")
+        return {k: str(v) if isinstance(v, UUID) else v for k, v in fields.items()}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

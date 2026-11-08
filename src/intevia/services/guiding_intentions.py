@@ -1,10 +1,11 @@
-"""Guiding Intention records and objectives. Office authority is interim pending CQ."""
+"""Guiding Intention records and objectives. An active CQ decides for its GI owner."""
 import json
 from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
 
 from core import models
+from src.intevia.services.cq_reads import _project_authorities
 from src.intevia.services.law_records import _records
 from src.intevia.services.library_laws import LawReadUnavailable, our_laws
 from src.intevia.services.organism_command_support import (
@@ -15,6 +16,8 @@ from src.intevia.services.organism_command_support import (
 AUTHORITY_MESSAGE = "This GI act requires the selected owner's effective Coordinator authority at receipt and execution. CQ is not available yet."
 LAW_MESSAGE = "Cite at least one local law in force for this GI owner; every cited exact version must be applicable and in force."
 MESSAGES = {
+    "GI_CQ_LO": "CQ is active. Put this Guiding Intention to the LO membership.",
+    "GI_CQ_CIRCLE": "CQ is active. Put this Guiding Intention to this Circle.",
     "GI_AUTHORITY": AUTHORITY_MESSAGE,
     "GI_LAW_REQUIRED": LAW_MESSAGE,
     "GI_PREDECESSOR": "Choose the current GI version; creation needs a new GI identity and no predecessor.",
@@ -154,6 +157,8 @@ def intention_history(*, credential, organism_uuid, gi_uuid, at=None, known_at=N
             """, [organism_uuid, gi_uuid, audience["at"], audience["known_at"]], alias=database_alias)
         if not rows:
             raise LawReadUnavailable("This GI history is unavailable in this organisation at these coordinates.")
+        actor = models.Identity.objects.using(database_alias).only("id").get(credential=credential)
+        _project_authorities(rows, actor, organism_uuid, database_alias)
         return {"organism": organism_uuid, "gi": gi_uuid, "at": audience["at"],
                 "known_at": audience["known_at"], "history": rows,
                 "current": None if rows[-1]["operation"] == "RETIRE" else rows[-1]}
@@ -221,6 +226,7 @@ def our_objectives(*, credential, organism_uuid, at=None, known_at=None,
         if type(include_history) is not bool:
             raise ValueError("Choose true or false for GI history.")
         rows = _rows(_OBJECTIVES, [organism_uuid, audience["at"], audience["known_at"]], alias=database_alias)
+        actor = models.Identity.objects.using(database_alias).only("id").get(credential=credential)
         grouped = {}
         for row in rows:
             # A missing exact law projection is an evidence-integrity error,
@@ -229,6 +235,8 @@ def our_objectives(*, credential, organism_uuid, at=None, known_at=None,
                 raise RuntimeError("A recorded GI citation has no exact law evidence.")
             row["needs_review"] = any(not citation["in_force"] for citation in row["citations"])
             grouped.setdefault(row["gi_uuid"], []).append(row)
+        citation_laws = [item["law"] for row in rows for item in row["citations"]]
+        _project_authorities([*rows, *citation_laws], actor, organism_uuid, database_alias)
         objectives = []
         for gi_uuid, history in grouped.items():
             latest = history[-1]

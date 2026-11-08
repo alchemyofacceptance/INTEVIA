@@ -27,6 +27,15 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "cq-qualified-effect-only": {
+        "follow_up": "DISC3-02 recurring control",
+        "intended": "A defeated proposal changes the law.",
+        "targets": ["test_cq_authority.CQAuthorityTests.test_defeated_attachment_has_no_effect"],
+        "sql": ["""CREATE OR REPLACE FUNCTION public.cq3_qualified(p_kind text)
+RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$
+ SELECT p_kind IN ('QUALIFIED','NOT_QUALIFIED_VOTE')
+$$;"""],
+    },
     "cq-default-tie-refusal": {
         "follow_up": "DISC2-11 recurring control",
         "intended": "A quorate default tie incorrectly qualifies.",

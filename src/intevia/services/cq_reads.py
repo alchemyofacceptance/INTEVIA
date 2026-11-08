@@ -1,8 +1,9 @@
 """Public Decision projections. Resolve the viewer and thread before a ballot or reporting link."""
 
-from django.db import transaction
+from django.db import connections, transaction
 
 from src.intevia.services import discussion as disc
+from src.intevia.services.law_records import _records
 
 RESULT_LABELS = {
     "QUALIFIED": "Qualified.",
@@ -22,9 +23,8 @@ NO_BALLOT_LABELS = {
 }
 
 
-def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
-    disc._read_owner(organism_uuid, circle_uuid)
-    disc._read_uuid(thread_uuid)
+def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
+    """The existing thread and GOVERNANCE-result audience at the current cut."""
     query = """SELECT b.board_uuid,b.organism_id,
         public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,statement_timestamp()) AS thread_audience
         FROM public.core_discboard b
@@ -50,6 +50,13 @@ def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
         actor.pk,
         actor.pk,
     ]
+    return query, args
+
+
+def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
+    disc._read_owner(organism_uuid, circle_uuid)
+    disc._read_uuid(thread_uuid)
+    query, args = result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid)
     if not disc._rows(query, args):
         raise disc.DiscussionUnavailable()
     disc._lock_registered_organism("default", organism_uuid)
@@ -66,11 +73,23 @@ _RESULT = """SELECT a.act_uuid AS post_uuid,a.thread_uuid,(a.facts->>'post_numbe
  a.facts->'reporting_rule' AS reporting_rule,a.facts->'group_gaze' AS participants,
  a.facts->'opened_at' AS opened_at,a.facts->'deadline' AS deadline,a.facts->'closed_at' AS closed_at,
  a.facts->'settled_at' AS settled_at,a.facts->'restart' AS restarted,
+ a.facts->'referral'->>'destination' AS referral_destination,
+ CASE WHEN a.facts ? 'referral' THEN jsonb_build_object('source_result',a.act_uuid,
+        'wording_version',a.facts->'referral'->'wording_version','wording_fingerprint',a.facts->'referral'->'wording_fingerprint',
+        'attachment_fingerprint',a.facts->'referral'->'attachment_fingerprint') END AS referral,
+ a.facts->>'disposition' AS disposition, a.facts->>'reason' AS effect_reason,
  a.facts->'retry_requested' AS retry_requested,a.facts->'version' AS wording_version
  FROM public.core_cqact a WHERE a.operation IN ('SETTLE','CLOSE','NO_BALLOT') AND a.board_uuid=%s AND a.thread_uuid=%s"""
 
 
 def _present(row):
+    if row.get("referral_destination") is None:
+        row.pop("referral_destination", None)
+        row.pop("referral", None)
+    if row.get("disposition") is None:
+        row.pop("disposition", None)
+    if row.get("effect_reason") is None:
+        row.pop("effect_reason", None)
     count = row["count"]
     if count["kind"] != "NO_DECISION_PROVISION_ENDED":
         row.pop("invalid_provisions")
@@ -234,3 +253,95 @@ def vote_status(
             [status["ballot"], min(read_at, status["deadline"])],
         )
     return status
+
+
+def _project_authorities(records, actor, organism_uuid, database_alias="default"):
+    """Project only the exact, currently visible result links, in one read for a register."""
+    linked = []
+    for row in records:
+        source = row.get("authority_source") or {}
+        collective = source.get("kind") == "CQ_RESULT"
+        reference = (
+            source.get("reference") if collective else source.get("referral_result")
+        )
+        if reference:
+            linked.append((row, source, collective, reference))
+    if not linked:
+        return
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT r.act_uuid::text AS reference,jsonb_build_object('board',r.board_uuid,'circle',c.circle_uuid,
+                'thread',r.thread_uuid,'result_post',r.act_uuid,'ballot',o.act_uuid,
+                'wording_version',r.facts->'version','attachment_fingerprint',r.facts->'attachment_fingerprint',
+                'counting_rule',(o.facts->'rules')-'provisions'-'applied_provisions') AS trace
+            FROM public.core_cqact r JOIN public.core_livingorganism lo ON lo.id=r.organism_id
+            JOIN public.core_discboard b ON b.board_uuid=r.board_uuid LEFT JOIN public.core_circle c ON c.id=b.circle_id
+            LEFT JOIN public.core_cqact o ON o.act_uuid=(r.facts->>'ballot')::uuid
+            WHERE r.act_uuid=ANY(%s::uuid[]) AND lo.organism_id=%s
+              AND public.cq3_result_visible(r.act_uuid,lo.id,%s,statement_timestamp())
+            """,
+            [sorted({item[3] for item in linked}), organism_uuid, actor.pk],
+        )
+        visible = {row["reference"]: row["trace"] for row in _records(cursor)}
+    for row, source, collective, reference in linked:
+        if collective:
+            projected = {"kind": source["kind"], "route": source["route"]}
+            if reference in visible:
+                projected.update(reference=reference, **visible[reference])
+        else:
+            projected = dict(source)
+            if reference in visible:
+                projected["referral"] = visible[reference]
+            else:
+                projected.pop("referral_result")
+        row["authority_source"] = projected
+
+
+def _authority_trace(source, actor, organism_uuid):
+    row = {"authority_source": source}
+    _project_authorities([row], actor, organism_uuid)
+    return row["authority_source"]
+
+
+@transaction.atomic
+def implementation_record(
+    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None
+):
+    """Follow a result to the single act it implemented. A result can have no effect."""
+    actor = disc._actor(credential)
+    board = _scope(actor, organism_uuid, circle_uuid, thread_uuid)
+    result = _result(board["board_uuid"], thread_uuid, result_uuid)
+    rows = disc._rows(
+        """
+        SELECT i.act_uuid AS implementation,i.authority_source,
+               i.facts->'domain_plan'->>'domain' AS domain,
+               g.act_uuid AS gi_act,g.version_uuid AS gi_version,
+               l.binding_uuid AS adopted_binding,ending.binding_id AS ended_binding,
+               p.permission_uuid AS release_permission,p.authority_source AS permission_source,
+               f.fact_uuid AS publication
+          FROM public.core_cqact i JOIN public.core_livingorganismevent e ON e.event_uuid=i.act_uuid
+          LEFT JOIN public.core_giact g ON g.act_uuid=(i.facts->'domain_plan'->'payload'->>'request')::uuid
+          LEFT JOIN public.core_organismlawbinding l ON l.adoption_event_id=e.id
+          LEFT JOIN public.core_organismlawending ending ON ending.end_event_id=e.id
+          LEFT JOIN public.core_libreleasepermission p ON p.version_id=(i.facts->'domain_plan'->>'version')::bigint
+             AND i.facts->'domain_plan'->>'domain' IN ('PUBLISH_POLICY','RELEASE_POLICY')
+          LEFT JOIN public.core_libpublicationfact f ON f.operation_uuid=%s AND f.kind='PUBLICATION'
+         WHERE i.operation='IMPLEMENT' AND i.board_uuid=%s AND i.thread_uuid=%s AND i.request->>'result'=%s
+         """,
+        [result_uuid, board["board_uuid"], thread_uuid, str(result_uuid)],
+    )
+    if not rows:
+        return {"result": result["post_uuid"], "effect": None}
+    effect = {key: value for key, value in rows[0].items() if value is not None}
+    effect["authority_source"] = _authority_trace(
+        effect["authority_source"], actor, organism_uuid
+    )
+    if "permission_source" in effect:
+        effect["permission_source"] = _authority_trace(
+            effect["permission_source"], actor, organism_uuid
+        )
+        permission = effect["permission_source"]
+        if permission["kind"] == "CQ_RESULT" and "result_post" not in permission:
+            effect.pop("release_permission")
+    return {"result": result["post_uuid"], "effect": effect}
