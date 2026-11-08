@@ -27,6 +27,13 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "cq-settings-result-reference": {
+        "follow_up": "DISC4-01 recurring control",
+        "intended": "The voted settings version cites itself instead of its qualifying result.",
+        "targets": ["test_cq_settings_authority.CQSettingsAuthorityTests.test_01_qualified_settings_cite_deciding_result"],
+        "sql": ["""CREATE OR REPLACE FUNCTION public.cq4_decision(p_version uuid,p_source jsonb)
+RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT p_version $$;"""],
+    },
     "cq-qualified-effect-only": {
         "follow_up": "DISC3-02 recurring control",
         "intended": "A defeated proposal changes the law.",

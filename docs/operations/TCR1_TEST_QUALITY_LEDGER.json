@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "TE P2",
-  "baseline_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
-  "baseline_methods": 276,
-  "candidate_methods": 239,
+  "package": "DISC4 P2",
+  "baseline_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+  "baseline_methods": 239,
+  "candidate_methods": 245,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -29,6 +29,25 @@
       "restored": null,
       "commit": null,
       "scope": "Candidate exposed for VC run and subsequent governed admission and review."
+    },
+    "DISC4_P1_PENDING": {
+      "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+      "candidate_commit": null,
+      "source": "DISC4_CANDIDATE_TABLE.json (candidate LF SHA-256 per file)",
+      "status": "Prepared for VC. No candidate runtime, break/restoration or admission review claimed."
+    },
+    "DISC4_P1_VC": {
+      "source": "01_AUTHORITY/VC_CHECK_DISC4_P1_CI_JOB_v1_0.md",
+      "source_sha256": "aaab3b5d5cc93007c3b3c625c737dc9cf2c5ee7ec5253e5e272afaa9ff06660a",
+      "scratch_commit": "56a99966d96521d96e7a313613316c2f93eb56a6",
+      "tree": "68d552714d4eb5fe6282ac0b18b0a3b1c0f72978",
+      "status": "VC reports CI_JOB_LOCAL QUALIFYING on P1, 243/243, 28/28 controls, SR-ROUNDTRIP 1/1, S015 isolation 227/227; whole route 1082.5 s."
+    },
+    "DISC4_P2_PENDING": {
+      "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+      "candidate_commit": null,
+      "source": "DISC4_CANDIDATE_TABLE.json",
+      "status": "Cumulative P2 candidate, mechanical checks only. VC PostgreSQL whole-job evidence and independent review pending."
     }
   },
   "source_index": {
@@ -99,6 +118,14 @@
     "HG_RULINGS_TE_P0_20261108_CAPTURE.txt": {
       "path_in_TE_return": "01_AUTHORITY/HG_RULINGS_TE_P0_20261108_CAPTURE.txt",
       "sha256": "6a69de1813d0d3068acfe43df68b6b41c8505fbc4779f24cf6cb99ebc763d0f2"
+    },
+    "DISC4_TAR_v1_0_P1.md": {
+      "path_in_DISC4_return": "02_DESIGN/DISC4_TAR_v1_0_P1.md",
+      "sha256": "ab84b58339d5619c1d4541bc51dbb270d6d9354eaa155ecfa789ed742fb73490"
+    },
+    "DISC4_TAR_v1_0_P2.md": {
+      "path_in_DISC4_return": "02_DESIGN/DISC4_TAR_v1_0_P2.md",
+      "sha256": "024804cc7f2f8d47166f632e756ea01a6962e87c1fc9b2615552be622d26293d"
     }
   },
   "coverage": {
@@ -106,9 +133,10 @@
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 239,
+    "active": 245,
     "folded": 35,
-    "retired": 2
+    "retired": 2,
+    "DISC4_methods": 6
   },
   "tests": [
     {
@@ -2107,6 +2135,15 @@
           "unit_ids": [
             "DISC3-01"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            26
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2120,9 +2157,26 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:109",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
       "current_source": "tests/test_cq_authority.py:109"
     },
     {
@@ -2139,6 +2193,15 @@
           ],
           "unit_ids": [
             "DISC3-02"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            25
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2157,9 +2220,26 @@
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_defeated_attachment_has_no_effect",
         "baseline_recurring_faults": [
           "cq-qualified-effect-only"
-        ]
+        ],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_authority.py:179",
+          "change": "Select abstention at bootstrap so its tied and defeated LAW attachments share the original claim and require no unrelated settings vote.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
       "current_source": "tests/test_cq_authority.py:179"
     },
     {
@@ -2177,6 +2257,15 @@
           "unit_ids": [
             "DISC3-03"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            28
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2190,10 +2279,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_membership_protected_act_once_and_stale_disposition",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:238"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:238",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:237"
     },
     {
       "obligation": "base:test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
@@ -2210,6 +2316,15 @@
           "unit_ids": [
             "DISC3-04"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            29
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2224,10 +2339,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:350",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:350",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:349",
       "baseline_claim": "DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2."
     },
     {
@@ -2245,6 +2377,15 @@
           "unit_ids": [
             "DISC3-05"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            27
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2259,10 +2400,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_lo_gi_lifecycle_and_interim_authority",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_lo_gi_lifecycle_and_interim_authority"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_lo_gi_lifecycle_and_interim_authority",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:663",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:663",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:662",
       "baseline_claim": "DISC3-05. Members create, revise and retire. The prior office act retains its source."
     },
     {
@@ -2280,6 +2438,15 @@
           "unit_ids": [
             "DISC3-06"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            23
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2294,10 +2461,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:756",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:756",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:755",
       "baseline_claim": "DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI."
     },
     {
@@ -2315,6 +2499,15 @@
           "unit_ids": [
             "DISC3-07"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            22
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2329,10 +2522,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_below_three_referral_and_office_limits",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_below_three_referral_and_office_limits"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_authority.CQAuthorityTests.test_below_three_referral_and_office_limits",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:808",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:808",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:807",
       "baseline_claim": "DISC3-07. A new body starts afresh. Recusals and the boundary on personal authority follow the matter."
     },
     {
@@ -2350,6 +2560,15 @@
           "unit_ids": [
             "DISC3-08"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            24
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": null,
@@ -2363,10 +2582,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_authority.CQAuthorityTests.test_concurrent_final_answer_rollback_and_reversal",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "14de4af9f3b9fa17bf0b13397154e1b05ded661146e28904edf4330b94ef7bb3",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_authority.py:987"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_authority.py:987",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_authority.py:986"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_free_settings_versions_and_authority",
@@ -2382,6 +2618,15 @@
           ],
           "unit_ids": [
             "DISC2-01"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            34
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2403,10 +2648,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_free_settings_versions_and_authority",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:148"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:148",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:145"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_subscriber_initiation_and_reporting_history_on_lapse",
@@ -2422,6 +2684,15 @@
           ],
           "unit_ids": [
             "DISC2-02"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            35
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2443,10 +2714,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_subscriber_initiation_and_reporting_history_on_lapse",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:266"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_clarity.py:266",
+          "change": "Use an actual voted selection, follow its deciding result, retain it over lapse, and schedule a later reporting change by vote.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:263"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_timed_preparation_and_idempotent_rule_catch_up",
@@ -2462,6 +2750,15 @@
           ],
           "unit_ids": [
             "DISC2-03"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            36
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2483,10 +2780,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_timed_preparation_and_idempotent_rule_catch_up",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:361"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:361",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:358"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_wording_revisions_confirmations_and_early_lock",
@@ -2502,6 +2816,15 @@
           ],
           "unit_ids": [
             "DISC2-04"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            37
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2523,10 +2846,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_wording_revisions_confirmations_and_early_lock",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:408"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:408",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:405"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_at_deadline_unclear_members_and_free_clarity_setting",
@@ -2542,6 +2882,15 @@
           ],
           "unit_ids": [
             "DISC2-05"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            31
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2563,10 +2912,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_at_deadline_unclear_members_and_free_clarity_setting",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:508"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:508",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:505"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_access_refusal_rollback_and_populated_reversal",
@@ -2582,6 +2948,15 @@
           ],
           "unit_ids": [
             "DISC2-06"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            30
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2604,7 +2979,15 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_access_refusal_rollback_and_populated_reversal",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_clarity.CQClarityTests.test_access_refusal_rollback_and_populated_reversal"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_clarity.CQClarityTests.test_access_refusal_rollback_and_populated_reversal",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
       "history": [
         {
@@ -2612,9 +2995,17 @@
           "event": "part of claim moved",
           "successor": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
           "case": "0074_cq_clarity, exact refusal and settings version."
+        },
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:881",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:881",
+      "current_source": "tests/test_cq_clarity.py:878",
       "baseline_claim": "DISC2-06: disclosure refusal comes before role details, request reuse is no backdoor, event pair is immutable, caller rollback leaves nothing, migration 0074 reversal refused while CQ history exists"
     },
     {
@@ -2631,6 +3022,15 @@
           ],
           "unit_ids": [
             "DISC2-07"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            33
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2652,10 +3052,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_constitutional_entitlement_scope_and_retirement",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:948"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_clarity.py:948",
+          "change": "Three eligible members can meet the ordinary absolute floor of three. An isolated voted broadening checks LO versus Circle scope. The committed branch retains the original law, tests exact refusal on removal, then adds distinct declarations before lawful retirement.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:945"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_competing_wording_completion_and_due_catch_up",
@@ -2671,6 +3088,15 @@
           ],
           "unit_ids": [
             "DISC2-08"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            32
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2692,10 +3118,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_clarity.CQClarityTests.test_competing_wording_completion_and_due_catch_up",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "d1d1728c559955dbdc85129ec3c442534fe395c671b65b1b2b236cef4cf47668",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_clarity.py:1391"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_clarity.py:1391",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_clarity.py:1398"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_riverside_and_default_quorum_boundaries",
@@ -2711,6 +3154,15 @@
           ],
           "unit_ids": [
             "DISC2-09"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            49
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2732,10 +3184,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_riverside_and_default_quorum_boundaries",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:109"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:109",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:110"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_ballot_conflict_duplicate_abstention_and_eligible_period",
@@ -2751,6 +3220,15 @@
           ],
           "unit_ids": [
             "DISC2-10"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            39
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2772,10 +3250,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_ballot_conflict_duplicate_abstention_and_eligible_period",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:159"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:159",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:160"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases",
@@ -2791,6 +3286,15 @@
           ],
           "unit_ids": [
             "DISC2-11"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            42
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2816,10 +3320,27 @@
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases",
         "baseline_recurring_faults": [
           "cq-default-tie-refusal"
-        ]
+        ],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:279"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:279",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:280"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_low_turnout_and_distinct_no_decision_results",
@@ -2835,6 +3356,15 @@
           ],
           "unit_ids": [
             "DISC2-12"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            45
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2856,10 +3386,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_low_turnout_and_distinct_no_decision_results",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:331"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:331",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:332"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_concurrent_settings_and_opening_snapshot",
@@ -2875,6 +3422,15 @@
           ],
           "unit_ids": [
             "DISC2-13"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            41
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2896,10 +3452,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_concurrent_settings_and_opening_snapshot",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:459"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_decisions.py:459",
+          "change": "Prepare the settings ballot outside contention. The last answer and the independent opening contend on the same LO lock; check version, reporting and abstention together.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:460"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_open_read_embargo_and_early_release",
@@ -2915,6 +3488,15 @@
           ],
           "unit_ids": [
             "DISC2-14"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            47
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2936,10 +3518,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_open_read_embargo_and_early_release",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:487"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:487",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:496"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_one_fresh_retry_exhausts_automation",
@@ -2955,6 +3554,15 @@
           ],
           "unit_ids": [
             "DISC2-15"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            46
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -2976,10 +3584,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_one_fresh_retry_exhausts_automation",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:607"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_decisions.py:607",
+          "change": "A fifth member joins after the original opening to meet the old floor on the settings vote. The first ballot and retry keep their original eligibility rule and count.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:616"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
@@ -2995,6 +3620,15 @@
           ],
           "unit_ids": [
             "DISC2-16"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            44
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -3016,10 +3650,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:689"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_decisions.py:689",
+          "change": "July links to SETTLE; version, institutional event, fingerprints, actors, timing and counting rule remain checkable. Names of July voters remain absent.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:701"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_reporting_switch_mid_vote_and_permanent_totals_only",
@@ -3035,6 +3686,15 @@
           ],
           "unit_ids": [
             "DISC2-17"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            48
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -3056,10 +3716,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_reporting_switch_mid_vote_and_permanent_totals_only",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:774"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "method",
+          "previous_source": "tests/test_cq_decisions.py:774",
+          "change": "The change back to named reporting was decided in a totals-only ballot. Its public settings history conceals the final enterer and the earlier result remains permanently totals-only.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:787"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_circle_probation_access_and_reference_audience",
@@ -3075,6 +3752,15 @@
           ],
           "unit_ids": [
             "DISC2-18"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            40
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -3096,10 +3782,27 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_circle_probation_access_and_reference_audience",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:814"
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:814",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:831"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
@@ -3115,6 +3818,15 @@
           ],
           "unit_ids": [
             "DISC2-19"
+          ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            38
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
           ]
         }
       ],
@@ -3137,10 +3849,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:932",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:932",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:949",
       "baseline_claim": "DISC2-19: last answer, numbered result and both chain entries share one commit; forged act refused; migration 0075 reversal refused"
     },
     {
@@ -3167,6 +3896,15 @@
           "unit_ids": [
             "DISC2-20"
           ]
+        },
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            43
+          ],
+          "unit_ids": [
+            "DISC4-P1-SETUP"
+          ]
         }
       ],
       "review": {
@@ -3188,10 +3926,27 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_governance_result_audience_for_unseated_member",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_governance_result_audience_for_unseated_member"
+        "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_governance_result_audience_for_unseated_member",
+        "DISC4_P1": {
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "reference": "DISC4_P1_PENDING"
+        }
       },
-      "history": [],
-      "current_source": "tests/test_cq_decisions.py:1004",
+      "history": [
+        {
+          "unit": "DISC4 P1",
+          "base_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+          "scope": "shared setup",
+          "previous_source": "tests/test_cq_decisions.py:1004",
+          "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
+          "evidence": "DISC4_P1_PENDING"
+        }
+      ],
+      "current_source": "tests/test_cq_decisions.py:1021",
       "baseline_claim": "DISC2-20: an LO member without a seat can follow a GOVERNANCE result and its rule"
     },
     {
@@ -11156,6 +11911,275 @@
       },
       "history": [],
       "current_source": "tests/test_sr_provider.py:247"
+    },
+    {
+      "obligation": "DISC4-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_01_qualified_settings_cite_deciding_result",
+      "claim": "DISC4-01. A qualified change cites its result in the version, ILC and permitted history.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "DISC4-01"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [
+        "cq-settings-result-reference"
+      ],
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-01",
+        "DISC4_P2": {
+          "reference": "DISC4_P2_PENDING",
+          "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
+        }
+      },
+      "current_source": "tests/test_cq_settings_authority.py:33",
+      "history": [
+        {
+          "unit": "DISC4 P2",
+          "scope": "source lines only",
+          "previous_source": "tests/test_cq_settings_authority.py:27",
+          "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        }
+      ]
+    },
+    {
+      "obligation": "DISC4-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_02_only_qualified_current_target_takes_effect",
+      "claim": "DISC4-02. Only a competent, current, qualified patch takes effect: wrong body, defeat, other result kinds, stale target and forgery.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "DISC4-02"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-02",
+        "DISC4_P2": {
+          "reference": "DISC4_P2_PENDING",
+          "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
+        }
+      },
+      "current_source": "tests/test_cq_settings_authority.py:97",
+      "history": [
+        {
+          "unit": "DISC4 P2",
+          "scope": "source lines only",
+          "previous_source": "tests/test_cq_settings_authority.py:91",
+          "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        }
+      ]
+    },
+    {
+      "obligation": "DISC4-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_03_office_route_obeys_voting_state",
+      "claim": "DISC4-03. Bootstrap, below three, third member, voted switch-off, restart, outsider and the exact below-three motion.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "DISC4-03"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-03",
+        "DISC4_P2": {
+          "reference": "DISC4_P2_PENDING",
+          "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
+        }
+      },
+      "current_source": "tests/test_cq_settings_authority.py:179",
+      "history": [
+        {
+          "unit": "DISC4 P2",
+          "scope": "source lines only",
+          "previous_source": "tests/test_cq_settings_authority.py:173",
+          "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        }
+      ]
+    },
+    {
+      "obligation": "DISC4-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_04_open_ballot_keeps_its_rules",
+      "claim": "DISC4-04. Both the deciding ballot and an open peer keep their opening rule; a later vote uses the new one.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P1.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "DISC4-04"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-04",
+        "DISC4_P2": {
+          "reference": "DISC4_P2_PENDING",
+          "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
+        }
+      },
+      "current_source": "tests/test_cq_settings_authority.py:292",
+      "history": [
+        {
+          "unit": "DISC4 P2",
+          "scope": "source lines only",
+          "previous_source": "tests/test_cq_settings_authority.py:286",
+          "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        }
+      ]
+    },
+    {
+      "obligation": "DISC4-05",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_05_circle_reporting_inherits_or_uses_its_vote",
+      "claim": "DISC4-05. Local authority, sibling inheritance, frozen ballots, and an exact Article overriding the local preference.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P2.md",
+          "lines": [
+            22
+          ],
+          "unit_ids": [
+            "DISC4-05"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "current_source": "tests/test_cq_settings_authority.py:350",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+        "change_record": "DISC4_TAR_v1_0_P2.md / DISC4-05"
+      },
+      "history": []
+    },
+    {
+      "obligation": "DISC4-06",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_06_reporting_trace_respects_audience_and_lapse",
+      "claim": "DISC4-06. GOVERNANCE result audience, local choice over lapse, stale entitlement at settlement, and a voted return to inheritance.",
+      "unit_TAR": [
+        {
+          "source": "DISC4_TAR_v1_0_P2.md",
+          "lines": [
+            23
+          ],
+          "unit_ids": [
+            "DISC4-06"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "current_source": "tests/test_cq_settings_authority.py:512",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+        "candidate_run": "DISC4_P2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+        "change_record": "DISC4_TAR_v1_0_P2.md / DISC4-06"
+      },
+      "history": []
     }
-  ]
+  ],
+  "previous_unit": {
+    "package": "DISC4 P1",
+    "baseline_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
+    "baseline_methods": 239,
+    "candidate_methods": 243,
+    "coverage": {
+      "unit_tables": 13,
+      "SR_C2_staging_tables": 1,
+      "historical_carryovers": 90,
+      "DISC3_methods": 8,
+      "active": 243,
+      "folded": 35,
+      "retired": 2,
+      "DISC4_methods": 4
+    },
+    "previous_unit": {
+      "package": "TE P2",
+      "baseline_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+      "baseline_methods": 276,
+      "candidate_methods": 239,
+      "coverage": {
+        "unit_tables": 13,
+        "SR_C2_staging_tables": 1,
+        "historical_carryovers": 90,
+        "DISC3_methods": 8,
+        "active": 239,
+        "folded": 35,
+        "retired": 2
+      }
+    }
+  }
 }

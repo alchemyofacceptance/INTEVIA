@@ -22,6 +22,13 @@ CLARITY_STAGE = {
 }
 
 MESSAGES = {
+    "CQ_SETTINGS_WORDING": "The attached wording differs from the proposed settings. Attach the exact change again.",
+    "CQ_SETTINGS_REFERRAL": "Use the exact settings motion that closed below three eligible members. A Coordinator who declared a conflict cannot decide it.",
+    "CQ_SETTINGS_VOTE": "The members decide these settings by vote. Put the change forward as a Suggestion.",
+    "CQ_SETTINGS_RESTART": "Re-enable CQ with the recorded settings, then put the change to the members.",
+    "CQ_REPORT_SCOPE": "Each subscribing Circle decides its own reporting. Put a local change to that Circle.",
+    "CQ_REPORTING_LAW": "The cited constitutional provision fixes reporting for this Circle. Follow the provision or change the law first.",
+    "CQ_SETTINGS_PROVISION": "A cited provision is still in force. Keep it in these settings or change the law first.",
     "CQ_RESPONSE_DUE": "The Coordinator response period has ended. Run CQ catch-up to record the rule outcome.",
     "CQ_NOT_READY": "There is no separate vote-opening step. Proceed from Clarity, or check the current CQ phase.",
     "CQ_NOT_OPEN": "This vote has not opened.",
@@ -202,6 +209,13 @@ def _command(
                 FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
                 [board, thread, operation, actor.pk, owner],
             )
+            if operation == "SETTINGS":
+                disc._rows(
+                    """SELECT public.cq4_direct_admit(lo.id,%s,%s,%s,%s,%s,statement_timestamp())
+                       FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
+                    [key, actor.pk, actor.access_epoch, fields.get("changes") == {"enabled": True},
+                     _id(fields.get("below_three_result"), nullable=True), owner],
+                )
             if operation == "ANSWER":
                 disc._rows(
                     "SELECT public.cq_answer_eligible(%s,%s,%s,%s,statement_timestamp())",
@@ -236,6 +250,7 @@ def change_settings(
     predecessor,
     changes,
     reporting_effective_from=None,
+    below_three_result=None,
 ):
     """A patch over the predecessor version. None identifies platform defaults."""
     return _command(
@@ -245,12 +260,38 @@ def change_settings(
         "SETTINGS",
         predecessor=predecessor,
         changes=changes,
+        **({"below_three_result": below_three_result} if below_three_result is not None else {}),
         **(
             {"reporting_effective_from": reporting_effective_from}
             if reporting_effective_from is not None
             else {}
         ),
     )
+
+
+def settings_attachment(*, organism_uuid, predecessor, changes, reporting_effective_from=None):
+    """Prepare the exact, inspectable settings patch to attach to a Suggestion."""
+    spec = {"organism": organism_uuid, "predecessor": predecessor, "changes": changes}
+    if reporting_effective_from is not None:
+        spec["reporting_effective_from"] = reporting_effective_from
+    return _settings_proposal("SETTINGS", spec)
+
+
+def circle_reporting_attachment(*, organism_uuid, circle_uuid, predecessor, reporting):
+    """Identify the Circle and the exact local version its vote would replace."""
+    return _settings_proposal("CIRCLE_REPORTING", {
+        "organism": organism_uuid, "circle": circle_uuid,
+        "predecessor": predecessor, "reporting": reporting,
+    })
+
+
+def _settings_proposal(kind, spec):
+    try:
+        wording = json.dumps(spec, sort_keys=True, ensure_ascii=False,
+                             allow_nan=False, default=_json_reference)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise CQRefused("CQ_SETTINGS_INPUT") from exc
+    return {"kind": kind, "spec": json.loads(wording), "text": wording}
 
 
 def put_forward(
@@ -399,29 +440,77 @@ def _read_owner(actor, organism_uuid):
     return rows[0]["id"]
 
 
-def settings(*, credential, organism_uuid):
+def _settings_circle(owner, actor, circle_uuid):
+    if circle_uuid is None:
+        return None
+    disc._read_uuid(circle_uuid)
+    rows = disc._rows(
+        """SELECT c.id FROM public.core_circle c WHERE c.parent_organism_id=%s AND c.circle_uuid=%s
+        AND public.disc_audience(c.parent_organism_id,c.id,%s,'MEMBERS',statement_timestamp())""",
+        [owner, circle_uuid, actor.pk],
+    )
+    if not rows:
+        raise disc.DiscussionUnavailable()
+    return rows[0]["id"]
+
+
+def settings(*, credential, organism_uuid, circle_uuid=None):
+    """Current general settings. A motion-specific declaration is applied at its own opening."""
     with transaction.atomic():
         actor = disc._actor(credential)
         owner = _read_owner(actor, organism_uuid)
+        circle = _settings_circle(owner, actor, circle_uuid)
         row = disc._rows(
             """SELECT public.cq_settings(%s) AS settings, p.reporting_version AS platform_version,
-          public.cq_reporting_at(%s,statement_timestamp())->>'version' AS reporting_version,
-          (SELECT a.act_uuid FROM public.core_cqact a WHERE a.organism_id=%s AND a.operation='SETTINGS'
-           ORDER BY ordinal DESC LIMIT 1) AS version FROM public.cq_platform_defaults p""",
-            [owner, owner, owner],
+            public.cq4_reporting(%s,%s,NULL,statement_timestamp()) AS reporting_rule,
+            (SELECT a.act_uuid FROM public.core_cqact a WHERE a.organism_id=%s AND a.operation='SETTINGS'
+             ORDER BY a.ordinal DESC LIMIT 1) AS version FROM public.cq_platform_defaults p""",
+            [owner, owner, circle, owner],
         )[0]
+        rule = row["reporting_rule"]
+        row["reporting_version"] = rule["version"]
+        row["reporting_origin"] = rule.get("origin") or (
+            "PLATFORM" if rule["version"] == row["platform_version"] else "LO"
+        )
+        row["settings"]["reporting"] = rule["value"]
+        if circle is not None:
+            # Legacy LO scope is historical metadata. A Circle's freedom to
+            # choose reporting follows its own vote and the governing law.
+            row["settings"].pop("reporting_scope")
+            row["local_version"] = disc._rows(
+                "SELECT (public.cq4_local_version(%s,%s,statement_timestamp())).act_uuid AS version",
+                [owner, circle],
+            )[0]["version"]
+            row["inherits_reporting"] = row["reporting_origin"] in ("LO", "PLATFORM")
         row["clarity_stage_control"] = CLARITY_STAGE.copy()
         return row
 
 
-def settings_history(*, credential, organism_uuid):
+def settings_history(*, credential, organism_uuid, circle_uuid=None):
     with transaction.atomic():
-        owner = _read_owner(disc._actor(credential), organism_uuid)
-        return disc._rows(
-            """SELECT act_uuid,actor_id,authority_source,received_at,effective_at,recorded_at,facts,fingerprint
+        actor = disc._actor(credential)
+        owner = _read_owner(actor, organism_uuid)
+        circle = _settings_circle(owner, actor, circle_uuid)
+        if circle is not None:
+            return cq_reads._circle_versions(owner, circle, actor, organism_uuid)
+        rows = disc._rows(
+            """SELECT act_uuid,actor_id,authority_source,received_at,effective_at,recorded_at,
+          CASE WHEN facts ? 'below_three_result' AND NOT public.cq3_result_visible(
+            (facts->>'below_three_result')::uuid,organism_id,%s,statement_timestamp())
+            THEN facts-'below_three_result' ELSE facts END AS facts,fingerprint,
+          public.cq4_decision(act_uuid,authority_source) AS decision
           FROM public.core_cqact WHERE organism_id=%s AND operation='SETTINGS' ORDER BY ordinal""",
-            [owner],
+            [actor.pk, owner],
         )
+        cq_reads._project_authorities(rows, actor, organism_uuid)
+        for row in rows:
+            source = row["authority_source"]
+            if not cq_reads._settings_enterer_visible(source):
+                row.pop("actor_id")
+            if source["kind"] == "CQ_RESULT" and "result_post" not in source:
+                row.pop("decision")
+                row["facts"].pop("decision", None)
+        return rows
 
 
 def phase(*, credential, organism_uuid, thread_uuid, circle_uuid=None):

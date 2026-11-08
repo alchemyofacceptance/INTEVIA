@@ -179,7 +179,7 @@ class CQAuthorityTests(TransactionTestCase):
     def test_defeated_attachment_has_no_effect(self):
         """DISC3-02. Mutation target is the first no-binding assertion after a real defeated vote."""
         lo, scope, people, _ = self.ordinary(3)
-        self.configure(scope, {"enabled": True})
+        self.configure(scope, {"enabled": True, "abstention": True})
         document = law.Document(people[0])
         attachment = self.attachment(lo, document)
         journey, ballot = self.ballot(scope, attachment, people)
@@ -205,7 +205,6 @@ class CQAuthorityTests(TransactionTestCase):
         )
         self.assertEqual(result["disposition"], "NO_AUTHORITY")
         # Three is the minimum possible tie with a quorate explicit abstention.
-        self.configure(scope, {"abstention": True}, cq.settings(**scope)["version"])
         tied, tie = self.ballot(scope, attachment, people)
         for person, choice in zip(people, ("QUALIFIED", "NOT_QUALIFIED", "ABSTAIN")):
             self.cast(tied, tie, person, choice)

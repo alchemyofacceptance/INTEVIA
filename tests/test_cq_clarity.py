@@ -26,7 +26,7 @@ from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
 )
 from src.intevia.services.organism_authority import S015Authority
-from tests import discussion_support
+from tests import cq_settings_support, discussion_support
 from tests import s015_0021_support as support
 from tests import test_law_acts as fixtures
 from tests.test_law_records import Document, query_one
@@ -110,10 +110,7 @@ class CQClarityTests(TransactionTestCase):
             {"credential": owner.credential, "organism_uuid": lo.organism_id},
         )
 
-    def configure(self, scope, changes, previous=None):
-        return cq.change_settings(
-            **scope, request_uuid=uuid4(), predecessor=previous, changes=changes
-        )
+    configure = cq_settings_support.configure
 
     def topic(self, scope, *, category="DISCUSSION", category_id=None, topic_type="SUGGESTION",
               title="Review the opening hours", markdown="Open on Saturdays"):
@@ -301,7 +298,7 @@ class CQClarityTests(TransactionTestCase):
             trace = fact["facts"]["reporting_rule"]
             self.assertEqual(
                 (trace["old"], trace["new"], fact["facts"]["decision"]),
-                ("NAMED", "TOTALS_ONLY", str(picked)),
+                ("NAMED", "TOTALS_ONLY", fact["authority_source"]["reference"]),
             )
             self.assertNotEqual(trace["old_fingerprint"], trace["new_fingerprint"])
             self.assertEqual(fact["facts"]["reporting_version"], str(picked))
@@ -331,10 +328,9 @@ class CQClarityTests(TransactionTestCase):
             )
 
         effective = support.database_now() + timedelta(days=1)
-        later = cq.change_settings(
-            **scope,
-            request_uuid=uuid4(),
-            predecessor=picked,
+        later = self.configure(
+            scope,
+            previous=picked,
             changes={"reporting": "NAMED"},
             reporting_effective_from=effective,
         )
@@ -350,8 +346,9 @@ class CQClarityTests(TransactionTestCase):
             [str(later)],
         )[0]
         self.assertEqual(
-            (rule["decision"], rule["effective_from"], rule["evidence_reference"]),
-            (later, effective, "cq-settings-decision:" + str(later)),
+            (str(rule["decision"]), rule["effective_from"], rule["evidence_reference"]),
+            (self.facts(later)["request"]["result"], effective,
+             "cq-settings-result:" + self.facts(later)["request"]["result"]),
         )
 
     test_subscriber_initiation_and_reporting_history_on_lapse.ISOLATION_FULL_CAPTURE = (
@@ -1013,7 +1010,7 @@ class CQClarityTests(TransactionTestCase):
             "enabled": True,
             "threshold_base": "PARTICIPANTS",
             "quorum_form": "ABSOLUTE",
-            "quorum_value": 4,
+            "quorum_value": 3,
             "threshold": "FRACTION",
             "numerator": 1,
             "denominator": 2,
@@ -1033,7 +1030,7 @@ class CQClarityTests(TransactionTestCase):
                 changes=changes | {"provisions": wrong},
             )
         for uncited in (
-            {"quorum_form": "PERCENT", "quorum_value": 40},
+            {"quorum_form": "PERCENT", "quorum_value": 30},
             {"numerator": 1, "denominator": 3},
         ):
             self.refused(
@@ -1188,38 +1185,47 @@ class CQClarityTests(TransactionTestCase):
                 normal["denominator"],
                 normal["applied_provisions"],
             ),
-            ("ABSOLUTE", 4, "PARTICIPANTS", 2, []),
+            ("ABSOLUTE", 3, "PARTICIPANTS", 2, []),
         )
         interactive, _, motion = self.topic(scope)
         initiate(interactive, motion)
         interactive_window = cq.mark_prepared(**interactive, request_uuid=uuid4())
         # The vote exception is LO-wide. Free Off applies to the Circle too.
         broad = turnout | {"decision": "ALL_DECISIONS"}
-        broad_version = self.configure(
-            scope, {"provisions": [broad], "clarity_stage": False}, first
-        )
-        circle = circle_commands.form(
-            **scope,
-            circle_uuid=uuid4(),
-            kind="GENERIC",
-            purpose="Test the scope of an LO Article",
-            request_uuid=uuid4(),
-        )
-        circle_journey, _, circle_topic = self.topic(
-            scope | {"circle_uuid": circle.circle_uuid}
-        )
-        self.assertFalse(initiate(circle_journey, circle_topic)["clarity_stage"])
-        circle_rules = disc._rows(
-            "SELECT public.cq_scoped_settings(public.cq_settings(%s),%s,%s,%s,'VOTE',statement_timestamp()) AS rules",
-            [
-                lo.pk,
-                lo.organism_id,
-                disc._board_id(lo.organism_id, circle.circle_uuid),
-                circle_topic["thread"],
-            ],
-        )[0]["rules"]
-        self.assertEqual(
-            (circle_rules["quorum_value"], circle_rules["applied_provisions"]), (4, [])
+        # Explore the all-motion designation on an isolated branch, then retain
+        # the original declarations for the separate exact-motion retirement case.
+        with transaction.atomic():
+            self.configure(
+                scope, {"provisions": [gate, broad, fraction, skip_stage], "clarity_stage": False}, first
+            )
+            circle = circle_commands.form(
+                **scope,
+                circle_uuid=uuid4(),
+                kind="GENERIC",
+                purpose="Test the scope of an LO Article",
+                request_uuid=uuid4(),
+            )
+            circle_journey, _, circle_topic = self.topic(
+                scope | {"circle_uuid": circle.circle_uuid}
+            )
+            self.assertFalse(initiate(circle_journey, circle_topic)["clarity_stage"])
+            circle_rules = disc._rows(
+                "SELECT public.cq_scoped_settings(public.cq_settings(%s),%s,%s,%s,'VOTE',statement_timestamp()) AS rules",
+                [
+                    lo.pk,
+                    lo.organism_id,
+                    disc._board_id(lo.organism_id, circle.circle_uuid),
+                    circle_topic["thread"],
+                ],
+            )[0]["rules"]
+            self.assertEqual(
+                (circle_rules["quorum_value"], circle_rules["applied_provisions"]), (3, [])
+            )
+            transaction.set_rollback(True)
+        self.refused(
+            "CQ_SETTINGS_PROVISION",
+            "A cited provision is still in force. Keep it in these settings or change the law first.",
+            self.configure, scope=scope, changes={"provisions": []}, previous=first,
         )
         pending, _, later = self.topic(scope)
         inert, _, inactive = self.topic(scope)
@@ -1234,8 +1240,9 @@ class CQClarityTests(TransactionTestCase):
         }
         self.configure(
             scope,
-            {"provisions": [pending_law, interactive_law, off_gate, off_cdpt]},
-            broad_version,
+            {"provisions": entries + [pending_law, interactive_law, off_gate, off_cdpt],
+             "clarity_stage": False},
+            first,
         )
         self.assertFalse(initiate(pending, later)["clarity_stage"])
 

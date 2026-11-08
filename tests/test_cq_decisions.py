@@ -3,7 +3,7 @@
 import json
 from importlib import import_module
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
@@ -27,6 +27,7 @@ from src.intevia.services.organism_application_authority import (
 from src.intevia.services.organism_authority import S015Authority
 from tests import cq_authority_support as board_support
 from tests import (
+    cq_settings_support,
     discussion_support,
 )
 from tests import s015_0021_support as support
@@ -460,11 +461,19 @@ class CQDecisionTests(TransactionTestCase):
         """DISC2-13. A waiting opener sees both parts of a committed settings change."""
         _, scope, people, current = self.setup_board(3, beta=True)
         journey, _ = self.confirmed(scope, people)
+        proposal, wording = cq_settings_support.propose(
+            self, scope, {"reporting": "TOTALS_ONLY", "abstention": True}, current
+        )
+        setting_ballot = cq_settings_support.open_motion(proposal, wording, people)
+        for person in people[:-1]:
+            self.cast(proposal, setting_ballot, person)
+
+        def decide_settings():
+            self.cast(proposal, setting_ballot, people[-1])
+            return cq.settings(**scope)["version"]
+
         version, waiting = self.contended_commands(
-            lambda: self.configure(
-                scope, {"reporting": "TOTALS_ONLY", "abstention": True}, current
-            ),
-            lambda: cq.finish_clarity(**journey, request_uuid=uuid4()),
+            decide_settings, lambda: cq.finish_clarity(**journey, request_uuid=uuid4())
         )
         ballot = waiting.result(timeout=5)
         self.assertEqual(
@@ -617,6 +626,9 @@ class CQDecisionTests(TransactionTestCase):
         )
         journey, _ = self.confirmed(scope, people)
         ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        # The four original voters cannot change an absolute floor of five.
+        # The fifth member can join the settings motion; the first roster is frozen.
+        fixtures.add_member(lo)
         reporting = self.configure(
             scope,
             {
@@ -709,7 +721,7 @@ class CQDecisionTests(TransactionTestCase):
                 trace["decision"],
                 trace["version"],
             ),
-            ("LO", lo.organism_id, changed, str(changed)),
+            ("LO", lo.organism_id, UUID(fact["request"]["result"]), str(changed)),
         )
         self.assertEqual(
             (trace["previous_value"], trace["value"], trace["scope"]),
@@ -719,14 +731,15 @@ class CQDecisionTests(TransactionTestCase):
             (
                 trace["actor_identity_uuid"],
                 trace["enterer_identity_uuid"],
-                trace["authority_source"],
+                trace["authority_source"]["reference"],
             ),
-            (people[0].identity_id, people[0].identity_id, fact["authority_source"]),
+            (people[0].identity_id, people[0].identity_id, fact["request"]["result"]),
         )
-        self.assertEqual(trace["authority_source"]["kind"], "OFFICE")
+        self.assertEqual(trace["authority_source"]["kind"], "CQ_RESULT")
+        self.assertEqual(trace["authority_source"]["result_post"], fact["request"]["result"])
         self.assertEqual(trace["effective_from"], fact["effective_at"])
         self.assertEqual(
-            trace["evidence_reference"], "cq-settings-decision:" + str(changed)
+            trace["evidence_reference"], "cq-settings-result:" + fact["request"]["result"]
         )
         self.assertLessEqual(trace["received_at"], trace["recorded_at"])
         self.assertEqual(
@@ -798,7 +811,11 @@ class CQDecisionTests(TransactionTestCase):
             (str(changed), 1),
         )
         self.assertNotIn("participants", before)
-        self.configure(scope, {"reporting": "NAMED"}, changed)
+        restored = self.configure(scope, {"reporting": "NAMED"}, changed)
+        record = cq.settings_history(**scope)[-1]
+        self.assertEqual((record["act_uuid"], record["authority_source"]["counting_rule"]["reporting"]),
+                         (restored, "TOTALS_ONLY"))
+        self.assertNotIn("actor_id", record)
         after = self.closed(july, second)
         self.assertEqual(after, before)
         self.assertEqual(posts.read_thread(**july)["posts"][-1], after)

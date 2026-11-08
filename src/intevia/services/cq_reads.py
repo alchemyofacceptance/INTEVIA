@@ -150,21 +150,91 @@ def result_post(
     return _result(board["board_uuid"], thread_uuid, result_uuid)
 
 
+def _permitted_versions(rows, actor, organism_uuid):
+    _project_authorities(rows, actor, organism_uuid)
+    for row in rows:
+        source = row["authority_source"]
+        if not _settings_enterer_visible(source):
+            row.pop("actor_identity_uuid", None)
+            row.pop("enterer_identity_uuid", None)
+        if source["kind"] == "CQ_RESULT" and "result_post" not in source:
+            row.pop("decision", None)
+            row.pop("evidence_reference", None)
+    return rows
+
+
+_VERSION_EVIDENCE = """a.authority_source,a.fingerprint,a.received_at,e.occurred_at,
+    a.effective_at AS act_effective_at,a.effective_at AS effective_from,a.recorded_at,
+    actor.identity_id AS actor_identity_uuid,enterer.identity_id AS enterer_identity_uuid,
+    e.authority_decision_reference,e.evidence_reference"""
+
+_VERSION_JOINS = """FROM public.core_cqact a JOIN public.core_livingorganismevent e ON e.event_uuid=a.act_uuid
+    JOIN public.core_identity actor ON actor.id=a.actor_id
+    JOIN public.core_identity enterer ON enterer.id=e.enterer_identity_id"""
+
+
+def _circle_versions(owner, circle, actor, organism_uuid, *, version=None):
+    """Call only after the Circle register or a particular result admitted this viewer."""
+    query = """SELECT 'CIRCLE' AS origin,a.act_uuid,a.act_uuid AS version,c.circle_uuid,
+        plan->>'predecessor' AS predecessor,plan->>'previous_choice' AS previous_choice,
+        plan->'previous_rule' AS previous_rule,plan->'previous_rule'->>'value' AS previous_value,
+        plan->>'choice' AS choice,plan->>'value' AS value,(a.request->>'result')::uuid AS decision,"""
+    query += _VERSION_EVIDENCE + " " + _VERSION_JOINS + """
+        JOIN public.core_discboard b ON b.board_uuid=a.board_uuid
+        JOIN public.core_circle c ON c.id=b.circle_id AND c.parent_organism_id=a.organism_id
+        CROSS JOIN LATERAL (SELECT a.facts->'domain_plan' AS plan) domain
+        WHERE a.organism_id=%s AND c.id=%s AND a.operation='IMPLEMENT' AND plan->>'domain'='CIRCLE_REPORTING'"""
+    args = [owner, circle]
+    if version is not None:
+        query += " AND a.act_uuid=%s"
+        args.append(version)
+    return _permitted_versions(disc._rows(query + " ORDER BY a.ordinal", args), actor, organism_uuid)
+
+
+def _provision_decision(owner, rule, actor, organism_uuid):
+    rows = disc._rows(
+        """SELECT a.act_uuid AS version,public.cq4_decision(a.act_uuid,a.authority_source) AS decision,"""
+        + _VERSION_EVIDENCE + " " + _VERSION_JOINS + """
+        WHERE a.organism_id=%s AND a.operation='SETTINGS' AND a.act_uuid=%s""",
+        [owner, rule["version"]],
+    )
+    if not rows:
+        raise disc.DiscussionUnavailable()
+    return rule | _permitted_versions(rows, actor, organism_uuid)[0]
+
+
 @transaction.atomic
 def reporting_decision(
     *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None
 ):
-    board = _scope(disc._actor(credential), organism_uuid, circle_uuid, thread_uuid)
+    actor = disc._actor(credential)
+    board = _scope(actor, organism_uuid, circle_uuid, thread_uuid)
     disc._read_uuid(result_uuid)
     # Start from the result in the authorised scope. A caller cannot substitute an LO settings ID.
     rows = disc._rows(
-        """SELECT facts->'reporting_rule'->>'version' AS version FROM public.core_cqact
+        """SELECT a.facts->'reporting_rule' AS rule,b.circle_id FROM public.core_cqact a
+        JOIN public.core_discboard b USING(board_uuid)
         WHERE operation IN ('SETTLE','CLOSE','NO_BALLOT') AND board_uuid=%s AND thread_uuid=%s AND act_uuid=%s""",
         [board["board_uuid"], thread_uuid, result_uuid],
     )
     if not rows:
         raise disc.DiscussionUnavailable()
-    version = rows[0]["version"]
+    rule, circle = rows[0]["rule"], rows[0]["circle_id"]
+    version = rule["version"]
+    owner = board["organism_id"]
+    if rule.get("origin") == "CONSTITUTION":
+        return _provision_decision(owner, rule, actor, organism_uuid)
+    if rule.get("origin") == "CIRCLE":
+        versions = _circle_versions(owner, circle, actor, organism_uuid, version=version)
+        if not versions:
+            raise disc.DiscussionUnavailable()
+        return versions[0]
+    inheritance = {}
+    if "inheritance_version" in rule:
+        versions = _circle_versions(owner, circle, actor, organism_uuid, version=rule["inheritance_version"])
+        if not versions:
+            raise disc.DiscussionUnavailable()
+        inheritance = {"inheritance_decision": versions[0]}
     rows = disc._rows(
         """SELECT 'LO' AS origin,lo.organism_id AS organism_uuid,r.version,r.predecessor,
         r.previous_value,r.value,r.previous_scope,r.scope,r.previous_fingerprint,r.value_fingerprint,
@@ -177,7 +247,7 @@ def reporting_decision(
         [board["organism_id"], version],
     )
     if rows:
-        return rows[0]
+        return _permitted_versions(rows, actor, organism_uuid)[0] | inheritance
     rows = disc._rows(
         """SELECT 'PLATFORM' AS origin,reporting_version AS version,reporting AS value,ruling_basis
                          FROM public.core_cqreportingdefault WHERE reporting_version=%s""",
@@ -185,7 +255,7 @@ def reporting_decision(
     )
     if not rows:
         raise disc.DiscussionUnavailable()
-    return rows[0]
+    return rows[0] | inheritance
 
 
 @transaction.atomic
@@ -298,6 +368,13 @@ def _project_authorities(records, actor, organism_uuid, database_alias="default"
         row["authority_source"] = projected
 
 
+def _settings_enterer_visible(source):
+    """A settings trace must not identify the last voter in a totals-only ballot."""
+    if source["kind"] != "CQ_RESULT":
+        return True
+    return source.get("counting_rule", {}).get("reporting") == "NAMED"
+
+
 def _authority_trace(source, actor, organism_uuid):
     row = {"authority_source": source}
     _project_authorities([row], actor, organism_uuid)
@@ -319,8 +396,11 @@ def implementation_record(
                g.act_uuid AS gi_act,g.version_uuid AS gi_version,
                l.binding_uuid AS adopted_binding,ending.binding_id AS ended_binding,
                p.permission_uuid AS release_permission,p.authority_source AS permission_source,
-               f.fact_uuid AS publication
+               f.fact_uuid AS publication,s.act_uuid AS settings_version,
+               CASE WHEN i.facts->'domain_plan'->>'domain'='CIRCLE_REPORTING' THEN i.act_uuid END AS circle_reporting_version
           FROM public.core_cqact i JOIN public.core_livingorganismevent e ON e.event_uuid=i.act_uuid
+          LEFT JOIN public.core_cqact s ON s.organism_id=i.organism_id AND s.operation='SETTINGS'
+             AND s.request->>'result'=i.request->>'result'
           LEFT JOIN public.core_giact g ON g.act_uuid=(i.facts->'domain_plan'->'payload'->>'request')::uuid
           LEFT JOIN public.core_organismlawbinding l ON l.adoption_event_id=e.id
           LEFT JOIN public.core_organismlawending ending ON ending.end_event_id=e.id
