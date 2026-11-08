@@ -110,7 +110,7 @@ REQUIRED = (
 
 # The controls every qualifying run must record. Mutation controls are NOT here: they come from the
 # bound candidate's own registry, because they change as packets add mutations (v0_7 section 3.3).
-FIXED_CONTROLS = ("IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK")
+FIXED_CONTROLS = ("IDENTITY", "OFFLINE", "SELF", "SR-ROUNDTRIP", "S015", "OWNERSHIP", "LOCK")
 
 # The only exit a mutation control's target may report. Under the mutation the target must FAIL BY
 # ASSERTION, so the test process reports exactly one failure and exits 1. Recorded as an exact value
@@ -121,7 +121,7 @@ PERMITTED_MUTATION_TARGET_EXIT = 1
 # The route version this statement is written against (contract section 3, E25; RD-5 confirmed).
 # It is an exact value: when the route's version changes, the contract changes with it, deliberately,
 # so that a consumer cannot silently accept evidence from a route it was not written for.
-ROUTE_VERSION = "S015 verification route v0.5"
+ROUTE_VERSION = "S015 verification route v0.6"
 
 # An empty list means "no refusals", not "nothing checked". A field's absence is section 2's business.
 _REFUSAL_REGISTRY = "the mutation registry cannot be derived: %s"

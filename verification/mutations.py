@@ -335,7 +335,7 @@ END $mutation$"""],
         "class": 'ADMISSION',
         "follow_up": 'SR C3 admission; unqualified until normal / one-defect / restored evidence',
         "intended": 'Command reaches sr_definition_superseded_guard at the outer commit and distinguishes its named refusal',
-        "targets": ['test_sr_definitions.SRDefinitionCommandTests.test_08_sr20_reached_at_real_command_commit'],
+        "targets": ['test_sr_definitions.SRDefinitionCommandTests.test_07_sr30_reached_at_real_command_commit'],
         "sql": ["DO $mutation$\nDECLARE definition text; needle text := 'SR definition refused: a deactivated version must be superseded by a successor at commit';\nBEGIN\n SELECT pg_get_functiondef('public.sr_definition_superseded_guard()'::regprocedure) INTO definition;\n IF definition IS NULL OR (length(definition)-length(replace(definition,needle,''))) <> length(needle) THEN\n  RAISE EXCEPTION 'C3 expected single guard message missing';\n END IF;\n EXECUTE replace(definition,needle,'C3 MUTATION: unrelated refusal');\nEND\n$mutation$"],
     },
 }

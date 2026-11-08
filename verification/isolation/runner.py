@@ -20,9 +20,11 @@ import re
 import sys
 import time
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
-from django.test import TransactionTestCase
+from django.db import connection, transaction
+from django.test import TestCase, TransactionTestCase
 from django.test.runner import DiscoverRunner
 from django.test.utils import iter_test_cases
 
@@ -192,6 +194,18 @@ def database_access(test):
         return "unknown", None
     databases = sorted(validate())
     return ("permitted" if "default" in databases else "forbidden"), databases
+
+
+@contextmanager
+def read_only_transaction():
+    """Protect an entire reviewed reader, including unittest setup and cleanup."""
+    with transaction.atomic(using="default", durable=True):
+        with connection.cursor() as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+        try:
+            yield
+        finally:
+            transaction.set_rollback(True, using="default")
 
 
 def sequence_check_summary(
@@ -538,6 +552,11 @@ class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDataba
                     )
                     self._release_runner_output()
                     raise
+                self._reader = None
+                self._reader_passed = False
+                if runner._write_nothing_eligible(test):
+                    self._reader = read_only_transaction()
+                    self._reader.__enter__()
                 self._install_post_teardown_alias_check(test)
                 runner.started_ids.append(test.id())
 
@@ -619,6 +638,7 @@ class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDataba
                 runner.outcome_ids.append(test.id())
 
             def addSuccess(self, test):
+                self._reader_passed = True
                 self._outcome(test); super().addSuccess(test)
 
             def addError(self, test, err):
@@ -645,6 +665,11 @@ class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDataba
 
             def stopTest(self, test):
                 try:
+                    if self._reader is not None:
+                        self._reader.__exit__(*sys.exc_info())
+                        # Django tears down after unittest has reported the outcome.
+                        # Never suppress fixture teardown after a failed or skipped reader.
+                        test._isolation_read_only_success = self._reader_passed
                     runner._stop_timing(test)
                     try:
                         super().stopTest(test)
@@ -901,6 +926,23 @@ class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDataba
             )
         return rec
 
+    def _write_nothing_eligible(self, test):
+        """Only method-marked, single-connection readers may omit the successful flush."""
+        method = getattr(test, getattr(test, "_testMethodName", ""), None)
+        if not getattr(method, "ISOLATION_WRITE_NOTHING", False):
+            return False
+        return (
+            isinstance(test, TransactionTestCase)
+            and not isinstance(test, TestCase)
+            and not self._full_capture_trigger(test)
+            and database_access(test) == ("permitted", ["default"])
+            and not test.reset_sequences
+            and not test.fixtures
+            and not test.serialized_rollback
+            and test.available_apps is None
+            and type(test)._fixture_teardown is TransactionTestCase._fixture_teardown
+        )
+
     def _full_capture_trigger(self, test):
         if os.environ.get("VERIFICATION_ISOLATION_PER_TEST") == "1":
             return "switch"
@@ -1038,7 +1080,11 @@ class IsolationRunner(RecordingRunnerMixin, TemplateModeRunnerMixin, OwnedDataba
             started = time.perf_counter()
             completed = False
             try:
-                result = original(test, *args, **kwargs)
+                if test.__dict__.pop("_isolation_read_only_success", False):
+                    with patch.object(test, "_fixture_teardown", lambda: None):
+                        result = original(test, *args, **kwargs)
+                else:
+                    result = original(test, *args, **kwargs)
                 completed = True
                 return result
             finally:

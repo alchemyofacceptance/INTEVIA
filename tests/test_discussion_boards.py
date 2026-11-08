@@ -107,7 +107,7 @@ class DiscussionBoardTests(TransactionTestCase):
             "circle_uuid": uuid4(), "category_uuid": uuid4(), "request_uuid": uuid4(), "name": "Absent"})))
 
     def test_access_probation_permission_and_departure(self):
-        """DISC1-03. LO permission plus local category; no Circle admission and exact refusal parity."""
+        """DISC1-03. LO probation permission controls category access and departure ends board access."""
         lo, actor = fixtures.ordinary_birth()
         args = self.args(lo, actor)
         disc.ensure_board(**args, request_uuid=uuid4())
@@ -126,15 +126,6 @@ class DiscussionBoardTests(TransactionTestCase):
         self.assertTrue(visible[0]["can_reply"])
         hidden = next(r for r in disc.board_categories(**args)["categories"] if r["name"] == "Discussion")
         self.unavailable(lambda: disc.category_history(**member_args, category_uuid=hidden["category_uuid"]))
-        circle, coordinator = discussion_support.independent_circle(lo, actor)
-        circle_args = self.args(lo, coordinator, circle)
-        disc.ensure_board(**circle_args, request_uuid=uuid4())
-        p, _ = self.create(circle_args, access="PROBATIONARY")
-        self.assertFalse(models.CircleParticipation.objects.filter(circle=circle, membership=member_row).exists())
-        self.assertEqual(len(disc.category_history(**self.args(lo, member, circle), category_uuid=p)), 1)
-        disc.set_probation_access(credential=actor.credential, organism_uuid=lo.organism_id,
-                                  enabled=False, request_uuid=uuid4())
-        self.unavailable(lambda: disc.category_history(**self.args(lo, member, circle), category_uuid=p))
         outsider = support.register_test_learner(username="disc-outsider-" + uuid4().hex)
         for who, owner in ((outsider, lo.organism_id), (actor, uuid4())):
             self.unavailable(lambda who=who, owner=owner: disc.board_categories(credential=who.credential, organism_uuid=owner))
@@ -187,7 +178,7 @@ class DiscussionBoardTests(TransactionTestCase):
     test_free_cap_beta_exception_and_lapse_projection.ISOLATION_FULL_CAPTURE = True
 
     def test_history_retirement_guards_rollback_and_reversal(self):
-        """DISC1-05. Stable IDs, immutable versions, free-slot reuse, atomicity and populated reversal."""
+        """DISC1-05. Category retirement frees its slot and keeps immutable history through rollback."""
         lo, actor = fixtures.ordinary_birth(offering_choice="FREE")
         args = self.args(lo, actor)
         provision = disc.ensure_board(**args, request_uuid=uuid4())
@@ -234,11 +225,6 @@ class DiscussionBoardTests(TransactionTestCase):
             raise RuntimeError("deliberate rollback")
         self.assertEqual(disc._rows("SELECT count(*) AS n FROM public.core_discact")[0]["n"], count)
         self.assertEqual(models.LivingOrganismEvent.objects.count(), event_count)
-        migration = import_module("core.migrations.0072_discussion_boards")
-        with connection.schema_editor(atomic=True) as editor:  # noqa: SIM117 -- inspect inside editor
-            with self.assertRaises(RuntimeError) as reversal:
-                migration.reverse(None, editor)
-        self.assertEqual(str(reversal.exception), "DISC1 reversal refused while discussion history exists.")
         self.assertEqual(len(disc.category_history(**args, category_uuid=keys[0])), 3)
 
     test_history_retirement_guards_rollback_and_reversal.ISOLATION_FULL_CAPTURE = True
@@ -273,12 +259,16 @@ class DiscussionBoardTests(TransactionTestCase):
         self.assertIn("WELCOME", [c["functional_code"] for c in disc.board_categories(**self.args(lo, owner))["categories"]])
 
     def test_p2c_r4_probation_audience_is_board_specific(self):
-        """DISC1-14 / R4. Closed-to-probation Circle, unprovisioned Circle and unknown are indistinguishable."""
+        """DISC1-14 / R4. Circle probation access requires LO permission and a visible local category.
+
+        Includes the no-place and revoked-permission cases from
+        test_access_probation_permission_and_departure.
+        """
         lo, owner = fixtures.ordinary_birth()
         disc.set_probation_access(credential=owner.credential, organism_uuid=lo.organism_id,
                                  enabled=True, request_uuid=uuid4())
         circle, coordinator = discussion_support.independent_circle(lo, owner)
-        unopened, _ = discussion_support.independent_circle(lo, owner)
+        unopened, second_coordinator = discussion_support.independent_circle(lo, owner)
         args = self.args(lo, coordinator, circle)
         disc.ensure_board(**args, request_uuid=uuid4())
         category = next(c for c in disc.board_categories(**args)["categories"] if c["functional_code"] == "DISCUSSION")
@@ -302,32 +292,34 @@ class DiscussionBoardTests(TransactionTestCase):
         self.refused("DISC_AUTHORITY", lambda: disc.ensure_board(**probation, request_uuid=uuid4()))
         self.assertFalse(models.CircleParticipation.objects.filter(circle=circle, membership=row).exists())
 
-        # S5: custom probationary categories, unlike Welcome, can retire or
-        # change their audience. Use separate boards so Welcome cannot mask either case.
-        retired_circle, retired_owner = discussion_support.independent_circle(lo, owner)
-        retired_args = self.args(lo, retired_owner, retired_circle)
-        disc.ensure_board(**retired_args, request_uuid=uuid4())
-        category, _ = self.create(retired_args, access="PROBATIONARY")
-        head = disc.category_history(**retired_args, category_uuid=category)[-1]
-        disc.retire_category(**retired_args, category_uuid=category, predecessor=head["version_uuid"], request_uuid=uuid4())
-        probation_args = self.args(lo, member, retired_circle)
+        # The second Circle has no Welcome to mask the custom audience.
+        second = self.args(lo, second_coordinator, unopened)
+        disc.ensure_board(**second, request_uuid=uuid4())
+        changed_category, _ = self.create(second, access="PROBATIONARY")
+        head = disc.category_history(**second, category_uuid=changed_category)[-1]
+        changed_probation = self.args(lo, member, unopened)
+        self.assertEqual(len(disc.category_history(**changed_probation, category_uuid=changed_category)), 1)
+        self.assertFalse(models.CircleParticipation.objects.filter(circle=unopened, membership=row).exists())
+        disc.set_probation_access(credential=owner.credential, organism_uuid=lo.organism_id,
+                                  enabled=False, request_uuid=uuid4())
+        self.unavailable(lambda: disc.category_history(**changed_probation, category_uuid=changed_category))
+        disc.set_probation_access(credential=owner.credential, organism_uuid=lo.organism_id,
+                                  enabled=True, request_uuid=uuid4())
+        disc.revise_category(**second, category_uuid=changed_category, predecessor=head["version_uuid"],
+            request_uuid=uuid4(), name="Now members", description="", order=0, access="MEMBERS")
+        for target in (changed_probation, changed_probation | {"circle_uuid": uuid4()}):
+            self.unavailable(lambda target=target: disc.board_categories(**target))
+            self.unavailable(lambda target=target: disc.category_history(**target, category_uuid=changed_category))
+
+        category, _ = self.create(second, access="PROBATIONARY")
+        head = disc.category_history(**second, category_uuid=category)[-1]
+        disc.retire_category(**second, category_uuid=category, predecessor=head["version_uuid"], request_uuid=uuid4())
+        probation_args = self.args(lo, member, unopened)
         history = disc.category_history(**probation_args, category_uuid=category)
         self.assertEqual([v["retired"] for v in history], [False, True])
         visible = disc.board_categories(**probation_args)["categories"]
         self.assertEqual([v["category_uuid"] for v in visible], [category])
         self.assertFalse(visible[0]["can_reply"])
-        changed_circle, changed_owner = discussion_support.independent_circle(lo, owner)
-        changed_args = self.args(lo, changed_owner, changed_circle)
-        disc.ensure_board(**changed_args, request_uuid=uuid4())
-        changed_category, _ = self.create(changed_args, access="PROBATIONARY")
-        head = disc.category_history(**changed_args, category_uuid=changed_category)[-1]
-        changed_probation = self.args(lo, member, changed_circle)
-        self.assertEqual(len(disc.category_history(**changed_probation, category_uuid=changed_category)), 1)
-        disc.revise_category(**changed_args, category_uuid=changed_category, predecessor=head["version_uuid"],
-            request_uuid=uuid4(), name="Now members", description="", order=0, access="MEMBERS")
-        for target in (changed_probation, changed_probation | {"circle_uuid": uuid4()}):
-            self.unavailable(lambda target=target: disc.board_categories(**target))
-            self.unavailable(lambda target=target: disc.category_history(**target, category_uuid=changed_category))
 
     def test_p2c_r6_foreign_category_and_functional_refusal_order(self):
         """DISC1-16 / R6. Foreign category IDs disclose nothing; functional check precedes predecessor."""

@@ -362,6 +362,52 @@ class BufferedOutputGuard(unittest.TestCase):
         )
         return runner
 
+    def test_last_failed_reader_flushes_before_diagnostics(self):
+        """Only actual success suppresses flush; a last failed reader cleans up before CP-F and CP-Z."""
+        runner = self._runner()
+        events = []
+
+        @contextlib.contextmanager
+        def reader():
+            events.append("read only")
+            try:
+                yield
+            finally:
+                events.append("rollback")
+
+        class Probe(unittest.TestCase):
+            def test_pass(self):
+                pass
+
+            def test_fail(self):
+                with self.subTest(case="last"):
+                    self.fail("deliberate reader failure")
+
+            def _fixture_teardown(self):
+                events.append("flush")
+
+            def __call__(self, result):
+                super().__call__(result)
+                runner._timed_post_teardown(lambda case: case._fixture_teardown())(self)
+                events.append("closed")
+
+        cases = [Probe("test_pass"), Probe("test_fail")]
+        runner._write_nothing_eligible = lambda test: True
+        runner._record_post_teardown = lambda test, elapsed, completed: None
+        def diagnose():
+            events.extend(("CP-F", test.id()) for test in runner.pending_failures)
+            runner.pending_failures.clear()
+        runner._run_pending_cpf = diagnose
+        runner.checkpoint_z = lambda: events.append("CP-Z")
+        stream = io.StringIO()
+        with mock.patch("verification.isolation.runner.read_only_transaction", reader), mock.patch.dict(
+                os.environ, {"VERIFICATION_RUN_NONCE": "reader-outcome-probe"}), contextlib.redirect_stderr(stream):
+            result = unittest.TextTestRunner(stream=stream, resultclass=runner.get_resultclass()).run(unittest.TestSuite(cases))
+        self.assertEqual(len(result.failures), 1)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(events, ["read only", "rollback", "closed", "read only", "rollback", "flush", "closed",
+                                  ("CP-F", cases[1].id()), "CP-Z"])
+
     def _suite(self):
         class Probe(unittest.TestCase):
             def test_a_pass_witness(self):
@@ -649,11 +695,12 @@ class B2CleanupRecords(_Tmp):
         return r, code, json.loads(route_mod.read_text(r.path("summary.json")))
 
     def test_b2_cleanup_exception_keeps_every_name_and_exits_3(self):
+        """A cleanup failure accounts for every attempted clone, including SR-ROUNDTRIP."""
         r, code, summary = self._run_with_cleanup_failure()
         self.assertEqual(code, 3)
         self.assertEqual(summary["cleanup"]["outcome"], "NOT CLEAN")
         names = {n["name"]: n for n in summary["cleanup"]["names"]}
-        self.assertEqual(set(names), {r.db_name("SELF"), r.db_name("S015")})
+        self.assertEqual(set(names), {r.db_name("SELF"), r.db_name("SR-ROUNDTRIP"), r.db_name("S015")})
         self.assertTrue(all(n["state"].startswith("UNRESOLVED") and "simulated server unavailable" in n["state"] for n in names.values()))
         self.assertNotIn("SETUP", [s["id"] for s in summary["steps"]])
 
@@ -1213,6 +1260,26 @@ class B4FreshEvidence(_Tmp):
                  {"checkpoint": "CP-Z", "established": True, "run_nonce": n},
                  {"checkpoint": "SUMMARY", "isolation_verdict": "PASS",
                   "cpz_established": True, "run_nonce": n}])
+
+    def test_sr_roundtrip_requires_the_bound_plan_and_full_capture(self):
+        """A light checkpoint, stale plan digest or incomplete execution disqualifies the SR control."""
+        r = self.route()
+        target = route_mod.SR_ROUNDTRIP_TEST
+        digest = hashlib.sha256(target.encode()).hexdigest()
+        def records():
+            rows = self._good(r, [target])
+            rows[1]["capture"] = "full"
+            rows[-1].update(plan_sha256=digest, tests_executed=1, executed_matches_plan="FULL")
+            return rows
+        def read(rows):
+            return r.read_isolation(self._iso(r, rows), [target], expected_plan=digest)
+        self.assertEqual(read(records())["verdict"], "PASS")
+        for location, field, value in ((1, "capture", "light"), (-1, "plan_sha256", "stale"),
+                                       (-1, "executed_matches_plan", "PREFIX"), (-1, "tests_executed", 0)):
+            with self.subTest(field=field):
+                rows = records()
+                rows[location][field] = value
+                self.assertEqual(read(rows)["verdict"], "NOT ESTABLISHED")
 
     def test_b4_summary_only_isolation_is_not_pass(self):
         r = self.route()
@@ -1957,6 +2024,9 @@ class CICloneTemplateBinding(_CloneFixture):
 
         def suite(sid, *a, **k):
             r.template = template
+            if sid == "SR-ROUNDTRIP":
+                template["clones"].append({"step": sid, "database": r.db_name(sid), "clone_setup_seconds": 1.5,
+                                           "clone_cp0_matches_template": True, "problems": []})
             if sid == "S015":
                 raise RuntimeError("simulated: the S015 child could not be started")
             return {"id": sid, "outcome": "PASS", "template": {"mode": "clone", "built": sid == "SELF", "build_seconds": 27.5 if sid == "SELF" else None,
@@ -1974,14 +2044,14 @@ class CICloneTemplateBinding(_CloneFixture):
             code, summary = self.run_route(r, suite, child, lambda name, conn=None: None)
         by_id = {step["id"]: step for step in summary["steps"]}
         self.assertEqual(code, 2, "a step that raised is INCOMPLETE, so the route must exit 2; it exited %s" % code)
-        for step_id in ("OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"):
+        for step_id in ("OFFLINE", "SELF", "SR-ROUNDTRIP", "S015", "OWNERSHIP", "LOCK"):
             timing = by_id[step_id].get("timing")
             self.assertIsNotNone(timing, "step %s recorded no timing at all; every executed step must carry started, finished and seconds" % step_id)
             self.assertEqual(set(timing), {"started", "finished", "seconds"}, "step %s timing has keys %s, not started/finished/seconds" % (step_id, sorted(timing)))
             self.assertTrue(isinstance(timing["seconds"], float) and timing["seconds"] >= 0, "step %s seconds %r must be a non-negative number" % (step_id, timing["seconds"]))
         self.assertEqual(summary["identity"].get("timing", {}).keys() and set(summary["identity"]["timing"]), {"started", "finished", "seconds"},
                          "IDENTITY's timing must be recorded under summary.identity.timing")
-        for step_id in ("OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"):
+        for step_id in ("OFFLINE", "SELF", "SR-ROUNDTRIP", "S015", "OWNERSHIP", "LOCK"):
             self.assertEqual(by_id[step_id]["timing"]["seconds"], 0.5, "step %s's duration must come from the controlled monotonic clock (0.5 s per start/end pair), not the wall clock; got %r" % (step_id, by_id[step_id]["timing"]["seconds"]))
         self.assertEqual(by_id["S015"]["outcome"], "INCOMPLETE", "a step whose child raised must be INCOMPLETE, with its timing still recorded")
         self.assertEqual((by_id["SELF"]["template"]["build_seconds"], by_id["OWNERSHIP"].get("template")), (27.5, None),
@@ -1995,11 +2065,16 @@ class CICloneTemplateBinding(_CloneFixture):
         self.assertTrue(all(s.get("timing") == {"status": "not run"} for s in planned_not_run), "a planned step that never ran must carry timing status 'not run', never a zero duration")
         summary_md = route_mod.read_text(r.path("SUMMARY.md"))
         self.assertIn("## Step timings", summary_md, "SUMMARY.md must render the step-timing table")
+        sr = by_id["SR-ROUNDTRIP"]["timing"]
+        self.assertIn("| SR-ROUNDTRIP | %s | %s | %s | reused | 1.5 | True |" %
+                      (sr["started"], sr["finished"], sr["seconds"]), summary_md)
+        steps = [step["id"] for step in summary["steps"]]
+        self.assertEqual(steps[steps.index("SELF"):steps.index("S015") + 1], ["SELF", "SR-ROUNDTRIP", "S015"])
         self.assertIn("| SELF | %s | %s | %s | 27.5 | 1.5 | True |" % (by_id["SELF"]["timing"]["started"], by_id["SELF"]["timing"]["finished"], by_id["SELF"]["timing"]["seconds"]), summary_md,
                       "the SELF row must show its build seconds (27.5), clone setup (1.5) and CP-0 match")
         self.assertIn("| TPL-FINAL (final inspection; cleanup, not a control) | %s | %s | %s | reused | 1.1 | True |" % (final["timing"]["started"], final["timing"]["finished"], final["timing"]["seconds"]), summary_md,
                       "the final inspection must be rendered as its own timing row with its clone setup seconds, outside the fixed controls")
-        self.assertIn("- **Test-runner clones (SELF, S015, mutation steps):** 1;", summary_md, "the test-runner clone count must be derived from the template's clone records (one: SELF's; S015 never started)")
+        self.assertIn("- **Test-runner clones (SELF, SR-ROUNDTRIP, S015, mutation steps):** 2;", summary_md, "the test-runner clone count must be derived from the template's clone records (SELF and SR-ROUNDTRIP; S015 never started)")
         self.assertIn("- **Final-inspection clone:** `%s` (1 more clone; setup 1.1 s)" % final["database"], summary_md, "the final-inspection clone must be counted separately")
         self.assertIn("Built by step:** SELF in 27.5 s", summary_md, "the template section must show the building step and its build seconds")
 

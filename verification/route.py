@@ -1,4 +1,4 @@
-"""S015 verification route - the single entry point used locally and by CI (route v0.5, Change C v0.6).
+"""S015 verification route - the single entry point used locally and by CI (route v0.6, Change C v0.6).
 
     python -m verification.run [--evidence-dir NEW_DIR] [--run-id ID] [--skip-mutations]
 
@@ -14,6 +14,7 @@ Steps (each PASS, FAIL or INCOMPLETE):
   IDENTITY    the commit, git tree of the working files, and every change with its bytes; a failure makes the run INCOMPLETE
   OFFLINE     verification.selftest_parser, verification.selftest_route, verification.selftest_recording and verification.selftest_bootstrap (no database)
   SELF        the isolation instrument's self-check under the isolation runner
+  SR-ROUNDTRIP SR clean and occupied migration rehearsal on one separate clone
   S015        the S015 test set (tests/, pattern test_*.py) under the isolation runner
   OWNERSHIP   live checks of the database safeguards: a colliding database is refused and left untouched; a replaced
               database is not dropped; an owned database is dropped only by its oid
@@ -43,7 +44,7 @@ Database safety (A1 C-A1-B3; RC-B2, RC-B3 and RC-O1 in v0.3):
             fresh per run, from the migrations at zero, by the first database step (SELF) through the TT-1 template
             machinery under the build-once policy (verification.isolation.template_mode.prepare_template_build_once,
             which calls TT-1's _build_template once; prepare_template stays the development path); it is sealed against connections and becomes
-            the run's template. Every later test database - S015 and each MUT step, and the final check below - is a
+            the run's template. Every later test database - SR-ROUNDTRIP, S015 and each MUT step, and the final check below - is a
             clone of it. The TT-1 evidence root for the run is the directory PKTB_VERIFICATION_ROUTE inside the evidence
             directory (template store, build intents, every step's database receipts). Each clone step proves its clone
             is a copy of the template (its compared CP-0 properties match the fresh-build reference; a mutation step checks
@@ -94,8 +95,9 @@ ISOLATION_RUNNER = "verification.isolation.runner.IsolationRunner"
 MUTATION_RUNNER = "verification.mutations.MutationRunner"
 LOCK_KEY = int(hashlib.sha256(b"intevia-s015-verification-route").hexdigest()[:15], 16)
 LOCK_DATABASE = "postgres"  # common to every route run on a server (RC-O1); not configurable by design
-OWNERSHIP_PROBE_TEST = "test_s015_0022_contract.S0150022ContractTests.test_l2_preimage_refuses_every_body_while_u14_stands"
-STEP_CODES = {"SELF": "self", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3", "LOCK": "lock1", "TPL-FINAL": "tplf"}
+SR_ROUNDTRIP_TEST = "verification.sr_roundtrip.SRRoundTrip.test_clean_and_occupied_reversal"
+OWNERSHIP_PROBE_TEST = "test_s015_0022_contract.S0150022ReadOnlyTests.test_l2_preimage_refuses_every_body_while_u14_stands"
+STEP_CODES = {"SELF": "self", "SR-ROUNDTRIP": "srtrip", "S015": "s015", "OWN-COLLIDE": "own1", "OWN-REPLACE": "own2", "OWN-OWNED": "own3", "LOCK": "lock1", "TPL-FINAL": "tplf"}
 # CI-CLONE-1: the run's TT-1 evidence root (a directory of this name inside the evidence directory; the name must satisfy
 # template.py's PKTB_ pattern), the template store beneath it, the store namespace, and the step that builds the template.
 TEMPLATE_ROOT = "PKTB_VERIFICATION_ROUTE"
@@ -114,11 +116,18 @@ from django.test.runner import DiscoverRunner
 from django.db import connections
 from verification.route import collection_facts
 mode, out_path, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
-if mode == "label":
+plan_digest = None
+if mode == "plan":
+    from verification.isolation.run_plan import build_plan, write_plan
+    plan = build_plan(rest)
+    plan_digest = write_plan(plan, os.environ["INTEVIA_RUN_PLAN_FILE"])
+    ids = plan["tests"]
+elif mode == "label":
     suite = DiscoverRunner(verbosity=0).build_suite(rest)
 else:
     suite = DiscoverRunner(verbosity=0, pattern=rest[0], top_level="tests").build_suite(["tests"])
-ids = [t.id() for t in suite]
+if mode != "plan":
+    ids = [t.id() for t in suite]
 failed = [i for i in ids if "loader._FailedTest" in i]
 facts = {}
 if mode == "discover":
@@ -130,7 +139,7 @@ if mode == "discover":
 with open(out_path, "x", encoding="utf-8") as f:
     json.dump({"mode": mode, "args": rest, "count": len(ids), "failed_loads": failed, "run_nonce": os.environ.get("VERIFICATION_RUN_NONCE"),
                "digest": hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest(), "ids": ids,
-               "facts": facts}, f, indent=1)
+               "facts": facts, "plan_sha256": plan_digest}, f, indent=1)
 """
 
 # CI-CLONE-1: the end-of-run template check and drop, run as one more Django child under django_env. The child is a
@@ -775,6 +784,10 @@ class Route:
         db = self.db_name(sid)
         step["database"] = db
         env = self.django_env(db, sid, isolation, mutation)
+        if mode == "plan":
+            env["INTEVIA_RUN_PLAN_FILE"] = self.path(sid + "_plan.json")
+            env["VERIFICATION_STEP"] = sid
+            step["run_kind"] = self.run_kind
         collection_path = self.path(sid + "_collection.json")
         c = subprocess.run([sys.executable, "-c", COLLECT, mode, collection_path, *args], cwd=ROOT, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
         if c.returncode != 0 or not os.path.exists(collection_path):
@@ -807,7 +820,18 @@ class Route:
         if self.oid_of(db) is not None:
             step["outcome"], step["reason"] = "INCOMPLETE", "a database named %s already exists; the step was not run and it was left untouched" % db
             return step
-        labels = list(args) if mode == "label" else ["tests", "--top-level-directory", "tests", "--pattern", args[0]]
+        if mode == "plan":
+            plan_sha256 = sha256_file(env["INTEVIA_RUN_PLAN_FILE"])
+            if collection["ids"] != args or collection.get("plan_sha256") != plan_sha256:
+                step.update(outcome="INCOMPLETE", reason="resolved SR plan differs from its witness or digest")
+                return step
+            step["plan_sha256"] = plan_sha256
+            env["INTEVIA_RUN_PLAN_SHA256"] = plan_sha256
+            labels = []
+        elif mode == "label":
+            labels = list(args)
+        else:
+            labels = ["tests", "--top-level-directory", "tests", "--pattern", args[0]]
         runner = MUTATION_RUNNER if mutation else ISOLATION_RUNNER
         log = self.path(sid + "_test_output.log")
         self.attempted.append((sid, db, env[RECEIPT_ENV]))
@@ -861,7 +885,11 @@ class Route:
                 reason = ("; " .join(filter(None, [reason, "template binding not established: "
                                                    + "; ".join(step["template"]["problems"])])))
         if outcome != "INCOMPLETE" and isolation:
-            step["isolation"] = self.read_isolation(env["VERIFICATION_ISOLATION_JSON"], collection["ids"])
+            if mode == "plan":
+                step["isolation"] = self.read_isolation(env["VERIFICATION_ISOLATION_JSON"], collection["ids"],
+                                                        expected_plan=plan_sha256)
+            else:
+                step["isolation"] = self.read_isolation(env["VERIFICATION_ISOLATION_JSON"], collection["ids"])
             if step["isolation"]["verdict"] is None:
                 outcome, reason = "INCOMPLETE", "isolation evidence missing or not bound to this run: %s" % step["isolation"]["problem"]
             elif step["isolation"]["verdict"] != "PASS" and outcome == "PASS":
@@ -989,7 +1017,7 @@ class Route:
                     return record
         return None
 
-    def read_isolation(self, path, collected):
+    def read_isolation(self, path, collected, *, expected_plan=None):
         """Recompute the isolation verdict from this run's own records (C-A1-B4); never trust a summary line alone."""
         res = {"verdict": None, "problem": None}
         if not os.path.exists(path):
@@ -1034,6 +1062,15 @@ class Route:
         unresolved = sorted(set(ids) - set(established) - set(lawful_na))
         if unresolved:
             reasons.append("%d applicable checkpoint(s) not established" % len(unresolved))
+        if expected_plan is not None:
+            reported = summ[0]
+            res.update(plan_sha256=reported.get("plan_sha256"), executed_matches_plan=reported.get("executed_matches_plan"),
+                       tests_executed=reported.get("tests_executed"), test_phases=reported.get("timing"))
+            if (res["plan_sha256"] != expected_plan or res["executed_matches_plan"] != "FULL"
+                    or res["tests_executed"] != len(collected) or ids != collected):
+                reasons.append("SR-ROUNDTRIP did not execute its exact plan")
+            if any(row.get("capture") != "full" or row.get("established") is not True for row in cpa):
+                reasons.append("SR-ROUNDTRIP requires established full capture")
         verdict = "PASS" if not reasons else "NOT ESTABLISHED"
         if summ[0].get("isolation_verdict") != verdict:
             reasons.append("the runner's SUMMARY verdict %r disagrees with the recomputed verdict" % summ[0].get("isolation_verdict"))
@@ -1337,19 +1374,20 @@ class Route:
     # ------------------------------------------------------------------ orchestration
     def run(self, skip_mutations, launch_token=None, snapshot=None, checkout=None, attested_commit=None):
         self.candidate_root = os.path.abspath(checkout or ROOT)
+        self.run_kind = "development" if skip_mutations else "qualification"
         summary = {
-            "route": "S015 verification route v0.5",
+            "route": "S015 verification route v0.6",
             **self.database_identity(),
             "run_nonce": self.nonce,
             "started": host_clock_utc(),
         }
         self.say(
-            "S015 VERIFICATION ROUTE v0.5  run %s  token %s  %s"
+            "S015 VERIFICATION ROUTE v0.6  run %s  token %s  %s"
             % (self.run_id, self.run_token, summary["started"])
         )
         dependency = resolve_dependency_environment()
         summary["execution"] = {"launch_token": launch_token, "root": os.path.abspath(snapshot or ROOT), "entry": os.path.realpath(__file__), "mode": "snapshot-entry" if snapshot else "checkout-entry", "site_dirs": [dependency["site_packages"]]}
-        planned = ["IDENTITY", "OFFLINE", "SELF", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
+        planned = ["IDENTITY", "OFFLINE", "SELF", "SR-ROUNDTRIP", "S015", "OWNERSHIP", "LOCK"] + ([] if skip_mutations else ["MUT-" + n for n in MUTATIONS])
         summary["environment"] = self.environment()
         cleanup = {"outcome": "NOT REACHED", "names": []}
         try:
@@ -1396,6 +1434,7 @@ class Route:
                 raise RouteRefused("databases for this run id already exist and were left untouched: %s" % mine)
             plan = [("OFFLINE", self.step_offline),
                     ("SELF", lambda: self.step_suite("SELF", "label", ["verification.isolation.selfcheck_tests"])),
+                    ("SR-ROUNDTRIP", lambda: self.step_suite("SR-ROUNDTRIP", "plan", [SR_ROUNDTRIP_TEST])),
                     ("S015", lambda: self.step_suite("S015", "discover", [S015_PATTERN])),
                     ("OWNERSHIP", self.step_ownership),
                     ("LOCK", self.step_lock)]
@@ -1469,7 +1508,7 @@ class Route:
         with open(self.path("summary.json"), "x", encoding="utf-8") as f:
             json.dump(summary, f, indent=1, default=str)
         ident, env = summary.get("identity", {}), summary["environment"]
-        lines = ["# S015 verification route v0.5 - %s" % summary["result"], "",
+        lines = ["# S015 verification route v0.6 - %s" % summary["result"], "",
                  "- **Result:** %s (exit status %d); cleanup %s" % (summary["result"], summary["exit_status"], summary["cleanup"]["outcome"]),
                  "- **Tested:** %s" % ident.get("tested", "IDENTITY NOT ESTABLISHED"),
                  "- **Commit tree:** `%s`; working-files git tree `%s`; core migration head `%s`" % (ident.get("commit_tree"), ident.get("working_tree_git_tree"), ident.get("core_migration_head")),
@@ -1492,7 +1531,7 @@ class Route:
             t = (ident.get("timing") if s["id"] == "IDENTITY" else s.get("timing")) or {}
             tpl = s.get("template") or {}
             lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
-                s["id"], t.get("started", ""), t.get("finished", ""), t.get("seconds", ""),
+                s["id"], t.get("started", ""), t.get("finished", ""), t.get("seconds", t.get("status", "")),
                 tpl.get("build_seconds") if tpl.get("built") else ("" if not tpl else "reused"),
                 "" if tpl.get("clone_setup_seconds") is None else tpl["clone_setup_seconds"],
                 "" if tpl.get("clone_cp0_matches_template") is None else tpl["clone_cp0_matches_template"]))
@@ -1509,7 +1548,7 @@ class Route:
             clones = tpl.get("clones", [])
             lines += ["- **Built by step:** %s in %s s; name `%s`; oid %s; identity `%s`; fresh-build CP-0 reference `%s`; sealed %s"
                       % (tpl.get("built_by_step"), tpl.get("build_seconds"), tpl["name"], tpl.get("oid"), tpl.get("identity"), tpl.get("cp0_digest"), tpl.get("sealed")),
-                      "- **Test-runner clones (SELF, S015, mutation steps):** %d; every clone's compared CP-0 properties match the fresh-build reference: %s" % (
+                      "- **Test-runner clones (SELF, SR-ROUNDTRIP, S015, mutation steps):** %d; every clone's compared CP-0 properties match the fresh-build reference: %s" % (
                           len(clones), all(c.get("clone_cp0_matches_template") for c in clones) if clones else "no clones"),
                       "- **Final-inspection clone:** `%s` (1 more clone; setup %s s); compared CP-0 properties match the fresh-build reference: %s; template dropped: %s%s"
                       % (final.get("database"), final.get("clone_setup_seconds"), final.get("matches"), final.get("template_dropped"), (" (%s)" % final["error"]) if final.get("error") else ""),

@@ -246,6 +246,8 @@ class LawRecordTests(TransactionTestCase):
             )
         compete_on_installed_window(self, at)
 
+    test_overlapping_versions_and_competing_first_windows.ISOLATION_FULL_CAPTURE = True
+
     def test_publication_archive_and_source_of_law(self):
         """L-02. Publication and ordinary LO events confer no LAW standing."""
         ids = found()

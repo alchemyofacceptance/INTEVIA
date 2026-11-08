@@ -36,6 +36,21 @@ from tests.test_sr_office_guards import _add_member, _propose, _consent
 from tests.s015_0021_support import database_now, found_nonroot, seed_test_gateway
 
 
+def nomination_fixture(ids, proposer, row, member, *, consented=False):
+    """Write the guarded nomination and, when requested, its real consent history."""
+    tag = "c4-nomination:"+uuid4().hex
+    with transaction.atomic(),connection.cursor() as cur:
+        aid,auuid,pid = _propose(cur,ids,proposer_id=proposer.pk,proposer_membership_id=ids["membership"],
+            nominee_membership_id=member.pk,nominee_membership_uuid=member.membership_uuid,
+            definition_id=row.pk,definition_uuid=row.role_uuid,at=database_now(),tag=tag)
+    if consented:
+        with transaction.atomic(),connection.cursor() as cur:
+            _consent(cur,ids,nominee_identity_id=member.identity_id,nominee_membership_id=member.pk,
+                nominee_membership_uuid=member.membership_uuid,assignment_id=aid,assignment_uuid=auuid,
+                proposal_id=pid,at=database_now(),tag=tag)
+    return member, models.ContextualRoleAssignment.objects.get(pk=aid), models.ContextualRoleAssignmentStateEvent.objects.get(pk=pid)
+
+
 class SRProviderPureTests(SimpleTestCase):
     def test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context(self):
         """O-09: one vacancy observation uses one clock cut and reports a missing organisation."""
@@ -131,18 +146,8 @@ class SRProviderTests(TransactionTestCase):
         return json.loads(result.authority_reference.removeprefix("s015a1:"))
 
     def _nomination(self,row,*,consented=False):
-        member = self._member()
-        tag = "c4-nomination:"+uuid4().hex
-        with transaction.atomic(),connection.cursor() as cur:
-            aid,auuid,pid = _propose(cur,self.ids,proposer_id=self.actor.pk,proposer_membership_id=self.ids["membership"],
-                nominee_membership_id=member.pk,nominee_membership_uuid=member.membership_uuid,
-                definition_id=row.pk,definition_uuid=row.role_uuid,at=database_now(),tag=tag)
-        if consented:
-            with transaction.atomic(),connection.cursor() as cur:
-                _consent(cur,self.ids,nominee_identity_id=member.identity_id,nominee_membership_id=member.pk,
-                    nominee_membership_uuid=member.membership_uuid,assignment_id=aid,assignment_uuid=auuid,
-                    proposal_id=pid,at=database_now(),tag=tag)
-        return member, models.ContextualRoleAssignment.objects.get(pk=aid), models.ContextualRoleAssignmentStateEvent.objects.get(pk=pid)
+        """Nominate a separate member for the given office definition."""
+        return nomination_fixture(self.ids, self.actor, row, self._member(), consented=consented)
 
     def _consent_command(self,member,assignment,proposal,action):
         at=database_now()
@@ -192,7 +197,11 @@ class SRProviderTests(TransactionTestCase):
 
 
     def test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal(self):
-        """O-22: fresh consent requires the current definition while withdrawal preserves the old chain."""
+        """O-22. Stale consent refuses while withdrawal preserves the original chain.
+
+        Includes the stale CONSENT intake and rollback scope from
+        test_02_current_policy_and_stale_definition_refusals_reach_the_service.
+        """
         command,row=self._define()
         m1,a1,p1=self._nomination(row)
         m2,a2,p2=self._nomination(row)
@@ -200,7 +209,9 @@ class SRProviderTests(TransactionTestCase):
         first=service.record_office_consent(self._consent_command(m1,a1,p1,"CONSENT"))
         self.assertEqual((first.action,first.assignment_uuid),("CONSENT",a1.assignment_uuid), msg='Consenting to the current board-office nomination should record consent for that nomination; the returned action or nomination differs.')
         self._success(self._command("AMEND",row=row,content=command.content), action_description='Updating the board-office definition after the first nominee consented')
-        before=self._snapshot()
+        from tests.test_sr_office_actions import office_snapshot
+
+        before=office_snapshot()
         with self.assertRaises(consent_service.S015OfficeConsentSuperseded, msg='Consenting after the office definition was updated should refuse because a new nomination under the current definition is needed; the stale consent was not refused.') as stale:
             service.record_office_consent(self._consent_command(m2,a2,p2,"CONSENT"))
         self.assertEqual(stale.exception.code,"SR_SUPERSEDED_DEFINITION", msg='Refusing consent to an outdated nomination should identify the superseded office definition; a different refusal was returned.')
@@ -209,7 +220,9 @@ class SRProviderTests(TransactionTestCase):
         self.assertEqual(stale.exception.support_message, consent_service.OFFICE_CONSENT_MESSAGES["SUPERSEDED"], msg='Refusing consent after a definition update should explain the need for a new nomination under the current version; the support message differs.')
         # Constructor only: this is not a live retired-office consent witness.
         self.assertEqual(str(consent_service.S015OfficeConsentSuperseded(retired=True)), consent_service.OFFICE_CONSENT_MESSAGES["RETIRED"], msg='Constructing the retired-office consent refusal should explain retirement and that appointment is unavailable; the constructor selected another explanation.')
-        after=self._snapshot()
+        after=office_snapshot()
+        self.assertEqual(after["CommandIntake"][0], before["CommandIntake"][0] + 1,
+                         "The stale CONSENT refusal must retain exactly one new intake.")
         self.assertEqual({k:v for k,v in after.items() if k!="CommandIntake"},{k:v for k,v in before.items() if k!="CommandIntake"},'Refusing stale consent should leave the nomination, decisions and consent history unchanged apart from the request record; other stored records changed.')
         withdrawn=service.record_office_consent(self._consent_command(m1,a1,p1,"WITHDRAW"))
         self.assertEqual(withdrawn.action,"WITHDRAW", msg='Withdrawing prior consent after the office definition was updated should record withdrawal; a different action was returned.')
@@ -217,16 +230,6 @@ class SRProviderTests(TransactionTestCase):
         self.assertEqual(a1.role_definition_id,row.pk, msg="Withdrawing consent should preserve the nomination's original office definition; the nomination points to a different version.")
         self.assertEqual(a1.state,"PROPOSED",'Withdrawing consent should leave the nomination proposed rather than close it; its state changed.')
 
-    def test_06_participation_requirement_refuses_proposal_and_assignment(self):
-        """SR §F.2: temporary negative participation witness; C5 positive/closed/ended replacement must qualify before this is shed."""
-        command=self._command()
-        content=replace(command.content,participation_required=True,
-            provisions=command.content.provisions+(definitions.DefinitionProvision("PARTICIPATION_REQUIRED","library:test#participation","v1"),))
-        result=self._success(replace(command,content=content), action_description='Creating the board office that requires GOVERNANCE participation')
-        row=models.OrganismRoleDefinition.objects.get(role_uuid=result.role_definition_uuid)
-        member,assignment,proposal=self._nomination(row,consented=True)
-        self._evaluate(self._proposal(row,member),"E_NOMINEE_NOT_ELIGIBLE", action_description='Nominating a member without required GOVERNANCE participation for the board office')
-        self._evaluate(self._request({"event_action":"ASSIGN","assignment_uuid":str(assignment.assignment_uuid)}),"E_NOMINEE_NOT_ELIGIBLE", action_description='Appointing a member without required GOVERNANCE participation to the board office')
         # Real positive SB-G participation and Circle lifecycle are named cuts;
         # source review of the query is not a runtime positive witness.
 

@@ -83,36 +83,46 @@ class S0150022ContractTests(TransactionTestCase):
             )
             return cursor.fetchone()[0]
 
-    def test_lawful_resolution_insert_commits(self):
-        identity = self._identity("lawful")
-        self._insert_resolution(identity)
-
-        self.assertEqual(self._resolution_count(identity.pk), 1)
-
-    def test_takedown_records_severance_atomically(self):
-        identity = self._identity("takedown")
-        self._insert_resolution(identity)
-
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
-                    [identity.pk],
-                )
-
-        self.assertEqual(self._resolution_count(identity.pk), 0)
-        self.assertEqual(self._severed_count(identity.pk), 1)
-
     def test_reinsert_after_severance_is_refused(self):
+        """Severance is atomic and prevents reuse of the same identity.
+
+        Folded cases: test_lawful_resolution_insert_commits,
+        test_resolution_rollback_leaves_no_severance_trace and
+        test_takedown_records_severance_atomically.
+        """
+        class RollbackProbe(Exception):
+            pass
+
         identity = self._identity("reinsert")
         self._insert_resolution(identity)
 
+        with self.subTest(case="test_lawful_resolution_insert_commits"):
+            self.assertEqual(self._resolution_count(identity.pk), 1)
+
+        with self.subTest(case="test_resolution_rollback_leaves_no_severance_trace"):
+            with self.assertRaises(RollbackProbe):
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
+                            [identity.pk],
+                        )
+                    self.assertEqual(self._severed_count(identity.pk), 1)
+                    raise RollbackProbe()
+
+            self.assertEqual(self._resolution_count(identity.pk), 1)
+            self.assertEqual(self._severed_count(identity.pk), 0)
+
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
                     "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
                     [identity.pk],
                 )
+
+        with self.subTest(case="test_takedown_records_severance_atomically"):
+            self.assertEqual(self._resolution_count(identity.pk), 0)
+            self.assertEqual(self._severed_count(identity.pk), 1)
 
         # FU-B2 (UFUND-2 Change C; A1 review O-2): R-d as ruled and landed - a severed identity reference cannot receive
         # another resolution (ILC Datacron section 3, What the packet builds, item 2, and section 6; implemented by 0022's
@@ -127,34 +137,13 @@ class S0150022ContractTests(TransactionTestCase):
         self.assertEqual(self._resolution_count(identity.pk), 0)
         self.assertEqual(self._severed_count(identity.pk), 1)
 
-    def test_resolution_rollback_leaves_no_severance_trace(self):
-        # C-3: design v0.6 section 5.5 - "No guardian refuses DELETE on the resolution table - the takedown is that delete."
-        # The delete is not expected to raise. The transaction is rolled back deliberately after it, and the severance the
-        # delete recorded inside the transaction must not survive the rollback.
-        class RollbackProbe(Exception):
-            pass
 
-        identity = self._identity("rollback")
-        self._insert_resolution(identity)
-
-        with self.assertRaises(RollbackProbe):
-            with transaction.atomic():
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM public.core_identityresolution WHERE identity_id = %s",
-                        [identity.pk],
-                    )
-                self.assertEqual(self._severed_count(identity.pk), 1)
-                raise RollbackProbe()
-
-        self.assertEqual(self._resolution_count(identity.pk), 1)
-        self.assertEqual(self._severed_count(identity.pk), 0)
+@POSTGRESQL_ONLY
+class S0150022ReadOnlyTests(TransactionTestCase):
+    """Catalog and refusing-function reads require neither fixtures nor a sequence reset."""
 
     def test_l2_preimage_refuses_every_body_while_u14_stands(self):
-        # C-2: design v0.6 section 5.4 and U-14. The L2 body grammar is undefined, so the function is named, not specified,
-        # and refuses object and non-object bodies alike with the U-14 refusal. Only that refusal satisfies this test.
-        # (A comment, not a docstring: the verbose runner prints a docstring as an extra line, which the shared route's
-        # result parser does not recognise - run CHB_20260916T210412Z.)
+        """The U-14 function refuses both object and non-object bodies with its own reason."""
         for label, body in (("non-object body", [1, 2, 3]), ("object body", {"alpha": 1, "beta": [2, 3]})):
             with self.subTest(body=label):
                 with self.assertRaises(DatabaseError) as raised:
@@ -166,7 +155,10 @@ class S0150022ContractTests(TransactionTestCase):
                             )
                 self.assertIn(U14_REFUSAL, str(raised.exception))
 
+    test_l2_preimage_refuses_every_body_while_u14_stands.ISOLATION_WRITE_NOTHING = True
+
     def test_final_schema_objects_and_trigger_names_exist(self):
+        """The final schema binds the expected objects, columns and trigger names."""
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -289,3 +281,5 @@ class S0150022ContractTests(TransactionTestCase):
             transition_columns,
             ["effective_at", "received_at", "recorded_at"],
         )
+
+    test_final_schema_objects_and_trigger_names_exist.ISOLATION_WRITE_NOTHING = True

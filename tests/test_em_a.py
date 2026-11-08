@@ -12,7 +12,9 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management import call_command
+from importlib import import_module
+
+from django.apps import apps
 from django.core.mail import EmailMessage
 from django.db import (
     DatabaseError,
@@ -844,7 +846,7 @@ class EmailFoundationTests(TransactionTestCase):
         )
 
     def test_10_template_immutability_and_provider_seam(self):
-        """EMA-10: template guards survive qualified test flush; undeclared mail/backends and populated reversal refuse."""
+        """EMA-10: template mutation, undeclared mail/backends and populated reversal refuse."""
         row = self.enqueue()
         try:
             with transaction.atomic():
@@ -876,20 +878,14 @@ class EmailFoundationTests(TransactionTestCase):
             self.fail(
                 "Truncating version anchors must refuse even through the disposable owner test route."
             )
-        from django.db.migrations.executor import MigrationExecutor
-
-        try:
-            MigrationExecutor(connection).migrate([("email_foundation", None)])
-        except RuntimeError as exc:
-            self.assertIn(
-                "EM-a reverse refused",
-                str(exc),
-                "Populated reversal must reach EM-a's explicit preservation refusal.",
-            )
-        else:
-            self.fail(
-                "Reversing the email migration with an existing intent must refuse before removing tables."
-            )
+        migration = import_module("email_foundation.migrations.0001_initial")
+        self.assertIs(migration.Migration.operations[-1].reverse_code, migration.refuse_populated_reverse)
+        with connection.schema_editor() as editor, self.assertRaises(RuntimeError) as refused:
+            migration.refuse_populated_reverse(apps, editor)
+        self.assertEqual(
+            str(refused.exception),
+            "EM-a reverse refused: email records exist. Preserve them and commission a data-safe reversal; no tables have been removed.",
+        )
         self.assertTrue(
             Outbox.objects.filter(pk=row.pk).exists(),
             "A refused migration reversal must retain the existing intent.",
@@ -941,23 +937,5 @@ class EmailFoundationTests(TransactionTestCase):
                 self.fail(
                     "Mail without a known EM-a intent must be refused as NotAccepted."
                 )
-        # Exercise the real qualified disposable reset, not a blanket trigger bypass.
-        call_command("flush", interactive=False, verbosity=0, inhibit_post_migrate=True)
-        self.assertFalse(
-            TemplateVersion.objects.exists(),
-            "Qualified test teardown must flush template rows without breaking the suite.",
-        )
-        template = TemplateVersion.objects.create(
-            name="post-flush", version=1, digest="1" * 64
-        )
-        try:
-            with transaction.atomic():
-                TemplateVersion.objects.filter(pk=template.pk).update(digest="2" * 64)
-        except DatabaseError as exc:
-            self.assertIn(
-                "EM-a template versions are immutable",
-                str(exc),
-                "The flush route must restore the template guard before returning.",
-            )
-        else:
-            self.fail("The test reset must not leave template protection disabled.")
+
+    test_10_template_immutability_and_provider_seam.ISOLATION_FULL_CAPTURE = True

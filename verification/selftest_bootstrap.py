@@ -95,7 +95,7 @@ def _fixture_repo(root, helper_mode=False):
         "    ident = route.identity(checkout=checkout)\n"
         "    from verification import parse_results\n"
         "    summary = {\n"
-        "        \"route\": \"S015 verification route v0.5\",\n"
+        "        \"route\": \"S015 verification route v0.6\",\n"
         "        \"run_id\": args.run_id or \"run\",\n"
         "        \"result\": \"PASS\",\n"
         "        \"exit_status\": 0,\n"
@@ -184,6 +184,7 @@ class BootstrapSurfaceTests(unittest.TestCase):
         )
 
     def test_clean_run_qualifies(self):
+        """A clean bootstrap fixture binds its route version, candidate and launch evidence."""
         with tempfile.TemporaryDirectory(prefix="bootstrap-surface-") as td:
             checkout, commit, _ = _fixture_repo(td)
             run_root = Path(td) / "run-1"
@@ -196,7 +197,7 @@ class BootstrapSurfaceTests(unittest.TestCase):
             self.assertEqual(result["exit"], 0, result)
             self.assertTrue(gate["qualifying"], gate)
             self.assertFalse(gate["refusals"], gate)
-            self.assertEqual(summary["route"], "S015 verification route v0.5")
+            self.assertEqual(summary["route"], "S015 verification route v0.6")
             self.assertEqual(summary["identity"]["attested_commit"], commit)
             self.assertEqual(summary["execution"]["launch_token"], surface["launch_token"])
             self.assertEqual(attestation["site_prequalification"]["validated_dependency_root"], attestation["site_prequalification"]["interpreter"]["dependency_root"])

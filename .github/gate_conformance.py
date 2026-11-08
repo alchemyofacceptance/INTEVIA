@@ -454,6 +454,18 @@ CASES = [
      _steps(lambda s: [x for x in s if x["id"] != "LOCK"]), False,
      ["a required control is missing, duplicated or did not pass: <found>"]),
 
+    ("TE1", "the SR migration control is missing",
+     _steps(lambda steps: [step for step in steps if step["id"] != "SR-ROUNDTRIP"]), False,
+     ["a required control is missing, duplicated or did not pass: missing SR-ROUNDTRIP"]),
+
+    ("TE2", "the SR migration control appears twice",
+     _steps(lambda steps: steps + [step for step in steps if step["id"] == "SR-ROUNDTRIP"]), False,
+     ["the coordinator summary records step id SR-ROUNDTRIP more than once: the step record is contradictory"]),
+
+    ("TE3", "the SR migration control did not pass",
+     _steps(lambda steps: [dict(step, outcome="FAIL") if step["id"] == "SR-ROUNDTRIP" else step for step in steps]), False,
+     ["a required control is missing, duplicated or did not pass: SR-ROUNDTRIP recorded 'FAIL'"]),
+
     ("14", "a control duplicated (S015 twice)",
      _steps(lambda s: s + [x for x in s if x["id"] == "S015"]), False,
      ["the coordinator summary records step id S015 more than once: the step record is contradictory"]),

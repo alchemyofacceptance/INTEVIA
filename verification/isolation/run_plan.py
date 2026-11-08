@@ -653,7 +653,7 @@ def _run_self_test() -> int:
     def real_label_plan() -> None:
         attempts = {"count": 0}
         label = (
-            "tests.test_s015_0022_contract.S0150022ContractTests."
+            "tests.test_s015_0022_contract.S0150022ReadOnlyTests."
             "test_l2_preimage_refuses_every_body_while_u14_stands"
         )
         plan = build_plan([label], connection_attempts=attempts)

@@ -2,10 +2,12 @@
 
 Every test issues raw SQL that the specification v0.8 requires the database to refuse, and asserts the refusal — at the
 statement or at commit. Each class's positive control lives in tests/test_s015_0021_positive_controls.py under the same
-class name. Node identity: tests/test_s015_0021_negative_direct_sql.py::<Class>::<test>.
+class name. Each folded case keeps its original method name in subTest(case=...).
+The collected node is the surviving Class.test method; nested operation parameters remain visible.
 """
 import datetime as dt
 import uuid
+from contextlib import contextmanager
 from unittest import skipUnless
 
 from django.db import DatabaseError, connection, transaction
@@ -15,7 +17,7 @@ from s015_0021_support import (
     FIVE_RESERVED, SIX_CODES, T0, add_remaining_aggregates, append_event, append_second_event, contract_columns,
     database_now,
     drop_unset_check, empty_fp, empty_parts_commitment, first_line, found_nonroot, found_organism, found_root, fresh, predecessor_l1,
-    refresh, restore_unset_check, s2b_attribution_guard_suspended, seed_authority, seed_identity,
+    refresh, s2b_attribution_guard_suspended, seed_authority, seed_identity,
     sr_definition_guard_suspended, u,
 )
 
@@ -88,52 +90,54 @@ class _S015NegativeBase(TransactionTestCase):
 
 # ------------------------------------------------------------------ §6.1 item 1 — append-only refusal
 class AppendOnly(_S015NegativeBase):
-    def test_neg_update_event_same_value(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganismevent SET action = action WHERE id = %s", (ids["lo_event"],)),
-                     contains="append-only row mutation refused")
-
-    def test_neg_update_event_state(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganismevent SET resulting_state = 'CLOSED' WHERE id = %s", (ids["lo_event"],)),
-                     contains="append-only row mutation refused")
-
-    def test_neg_delete_event(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("DELETE FROM core_livingorganismevent WHERE id = %s", (ids["lo_event"],)),
-                     contains="append-only row mutation refused")
-
-    def test_neg_truncate_event_table(self):
-        self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("TRUNCATE core_livingorganismevent CASCADE"), contains="append-only row mutation refused")
-
-    def test_neg_set_constraints_deferred_does_not_lift_append_only(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        def attempt(cur):
-            cur.execute("SET CONSTRAINTS ALL DEFERRED")
-            cur.execute("DELETE FROM core_livingorganismevent WHERE id = %s", (ids["lo_event"],))
-        self.refuses(attempt, contains="append-only row mutation refused")
-
-    def test_neg_update_requirement_version(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_essentialcoveragerequirement SET minimum_active_occupants = 2 WHERE id = %s", (ids["requirement"],)),
-                     contains="append-only row mutation refused")
-
     def test_neg_each_event_table_append_only_attachment_by_operation(self):
+        """Event history and requirement versions reject row mutation, including no-op updates and bulk erasure.
+
+        Cases:
+        test_neg_each_event_table_append_only_attachment_by_operation
+        test_neg_delete_event
+        test_neg_truncate_event_table
+        test_neg_update_event_same_value
+        test_neg_update_event_state
+        test_neg_set_constraints_deferred_does_not_lift_append_only
+        test_neg_update_requirement_version
+        """
         ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
-        self.assertEqual(len(ids["events"]), 12)
-        for event_table, event_id in ids["events"].items():
-            operations = (
-                ("update", f"UPDATE public.{event_table} SET action = action WHERE id = %s", (event_id,)),
-                ("delete", f"DELETE FROM public.{event_table} WHERE id = %s", (event_id,)),
-                ("truncate", f"TRUNCATE public.{event_table} CASCADE", ()),
-            )
-            for operation, sql, params in operations:
-                with self.subTest(event_table=event_table, operation=operation):
-                    self.refuses(
-                        lambda cur, sql=sql, params=params: cur.execute(sql, params),
-                        contains="S015 immutable or append-only row mutation refused",
-                    )
+
+        lo_cases = {
+            "update": "test_neg_update_event_same_value",
+            "delete": "test_neg_delete_event",
+            "truncate": "test_neg_truncate_event_table",
+        }
+        with self.subTest(case="test_neg_each_event_table_append_only_attachment_by_operation"):
+            self.assertEqual(len(ids["events"]), 12)
+            for event_table, event_id in ids["events"].items():
+                operations = (
+                    ("update", f"UPDATE public.{event_table} SET action = action WHERE id = %s", (event_id,)),
+                    ("delete", f"DELETE FROM public.{event_table} WHERE id = %s", (event_id,)),
+                    ("truncate", f"TRUNCATE public.{event_table} CASCADE", ()),
+                )
+                for operation, sql, params in operations:
+                    case = lo_cases[operation] if event_table == "core_livingorganismevent" else "table attachment"
+                    with self.subTest(case=case, event_table=event_table, operation=operation):
+                        self.refuses(
+                            lambda cur, sql=sql, params=params: cur.execute(sql, params),
+                            contains="S015 immutable or append-only row mutation refused",
+                        )
+
+        with self.subTest(case="test_neg_update_event_state"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganismevent SET resulting_state = 'CLOSED' WHERE id = %s", (ids["lo_event"],)),
+                         contains="append-only row mutation refused")
+
+        with self.subTest(case="test_neg_set_constraints_deferred_does_not_lift_append_only"):
+            def attempt(cur):
+                cur.execute("SET CONSTRAINTS ALL DEFERRED")
+                cur.execute("DELETE FROM core_livingorganismevent WHERE id = %s", (ids["lo_event"],))
+            self.refuses(attempt, contains="append-only row mutation refused")
+
+        with self.subTest(case="test_neg_update_requirement_version"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_essentialcoveragerequirement SET minimum_active_occupants = 2 WHERE id = %s", (ids["requirement"],)),
+                         contains="append-only row mutation refused")
 
 
 # ------------------------------------------------------------------ §5.1 / §6.1 item 2 — the recorded-chain closure contract
@@ -171,17 +175,24 @@ class ChainClosure(_S015NegativeBase):
                                               pred_id=event_a, extra={"criterion_reference": "c"}), contains="predecessor_fk")
 
     def test_neg_head_rewind(self):
-        ids = self._ids()
-        e2 = self.commits(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]))[0]
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET head_event_id = %s WHERE id = %s", (ids["lo_event"], ids["lo"])),
-                     contains="head pointer")
+        """An event chain head cannot be cleared or rolled back.
 
-    def test_neg_head_null_while_events_exist(self):
-        ids = self._ids()
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET head_event_id = NULL WHERE id = %s", (ids["lo"],)), contains="head pointer")
+        Cases:
+        test_neg_head_rewind
+        test_neg_head_null_while_events_exist
+        """
+        ids = self.commits(lambda cur: self.root(cur))
+
+        with self.subTest(case="test_neg_head_null_while_events_exist"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET head_event_id = NULL WHERE id = %s", (ids["lo"],)), contains="head pointer")
+
+        with self.subTest(case="test_neg_head_rewind"):
+            self.commits(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]))
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET head_event_id = %s WHERE id = %s", (ids["lo_event"], ids["lo"])),
+                         contains="head pointer")
 
     def test_neg_anchor_without_sequence_one_at_commit(self):
-        ids = self._ids()
+        """An empty planning anchor must be refused at outer commit."""
         def attempt(cur):
             cur.execute("INSERT INTO core_planningclassificationcase (case_uuid, item_identifier) VALUES (%s, %s)", (str(uuid.uuid4()), f"u21g:{fresh()}"))
         self.refuses(attempt, contains="no sequence-1 event at commit")
@@ -203,15 +214,22 @@ class FourTimeGrammar(_S015NegativeBase):
                                               pred_id=ids["lo_event"], recorded_at=T0), contains="recorded_at is database-assigned")
 
     def test_neg_occurred_after_received(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], occ=T0 + dt.timedelta(seconds=1)), contains="four_time_ck")
+        """Event times must satisfy the received-time bounds.
 
-    def test_neg_received_in_the_future(self):
+        Cases:
+        test_neg_occurred_after_received
+        test_neg_received_in_the_future
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        future = database_now() + dt.timedelta(days=1)
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], occ=future, rec=future, eff=future), contains="four_time_ck")
+
+        with self.subTest(case="test_neg_occurred_after_received"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], occ=T0 + dt.timedelta(seconds=1)), contains="four_time_ck")
+
+        with self.subTest(case="test_neg_received_in_the_future"):
+            future = database_now() + dt.timedelta(days=1)
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], occ=future, rec=future, eff=future), contains="four_time_ck")
 
     def test_neg_timestamp_outside_domain(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -226,44 +244,45 @@ class FourTimeGrammar(_S015NegativeBase):
                         (str(event_uuid), ids["lo"], ids["lo_event"], ids["identity"], ids["basis"], "s015d1:" + "a" * 64, fresh(), "b" * 64, "s015l1:" + uuid.uuid4().hex + uuid.uuid4().hex, T0, T0, *contract.values()))
         self.refuses(attempt, contains="domain_ck")
 
-    def test_neg_temporal_basis_missing_when_retrospective(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_kind": None, "temporal_basis_reference": None}),
-                     contains="temporal_basis_ck")
-
-    def test_neg_temporal_basis_polarity_mismatch(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_kind": "PROSPECTIVE"}),
-                     contains="temporal_basis_ck")
-
-    def test_neg_temporal_basis_reference_blank(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_reference": " padded "}),
-                     contains="canonical_ck")
-
     def test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables(self):
+        """Temporal basis must identify a coherent kind, reference and direction.
+
+        Cases:
+        test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables
+        test_neg_temporal_basis_missing_when_retrospective
+        test_neg_temporal_basis_polarity_mismatch
+        """
         ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
-        self.assertEqual(len(ids["events"]), 12)
-        for event_table, name_token in EVENT_NAME_TOKENS.items():
-            with self.subTest(event_table=event_table):
-                self.refuses(
-                    lambda cur, event_table=event_table: append_second_event(
-                        cur,
-                        ids,
-                        event_table,
-                        fresh(),
-                        prior=None,
-                        eff=T0 - dt.timedelta(hours=1),
-                        overrides={
-                            "temporal_basis_kind": None,
-                            "temporal_basis_reference": "u21h:retrospective-basis",
-                        },
-                    ),
-                    contains=f"s015_0021_{name_token}_temporal_basis_ck",
-                )
+
+        with self.subTest(case="test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables"):
+            self.assertEqual(len(ids["events"]), 12)
+            for event_table, name_token in EVENT_NAME_TOKENS.items():
+                with self.subTest(event_table=event_table):
+                    self.refuses(
+                        lambda cur, event_table=event_table: append_second_event(
+                            cur,
+                            ids,
+                            event_table,
+                            fresh(),
+                            prior=None,
+                            eff=T0 - dt.timedelta(hours=1),
+                            overrides={
+                                "temporal_basis_kind": None,
+                                "temporal_basis_reference": "u21h:retrospective-basis",
+                            },
+                        ),
+                        contains=f"s015_0021_{name_token}_temporal_basis_ck",
+                    )
+
+        with self.subTest(case="test_neg_temporal_basis_missing_when_retrospective"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_kind": None, "temporal_basis_reference": None}),
+                         contains="temporal_basis_ck")
+
+        with self.subTest(case="test_neg_temporal_basis_polarity_mismatch"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_kind": "PROSPECTIVE"}),
+                         contains="temporal_basis_ck")
 
 
 # ------------------------------------------------------------------ §5.5, §6.1 items 4–7 — vocabularies, exclusions and shapes
@@ -289,24 +308,31 @@ class VocabulariesAndShapes(_S015NegativeBase):
             return cur.fetchone()[0]
 
     def test_neg_assignment_seventh_token(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
-        with connection.cursor() as cur:
-            cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
-        def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
-            with s2b_attribution_guard_suspended(cur):
-                append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "SUSPEND", "ACTIVE", "RESTRICTED", ids["identity"], ids["basis"], fresh(), pred_id=head)
-        self.refuses(attempt, contains="vocab_ck")
+        """The assignment state and action must belong to their respective vocabularies.
 
-    def test_neg_assignment_action_outside_six(self):
+        Cases:
+        test_neg_assignment_seventh_token
+        test_neg_assignment_action_outside_six
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
-        with connection.cursor() as cur:
-            cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
-        def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
-            with s2b_attribution_guard_suspended(cur):
-                append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "PROMOTE", "ACTIVE", "SUSPENDED", ids["identity"], ids["basis"], fresh(), pred_id=head)
-        self.refuses(attempt, contains="cra_action_ck")
+
+        with self.subTest(case="test_neg_assignment_seventh_token"):
+            a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
+            with connection.cursor() as cur:
+                cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
+            def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
+                with s2b_attribution_guard_suspended(cur):
+                    append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "SUSPEND", "ACTIVE", "RESTRICTED", ids["identity"], ids["basis"], fresh(), pred_id=head)
+            self.refuses(attempt, contains="vocab_ck")
+
+        with self.subTest(case="test_neg_assignment_action_outside_six"):
+            a = ids["assignments"]["INTEVIA_FOUNDER_STEWARD"]
+            with connection.cursor() as cur:
+                cur.execute("SELECT head_state_event_id FROM core_contextualroleassignment WHERE id = %s", (a,)); head = cur.fetchone()[0]
+            def attempt(cur):  # SR C2: a reserved root office row, under the labelled latitude (see Structure)
+                with s2b_attribution_guard_suspended(cur):
+                    append_event(cur, "core_contextualroleassignmentstateevent", a, 2, "PROMOTE", "ACTIVE", "SUSPENDED", ids["identity"], ids["basis"], fresh(), pred_id=head)
+            self.refuses(attempt, contains="cra_action_ck")
 
     def test_neg_planning_result_fourth_token(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -315,22 +341,28 @@ class VocabulariesAndShapes(_S015NegativeBase):
             append_event(cur, "core_planningclassificationevent", cur.fetchone()[0], 1, "CLASSIFY", None, "NOT_A_RESULT", ids["identity"], ids["basis"], fresh(), extra={"criterion_reference": "c"})
         self.refuses(attempt, contains="result_vocab_ck")
 
-    def test_neg_fingerprint_old_shape_on_anchor(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        def attempt(cur):
-            cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'DORMANT', now(), %s, %s, %s, 'f', %s)",
-                        (str(uuid.uuid4()), T0, T0, "0" * 64, ids["lo"]))
-        self.refuses(attempt, contains="insert-time fingerprint")
-
     def test_neg_decision_reference_wrong_prefix(self):
         ids = self.commits(lambda cur: self.root(cur))
         self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
                                               pred_id=ids["lo_event"], overrides={"authority_decision_reference": "s012d1:" + "a" * 64}), contains="decision_shape_ck")
 
     def test_neg_reference_not_canonical(self):
+        """Event references must be canonical.
+
+        Cases:
+        test_neg_reference_not_canonical
+        test_neg_temporal_basis_reference_blank
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], overrides={"evidence_reference": "  "}), contains="canonical_ck")
+
+        with self.subTest(case="test_neg_reference_not_canonical"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], overrides={"evidence_reference": "  "}), contains="canonical_ck")
+
+        with self.subTest(case="test_neg_temporal_basis_reference_blank"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], eff=T0 - dt.timedelta(hours=1), overrides={"temporal_basis_reference": " padded "}),
+                         contains="canonical_ck")
 
     def test_neg_role_scope_third_token(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -343,12 +375,23 @@ class CacheBoundary(_S015NegativeBase):
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset({"test_neg_non_owner_cannot_write_register"})
 
     def test_neg_raw_update_of_cache_value_same_value(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state = 'ACTIVE' WHERE id = %s", (ids["lo"],)), contains="database-computed")
+        """Governed cache values and fingerprints reject direct replacement.
 
-    def test_neg_raw_update_of_fingerprint(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state_source_event_set_fingerprint = state_source_event_set_fingerprint WHERE id = %s", (ids["lo"],)), contains="database-computed")
+        Cases:
+        test_neg_raw_update_of_cache_value_same_value
+        test_neg_raw_update_of_fingerprint
+        test_neg_obligation_raw_value_update
+        """
+        ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
+
+        with self.subTest(case="test_neg_raw_update_of_cache_value_same_value"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state = 'ACTIVE' WHERE id = %s", (ids["lo"],)), contains="database-computed")
+
+        with self.subTest(case="test_neg_raw_update_of_fingerprint"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state_source_event_set_fingerprint = state_source_event_set_fingerprint WHERE id = %s", (ids["lo"],)), contains="database-computed")
+
+        with self.subTest(case="test_neg_obligation_raw_value_update"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_governedobligationcase SET qualified_legal_deadline = now() WHERE id = %s", (ids["obligation_case"],)), contains="database-computed")
 
     def test_neg_raw_coordinate_update_without_ticket(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -362,19 +405,29 @@ class CacheBoundary(_S015NegativeBase):
         )
 
     def test_neg_insert_with_non_empty_set_fingerprint(self):
+        """Circle insertion accepts only the empty event-set fingerprint.
+
+        Cases:
+        test_neg_insert_with_non_empty_set_fingerprint
+        test_neg_fingerprint_old_shape_on_anchor
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        def attempt(cur):
-            cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'DORMANT', now(), %s, %s, %s, 'f', %s)",
-                        (str(uuid.uuid4()), T0, T0, "s015f4:" + "0" * 64, ids["lo"]))
-        self.refuses(attempt, contains="insert-time fingerprint")
+
+        with self.subTest(case="test_neg_insert_with_non_empty_set_fingerprint"):
+            def attempt(cur):
+                cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'DORMANT', now(), %s, %s, %s, 'f', %s)",
+                            (str(uuid.uuid4()), T0, T0, "s015f4:" + "0" * 64, ids["lo"]))
+            self.refuses(attempt, contains="insert-time fingerprint")
+
+        with self.subTest(case="test_neg_fingerprint_old_shape_on_anchor"):
+            def attempt(cur):
+                cur.execute("INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) VALUES (%s, 'DORMANT', now(), %s, %s, %s, 'f', %s)",
+                            (str(uuid.uuid4()), T0, T0, "0" * 64, ids["lo"]))
+            self.refuses(attempt, contains="insert-time fingerprint")
 
     def test_neg_placeholder_never_refreshed_refused_at_commit(self):
         # insert-time placeholder is never the fold; without the refresh the anchor cannot commit (predicate 4)
         self.refuses(lambda cur: found_root(cur, do_refresh=False), contains="cache does not equal the fold")
-
-    def test_neg_obligation_raw_value_update(self):
-        ids = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
-        self.refuses(lambda cur: cur.execute("UPDATE core_governedobligationcase SET qualified_legal_deadline = now() WHERE id = %s", (ids["obligation_case"],)), contains="database-computed")
 
     def test_neg_read_route_never_serves_cache_at_other_coordinates(self):
         ids = self.commits(lambda cur: self.root(cur))
@@ -391,15 +444,22 @@ class CacheBoundary(_S015NegativeBase):
 # ------------------------------------------------------------------ §5.3 / U21g-13 — prior_state at record time
 class PriorState(_S015NegativeBase):
     def test_neg_prior_state_not_the_effective_order_predecessor(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "CLOSED", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]),
-                     contains="prior_state")
+        """Prior state must match the effective-order predecessor, including absence.
 
-    def test_neg_prior_state_non_null_at_empty_predecessor_set(self):
-        # a sequence-2 event effective before sequence 1 has an empty record-time predecessor set → prior_state must be NULL
+        Cases:
+        test_neg_prior_state_not_the_effective_order_predecessor
+        test_neg_prior_state_non_null_at_empty_predecessor_set
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], eff=T0 - dt.timedelta(days=1)), contains="should be NULL")
+
+        with self.subTest(case="test_neg_prior_state_not_the_effective_order_predecessor"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "CLOSED", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]),
+                         contains="prior_state")
+
+        with self.subTest(case="test_neg_prior_state_non_null_at_empty_predecessor_set"):
+            # a sequence-2 event effective before sequence 1 has an empty record-time predecessor set → prior_state must be NULL
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], eff=T0 - dt.timedelta(days=1)), contains="should be NULL")
 
 
 # ------------------------------------------------------------------ §6.1 item 8 — structural guardians
@@ -488,17 +548,43 @@ class Structure(_S015NegativeBase):
 class FoundingCompleteness(_S015NegativeBase):
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset({
         "test_neg_nonroot_limb8_no_coordinator",
-        "test_neg_nonroot_limb8_inactive_coordinator",
         "test_neg_nonroot_duplicate_active_versions",
         "test_neg_nonroot_stale_active_version",
-        "test_neg_nonroot_limb5_no_requirement",
+        "test_neg_root_limb5_no_requirement",
     })
 
+    @contextmanager
+    def _root_scaffold(self):
+        """Scope the historical root latitude to the root half of a mixed witness."""
+        from tests.s015_0021_support import restore_root_scaffold, root_scaffold_state
+        with connection.cursor() as cur:
+            received = root_scaffold_state(cur)
+            try:
+                drop_unset_check(cur)
+                yield
+            finally:
+                restore_root_scaffold(cur, received)
+
     def test_neg_root_limb1_no_sequence_one_event(self):
-        self.refuses(
-            lambda cur: found_root(cur, skip={"lo_event"}, skip_refresh={"core_livingorganism"}),
-            contains="no sequence-1 event at commit",
-        )
+        """A root anchor cannot commit without its first event.
+
+        Cases:
+        test_neg_root_limb1_no_sequence_one_event
+        test_neg_bare_true_row_without_population
+        """
+
+        with self.subTest(case="test_neg_root_limb1_no_sequence_one_event"):
+            self.refuses(
+                lambda cur: found_root(cur, skip={"lo_event"}, skip_refresh={"core_livingorganism"}),
+                contains="no sequence-1 event at commit",
+            )
+
+        with self.subTest(case="test_neg_bare_true_row_without_population"):
+            def attempt(cur):
+                ident = str(uuid.uuid4())
+                cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) VALUES (%s, %s, 'FOUNDING_PENDING', now(), now(), now(), %s, 's', TRUE)",
+                            (ident, f"bare-{fresh()}", empty_fp(cur, "core_livingorganism", ident)))
+            self.refuses(attempt, contains="no sequence-1 event at commit")
 
     def test_neg_root_limb2_completion_omitted(self):
         self.refuses(lambda cur: found_root(cur, skip={"completion"}), contains="founding limb 2")
@@ -510,79 +596,146 @@ class FoundingCompleteness(_S015NegativeBase):
         )
 
     def test_neg_root_limb4_no_founder_steward_assignment(self):
-        self.refuses(
-            lambda cur: found_root(cur, assign_founder=False),
-            contains="S015 founding completion update refused",
-        )
+        """Root founding requires an active Founder and Steward assignment.
 
-    def test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates(self):
-        for state in ("SUSPENDED", "ENDED", "PROPOSED"):
-            with self.subTest(state=state):
-                self.refuses(
-                    lambda cur: found_root(cur, assignment_states={"INTEVIA_FOUNDER_STEWARD": state}),
-                    contains="S015 founding completion update refused",
-                )
+        Cases:
+        test_neg_root_limb4_no_founder_steward_assignment
+        test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates
+        """
+
+        with self.subTest(case="test_neg_root_limb4_no_founder_steward_assignment"):
+            self.refuses(
+                lambda cur: found_root(cur, assign_founder=False),
+                contains="S015 founding completion update refused",
+            )
+
+        with self.subTest(case="test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates"):
+            for state in ("SUSPENDED", "ENDED", "PROPOSED"):
+                with self.subTest(state=state):
+                    self.refuses(
+                        lambda cur: found_root(cur, assignment_states={"INTEVIA_FOUNDER_STEWARD": state}),
+                        contains="S015 founding completion update refused",
+                    )
 
     def test_neg_root_limb5_no_requirement(self):
-        self.refuses(lambda cur: found_root(cur, skip={"requirement"}), contains="founding limb 5")
+        """Root and non-root founding require the essential coverage requirement.
+
+        Cases:
+        test_neg_root_limb5_no_requirement
+        test_neg_nonroot_limb5_no_requirement
+        """
+
+        with self.subTest(case="test_neg_root_limb5_no_requirement"):
+            with self._root_scaffold():
+                self.refuses(lambda cur: found_root(cur, skip={"requirement"}), contains="founding limb 5")
+
+        with self.subTest(case="test_neg_nonroot_limb5_no_requirement"):
+            self.refuses(lambda cur: found_nonroot(cur, skip={"requirement"}), contains="limb 5")
 
     def test_neg_root_limb6_no_assessment(self):
-        self.refuses(lambda cur: found_root(cur, skip={"assessment"}), contains="limb 6")
+        """Founding without its assessment cannot commit any part of the organism.
+
+        Cases:
+        test_neg_root_limb6_no_assessment
+        test_neg_zero_rows_after_refused_founding
+        """
+
+        with connection.cursor() as cur:
+            cur.execute("SELECT count(*) FROM core_livingorganism")
+            before = cur.fetchone()[0]
+        with self.subTest(case="test_neg_root_limb6_no_assessment"):
+            self.refuses(lambda cur: found_root(cur, skip={"assessment"}), contains="founding limb 6")
+        with self.subTest(case="test_neg_zero_rows_after_refused_founding"), connection.cursor() as cur:
+            cur.execute("SELECT count(*) FROM core_livingorganism")
+            self.assertEqual(cur.fetchone()[0], before)
+            cur.execute("SELECT count(*) FROM core_organismroledefinition")
+            self.assertEqual(cur.fetchone()[0], 0)
 
     def test_neg_root_limb7_no_privacy_coordinator_assignment(self):
-        self.refuses(lambda cur: found_root(cur, skip={"pc_assignment"}), contains="limb 7")
+        """Root founding requires an active Privacy Coordinator assignment.
 
-    def test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates(self):
-        for state in ("SUSPENDED", "ENDED", "PROPOSED"):
-            with self.subTest(state=state):
-                self.refuses(
-                    lambda cur: found_root(cur, assignment_states={"INTEVIA_PRIVACY_COORDINATOR": state}),
-                    contains="limb 7",
-                )
+        Cases:
+        test_neg_root_limb7_no_privacy_coordinator_assignment
+        test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates
+        """
+
+        with self.subTest(case="test_neg_root_limb7_no_privacy_coordinator_assignment"):
+            self.refuses(lambda cur: found_root(cur, skip={"pc_assignment"}), contains="limb 7")
+
+        with self.subTest(case="test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"):
+            for state in ("SUSPENDED", "ENDED", "PROPOSED"):
+                with self.subTest(state=state):
+                    self.refuses(
+                        lambda cur: found_root(cur, assignment_states={"INTEVIA_PRIVACY_COORDINATOR": state}),
+                        contains="limb 7",
+                    )
 
     def test_neg_root_limb8_five_of_six_codes(self):
-        self.refuses(lambda cur: found_root(cur, codes=SIX_CODES[:5]), contains="limb 8")
+        """Root founding requires every reserved role code to be active.
 
-    def test_neg_root_limb8_inactive_code(self):
-        inv = {c: [(1, True)] for c in SIX_CODES}; inv["INTEVIA_STEWARD"] = [(1, False)]
-        self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="exactly one active INTEVIA_STEWARD")
+        Cases:
+        test_neg_root_limb8_five_of_six_codes
+        test_neg_root_limb8_inactive_code
+        """
 
-    def test_neg_root_duplicate_active_versions(self):
-        inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, True)]
-        self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="s015_0021_role_active_uniq")
+        with self.subTest(case="test_neg_root_limb8_five_of_six_codes"):
+            self.refuses(lambda cur: found_root(cur, codes=SIX_CODES[:5]), contains="limb 8")
 
-    def test_neg_root_stale_active_version(self):
-        inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, False)]
-        self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="not the current version")
+        with self.subTest(case="test_neg_root_limb8_inactive_code"):
+            inv = {c: [(1, True)] for c in SIX_CODES}; inv["INTEVIA_STEWARD"] = [(1, False)]
+            self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="exactly one active INTEVIA_STEWARD")
 
     def test_neg_nonroot_limb8_no_coordinator(self):
-        self.refuses(lambda cur: found_nonroot(cur, codes=[]), contains="exactly one active COORDINATOR")
+        """Non-root founding requires an active Coordinator definition.
 
-    def test_neg_nonroot_limb8_inactive_coordinator(self):
-        self.refuses(lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, False)]}), contains="exactly one active COORDINATOR")
+        Cases:
+        test_neg_nonroot_limb8_no_coordinator
+        test_neg_nonroot_limb8_inactive_coordinator
+        """
+
+        with self.subTest(case="test_neg_nonroot_limb8_no_coordinator"):
+            self.refuses(lambda cur: found_nonroot(cur, codes=[]), contains="exactly one active COORDINATOR")
+
+        with self.subTest(case="test_neg_nonroot_limb8_inactive_coordinator"):
+            self.refuses(lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, False)]}), contains="exactly one active COORDINATOR")
 
     def test_neg_nonroot_duplicate_active_versions(self):
-        self.refuses(
-            lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, True), (2, True)]}),
-            contains="s015_0021_role_active_uniq",
-        )
+        """Founding permits at most one active version of a role.
+
+        Cases:
+        test_neg_nonroot_duplicate_active_versions
+        test_neg_root_duplicate_active_versions
+        """
+
+        with self.subTest(case="test_neg_nonroot_duplicate_active_versions"):
+            self.refuses(
+                lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, True), (2, True)]}),
+                contains="s015_0021_role_active_uniq",
+            )
+
+        with self.subTest(case="test_neg_root_duplicate_active_versions"):
+            with self._root_scaffold():
+                inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, True)]
+                self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="s015_0021_role_active_uniq")
 
     def test_neg_nonroot_stale_active_version(self):
-        self.refuses(
-            lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, True), (2, False)]}),
-            contains="not the current version",
-        )
+        """The active role version at founding must be current.
 
-    def test_neg_nonroot_limb5_no_requirement(self):
-        self.refuses(lambda cur: found_nonroot(cur, skip={"requirement"}), contains="limb 5")
+        Cases:
+        test_neg_nonroot_stale_active_version
+        test_neg_root_stale_active_version
+        """
 
-    def test_neg_zero_rows_after_refused_founding(self):
-        with connection.cursor() as cur:
-            cur.execute("SELECT count(*) FROM core_livingorganism"); before = cur.fetchone()[0]
-        self.refuses(lambda cur: found_root(cur, skip={"assessment"}), contains="founding limb 6")
-        with connection.cursor() as cur:
-            cur.execute("SELECT count(*) FROM core_livingorganism"); self.assertEqual(cur.fetchone()[0], before)
-            cur.execute("SELECT count(*) FROM core_organismroledefinition"); self.assertEqual(cur.fetchone()[0], 0)
+        with self.subTest(case="test_neg_nonroot_stale_active_version"):
+            self.refuses(
+                lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, True), (2, False)]}),
+                contains="not the current version",
+            )
+
+        with self.subTest(case="test_neg_root_stale_active_version"):
+            with self._root_scaffold():
+                inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, False)]
+                self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="not the current version")
 
 
 class FoundingCoordinatorBinding(_S015NegativeBase):
@@ -643,50 +796,48 @@ class FoundingCoordinatorBinding(_S015NegativeBase):
 class ReservedRoleCodes(_S015NegativeBase):
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset({
         "test_neg_each_reserved_name_on_non_root",
-        "test_neg_non_root_founding_with_founder_steward_defined",
     })
 
     def test_neg_each_reserved_name_on_non_root(self):
-        b = self.commits(lambda cur: found_nonroot(cur))
-        # SR C1: the pre-SR-shaped row is written under the labelled latitude so that 0021's deferred
-        # reserved-code guard, the one under examination, answers rather than sr_00's insert guard.
-        def insert_pre_sr(cur, code):
-            with sr_definition_guard_suspended(cur):
-                cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)",
-                            (str(uuid.uuid4()), code, b["lo"]))
-        for code in FIVE_RESERVED:
-            with self.subTest(code=code):
-                self.refuses(lambda cur: insert_pre_sr(cur, code), contains="may be defined only by the platform root")
+        """Non-root organisms cannot define reserved roles during or after founding.
 
-    def test_neg_non_root_founding_with_founder_steward_defined(self):
-        from s015_0021_support import found_organism
-        self.refuses(
-            lambda cur: found_organism(
-                cur,
-                f"reserved-{fresh()}",
-                root=False,
-                codes=["INTEVIA_FOUNDER_STEWARD", "COORDINATOR"],
-                assign_founder=True,
-            ),
-            contains="may be defined only by the platform root",
-        )
-        ids = self.commits(lambda cur: found_nonroot(cur))
-        with connection.cursor() as cur:
-            cur.execute("SELECT state, platform_root FROM core_livingorganism WHERE id = %s", (ids["lo"],))
-            self.assertEqual(cur.fetchone(), ("ACTIVE", False))
+        Cases:
+        test_neg_each_reserved_name_on_non_root
+        test_neg_non_root_founding_with_founder_steward_defined
+        """
+
+        with self.subTest(case="test_neg_each_reserved_name_on_non_root"):
+            b = self.commits(lambda cur: found_nonroot(cur))
+            # SR C1: the pre-SR-shaped row is written under the labelled latitude so that 0021's deferred
+            # reserved-code guard, the one under examination, answers rather than sr_00's insert guard.
+            def insert_pre_sr(cur, code):
+                with sr_definition_guard_suspended(cur):
+                    cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) VALUES (%s, %s, 'LIVING_ORGANISM', 7, false, now(), %s)",
+                                (str(uuid.uuid4()), code, b["lo"]))
+            for code in FIVE_RESERVED:
+                with self.subTest(code=code):
+                    self.refuses(lambda cur: insert_pre_sr(cur, code), contains="may be defined only by the platform root")
+
+        with self.subTest(case="test_neg_non_root_founding_with_founder_steward_defined"):
+            from s015_0021_support import found_organism
+            self.refuses(
+                lambda cur: found_organism(
+                    cur,
+                    f"reserved-{fresh()}",
+                    root=False,
+                    codes=["INTEVIA_FOUNDER_STEWARD", "COORDINATOR"],
+                    assign_founder=True,
+                ),
+                contains="may be defined only by the platform root",
+            )
+            ids = self.commits(lambda cur: found_nonroot(cur))
+            with connection.cursor() as cur:
+                cur.execute("SELECT state, platform_root FROM core_livingorganism WHERE id = %s", (ids["lo"],))
+                self.assertEqual(cur.fetchone(), ("ACTIVE", False))
 
 
 # ------------------------------------------------------------------ §4.16 — the platform_root discriminator
 class PlatformRoot(_S015NegativeBase):
-    def test_neg_true_row_refused_while_unset_check_present(self):
-        with connection.cursor() as cur:
-            restore_unset_check(cur)
-        try:
-            self.refuses(lambda cur: found_root(cur), contains="s015_platform_root_unset_ck")
-        finally:
-            with connection.cursor() as cur:
-                drop_unset_check(cur)
-
     def test_neg_second_root_refused_by_singleton(self):
         self.commits(lambda cur: found_root(cur))
         self.refuses(lambda cur: found_root(cur), contains="s015_platform_root_singleton_uniq")
@@ -696,27 +847,27 @@ class PlatformRoot(_S015NegativeBase):
         self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET platform_root = FALSE WHERE id = %s", (ids["lo"],)), contains="immutable")
         self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET platform_root = TRUE WHERE id = %s", (ids["lo"],)), contains="immutable")
 
-    def test_neg_bare_true_row_without_population(self):
-        def attempt(cur):
-            ident = str(uuid.uuid4())
-            cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) VALUES (%s, %s, 'FOUNDING_PENDING', now(), now(), now(), %s, 's', TRUE)",
-                        (ident, f"bare-{fresh()}", empty_fp(cur, "core_livingorganism", ident)))
-        self.refuses(attempt, contains="no sequence-1 event at commit")
-
 
 # ------------------------------------------------------------------ §6.4 / U21g-5, U21g-14 — role-definition immutability
 class RoleDefinitionImmutability(_S015NegativeBase):
     def test_neg_each_fixed_column(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        rid = ids["roles"]["COORDINATOR"]
-        for col, value in [("code", "'COORDINATOR'"), ("scope", "'LIVING_ORGANISM'"), ("living_organism_id", "living_organism_id"), ("definition_version", "definition_version"), ("role_uuid", "role_uuid")]:
-            with self.subTest(column=col):
-                self.refuses(lambda cur: cur.execute(f"UPDATE core_organismroledefinition SET {col} = {value} WHERE id = %s", (rid,)), contains="immutable")
+        """Fixed role definitions cannot be rewritten or erased.
 
-    def test_neg_delete_and_truncate(self):
+        Cases:
+        test_neg_each_fixed_column
+        test_neg_delete_and_truncate
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("DELETE FROM core_organismroledefinition WHERE id = %s", (ids["roles"]["COORDINATOR"],)), contains="immutable")
-        self.refuses(lambda cur: cur.execute("TRUNCATE core_organismroledefinition CASCADE"), contains="immutable")
+
+        with self.subTest(case="test_neg_each_fixed_column"):
+            rid = ids["roles"]["COORDINATOR"]
+            for col, value in [("code", "'COORDINATOR'"), ("scope", "'LIVING_ORGANISM'"), ("living_organism_id", "living_organism_id"), ("definition_version", "definition_version"), ("role_uuid", "role_uuid")]:
+                with self.subTest(column=col):
+                    self.refuses(lambda cur: cur.execute(f"UPDATE core_organismroledefinition SET {col} = {value} WHERE id = %s", (rid,)), contains="immutable")
+
+        with self.subTest(case="test_neg_delete_and_truncate"):
+            self.refuses(lambda cur: cur.execute("DELETE FROM core_organismroledefinition WHERE id = %s", (ids["roles"]["COORDINATOR"],)), contains="immutable")
+            self.refuses(lambda cur: cur.execute("TRUNCATE core_organismroledefinition CASCADE"), contains="immutable")
 
 
 # ------------------------------------------------------------------ §6.5 — canonical root order

@@ -115,12 +115,15 @@ class CQClarityTests(TransactionTestCase):
             **scope, request_uuid=uuid4(), predecessor=previous, changes=changes
         )
 
-    def topic(self, scope, *, category="DISCUSSION", topic_type="SUGGESTION"):
-        disc.ensure_board(**scope, request_uuid=uuid4())
-        categories = disc.board_categories(**scope)["categories"]
-        category_id = next(
-            c["category_uuid"] for c in categories if c["functional_code"] == category
-        )
+    def topic(self, scope, *, category="DISCUSSION", category_id=None, topic_type="SUGGESTION",
+              title="Review the opening hours", markdown="Open on Saturdays"):
+        """Start a fresh topic, optionally in a category already obtained on this board."""
+        if category_id is None:
+            disc.ensure_board(**scope, request_uuid=uuid4())
+            categories = disc.board_categories(**scope)["categories"]
+            category_id = next(
+                c["category_uuid"] for c in categories if c["functional_code"] == category
+            )
         thread = uuid4()
         result = posts.start_topic(
             **scope,
@@ -128,8 +131,8 @@ class CQClarityTests(TransactionTestCase):
             thread_uuid=thread,
             request_uuid=uuid4(),
             post_uuid=uuid4(),
-            title="Review the opening hours",
-            markdown="Open on Saturdays",
+            title=title,
+            markdown=markdown,
             topic_type=topic_type,
         )
         return scope | {"thread_uuid": thread}, category_id, result
@@ -937,15 +940,6 @@ class CQClarityTests(TransactionTestCase):
         )
         self.assertFalse(
             disc._rows("SELECT 1 FROM public.core_cqact WHERE act_uuid=%s", [transient])
-        )
-        migration = import_module("core.migrations.0074_cq_clarity")
-        with (
-            connection.schema_editor(atomic=True) as editor,
-            self.assertRaises(RuntimeError) as refused,
-        ):
-            migration.reverse(None, editor)
-        self.assertEqual(
-            str(refused.exception), "DISC2 reversal refused while CQ history exists."
         )
         self.assertEqual(cq.settings(**scope)["version"], key)
 

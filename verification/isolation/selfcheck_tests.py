@@ -146,6 +146,8 @@ class IsolationSelfChecks(TransactionTestCase):
 
     # ---------------------------------------------------------------- seed restoration on the qualified connection
     def test_seed_restored_by_reset_on_qualified_connection(self):
+        """The qualified reset restores seed data and protects newly created email templates."""
+        from email_foundation.models import TemplateVersion
         self.reference()
         with connection.cursor() as cur:
             cur.execute("SELECT current_database()")
@@ -154,9 +156,42 @@ class IsolationSelfChecks(TransactionTestCase):
         self.assertIsNotNone(DB_PATTERN.fullmatch(name), "not a qualified disposable database: %s" % name)
         with connection.cursor() as cur:
             cur.execute("DELETE FROM core_role")
+        TemplateVersion.objects.create(name="before-flush", version=1, digest="0" * 64)
         call_command("flush", verbosity=0, interactive=False)
         self.assertEqual(state.capture()["core_role"], state.expected_seed_rows(),
                          "reset did not restore 0003's seed rows")
+
+        self.assertFalse(
+            TemplateVersion.objects.exists(),
+            "Qualified test teardown must flush template rows without breaking the suite.",
+        )
+        template = TemplateVersion.objects.create(
+            name="post-flush", version=1, digest="1" * 64
+        )
+        try:
+            with transaction.atomic():
+                TemplateVersion.objects.filter(pk=template.pk).update(digest="2" * 64)
+        except DatabaseError as exc:
+            self.assertIn(
+                "EM-a template versions are immutable",
+                str(exc),
+                "The flush route must restore the template guard before returning.",
+            )
+        else:
+            self.fail("The test reset must not leave template protection disabled.")
+
+    test_seed_restored_by_reset_on_qualified_connection.ISOLATION_FULL_CAPTURE = True
+
+    def test_reader_transaction_refuses_writes_and_releases_connection(self):
+        """PostgreSQL rejects writes inside the reader and restores normal mode on exit."""
+        from .runner import read_only_transaction
+        with read_only_transaction(), self.assertRaises(DatabaseError) as refused:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM core_role WHERE FALSE")
+        self.assertEqual(refused.exception.__cause__.sqlstate, "25006")
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW transaction_read_only")
+            self.assertEqual(cursor.fetchone()[0], "off")
 
     # ---------------------------------------------------------------- V3 deliberately failed resets
     def _guardian_rows(self):
@@ -343,6 +378,35 @@ class CheckpointApplicabilitySelfChecks(SimpleTestCase):
             isolation_verdict(True, suite, suite, suite, checkpoints[:-1], 0)[0],
             "NOT ESTABLISHED",
         )
+
+    def test_only_successful_eligible_reader_omits_flush(self):
+        """A reader skips only the successful flush; failures and full capture keep it."""
+        class Reader(TransactionTestCase):
+            def runTest(self):
+                pass
+
+        Reader.runTest.ISOLATION_WRITE_NOTHING = True
+        test = Reader()
+        runner = object.__new__(IsolationRunner)
+        with patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "0"}):
+            self.assertTrue(runner._write_nothing_eligible(test))
+            test.reset_sequences = True
+            self.assertFalse(runner._write_nothing_eligible(test))
+            test.reset_sequences = False
+            with patch.object(Reader, "ISOLATION_FULL_CAPTURE", True, create=True):
+                self.assertFalse(runner._write_nothing_eligible(test))
+        with patch.dict("os.environ", {"VERIFICATION_ISOLATION_PER_TEST": "1"}):
+            self.assertFalse(runner._write_nothing_eligible(test))
+        calls = []
+        def cleanup(case):
+            case._fixture_teardown()
+            calls.append("closed")
+        with patch.object(test, "_fixture_teardown", lambda: calls.append("flush")), patch.object(runner, "_record_post_teardown"):
+            teardown = runner._timed_post_teardown(cleanup)
+            test._isolation_read_only_success = True
+            teardown(test)
+            teardown(test)
+            self.assertEqual(calls, ["closed", "flush", "closed"])
 
     def test_cp_a_uses_light_capture_for_unmarked_tests(self):
         _, _, transaction_probe, _ = _probes()

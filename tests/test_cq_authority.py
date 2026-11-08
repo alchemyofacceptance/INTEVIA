@@ -45,23 +45,12 @@ class CQAuthorityTests(TransactionTestCase):
             "text": document.first.content,
         }
 
-    def motion(self, scope, attachment, title="Adopt the attached instrument"):
-        disc.ensure_board(**scope, request_uuid=uuid4())
-        category = next(
-            c
-            for c in disc.board_categories(**scope)["categories"]
-            if c["functional_code"] == "DISCUSSION"
-        )
-        journey = dict(scope, thread_uuid=uuid4())
-        topic = posts.start_topic(
-            **journey,
-            category_uuid=category["category_uuid"],
-            request_uuid=uuid4(),
-            post_uuid=uuid4(),
-            title=title,
-            markdown=title,
-            topic_type="SUGGESTION",
-        )
+    def motion(self, scope, attachment, title="Adopt the attached instrument", *, category_id=None, suggestion=None):
+        """Put forward a distinct motion or the same Suggestion after its refused attempt."""
+        if suggestion is None:
+            journey, _, topic = self.topic(scope, category_id=category_id, title=title, markdown=title)
+        else:
+            journey, _, topic = suggestion
         act = cq.put_forward(
             **journey,
             request_uuid=uuid4(),
@@ -91,9 +80,11 @@ class CQAuthorityTests(TransactionTestCase):
         people,
         *,
         officer=None,
+        category_id=None,
+        suggestion=None,
         title="Adopt the attached instrument",
     ):
-        journey, version, first = self.motion(scope, attachment, title)
+        journey, version, first = self.motion(scope, attachment, title, category_id=category_id, suggestion=suggestion)
         managed = self.ready(journey, version, people, officer)
         ballot = cq.finish_clarity(**managed, request_uuid=uuid4())
         self.assertEqual(
@@ -415,11 +406,15 @@ class CQAuthorityTests(TransactionTestCase):
             "text": second.content,
         }
         # Publication and adoption are separate votes, on the exact same text.
+        disc.ensure_board(**board, request_uuid=uuid4())
+        category_id = next(c["category_uuid"] for c in disc.board_categories(**board)["categories"]
+                           if c["functional_code"] == "DISCUSSION")
         publish, ballot = self.ballot(
             board,
             publication,
             people,
             officer=officer,
+            category_id=category_id,
             title="Publish Safeguarding Policy v2",
         )
         pub_result = self.qualification(publish, ballot, people)
@@ -452,6 +447,7 @@ class CQAuthorityTests(TransactionTestCase):
             adoption,
             people,
             officer=officer,
+            category_id=category_id,
             title="Adopt Safeguarding Policy v2",
         )
         for index, trustee in enumerate(people):
@@ -583,6 +579,7 @@ class CQAuthorityTests(TransactionTestCase):
         cited = [{"binding": str(citation["binding"]), "version": citation["version"]}]
         version = None
         results = []
+        category_id = None
         for op, text in (
             ("CREATE", "Welcome each family."),
             ("REVISE", "Welcome every family."),
@@ -600,8 +597,11 @@ class CQAuthorityTests(TransactionTestCase):
                 "citations": cited if op != "RETIRE" else [],
             }
             att = {"kind": "GI", "spec": spec, "text": text}
+            suggestion = None
             if op == "CREATE":
-                probe, _, topic = self.topic(scope)
+                suggestion = self.topic(scope, title="Decide the family welcome intention",
+                                        markdown="Decide the family welcome intention")
+                probe, category_id, topic = suggestion
                 with self.exact_refusal(
                     cq.CQRefused,
                     "A GI needs its exact applicable local law in force. Review its citations.",
@@ -613,7 +613,8 @@ class CQAuthorityTests(TransactionTestCase):
                         attachment=att | {"spec": spec | {"citations": []}},
                     )
             journey, ballot = self.ballot(
-                scope, att, people, title="Decide the family welcome intention"
+                scope, att, people, title="Decide the family welcome intention",
+                suggestion=suggestion, category_id=category_id
             )
             result = self.qualification(journey, ballot, people)
             self.assertEqual(result["disposition"], "APPLIED")
@@ -657,7 +658,7 @@ class CQAuthorityTests(TransactionTestCase):
         self.assertEqual(
             [r["authority_source"]["reference"] for r in objective["history"]], results
         )
-        return journey, key
+        return journey, key, category_id
 
     def test_lo_gi_lifecycle_and_interim_authority(self):
         """DISC3-05. Members create, revise and retire. The prior office act retains its source."""
@@ -682,7 +683,7 @@ class CQAuthorityTests(TransactionTestCase):
             gi.create_intention(
                 **(args | {"gi_uuid": uuid4(), "request_uuid": uuid4()})
             )
-        journey, key = self.gi_cycle(scope, people, citation, "CQ_MEMBERSHIP")
+        journey, key, category_id = self.gi_cycle(scope, people, citation, "CQ_MEMBERSHIP")
         (first,) = disc._rows(
             "SELECT category_uuid,post_uuid FROM public.discp_threads JOIN public.discp_posts USING(thread_uuid) WHERE thread_uuid=%s AND post_number=1",
             [journey["thread_uuid"]],
@@ -722,7 +723,7 @@ class CQAuthorityTests(TransactionTestCase):
                 ],
             },
         }
-        awaiting, ballot = self.ballot(scope, plan, people)
+        awaiting, ballot = self.ballot(scope, plan, people, category_id=category_id)
         retiring = replace(
             adopted,
             proposal=uuid4(),
@@ -814,7 +815,7 @@ class CQAuthorityTests(TransactionTestCase):
         circles.activate(**board, request_uuid=uuid4())
         board_support.appoint_board_coordinator(lo, circle, founder, officer)
         board["credential"] = officer.credential
-        original, _, topic = self.topic(board)
+        original, board_category, topic = self.topic(board)
         cq.put_forward(**original, version_uuid=topic["version"], request_uuid=uuid4())
         self.ready(original, topic["version"], people)
         opened = cq.finish_clarity(**original, request_uuid=uuid4())
@@ -834,7 +835,7 @@ class CQAuthorityTests(TransactionTestCase):
             ("NO_DECISION_FEWER_THAN_THREE", 1, "MEMBERSHIP"),
         )
         origin = loss["post_uuid"]
-        next_motion, _, next_topic = self.topic(scope)
+        next_motion, lo_category, next_topic = self.topic(scope)
         new = cq.put_forward(
             **next_motion,
             request_uuid=uuid4(),
@@ -852,7 +853,7 @@ class CQAuthorityTests(TransactionTestCase):
             self.facts(origin)["facts"]["wording_fingerprint"],
         )
         self.assertNotEqual(next_topic["version"], topic["version"])
-        other, _, copy = self.topic(scope)
+        other, _, copy = self.topic(scope, category_id=lo_category)
         with self.exact_refusal(
             cq.CQRefused, "This referral already has a receiving CQ journey."
         ):
@@ -901,7 +902,7 @@ class CQAuthorityTests(TransactionTestCase):
             "spec": article.content(),
             "text": document.first.content,
         }
-        protected, vote = self.ballot(scope, frozen, [*people, fourth])
+        protected, vote = self.ballot(scope, frozen, [*people, fourth], category_id=lo_category)
         for absent in (recused, fourth):
             cq.declare_conflict(
                 **(protected | {"credential": absent.credential}),
@@ -936,7 +937,7 @@ class CQAuthorityTests(TransactionTestCase):
                 "spec": proposal.content(),
                 "text": doc.first.content,
             }
-            journey, vote = self.ballot(board, attachment, people)
+            journey, vote = self.ballot(board, attachment, people, category_id=board_category)
             cq.declare_conflict(
                 **(journey | {"credential": member.credential}),
                 request_uuid=uuid4(),

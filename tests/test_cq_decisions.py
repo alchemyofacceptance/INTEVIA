@@ -930,9 +930,14 @@ class CQDecisionTests(TransactionTestCase):
         )
 
     def test_atomic_result_integrity_and_populated_reversal(self):
-        """DISC2-19. Last answer, numbered result and both chain entries share one commit."""
-        _, scope, people, _ = self.setup_board(3)
-        journey, _ = self.confirmed(scope, people)
+        """DISC2-19. A populated forum/CQ journey keeps its committed history through rollback and reversal.
+
+        Reversal cases from test_history_retirement_guards_rollback_and_reversal (0072),
+        test_guards_rollback_request_scope_and_populated_reversal (0073) and
+        test_access_refusal_rollback_and_populated_reversal (0074) join 0075.
+        """
+        _, scope, people, settings_version = self.setup_board(3)
+        journey, category_id = self.confirmed(scope, people)
         ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
         for member in people[:2]:
             self.cast(journey, ballot, member)
@@ -968,17 +973,31 @@ class CQDecisionTests(TransactionTestCase):
                 [uuid4(), result],
             )
         self.assertEqual(forged.exception.__cause__.diag.message_primary, "CQ_COMPLETE")
-        migration = import_module("core.migrations.0075_cq_decisions")
-        with (
-            connection.schema_editor(atomic=True) as editor,
-            self.assertRaises(RuntimeError) as stopped,
-        ):
-            migration.reverse(None, editor)
-        self.assertEqual(
-            str(stopped.exception),
-            "DISC2 vote reversal refused while ballot history exists.",
+        def category_versions():
+            return [row["version_uuid"] for row in disc.category_history(**scope, category_uuid=category_id)]
+
+        def opening_body():
+            return posts.read_thread(**journey)["posts"][0]["markdown"]
+
+        versions = category_versions()
+        self.assertTrue(versions, "The functional category needs its recorded provisioning version.")
+        checks = (
+            ("0072_discussion_boards", "DISC1 reversal refused while discussion history exists.",
+             category_versions, versions),
+            ("0073_discussion_posts", "DISC1 P2 reversal refused while post history exists.",
+             opening_body, "Open on Saturdays"),
+            ("0074_cq_clarity", "DISC2 reversal refused while CQ history exists.",
+             lambda: cq.settings(**scope)["version"], settings_version),
+            ("0075_cq_decisions", "DISC2 vote reversal refused while ballot history exists.",
+             lambda: self.closed(journey, ballot)["post_uuid"], result),
         )
-        self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
+        for module, refusal, read_back, expected in checks:
+            with self.subTest(reversal=module):
+                migration = import_module("core.migrations." + module)
+                with connection.schema_editor(atomic=True) as editor, self.assertRaises(RuntimeError) as stopped:
+                    migration.reverse(None, editor)
+                self.assertEqual(str(stopped.exception), refusal)
+                self.assertEqual(read_back(), expected)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True
 
@@ -996,8 +1015,11 @@ class CQDecisionTests(TransactionTestCase):
             username="disc2-external-" + uuid4().hex
         )
 
+        category_id = None
+
         def begin():
-            journey, _, topic = self.topic(board)
+            nonlocal category_id
+            journey, category_id, topic = self.topic(board, category_id=category_id)
             cq.put_forward(
                 **journey, version_uuid=topic["version"], request_uuid=uuid4()
             )

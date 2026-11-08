@@ -1,4 +1,4 @@
-# INTEVIA run requirements (repository copy) — post-permit v1.4 (31 Oct 2026: R2 — clone mode wherever a database is created, the CI route included; R8, R9 aligned; v1.3, 27 Oct 2026: R1 — every failure reported in one run; v1.2, 17 Oct 2026: R10 and R16 — CI as the default closure; the D-CI-2 merge gate)
+# INTEVIA run requirements (repository copy) — post-permit v1.6 (8 Nov 2026: TE P2, R18; v1.5, 8 Nov 2026: TE P1, R2, R8 and R17; v1.4, 31 Oct 2026: R2 — clone mode wherever a database is created, the CI route included; R8, R9 aligned; v1.3, 27 Oct 2026: R1 — every failure reported in one run; v1.2, 17 Oct 2026: R10 and R16 — CI as the default closure; the D-CI-2 merge gate)
 
 Rendered from practice section R as reset by the Human Governor's decisions TR-1 to TR-4 of 15 October 2026 (the testing reset), reconciled
 from the Lead Designer's returns v1.0 section 5.5 and v1.1 and the TU-2a commission. R10 and R16 are amended by the Human Governor's two
@@ -20,7 +20,7 @@ R1. Ordinary test failures do not stop a development, closure or full run: every
     requested for a quick local check; it is never required. Completeness is the required selection executing and
     passing.
 R2. Application test databases use clone mode. Each CI verification route run builds one application database from migrations at zero,
-    uses that database as its run-owned template, and clones it for SELF, S015, every mutation step and final inspection. Only SELF may
+    uses that database as its run-owned template, and clones it for SELF, SR-ROUNDTRIP, S015, every mutation step and final inspection. Only SELF may
     build that template; later steps require the recorded template and refuse if it is unavailable or inconsistent. No fresh fallback is
     permitted. By the Human Governor's named exception (decision 1A, 31 October 2026), the ownership/replacement, lock and template-sealing
     control probes may create empty databases without application migrations; their ownership evidence and cleanup requirements remain
@@ -46,7 +46,9 @@ R8. Every report records the actual mode, fail-fast, plan digest, run kind (pre-
     duration (a step never reached is marked "not run", never given a zero), the template build seconds (the building step, reported as
     soon as the build completes), each clone's setup seconds and setup outcome, and the final inspection's own timing and clone setup,
     so that the CI growth table (practice item 162) is exact; the two clone categories (test-runner clones; the final-inspection clone)
-    and the empty probe creates are counted from records.
+    and the empty probe creates are counted from records. SR-ROUNDTRIP follows SELF and precedes S015. Its own row reports
+    its complete elapsed seconds, including clone setup and the SR migration walk. Exclude these seconds from the S015
+    product-test rate and include them once in the whole-route elapsed time.
 R9. Missing, stale or contradictory inputs refuse before launch with an actionable message naming the R-number; never a silent
     fall-back to another mode. In the CI route a later step that cannot find or verify the recorded template, a clone that cannot be
     taken, or a clone whose compared CP-0 properties do not match the fresh-build reference, refuses before any migration, clone
@@ -95,3 +97,41 @@ R17. Isolation. CP-0 before the first test (full capture). Before each test, the
     migrations (module, class or method marker), and for any run a commission names with the per-test switch. After any failing or erroring
     test, a full capture once that test's post-teardown has completed. CP-Z after the last test (full capture). The isolation verdict is
     CP-0 met, an established check before every executed test, and CP-Z established when the run completed.
+    SR-ROUNDTRIP uses full capture on its own clone, with the usual CP-0, CP-F on failure and CP-Z.
+    A reviewed method may declare ISOLATION_WRITE_NOTHING = True when its entire lifecycle uses only the default
+    connection, has no fixtures or sequence reset and performs only reads. After CP-A the isolation runner uses a
+    PostgreSQL read-only transaction, rolls it back after unittest cleanup, and omits the fixture flush only on success.
+    Connection cleanup, timings, mismatch attribution, CP-F and CP-Z still apply. Full capture at any scope or by
+    switch takes precedence. DDL, migrations and multi-connection use require ordinary teardown. The 0021 direct-SQL
+    witnesses retain full capture, including the privilege reader with DDL cleanup. The brief historical fixture switch
+    in sr_definition_guard_suspended is covered by the light protection count of non-internal triggers not enabled.
+R18. Test admission. From the landing of package TE, apply TAR-1 through TAR-6 to every test added or changed
+    for main, including helpers and support code, whichever seat writes it. The Human Governor approved the rule
+    on 28 October 2026 and its repository fold-in through TE. Preserve the evidence status of earlier admissions.
+
+    TAR-1. State the single behavioural claim in the test docstring and repeat it in the commit's test list.
+    Split unrelated claims. For a merged witness, name each folded case in the docstring and its assertion or subTest
+    so the failing case can be identified. A test without a stated claim is not admitted.
+
+    TAR-2. Before adding a test, search for existing witnesses of that claim. Record the search command and result
+    in the run report. Strengthen an existing witness when it covers the claim. An overlapping addition requires
+    a stated reason, such as a different isolation level or entry point, reviewed by the Advisor.
+
+    TAR-3. Attach the normal pass, a one-defect break in product code and the restored pass to the run report.
+    The break targets the headline claim and must fail by assertion. Its output says what was expected, what was
+    observed and why the difference matters. Restore byte-identical product code and show the pass on those bytes.
+    A break that does not discriminate fails admission. Keep per-change evidence distinct from recurring controls.
+
+    TAR-4. Derive variable dates, identifiers, counts and digests from the code, database or clock. Each test
+    builds or isolates its mutable fixtures. Wait on observed conditions with bounded timeouts. Clean up workers
+    and connections on every exit. A pass that depends on another attempt fails admission.
+
+    TAR-5. For every admitted test, enter or update the obligation, full current label, claim, status, evidence
+    location and commit in docs/operations/TCR1_TEST_QUALITY_LEDGER.json. Reconcile the rows to the discovered
+    suite for each unit. Preserve folded claims, their successors and named cases, confirmed shed events and
+    gaps in historical evidence. Bind new run evidence to its exact tested commit or tree. TE seeds existing rows
+    from unit admission records, the SR C2 staging ledger and the per-test review.
+
+    TAR-6. At the unit review before its first test cycle, the reviewer reads all new and changed tests against
+    TAR-1 through TAR-5 on the issued route (Advisor review, VC correction, reviewer). Fix findings before
+    development runs. Runtime evidence is recorded by the seat commissioned to run the tests.

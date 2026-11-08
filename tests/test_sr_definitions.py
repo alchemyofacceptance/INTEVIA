@@ -656,24 +656,29 @@ class SRDefinitionCommandTests(TransactionTestCase):
                 self.assertEqual(resolved.pk,office.pk, msg='Looking up the effective Coordinator after a refused definition change should return the same founding office; another appointment was returned.')
 
     def test_07_sr30_reached_at_real_command_commit(self):
-        """O-22: deliberately bypass only local citation validation; sr_30 must refuse."""
+        """O-22. Both incomplete definition commands must roll back at their own commit.
+
+        test_07_sr30_reached_at_real_command_commit omits the citation.
+        test_08_sr20_reached_at_real_command_commit omits the successor.
+        Keep each recurring fault's failure directly on this selected method.
+        """
         command = self._command()
         command = replace(command,content=replace(command.content,provisions=()))
         before = self._snapshot()
         with patch.object(definitions,"_check_citations",return_value=None):
-            error = self._failure(command,definitions.S015RoleDefinitionGuardRefused)
-        self.assertEqual(error.primary,"SR definition refused: office basis citation missing")
+            error = self._failure(command,definitions.S015RoleDefinitionGuardRefused, action_description="sr_30: defining without the required citation")
+        self.assertEqual(error.primary,"SR definition refused: office basis citation missing",
+                         "sr_30 must identify the omitted citation at commit.")
         self._unchanged_except(before,"CommandIntake")
 
-    def test_08_sr20_reached_at_real_command_commit(self):
-        """O-22: omit successor write after real deactivation; sr_20 must refuse at exit."""
         command, row = self._define()
         before = self._snapshot()
         amend = self._command("AMEND",row=row,content=command.content)
         with patch.object(definitions,"_write_definition_version",return_value=row):
-            error = self._failure(amend,definitions.S015RoleDefinitionGuardRefused)
-        self.assertEqual(error.primary,"SR definition refused: a deactivated version must be superseded by a successor at commit")
-        self._unchanged_except(before,"CommandIntake")
+            error = self._failure(amend,definitions.S015RoleDefinitionGuardRefused, action_description="test_08_sr20_reached_at_real_command_commit: deactivating without a successor")
+        self.assertEqual(error.primary,"SR definition refused: a deactivated version must be superseded by a successor at commit",
+                         "test_08_sr20_reached_at_real_command_commit: the missing successor must explain the refusal.")
+        self._unchanged_except(before,"CommandIntake", action_description="test_08_sr20_reached_at_real_command_commit: refusing the missing successor")
 
     def test_09_completed_retry_and_changed_content_and_malformed_receipt(self):
         """O-29: exact retry has no new effect; altered request and corrupt result refuse."""

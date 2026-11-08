@@ -209,15 +209,16 @@ class RootOrganismTests(TransactionTestCase):
         self.assertIsNotNone(result.entitlement_uuid,'The real beta election must compose its own grant.')
         self.assertEqual(check_allowance(lo.organism_id, 'circles', 10, fixtures.database_now()).status, 'within')
         before=models.ContextualRoleAssignment.objects.count();original=circle_commands.form;reached=[]
-        def bad_last(**kwargs):
+        def bad_third(**kwargs):
             reached.append(kwargs['name'])
-            if len(reached)==10:kwargs['name']=''
+            if len(reached)==3:kwargs['name']=''
             return original(**kwargs)
-        with patch.object(circle_commands,'form',side_effect=bad_last):
+        with patch.object(circle_commands,'form',side_effect=bad_third):
             error,_=_attempt(lambda:root_circles.birth_inventory(**args))
-        self.assertEqual(len(reached),10,'The negative batch must reach its tenth ordinary birth.')
-        self.assertIsInstance(error,ValueError,'A blank final Circle name must refuse.')
-        self.assertFalse(models.Circle.objects.filter(parent_organism=lo).exists(),'All nine earlier births must roll back with the last refusal.')
+        self.assertEqual(reached, [name for name, _ in root_circles.INVENTORY[:3]],
+                         'The first two births must succeed before the third form call refuses.')
+        self.assertIsInstance(error,ValueError,'A blank third Circle name must refuse.')
+        self.assertFalse(models.Circle.objects.filter(parent_organism=lo).exists(),'Both earlier births must roll back with the last refusal.')
         self.assertFalse(models.CircleBirthDescription.objects.exists())
         self.assertFalse(models.RootCircleBatch.objects.exists())
         self.assertEqual(models.ContextualRoleAssignment.objects.count(),before)

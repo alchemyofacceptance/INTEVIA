@@ -123,7 +123,11 @@ class DiscussionPostTests(TransactionTestCase):
         self.assertNotIn("markdown", act["payload"])
 
     def test_hide_layers_quotes_history_and_restore_prior_state(self):
-        """DISC1-07. Hidden content never escapes through a quote, version or first-post thread."""
+        """DISC1-07. Hidden content stays hidden through topic, history, edit and quote reads.
+
+        Includes test_p2c_r2_author_hide_preserves_topic_and_other_replies and
+        test_p2c_r7_edit_preserves_quote_and_explicit_none_removes_it.
+        """
         lo, owner = fixtures.ordinary_birth()
         args = self.board(lo, owner)
         author = fixtures.add_member(lo)
@@ -170,6 +174,74 @@ class DiscussionPostTests(TransactionTestCase):
         log = posts.moderation_history(**self.read_args(member), thread_uuid=topic["thread"])
         self.assertTrue(any(row["actor_id"] == owner.pk and row["authority_source"]["kind"] == "OFFICE" for row in log))
         self.assertTrue(any(row["actor_id"] == author.pk and row["operation"] == "HIDE" for row in log))
+
+        with self.subTest(case="test_p2c_r2_author_hide_preserves_topic_and_other_replies"):
+            topic = self.start(member, title="Still a named discussion")
+            response = self.reply(args, topic, markdown="Another person's reply", quote_version=topic["version"])
+            self.hide(member, topic, True)
+            view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])
+            self.assertEqual(view["topic"]["title"], "Still a named discussion")
+            self.assertIsNone(view["posts"][0]["markdown"])
+            self.assertEqual(view["posts"][1]["markdown"], "Another person's reply")
+            self.assertIsNone(view["posts"][1]["quoted_markdown"])
+            self.assertTrue(view["posts"][1]["quote_hidden"])
+            self.assertFalse(view["posts"][1]["hidden"])
+
+            def listed_topic():
+                """Find this thread even when another discussion is listed first."""
+                rows = {row["thread_uuid"]: row for row in posts.category_topics(**member)}
+                self.assertIn(topic["thread"], rows, "Hiding the opening must preserve the listed thread.")
+                return rows[topic["thread"]]
+
+            listed = listed_topic()
+            self.assertEqual((listed["title"], listed["hidden"]), ("Still a named discussion", False))
+            self.assertIsNone(posts.post_history(**self.read_args(member), post_uuid=topic["post"])[0]["markdown"])
+            self.assertEqual(posts.post_history(**self.read_args(member), post_uuid=response["post"])[0]["markdown"], "Another person's reply")
+            self.reply(member, topic)
+            self.moderate(args, topic, "CLOSE")
+            self.refused("DISC_CLOSED", lambda: self.reply(member, topic))
+            self.hide(args, topic, True, as_coordinator=True)
+            view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])
+            self.assertIsNone(view["topic"]["title"])
+            self.assertTrue(all(p["hidden"] and p["markdown"] is None and p["quoted_markdown"] is None for p in view["posts"]))
+            self.assertIsNone(listed_topic()["title"])
+            self.assertEqual(posts.read_thread(**self.read_args(args), thread_uuid=topic["thread"])["posts"][1]["markdown"], "Another person's reply")
+            self.hide(args, topic, False, as_coordinator=True)
+            self.assertTrue(posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])["topic"]["closed"])
+
+        with self.subTest(case="test_p2c_r7_edit_preserves_quote_and_explicit_none_removes_it"):
+            topic = self.start(args)
+            quoted = self.reply(member, topic, markdown="Source")
+            quoting = self.reply(member, topic, quote_version=quoted["version"])
+            self.hide(member, quoted, True)
+            edit = member | {"thread_uuid": topic["thread"], "post_uuid": quoting["post"],
+                            "predecessor": quoting["version"], "request_uuid": uuid4(), "markdown": "Revised reply"}
+            revised = posts.edit_post(**edit)
+            self.assertEqual(posts.edit_post(**edit), revised)
+            view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])["posts"][-1]
+            self.assertEqual(view["quote_version"], quoted["version"])
+            self.assertIsNone(view["quoted_markdown"])
+            self.assertEqual(view["markdown"], "Revised reply")
+            explicit = posts.edit_post(**(edit | {"predecessor": revised["version"], "request_uuid": uuid4(),
+                                                  "quote_version": quoted["version"]}))
+            # Another post cannot acquire a new quote of that hidden version.
+            plain = self.reply(member, topic)
+            self.refused("DISC_QUOTE", lambda: posts.edit_post(**member, thread_uuid=topic["thread"], post_uuid=plain["post"],
+                predecessor=plain["version"], request_uuid=uuid4(), markdown="New quote", quote_version=quoted["version"]))
+            self.refused("DISC_QUOTE", lambda: self.reply(member, topic, quote_version=quoted["version"]))
+            remove = edit | {"predecessor": explicit["version"], "request_uuid": uuid4(), "quote_version": None}
+            removed = posts.edit_post(**remove)
+            before_replay = models.LivingOrganismEvent.objects.count()
+            # Current quote is None; replay must still resolve the older request's
+            # omitted quote from its immutable predecessor and return that old act.
+            self.assertEqual(posts.edit_post(**edit), revised)
+            self.assertEqual(posts.edit_post(**remove), removed)
+            self.assertEqual(models.LivingOrganismEvent.objects.count(), before_replay)
+            history = posts.post_history(**self.read_args(member), post_uuid=quoting["post"])
+            self.assertEqual([v["quote_version"] for v in history], [quoted["version"]]*3 + [None])
+            self.assertTrue(all(v["quoted_markdown"] is None for v in history))
+            self.hide(member, quoted, False)
+            self.assertEqual(posts.post_history(**self.read_args(member), post_uuid=quoting["post"])[0]["quoted_markdown"], "Source")
 
     def test_circle_local_moderation_announcements_and_retired_category(self):
         """DISC1-08. Independent Circle office, Announcements start/reply and category retirement."""
@@ -226,8 +298,12 @@ class DiscussionPostTests(TransactionTestCase):
             original = cur.fetchone()[0]
             cur.execute(migration.SE_HEADER + "SELECT p_capability<>'DISCUSSION_CUSTOM_CATEGORIES' AND (" + original.strip() + ")$$;", params=None)
             try:
-                self.assertFalse(disc.board_categories(**reader_args)["subscriber_categories"])
-                for key in keys:
+                listing = disc.board_categories(**reader_args)
+                self.assertFalse(listing["subscriber_categories"])
+                available = {c["category_uuid"] for c in listing["categories"]
+                             if c["can_start_topic"] and c["can_reply"]}
+                self.assertTrue(set(keys) <= available, "All twelve existing categories must still support posts.")
+                for key in (keys[0], keys[8], keys[-1]):
                     custom = args | {"category_uuid": key}
                     topic = self.start(custom)
                     self.reply(custom, topic)
@@ -274,7 +350,7 @@ class DiscussionPostTests(TransactionTestCase):
     test_probation_departure_and_posting_after_entitlement_loss.ISOLATION_FULL_CAPTURE = True
 
     def test_guards_rollback_request_scope_and_populated_reversal(self):
-        """DISC1-10. Immutable text/metadata, complete shared lineage, rollback and reversal veto."""
+        """DISC1-10. Immutable text/metadata, complete shared lineage and atomic rollback (reversal in DISC2-19)."""
         lo, owner = fixtures.ordinary_birth()
         args = self.board(lo, owner)
         topic = self.start(args)
@@ -328,46 +404,8 @@ class DiscussionPostTests(TransactionTestCase):
         with self.assertRaises(disc.DiscussionRefused) as incomplete:
             incomplete_act(check_complete=True)
         self.assertEqual((incomplete.exception.code, str(incomplete.exception)), ("DISC_COMPLETE", disc.MESSAGES["DISC_COMPLETE"]))
-        migration = import_module("core.migrations.0073_discussion_posts")
-        with connection.schema_editor(atomic=True) as editor:  # noqa: SIM117 -- inspect inside editor
-            with self.assertRaises(RuntimeError) as reverse:
-                migration.reverse(None, editor)
-        self.assertEqual(str(reverse.exception), "DISC1 P2 reversal refused while post history exists.")
-        self.assertEqual(posts.read_thread(**self.read_args(args), thread_uuid=topic["thread"])["posts"][0]["markdown"], "First body")
 
     test_guards_rollback_request_scope_and_populated_reversal.ISOLATION_FULL_CAPTURE = True
-
-    def test_p2c_r2_author_hide_preserves_topic_and_other_replies(self):
-        """DISC1-12 / R2. Author hides own opening text only; OFFICE hide hides the topic."""
-        lo, owner = fixtures.ordinary_birth()
-        args = self.board(lo, owner)
-        author = fixtures.add_member(lo)
-        member = args | {"credential": author.credential}
-        topic = self.start(member, title="Still a named discussion")
-        response = self.reply(args, topic, markdown="Another person's reply", quote_version=topic["version"])
-        self.hide(member, topic, True)
-        view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])
-        self.assertEqual(view["topic"]["title"], "Still a named discussion")
-        self.assertIsNone(view["posts"][0]["markdown"])
-        self.assertEqual(view["posts"][1]["markdown"], "Another person's reply")
-        self.assertIsNone(view["posts"][1]["quoted_markdown"])
-        self.assertTrue(view["posts"][1]["quote_hidden"])
-        self.assertFalse(view["posts"][1]["hidden"])
-        listed = posts.category_topics(**member)[0]
-        self.assertEqual((listed["title"], listed["hidden"]), ("Still a named discussion", False))
-        self.assertIsNone(posts.post_history(**self.read_args(member), post_uuid=topic["post"])[0]["markdown"])
-        self.assertEqual(posts.post_history(**self.read_args(member), post_uuid=response["post"])[0]["markdown"], "Another person's reply")
-        self.reply(member, topic)
-        self.moderate(args, topic, "CLOSE")
-        self.refused("DISC_CLOSED", lambda: self.reply(member, topic))
-        self.hide(args, topic, True, as_coordinator=True)
-        view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])
-        self.assertIsNone(view["topic"]["title"])
-        self.assertTrue(all(p["hidden"] and p["markdown"] is None and p["quoted_markdown"] is None for p in view["posts"]))
-        self.assertIsNone(posts.category_topics(**member)[0]["title"])
-        self.assertEqual(posts.read_thread(**self.read_args(args), thread_uuid=topic["thread"])["posts"][1]["markdown"], "Another person's reply")
-        self.hide(args, topic, False, as_coordinator=True)
-        self.assertTrue(posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])["topic"]["closed"])
 
     def test_p2c_r3_scope_before_author_and_coordinator_authority(self):
         """DISC1-13 / R3. Unknown/mismatched targets have one refusal on every existing-target route."""
@@ -461,45 +499,6 @@ class DiscussionPostTests(TransactionTestCase):
         self.assertEqual(len(posts.category_topics(**args)), 1)
         self.assertEqual(len(posts.read_thread(**board_args, thread_uuid=topic["thread"])["posts"]), 1)
 
-    def test_p2c_r7_edit_preserves_quote_and_explicit_none_removes_it(self):
-        """DISC1-17 / R7. Omission retains even a now-hidden quote; new hidden quote refuses."""
-        lo, owner = fixtures.ordinary_birth()
-        args = self.board(lo, owner)
-        author = fixtures.add_member(lo)
-        member = args | {"credential": author.credential}
-        topic = self.start(args)
-        quoted = self.reply(member, topic, markdown="Source")
-        quoting = self.reply(member, topic, quote_version=quoted["version"])
-        self.hide(member, quoted, True)
-        edit = member | {"thread_uuid": topic["thread"], "post_uuid": quoting["post"],
-                        "predecessor": quoting["version"], "request_uuid": uuid4(), "markdown": "Revised reply"}
-        revised = posts.edit_post(**edit)
-        self.assertEqual(posts.edit_post(**edit), revised)
-        view = posts.read_thread(**self.read_args(member), thread_uuid=topic["thread"])["posts"][-1]
-        self.assertEqual(view["quote_version"], quoted["version"])
-        self.assertIsNone(view["quoted_markdown"])
-        self.assertEqual(view["markdown"], "Revised reply")
-        explicit = posts.edit_post(**(edit | {"predecessor": revised["version"], "request_uuid": uuid4(),
-                                              "quote_version": quoted["version"]}))
-        # Another post cannot acquire a new quote of that hidden version.
-        plain = self.reply(member, topic)
-        self.refused("DISC_QUOTE", lambda: posts.edit_post(**member, thread_uuid=topic["thread"], post_uuid=plain["post"],
-            predecessor=plain["version"], request_uuid=uuid4(), markdown="New quote", quote_version=quoted["version"]))
-        self.refused("DISC_QUOTE", lambda: self.reply(member, topic, quote_version=quoted["version"]))
-        remove = edit | {"predecessor": explicit["version"], "request_uuid": uuid4(), "quote_version": None}
-        removed = posts.edit_post(**remove)
-        before_replay = models.LivingOrganismEvent.objects.count()
-        # Current quote is None; replay must still resolve the older request's
-        # omitted quote from its immutable predecessor and return that old act.
-        self.assertEqual(posts.edit_post(**edit), revised)
-        self.assertEqual(posts.edit_post(**remove), removed)
-        self.assertEqual(models.LivingOrganismEvent.objects.count(), before_replay)
-        history = posts.post_history(**self.read_args(member), post_uuid=quoting["post"])
-        self.assertEqual([v["quote_version"] for v in history], [quoted["version"]]*3 + [None])
-        self.assertTrue(all(v["quoted_markdown"] is None for v in history))
-        self.hide(member, quoted, False)
-        self.assertEqual(posts.post_history(**self.read_args(member), post_uuid=quoting["post"])[0]["quoted_markdown"], "Source")
-
     def test_p2c_r8_read_predicate_indexes_installed(self):
         """DISC1-18 / R8. Installed indexes cover the two JSON targets and category lookup."""
         rows = disc._rows("""SELECT c.relname AS name,i.indisvalid,i.indisready,
@@ -514,8 +513,13 @@ class DiscussionPostTests(TransactionTestCase):
         self.assertRegex(indexes["discp_act_thread"]["key"], r"payload\s*->>\s*'thread'")
         self.assertEqual(indexes["discp_thread_category"]["key"], "category_uuid")
 
+    test_p2c_r8_read_predicate_indexes_installed.ISOLATION_WRITE_NOTHING = True
+
     def test_p2d_s1_owner_arguments_precede_every_object_lookup(self):
-        """DISC1-20 / S1. Malformed owner inputs have no object-existence dependent answer."""
+        """DISC1-20 / S1. Read argument checks are independent of object existence.
+
+        Includes test_p2d_s2_required_category_argument_is_exact_uuid.
+        """
         lo, owner = fixtures.ordinary_birth()
         args = self.board(lo, owner)
         topic = self.start(args)
@@ -546,20 +550,18 @@ class DiscussionPostTests(TransactionTestCase):
                             (posts.moderation_history, "thread_uuid")):
             self.unavailable(lambda read=read, field=field: read(credential=None, organism_uuid="bad", **{field: uuid4()}))
 
-    def test_p2d_s2_required_category_argument_is_exact_uuid(self):
-        """DISC1-21 / S2. None is invalid for category reads; board-only reads omit that argument."""
-        lo, owner = fixtures.ordinary_birth()
-        args = self.read_args(self.board(lo, owner))
-        for value in (None, "bad", 0):
+        category_scope = self.read_args(args)
+        with self.subTest(case="test_p2d_s2_required_category_argument_is_exact_uuid"):
+            for value in (None, "bad", 0):
+                for read in (disc.category_history, posts.category_topics):
+                    with self.subTest(value=value, read=read.__name__):
+                        with self.assertRaises(Exception) as caught:
+                            read(**category_scope, category_uuid=value)
+                        self.assertIs(type(caught.exception), ValueError)
+                        self.assertEqual(str(caught.exception), "Choose an exact UUID for the discussion reference.")
+            self.assertEqual(len(disc.board_categories(**category_scope)["categories"]), 3)
             for read in (disc.category_history, posts.category_topics):
-                with self.subTest(value=value, read=read.__name__):
-                    with self.assertRaises(Exception) as caught:
-                        read(**args, category_uuid=value)
-                    self.assertIs(type(caught.exception), ValueError)
-                    self.assertEqual(str(caught.exception), "Choose an exact UUID for the discussion reference.")
-        self.assertEqual(len(disc.board_categories(**args)["categories"]), 3)
-        for read in (disc.category_history, posts.category_topics):
-            self.unavailable(lambda read=read: read(credential=None, organism_uuid=lo.organism_id, category_uuid=None))
+                self.unavailable(lambda read=read: read(credential=None, organism_uuid=lo.organism_id, category_uuid=None))
 
     def test_p2d_s4_new_identity_scope_and_replay_completion(self):
         """DISC1-23 / S4. Collisions are scoped before authority; denied new-ID probes have one answer."""

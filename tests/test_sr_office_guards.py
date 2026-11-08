@@ -41,7 +41,6 @@ from threading import Barrier
 from unittest import skipUnless
 
 from django.db import DatabaseError, close_old_connections, connection, transaction
-from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
 
@@ -63,6 +62,7 @@ from src.intevia.services.organism_command_support import _authority_request
 from tests.s015_0021_support import (
     append_event,
     current_applied_core_head,
+    current_core_leaf,
     database_now,
     drop_unset_check,
     empty_fp,
@@ -70,7 +70,6 @@ from tests.s015_0021_support import (
     found_nonroot,
     found_root,
     fresh,
-    migrate_to_target_with_restore,
     refresh,
     seed_identity,
     sr_definition_guard_suspended,
@@ -330,8 +329,7 @@ def _later(at, seconds):
 
 # ------------------------------------------------------------------ the tests
 
-@POSTGRESQL_ONLY
-class SROfficeGuardTests(TransactionTestCase):
+class SROfficeFixture:
     """Precondition-to-fixture map (practice 153), shared by the tests:
 
     - an LO with its founding Coordinator (ACTIVE membership, COORDINATOR office)  -> found_nonroot
@@ -457,6 +455,46 @@ class SROfficeGuardTests(TransactionTestCase):
             rows = cur.fetchall()
         self.assertEqual(len(rows), 1)
         return rows[0][0]
+
+    def _migration_facts(self):
+        """Read the applied head, four guard bodies and public trigger count."""
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
+                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND NOT t.tgisinternal"
+            )
+            triggers = cur.fetchone()[0]
+        return {
+            "head": current_applied_core_head(connection)[0][1],
+            "attribution": self._installed_body("s2b_guard_office_attribution"),
+            "consent": self._installed_body("s2b_guard_assign_consent"),
+            "definition_insert": self._installed_body("sr_definition_insert_guard"),
+            "definition_update": self._installed_body("sr_definition_update_guard"),
+            "triggers": triggers,
+        }
+
+    def _occupy_office(self):
+        """Commit a nomination, consent and assignment for populated reverse checks."""
+        at = self.at
+
+        def office(cur):
+            assignment_id, assignment_uuid, proposal_id = self._nominate_member_for_treasurer(cur, at, f"{self.tag}:populated")
+            self._assign(cur, assignment_id, assignment_uuid, proposal_id, _later(at, 2), f"{self.tag}:populated")
+
+        self._commits(office)
+
+    def _assert_0052_populated_refusal(self, migration):
+        """Exercise the actual reverse callable and check the counted office history."""
+        with connection.schema_editor(atomic=True) as editor:
+            with self.assertRaises(RuntimeError) as refused:
+                migration.restore_guards(None, editor)
+        self.assertIn("SR 0052 reverse refused", str(refused.exception))
+        self.assertIn("1 non-COORDINATOR LO-scoped assignment(s) carrying 2 state event(s)", str(refused.exception))
+
+
+@POSTGRESQL_ONLY
+class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
+    """Product witnesses for the widened SR office guards."""
 
     # -- 1. the attribution gate (W-2, attribution half) --------------------------
 
@@ -822,89 +860,31 @@ class SROfficeGuardTests(TransactionTestCase):
     # -- 9. the migration (W-13) -------------------------------------------------
 
     def test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused(self):
-        """With founding-only data, C2 and C1b reverse first. On a founding-only database the SR migrations
-        reverse to 0051 and reapply with the expected guard bodies and trigger count.
-        With an occupied office, both SR reversal checks must refuse at 0053, name the
-        populated records and preserve the 0053 facts and office state. Restore the C2 head at the end.
-        Obligation O-53 (partial witness). The sr-c2-attribution-gate mutation covers the
-        initial installed-body assertion. Reverse behaviour has a separate source-fault kit."""
+        """The installed office guards and populated 0052 veto survive at the received head."""
+        from verification.isolation.state import NON_CORE_TRIGGER_DELTAS, REQUIRED_TRIGGER_COUNT
         migration = import_module("core.migrations.0052_sr_office_guard_widening")
         safeguard = import_module("core.migrations.0053_sr_office_safeguards")
-
-        def facts():
-            with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
-                    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND NOT t.tgisinternal"
-                )
-                triggers = cur.fetchone()[0]
-            return {
-                "head": current_applied_core_head(connection)[0][1],
-                "attribution": self._installed_body("s2b_guard_office_attribution"),
-                "consent": self._installed_body("s2b_guard_assign_consent"),
-                "definition_insert": self._installed_body("sr_definition_insert_guard"),
-                "definition_update": self._installed_body("sr_definition_update_guard"),
-                "triggers": triggers,
-            }
-
         root = import_module("core.migrations.0062_root_genesis")
         installed = {signature: revised for signature, prior, revised in root.bodies()}
-        at_head = facts()
-        self.assertEqual(at_head["head"], "0076_cq_authority", msg="The migration rehearsal must start on the DISC3 candidate head.")
+        at_head = self._migration_facts()
+        self.assertEqual(at_head["head"], current_core_leaf(connection)[0][1], msg="The applied core head must match the migration graph.")
         self.assertEqual(at_head["definition_insert"], installed["public.sr_definition_insert_guard()"], msg="The installed definition-insert safeguard must match its 0062 body.")
-        self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="At 0053, the installed definition-update safeguard should match its complete candidate body; it differs.")
-        self.assertIn(("core", HEAD_0052), MigrationRecorder(connection).applied_migrations(), msg="The migration history should retain 0052 beneath 0053; its record is missing.")
+        self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The installed definition-update safeguard must retain its 0053 body.")
+        applied = MigrationRecorder(connection).applied_migrations()
+        self.assertIn(("core", HEAD_0052), applied, msg="The migration history should retain 0052 beneath 0053; its record is missing.")
         self.assertEqual(at_head["attribution"], installed["public.s2b_guard_office_attribution()"], msg="The installed attribution safeguard must match its 0062 body.")
-        self.assertEqual(at_head["consent"], migration.NEW_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="At 0053, the consent safeguard should remain the exact 0052 body; it differs.")
-        migrate_to_target_with_restore(self, ("core", "0053_sr_office_safeguards"))
-        restored_sr = facts()
-        self.assertEqual(restored_sr["definition_insert"], safeguard.NEW_SR_DEFINITION_INSERT_GUARD_BODY)
-        self.assertEqual(restored_sr["attribution"], safeguard.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY)
-        sr_triggers = restored_sr["triggers"]
-        self.assertGreater(at_head["triggers"], sr_triggers,
-                           msg="Reversing the C2 migration must remove its extra coverage and qualification guards.")
-        MigrationExecutor(connection).migrate([("core", HEAD_0052)])
-        at_0052 = facts()
-        self.assertEqual(at_0052["attribution"], migration.NEW_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="After reversing to 0052, the attribution safeguard should be the exact 0052 body; it differs.")
-        self.assertEqual(at_0052["definition_insert"], safeguard.BODIES["sr_definition_insert_guard"][0], msg="After reversing to 0052, the definition-insert safeguard should be its exact earlier body; it differs.")
-        self.assertEqual(at_0052["definition_update"], safeguard.BODIES["sr_definition_update_guard"][0], msg="After reversing to 0052, the definition-update safeguard should be its exact earlier body; it differs.")
-        self.assertEqual(at_0052["triggers"], sr_triggers, msg="Reversing to 0052 should preserve the observed trigger count; the count changed.")
-        MigrationExecutor(connection).migrate([("core", HEAD_0051)])
-        at_0051 = facts()
-        self.assertEqual(at_0051["head"], HEAD_0051, msg="After reversing to 0051, the recorded migration head should be 0051; it differs.")
-        self.assertEqual(at_0051["attribution"], migration.PREVIOUS_S2B_GUARD_OFFICE_ATTRIBUTION_BODY, msg="After reversing to 0051, the attribution safeguard should be its exact pre-0052 body; it differs.")
-        self.assertEqual(at_0051["consent"], migration.PREVIOUS_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="After reversing to 0051, the consent safeguard should be its exact pre-0052 body; it differs.")
-        self.assertEqual(at_0051["triggers"], sr_triggers, msg="Reversing to 0051 should preserve the observed trigger count; the count changed.")
-        self.restore_received_migrations()
-        again = facts()
-        self.assertEqual(again, at_head, msg="Restoring the received migrations should restore every compared body, head and trigger count; the recorded facts differ.")
-
-        at = self.at
-
-        def office(cur):
-            assignment_id, assignment_uuid, proposal_id = self._nominate_member_for_treasurer(cur, at, f"{self.tag}:populated")
-            self._assign(cur, assignment_id, assignment_uuid, proposal_id, _later(at, 2), f"{self.tag}:populated")
-
-        self._commits(office)
-        migrate_to_target_with_restore(self, ("core", "0053_sr_office_safeguards"))
-        at_0053 = facts()
-        self.assertEqual(at_0053["head"], "0053_sr_office_safeguards", msg="The populated reversal checks must start at 0053.")
+        self.assertEqual(at_head["consent"], migration.NEW_S2B_GUARD_ASSIGN_CONSENT_BODY, msg="The installed consent safeguard must retain its 0052 body.")
+        expected = REQUIRED_TRIGGER_COUNT[at_head["head"]] + sum(
+            delta for key, delta in NON_CORE_TRIGGER_DELTAS.items() if key in applied
+        )
+        self.assertEqual(at_head["triggers"], expected, "Installed trigger count differs from the isolation declaration.")
+        self._occupy_office()
         before = self._state()
-        with self.assertRaises(RuntimeError, msg="The new migration should refuse rollback while an office remains; it allowed rollback.") as refused:
-            MigrationExecutor(connection).migrate([("core", HEAD_0051)])
-        message = str(refused.exception)
-        self.assertIn("SR 0053 reverse refused", message, msg="Rollback with an occupied office should be refused by 0053 itself; its refusal was not reported.")
-        self.assertIn("1 non-Coordinator office assignment(s)", message, msg="The 0053 rollback refusal should identify the remaining non-Coordinator assignment; it did not.")
-        # Deliberately call 0052 reverse under installed 0053: its populated-row veto must precede body comparison.
-        with connection.schema_editor(atomic=True) as editor:
-            with self.assertRaises(RuntimeError, msg="The earlier 0052 reverse preflight should still refuse a populated office; it allowed rollback.") as prior_refused:
-                migration.restore_guards(None, editor)
-        self.assertIn("SR 0052 reverse refused", str(prior_refused.exception), msg="The retained 0052 preflight should name its own populated-state refusal; another error was reported.")
-        self.assertIn("1 non-COORDINATOR LO-scoped assignment(s) carrying 2 state event(s)", str(prior_refused.exception), msg="The 0052 refusal should identify one assignment carrying its two state events; its account differs.")
-        self.assertEqual(facts(), at_0053, msg="Refused rollback attempts should leave all compared migration facts unchanged; they changed.")
-        self.assertEqual(self._state(), before, msg="Refused rollback attempts should leave the compared office records unchanged; they changed.")
-        self.restore_received_migrations()
-        self.assertEqual(facts()["head"], "0076_cq_authority", msg="The populated rehearsal must finish on the DISC3 candidate head.")
+        self._assert_0052_populated_refusal(migration)
+        self.assertEqual(self._migration_facts(), at_head)
+        self.assertEqual(self._state(), before)
+
+    test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused.ISOLATION_FULL_CAPTURE = True
 
     # -- 10. concurrency (threaded) ------------------------------------------------
 

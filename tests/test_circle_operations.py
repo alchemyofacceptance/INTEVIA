@@ -740,3 +740,5 @@ class CircleOperationsTests(TransactionTestCase):
                 migration.reverse(apps, editor)
         office.refresh_from_db()
         self.assertEqual(office.state, "ACTIVE", "A refused rollback must retain the appointment.")
+
+    test_circle_coordinator_operating_journey.ISOLATION_FULL_CAPTURE = True

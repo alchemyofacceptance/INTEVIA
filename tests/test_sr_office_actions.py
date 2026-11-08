@@ -34,6 +34,32 @@ import tests.test_sr_definitions as c3
 import tests.s015_0021_support as fixtures
 
 
+def office_snapshot():
+    """Return each table's count, last PK and ordered digest of complete stored rows."""
+    names = ("LivingOrganism","LivingOrganismEvent","OrganismMembership","OrganismMembershipTransition",
+             "OrganismRoleDefinition","OrganismRoleDefinitionProvision","ContextualRoleAssignment",
+             "ContextualRoleAssignmentStateEvent","OfficeAppointmentConsent","AuthorityDecision",
+             "OrganismCommandReceipt","CommandIntake","Circle","CircleStateEvent","CircleParticipation",
+             "CircleParticipationEnd","CircleJoinRequest","CircleAdmissionDecision","GovernedRule",
+             "OrganismEntitlement","OrganismEntitlementEvent","OrganismEntitlementPolicyText")
+    selects = []
+    quote = connection.ops.quote_name
+    for index, name in enumerate(names):
+        meta = getattr(models, name)._meta
+        pk = quote(meta.pk.column)
+        table = quote(meta.db_table)
+        selects.append(f"""
+            SELECT {index} AS ordinal, count(*), (SELECT tail.{pk}::text FROM {table} AS tail ORDER BY tail.{pk} DESC LIMIT 1),
+                   encode(sha256(convert_to(COALESCE(string_agg(
+                       encode(sha256(convert_to(to_jsonb(r)::text, 'UTF8')), 'hex'),
+                       '' ORDER BY {pk}), ''), 'UTF8')), 'hex')
+              FROM {table} AS r
+        """)
+    with connection.cursor() as cursor:
+        cursor.execute(" UNION ALL ".join(selects) + " ORDER BY ordinal")
+        return {names[index]: (count, last_pk, digest) for index, count, last_pk, digest in cursor.fetchall()}
+
+
 class SROfficeActionTests(TransactionTestCase):
     reset_sequences = True
     _command = c3.SRDefinitionCommandTests._command
@@ -90,6 +116,14 @@ class SROfficeActionTests(TransactionTestCase):
             action=OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, version_uuid=draft.version_uuid,
             request_reference="c5-effect:"+key, idempotency_key=key, occurred_at=at, effective_at=at))
 
+    def _bystander(self):
+        """Add an active member and JOIN without paying for learner registration."""
+        from tests.test_sr_office_guards import _add_member
+
+        with transaction.atomic(), connection.cursor() as cursor:
+            pk, _, _ = _add_member(cursor, self.ids, "te-member-" + uuid4().hex, fixtures.database_now())
+        return models.OrganismMembership.objects.get(pk=pk)
+
     def _member(self, *, effective_at=None):
         identity = fixtures.register_test_learner(username="c5-member-"+uuid4().hex)
         at = effective_at or fixtures.database_now()
@@ -107,14 +141,7 @@ class SROfficeActionTests(TransactionTestCase):
             fixtures.refresh(cursor,"core_organismmembership",pk,at)
         return models.OrganismMembership.objects.select_related("identity__credential").get(pk=pk)
 
-    def _snapshot(self):
-        names = ("LivingOrganism","LivingOrganismEvent","OrganismMembership","OrganismMembershipTransition",
-                 "OrganismRoleDefinition","OrganismRoleDefinitionProvision","ContextualRoleAssignment",
-                 "ContextualRoleAssignmentStateEvent","OfficeAppointmentConsent","AuthorityDecision",
-                 "OrganismCommandReceipt","CommandIntake","Circle","CircleStateEvent","CircleParticipation",
-                 "CircleParticipationEnd","CircleJoinRequest","CircleAdmissionDecision","GovernedRule",
-                 "OrganismEntitlement","OrganismEntitlementEvent","OrganismEntitlementPolicyText")
-        return {name:list(getattr(models,name).objects.order_by("pk").values_list()) for name in names}
+    _snapshot = staticmethod(office_snapshot)
 
     def _proposal_command(self, row, member, actor=None):
         at=fixtures.database_now(); key=uuid4().hex
@@ -185,10 +212,10 @@ class SROfficeActionTests(TransactionTestCase):
         self.assertEqual({k:v for k,v in after.items() if k not in allowed},
                          {k:v for k,v in before.items() if k not in allowed},
                          f"{label} should preserve all business records and receipts; a record changed.")
-        self.assertEqual(len(after["CommandIntake"]),len(before["CommandIntake"])+1,
+        self.assertEqual(after["CommandIntake"][0],before["CommandIntake"][0]+1,
                          f"{label} should retain exactly its new request record; the count differs.")
         if provider:
-            self.assertEqual(len(after["AuthorityDecision"]),len(before["AuthorityDecision"])+1,
+            self.assertEqual(after["AuthorityDecision"][0],before["AuthorityDecision"][0]+1,
                              f"{label} should retain exactly one refusal decision; the count differs.")
             self.assertEqual(models.AuthorityDecision.objects.latest("pk").outcome,"REFUSED",
                              f"{label} should record a refused authority decision; it was not refused.")
@@ -234,16 +261,13 @@ class SROfficeActionTests(TransactionTestCase):
         _,pending=self._nominate(row)
         nominee=pending.membership
         self._run(lambda:self.consent.record_office_consent(self._consent_command(nominee,pending)),"Consenting before the office definition changes")
-        consent_nominee,consent_pending=self._nominate(row)
         changed=self._success(self._command("AMEND",row=row,content=content))
-        self._refusal(lambda:self.consent.record_office_consent(self._consent_command(consent_nominee,consent_pending)),
-            consent.S015OfficeConsentSuperseded,"SR_SUPERSEDED_DEFINITION","Consenting to the old office definition")
         self._refusal(lambda:self.roles.propose_assignment(self._proposal_command(row,member)),roles.S015AssignmentRuleRefused,
             "SR_SUPERSEDED_DEFINITION","Nominating under the old definition")
         self._refusal(lambda:self.roles.transition_assignment(self._transition_command(pending,"ASSIGN")),roles.S015AssignmentRuleRefused,
             "SR_SUPERSEDED_DEFINITION","Appointing under the old definition")
         row.refresh_from_db(); current=models.OrganismRoleDefinition.objects.get(role_uuid=changed.role_definition_uuid)
-        self._nominate(current)
+        self._nominate(current,self._bystander())
         pending.refresh_from_db()
         self.assertEqual(pending.role_definition_id,row.pk,"Refusing the stale appointment should leave its original definition attached; it was retargeted.")
 
@@ -415,15 +439,19 @@ class SROfficeActionTests(TransactionTestCase):
         after=self._snapshot()
         self.assertEqual({k:v for k,v in after.items() if k!="CommandIntake"},{k:v for k,v in before.items() if k!="CommandIntake"},
                          f"A lock conflict during {label} should preserve all governed records; records changed.")
-        self.assertEqual(len(after["CommandIntake"]),len(before["CommandIntake"])+1,
+        self.assertEqual(after["CommandIntake"][0],before["CommandIntake"][0]+1,
                          f"A lock conflict during {label} should retain exactly one new request; the count differs.")
         result=self._run(lambda:execute(command),"Retrying "+label+" after the lock is released")
-        self.assertEqual(models.CommandIntake.objects.count(),len(after["CommandIntake"]),
+        self.assertEqual(models.CommandIntake.objects.count(),after["CommandIntake"][0],
                          f"Retrying {label} unchanged should reuse the original request; a second intake record appeared.")
         return result
 
     def test_07_all_office_entries_translate_real_contention_and_retry(self):
-        """A4-A8 class D: real advisory-lock conflicts roll back, then exact retries work."""
+        """A4-A8. Every office entry handles contention and retry without duplicate effects.
+
+        Includes test_10_all_office_entries_reject_changed_retries_and_bad_receipts
+        for proposal, consent, assignment, ending and reassignment.
+        """
         _,row=self._define();member=self._member()
         p=self._proposal_command(row,member)
         proposed=self._contended_then_retry(self.roles.propose_assignment,p,OrganismAction.TRANSITION_CONTEXTUAL_ROLE,"the nomination")
@@ -437,6 +465,26 @@ class SROfficeActionTests(TransactionTestCase):
         _,a2=self._appoint(row)
         reassign=self._transition_command(a2,"REASSIGN")
         self._contended_then_retry(self.roles.transition_assignment,reassign,OrganismAction.TRANSITION_CONTEXTUAL_ROLE,"the reassignment")
+
+        actions=[(self.roles,self.roles.propose_assignment,p,"the nomination"),
+                 (self.consent,self.consent.record_office_consent,c,"the consent"),
+                 (self.roles,self.roles.transition_assignment,assign,"the appointment"),
+                 (self.roles,self.roles.transition_assignment,end,"the ending"),
+                 (self.roles,self.roles.transition_assignment,reassign,"the reassignment")]
+        for service,execute,command,label in actions:
+            with self.subTest(case="test_10_all_office_entries_reject_changed_retries_and_bad_receipts", action=label):
+                before=self._snapshot()
+                try: execute(replace(command,occurred_at=command.occurred_at-timedelta(microseconds=1)))
+                except Exception as exc:
+                    self.assertIsInstance(exc,S015CommandReplayMismatch,f"Repeating {label} with changed timing should return the changed-request refusal; another error occurred.")
+                else: self.fail(f"Repeating {label} with changed timing should refuse; changed content was accepted.")
+                self.assertEqual(self._snapshot(),before,f"A changed retry of {label} should preserve all recorded data; data changed.")
+                with patch.object(service,"_replay_result",side_effect=S015CommandReceiptMalformed()):
+                    try: execute(command)
+                    except Exception as exc:
+                        self.assertIsInstance(exc,S015CommandReceiptMalformed,f"Reading an invalid receipt for {label} should preserve the decoder's technical refusal; another error occurred.")
+                    else: self.fail(f"Reading an invalid receipt for {label} should stop with a technical error; a result was served.")
+                self.assertEqual(self._snapshot(),before,f"A malformed replay of {label} should not create or change any record; data changed.")
 
     def _seat_founder(self):
         service=governance.OrganismGovernanceService(clock=fixtures.database_now,authority=self.authority)
@@ -461,6 +509,7 @@ class SROfficeActionTests(TransactionTestCase):
     def test_08_participation_is_required_and_its_creation_cut_is_observed(self):
         """TAR06: live GOVERNANCE participation permits both nomination and appointment.
 
+        Includes the provider 06 never-seated ASSIGN denial.
         The historical observation before creation is a query boundary, not a
         claim that a participation may lawfully predate its Circle. The closed-Circle and ended-participation branches retain their lawful
         surrounding state; redundant query clauses are not claimed independently.
@@ -470,6 +519,15 @@ class SROfficeActionTests(TransactionTestCase):
         defined=self._success(replace(command,content=content));row=models.OrganismRoleDefinition.objects.get(role_uuid=defined.role_definition_uuid)
         self._refusal(lambda:self.roles.propose_assignment(self._proposal_command(row,self.founder_member)),S015AuthorityDenied,
             "E_NOMINEE_NOT_ELIGIBLE","Nominating without the required GOVERNANCE participation",provider=True)
+        # Provider 06: the nominee never had a place. Use the guarded consented
+        # nomination fixture so the ASSIGN reaches the independent admission check.
+        from tests.test_sr_provider import nomination_fixture
+
+        with self.subTest(case="test_06_participation_requirement_refuses_proposal_and_assignment", action="ASSIGN"):
+            _, never_seated, _ = nomination_fixture(self.ids, self.actor, row, self._bystander(), consented=True)
+            self._refusal(lambda: self.roles.transition_assignment(self._transition_command(never_seated, "ASSIGN")),
+                          S015AuthorityDenied, "E_NOMINEE_NOT_ELIGIBLE",
+                          "Appointing a consenting nominee who never held the required place", provider=True)
         seated,created=self._seat_founder()
         participation=models.CircleParticipation.objects.get(participation_uuid=seated.participation_uuid)
         circle=models.Circle.objects.get(circle_uuid=created.record_uuid)
@@ -552,36 +610,3 @@ class SROfficeActionTests(TransactionTestCase):
             self.assertFalse(roles.assignment_in_effect(assignment,until),"A fixed-term appointment should cease to be effective at its exact end without pausing; it remained effective.")
             self.assertEqual(self._snapshot(),before,"Observing term expiry should neither end nor rewrite the appointment; a record changed.")
             self.assertEqual(models.OrganismCommandReceipt.objects.get(lineage_reference=result.lineage_reference).result_payload["suspension_tolls_term"],"NO","The fixed-term receipt should retain the no-pause default; its value differs.")
-
-    def test_10_all_office_entries_reject_changed_retries_and_bad_receipts(self):
-        """A4-A8 technical replay matrix, using the real first write for every entry.
-
-        Malformed receipt input is substituted at the decoder boundary; immutable
-        stored receipts are never edited to manufacture the technical condition.
-        """
-        _,row=self._define();member=self._member()
-        p=self._proposal_command(row,member);proposed=self.roles.propose_assignment(p)
-        a=models.ContextualRoleAssignment.objects.get(assignment_uuid=proposed.assignment_uuid)
-        c=self._consent_command(member,a);self.consent.record_office_consent(c)
-        assign=self._transition_command(a,"ASSIGN");self.roles.transition_assignment(assign)
-        end=self._transition_command(a,"END");self.roles.transition_assignment(end)
-        m2,a2=self._appoint(row);reassign=self._transition_command(a2,"REASSIGN");self.roles.transition_assignment(reassign)
-        actions=[(self.roles,self.roles.propose_assignment,p,"the nomination"),
-                 (self.consent,self.consent.record_office_consent,c,"the consent"),
-                 (self.roles,self.roles.transition_assignment,assign,"the appointment"),
-                 (self.roles,self.roles.transition_assignment,end,"the ending"),
-                 (self.roles,self.roles.transition_assignment,reassign,"the reassignment")]
-        for service,execute,command,label in actions:
-            with self.subTest(action=label):
-                before=self._snapshot()
-                try: execute(replace(command,occurred_at=command.occurred_at-timedelta(microseconds=1)))
-                except Exception as exc:
-                    self.assertIsInstance(exc,S015CommandReplayMismatch,f"Repeating {label} with changed timing should return the changed-request refusal; another error occurred.")
-                else: self.fail(f"Repeating {label} with changed timing should refuse; changed content was accepted.")
-                self.assertEqual(self._snapshot(),before,f"A changed retry of {label} should preserve all recorded data; data changed.")
-                with patch.object(service,"_replay_result",side_effect=S015CommandReceiptMalformed()):
-                    try: execute(command)
-                    except Exception as exc:
-                        self.assertIsInstance(exc,S015CommandReceiptMalformed,f"Reading an invalid receipt for {label} should preserve the decoder's technical refusal; another error occurred.")
-                    else: self.fail(f"Reading an invalid receipt for {label} should stop with a technical error; a result was served.")
-                self.assertEqual(self._snapshot(),before,f"A malformed replay of {label} should not create or change any record; data changed.")

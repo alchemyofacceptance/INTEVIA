@@ -16,6 +16,8 @@ from tests.test_c1_rejoin import _attempt
 
 class RecoveryTests(TransactionTestCase):
     def setUp(self):
+        # Ordinary registration establishes current terms before the dated founding.
+        # The second-window volunteer registers at the current receipt time.
         self.departure = departures.DepartureTests()
         self.departure.setUp()
         self.fx = self.departure.fx
@@ -167,6 +169,16 @@ class RecoveryTests(TransactionTestCase):
                          "The authorised appointment must restore this same episode through its own fresh, satisfied assessment.")
 
     def test_second_window_volunteer_reactivates_before_exclusive_end(self):
+        """A second-window volunteer can reactivate before its exclusive end."""
+        from src.intevia.services import organism_role_service
+        from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
+        from src.intevia.services.organism_authority import S015Authority
+        from tests.test_sr_office_actions import SROfficeActionTests
+
+        self.fx = SROfficeActionTests()
+        self.fx.roles = organism_role_service.OrganismRoleService(
+            authority=S015Authority(provider=ProductionApplicationAuthorityProvider()), clock=fixtures.database_now
+        )
         # Expire a genuine fixed-term Coordinator appointment 35 days ago.
         # Its first window has elapsed, and its second still has time to run.
         start = fixtures.database_now() - timedelta(days=40)
