@@ -338,15 +338,32 @@ class SROfficeActionTests(TransactionTestCase):
             self._success(self._command("RETIRE",row=retirable))
 
     def test_05_named_body_uses_only_its_recorded_alternative(self):
-        """A6 missing route class A; later alternative cannot authorise the old chain."""
-        command=self._command();content=replace(command.content,appointing_authority="NAMED_BODY",appointing_body_reference="library:test#body",
-            provisions=command.content.provisions+(definitions.DefinitionProvision("APPOINTING_AUTHORITY","library:test#body","v1"),))
-        result=self._success(replace(command,content=content));row=models.OrganismRoleDefinition.objects.get(role_uuid=result.role_definition_uuid)
+        """The exact named-body alternative can appoint only while voting is off."""
+        from src.intevia.services import cq
+        from tests import test_law_acts as law
+
+        command = self._command()
+        document = law.Document(self.actor)
+        wording = (f"[#1] The members elect the {command.content.code} office. "
+                   "[#2] When voting is off, the LO Coordinator may appoint to that office.")
+        article = document.service.create_successor_version(
+            identity=document.author, resource_id=document.name, content=wording, evidence_reference="hard:office-route")
+        document.transition("publish_library_resource")
+        proposal = replace(law.adoption(self.organism, document, "ARTICLE"), version=article.version_number)
+        enacted = law.law.OrganismLawService().adopt_law(law.command(self.actor, proposal))
+        self.assertEqual(enacted.status, "ADOPT")
+        reference = str(proposal.proposal)
+        version = str(article.pk)
+        body_ref, alternative = reference + "#1", reference + "#2"
+        content = replace(command.content, appointing_authority="NAMED_BODY", appointing_body_reference=body_ref,
+                          provisions=command.content.provisions +
+                          (definitions.DefinitionProvision("APPOINTING_AUTHORITY", body_ref, version),))
+        result=self._success(self._command(content=content));row=models.OrganismRoleDefinition.objects.get(role_uuid=result.role_definition_uuid)
         member,old=self._nominate(row);self.consent.record_office_consent(self._consent_command(member,old))
         self._refusal(lambda:self.roles.transition_assignment(self._transition_command(old,"ASSIGN")),S015AuthorityDenied,
             "C_APPOINTING_ROUTE_NOT_IMPLEMENTED","Appointing through a named body without its route",provider=True)
-        updated=replace(content,alternative_route_reference="TEST explicit Coordinator alternative",
-            provisions=content.provisions+(definitions.DefinitionProvision("ALTERNATIVE_ROUTE","library:test#alternative","v1"),))
+        updated=replace(content,alternative_route_reference=alternative,
+            provisions=content.provisions+(definitions.DefinitionProvision("ALTERNATIVE_ROUTE",alternative,version),))
         new=self._success(self._command("AMEND",row=row,content=updated));current=models.OrganismRoleDefinition.objects.get(role_uuid=new.role_definition_uuid)
         self._refusal(lambda:self.roles.transition_assignment(self._transition_command(old,"ASSIGN")),S015AuthorityDenied,
             "C_APPOINTING_ROUTE_NOT_IMPLEMENTED","Borrowing a later alternative for an earlier nomination",provider=True)
@@ -354,6 +371,31 @@ class SROfficeActionTests(TransactionTestCase):
         result=self._run(lambda:self.roles.transition_assignment(self._transition_command(new,"ASSIGN")),"Appointing through the expressly recorded alternative")
         facts=json.loads(result.authority_reference.removeprefix("s015a1:"))
         self.assertEqual((facts["g"],facts["y"]),(str(current.role_uuid),"AR"),"An alternative appointment should name its own version and alternative route; the facts differ.")
+
+        member, waiting = self._nominate(current)
+        self.consent.record_office_consent(self._consent_command(member, waiting))
+        scope = {"credential": self.actor.credential, "organism_uuid": self.organism.organism_id}
+        cq.change_settings(**scope, changes={"enabled": True}, predecessor=None, request_uuid=uuid4())
+        self.assertIs(models.LOGovernanceConfigurationVersion.objects.get(
+            living_organism=self.organism, cq_active=False).cq_active, False)
+        refused_command = self._transition_command(waiting, "ASSIGN")
+        before = self._snapshot()
+        with self.assertRaises(S015AuthorityDenied) as refused:
+            self.roles.transition_assignment(refused_command)
+        error = refused.exception
+        decision = models.AuthorityDecision.objects.get(decision_reference=error.authority_decision_reference)
+        self.assertEqual((error.disclosed_refusal_code.value, decision.outcome, decision.refusal_code),
+                         ("C_ROUTE_IS_CQ", "REFUSED", "C_ROUTE_IS_CQ"))
+        self.assertEqual((error.support_class, error.support_message),
+                         ("B", ("Appointing someone to this office was refused under this rule: this organisation "
+                          "uses Collective Questioning for this action. Nothing has changed; your request and "
+                          f"this refusal are on record (reference {decision.decision_reference}). Check that rule "
+                          "before making a new request; repeating the same request will get the same answer.")))
+        after = self._snapshot()
+        for name in before.keys() - {"CommandIntake", "AuthorityDecision"}:
+            self.assertEqual(before[name], after[name], name)
+        self.assertEqual(after["CommandIntake"][0], before["CommandIntake"][0] + 1)
+        self.assertEqual(after["AuthorityDecision"][0], before["AuthorityDecision"][0] + 1)
 
     def test_06_two_definition_contenders_cannot_both_create_one_office(self):
         """W12: two distinct requests by the Coordinator meet before locking; one wins."""

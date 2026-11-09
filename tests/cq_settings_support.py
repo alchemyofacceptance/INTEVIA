@@ -55,6 +55,16 @@ def open_motion(scope, wording, people):
     return cq_reads.vote_status(**scope)["ballot"]
 
 
+def prepared_ballot(case, scope):
+    """Start an ordinary motion under an explicitly disabled Clarity stage."""
+    journey, _, topic = case.topic(scope)
+    cq.put_forward(**journey, request_uuid=uuid4(), version_uuid=topic["version"])
+    cq.mark_prepared(**journey, request_uuid=uuid4())
+    ballot = cq_reads.vote_status(**journey)["ballot"]
+    case.assertIsNotNone(ballot, "Preparation must open a real ballot when Clarity is off.")
+    return journey, ballot
+
+
 def settle(scope, ballot, people, choices=None):
     choices = ["QUALIFIED"] * len(people) if choices is None else choices
     for person, choice in zip(people, choices, strict=True):

@@ -146,33 +146,41 @@ class ChainClosure(_S015NegativeBase):
         return self.commits(lambda cur: self.root(cur))
 
     def test_neg_orphan_sequence_two_without_predecessor(self):
-        ids = self._ids()
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=None, overrides={"predecessor_sequence": None}), contains="adjacency_ck")
+        """Chain successors must be adjacent, unique and on the same anchor.
 
-    def test_neg_fork_second_successor(self):
+        Cases:
+        test_neg_orphan_sequence_two_without_predecessor
+        test_neg_skip_sequence
+        test_neg_predecessor_of_another_anchor
+        test_neg_fork_second_successor
+        """
         ids = self._ids()
-        self.commits(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]))
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 3, "Y", "DORMANT", "ACTIVE", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"], overrides={"predecessor_sequence": 2}), contains="pred_uniq")
 
-    def test_neg_skip_sequence(self):
-        ids = self._ids()
-        self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 3, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=ids["lo_event"]), contains="append order")
+        with self.subTest(case="test_neg_orphan_sequence_two_without_predecessor"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=None, overrides={"predecessor_sequence": None}), contains="adjacency_ck")
 
-    def test_neg_predecessor_of_another_anchor(self):
-        ids = self._ids()
-        def case(cur):
-            cur.execute("INSERT INTO core_planningclassificationcase (case_uuid, item_identifier) VALUES (%s, %s) RETURNING id", (str(uuid.uuid4()), f"u21g:{fresh()}"))
-            c = cur.fetchone()[0]
-            e = append_event(cur, "core_planningclassificationevent", c, 1, "CLASSIFY", None, "ROUTINE_ELIGIBLE", ids["identity"], ids["basis"], fresh(), extra={"criterion_reference": "c"})[0]
-            return c, e
-        case_a, event_a = self.commits(case)
-        case_b, _event_b = self.commits(case)
-        # sequence 2 on case B naming case A's event as predecessor: same-aggregate parentage is declarative (composite FK)
-        self.refuses(lambda cur: append_event(cur, "core_planningclassificationevent", case_b, 2, "RECLASSIFY", "ROUTINE_ELIGIBLE", "UNKNOWN", ids["identity"], ids["basis"], fresh(),
-                                              pred_id=event_a, extra={"criterion_reference": "c"}), contains="predecessor_fk")
+        with self.subTest(case="test_neg_skip_sequence"):
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 3, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"]), contains="append order")
+
+        with self.subTest(case="test_neg_predecessor_of_another_anchor"):
+            def case(cur):
+                cur.execute("INSERT INTO core_planningclassificationcase (case_uuid, item_identifier) VALUES (%s, %s) RETURNING id", (str(uuid.uuid4()), f"u21g:{fresh()}"))
+                c = cur.fetchone()[0]
+                e = append_event(cur, "core_planningclassificationevent", c, 1, "CLASSIFY", None, "ROUTINE_ELIGIBLE", ids["identity"], ids["basis"], fresh(), extra={"criterion_reference": "c"})[0]
+                return c, e
+            case_a, event_a = self.commits(case)
+            case_b, _event_b = self.commits(case)
+            # sequence 2 on case B naming case A's event as predecessor: same-aggregate parentage is declarative (composite FK)
+            self.refuses(lambda cur: append_event(cur, "core_planningclassificationevent", case_b, 2, "RECLASSIFY", "ROUTINE_ELIGIBLE", "UNKNOWN", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=event_a, extra={"criterion_reference": "c"}), contains="predecessor_fk")
+
+        with self.subTest(case="test_neg_fork_second_successor"):
+            self.commits(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(), pred_id=ids["lo_event"]))
+            self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 3, "Y", "DORMANT", "ACTIVE", ids["identity"], ids["basis"], fresh(),
+                                                  pred_id=ids["lo_event"], overrides={"predecessor_sequence": 2}), contains="pred_uniq")
+
 
     def test_neg_head_rewind(self):
         """An event chain head cannot be cleared or rolled back.
@@ -214,10 +222,11 @@ class FourTimeGrammar(_S015NegativeBase):
                                               pred_id=ids["lo_event"], recorded_at=T0), contains="recorded_at is database-assigned")
 
     def test_neg_occurred_after_received(self):
-        """Event times must satisfy the received-time bounds.
+        """Stored event times must satisfy both their order and their timestamp domain.
 
         Cases:
         test_neg_occurred_after_received
+        test_neg_timestamp_outside_domain
         test_neg_received_in_the_future
         """
         ids = self.commits(lambda cur: self.root(cur))
@@ -231,18 +240,18 @@ class FourTimeGrammar(_S015NegativeBase):
             self.refuses(lambda cur: append_event(cur, "core_livingorganismevent", ids["lo"], 2, "X", "ACTIVE", "DORMANT", ids["identity"], ids["basis"], fresh(),
                                                   pred_id=ids["lo_event"], occ=future, rec=future, eff=future), contains="four_time_ck")
 
-    def test_neg_timestamp_outside_domain(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        def attempt(cur):
-            event_uuid = str(uuid.uuid4())
-            contract = contract_columns(ids["identity"])
-            contract["parts_commitment"] = empty_parts_commitment("core_livingorganismevent", event_uuid)
-            contract["predecessor_l1_commitment"] = predecessor_l1(cur, "core_livingorganismevent", {"sequence": 2, "predecessor_id": ids["lo_event"]})
-            names = ", ".join(contract)
-            cur.execute("INSERT INTO core_livingorganismevent (event_uuid, living_organism_id, sequence, predecessor_id, predecessor_sequence, action, prior_state, resulting_state, actor_id, actor_access_epoch, authority_basis_id, authority_decision_reference, evidence_reference, request_reference, idempotency_key, payload_fingerprint, lineage_reference, occurred_at, effective_at, received_at, " + names + ") "
-                        "VALUES (%s, %s, 2, %s, 1, 'X', 'ACTIVE', 'DORMANT', %s, 0, %s, %s, 'e', 'r', %s, %s, %s, '-infinity', %s, %s, " + ", ".join(["%s"] * len(contract)) + ")",
-                        (str(event_uuid), ids["lo"], ids["lo_event"], ids["identity"], ids["basis"], "s015d1:" + "a" * 64, fresh(), "b" * 64, "s015l1:" + uuid.uuid4().hex + uuid.uuid4().hex, T0, T0, *contract.values()))
-        self.refuses(attempt, contains="domain_ck")
+        with self.subTest(case="test_neg_timestamp_outside_domain"):
+            def attempt(cur):
+                event_uuid = str(uuid.uuid4())
+                contract = contract_columns(ids["identity"])
+                contract["parts_commitment"] = empty_parts_commitment("core_livingorganismevent", event_uuid)
+                contract["predecessor_l1_commitment"] = predecessor_l1(cur, "core_livingorganismevent", {"sequence": 2, "predecessor_id": ids["lo_event"]})
+                names = ", ".join(contract)
+                cur.execute("INSERT INTO core_livingorganismevent (event_uuid, living_organism_id, sequence, predecessor_id, predecessor_sequence, action, prior_state, resulting_state, actor_id, actor_access_epoch, authority_basis_id, authority_decision_reference, evidence_reference, request_reference, idempotency_key, payload_fingerprint, lineage_reference, occurred_at, effective_at, received_at, " + names + ") "
+                            "VALUES (%s, %s, 2, %s, 1, 'X', 'ACTIVE', 'DORMANT', %s, 0, %s, %s, 'e', 'r', %s, %s, %s, '-infinity', %s, %s, " + ", ".join(["%s"] * len(contract)) + ")",
+                            (str(event_uuid), ids["lo"], ids["lo_event"], ids["identity"], ids["basis"], "s015d1:" + "a" * 64, fresh(), "b" * 64, "s015l1:" + uuid.uuid4().hex + uuid.uuid4().hex, T0, T0, *contract.values()))
+            self.refuses(attempt, contains="domain_ck")
+
 
     def test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables(self):
         """Temporal basis must identify a coherent kind, reference and direction.
@@ -394,15 +403,23 @@ class CacheBoundary(_S015NegativeBase):
             self.refuses(lambda cur: cur.execute("UPDATE core_governedobligationcase SET qualified_legal_deadline = now() WHERE id = %s", (ids["obligation_case"],)), contains="database-computed")
 
     def test_neg_raw_coordinate_update_without_ticket(self):
-        ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state_known_at = clock_timestamp() WHERE id = %s", (ids["lo"],)), contains="no refresh ticket")
+        """A cache refresh requires its ticket and admissible knowledge coordinates.
 
-    def test_neg_refresh_known_at_in_future(self):
+        Cases:
+        test_neg_raw_coordinate_update_without_ticket
+        test_neg_refresh_known_at_in_future
+        """
         ids = self.commits(lambda cur: self.root(cur))
-        self.refuses(
-            lambda cur: cur.execute("SELECT public.s015_refresh_governed_cache('core_livingorganism', %s, %s, clock_timestamp() + interval '1 day')", (ids["lo"], T0)),
-            contains="coordinates must satisfy state_at <= known_at <= now",
-        )
+
+        with self.subTest(case="test_neg_raw_coordinate_update_without_ticket"):
+            self.refuses(lambda cur: cur.execute("UPDATE core_livingorganism SET state_known_at = clock_timestamp() WHERE id = %s", (ids["lo"],)), contains="no refresh ticket")
+
+        with self.subTest(case="test_neg_refresh_known_at_in_future"):
+            self.refuses(
+                lambda cur: cur.execute("SELECT public.s015_refresh_governed_cache('core_livingorganism', %s, %s, clock_timestamp() + interval '1 day')", (ids["lo"], T0)),
+                contains="coordinates must satisfy state_at <= known_at <= now",
+            )
+
 
     def test_neg_insert_with_non_empty_set_fingerprint(self):
         """Circle insertion accepts only the empty event-set fingerprint.
@@ -490,22 +507,32 @@ class Structure(_S015NegativeBase):
     # guard, the one under examination, answers; the widened attribution guard (0052) would refuse
     # them first, so the ASSIGN is written under the labelled latitude and refreshed inside it.
     def test_neg_membership_and_role_in_different_organisms(self):
-        a, b = self._two()
-        def attempt(cur):
-            role_id = self._non_coordinator_role(cur, b["lo"])
-            aid = self._assignment(cur, a["membership"], role_id)
-            with s2b_attribution_guard_suspended(cur):
-                append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
-        self.refuses(attempt, contains="assignment structure")
+        """An assignment must match its membership, role and Circle scopes.
 
-    def test_neg_scope_circle_mismatch(self):
-        a = self.commits(lambda cur: add_remaining_aggregates(cur, self.root(cur), fresh()))
-        def attempt(cur):
-            role_id = self._non_coordinator_role(cur, a["lo"])
-            aid = self._assignment(cur, a["membership"], role_id, circle=a["circle"])
-            with s2b_attribution_guard_suspended(cur):
-                append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
-        self.refuses(attempt, contains="role scope")
+        Cases:
+        test_neg_membership_and_role_in_different_organisms
+        test_neg_scope_circle_mismatch
+        """
+        a, b = self._two()
+
+        with self.subTest(case="test_neg_membership_and_role_in_different_organisms"):
+            def attempt(cur):
+                role_id = self._non_coordinator_role(cur, b["lo"])
+                aid = self._assignment(cur, a["membership"], role_id)
+                with s2b_attribution_guard_suspended(cur):
+                    append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
+            self.refuses(attempt, contains="assignment structure")
+
+        with self.subTest(case="test_neg_scope_circle_mismatch"):
+            self.commits(lambda cur: add_remaining_aggregates(cur, a, fresh()))
+
+            def attempt(cur):
+                role_id = self._non_coordinator_role(cur, a["lo"])
+                aid = self._assignment(cur, a["membership"], role_id, circle=a["circle"])
+                with s2b_attribution_guard_suspended(cur):
+                    append_event(cur, "core_contextualroleassignmentstateevent", aid, 1, "ASSIGN", None, "ACTIVE", a["identity"], a["basis"], fresh()); refresh(cur, "core_contextualroleassignment", aid)
+            self.refuses(attempt, contains="role scope")
+
 
     def test_neg_founder_steward_for_non_founder(self):
         a = self.commits(lambda cur: self.root(cur))
@@ -522,21 +549,29 @@ class Structure(_S015NegativeBase):
         self.refuses(attempt, contains="INTEVIA_FOUNDER_STEWARD anchor must be held by the founder")
 
     def test_neg_self_mentor(self):
-        a = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id, mentor_membership_id) VALUES (%s, 'MENTORSHIP', %s, %s)", (str(uuid.uuid4()), a["membership"], a["membership"])),
-                     contains="mentor_distinct_ck")
+        """A mentorship must name a distinct member of the same LO.
 
-    def test_neg_mentorship_without_mentor(self):
-        a = self.commits(lambda cur: self.root(cur))
-        self.refuses(lambda cur: cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id) VALUES (%s, 'MENTORSHIP', %s)", (str(uuid.uuid4()), a["membership"])),
-                     contains="mentorship_requires_mentor_ck")
-
-    def test_neg_mentor_in_other_organism(self):
+        Cases:
+        test_neg_self_mentor
+        test_neg_mentorship_without_mentor
+        test_neg_mentor_in_other_organism
+        """
         a, b = self._two()
-        def attempt(cur):
-            cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id, mentor_membership_id) VALUES (%s, 'MENTORSHIP', %s, %s) RETURNING id", (str(uuid.uuid4()), a["membership"], b["membership"]))
-            append_event(cur, "core_membershipconditionstateevent", cur.fetchone()[0], 1, "OPEN", None, "ACTIVE", a["identity"], a["basis"], fresh())
-        self.refuses(attempt, contains="condition structure")
+
+        with self.subTest(case="test_neg_self_mentor"):
+            self.refuses(lambda cur: cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id, mentor_membership_id) VALUES (%s, 'MENTORSHIP', %s, %s)", (str(uuid.uuid4()), a["membership"], a["membership"])),
+                         contains="mentor_distinct_ck")
+
+        with self.subTest(case="test_neg_mentorship_without_mentor"):
+            self.refuses(lambda cur: cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id) VALUES (%s, 'MENTORSHIP', %s)", (str(uuid.uuid4()), a["membership"])),
+                         contains="mentorship_requires_mentor_ck")
+
+        with self.subTest(case="test_neg_mentor_in_other_organism"):
+            def attempt(cur):
+                cur.execute("INSERT INTO core_membershipcondition (condition_uuid, condition_kind, subject_membership_id, mentor_membership_id) VALUES (%s, 'MENTORSHIP', %s, %s) RETURNING id", (str(uuid.uuid4()), a["membership"], b["membership"]))
+                append_event(cur, "core_membershipconditionstateevent", cur.fetchone()[0], 1, "OPEN", None, "ACTIVE", a["identity"], a["basis"], fresh())
+            self.refuses(attempt, contains="condition structure")
+
 
     def test_neg_assessment_declares_absent_roster(self):
         a = self.commits(lambda cur: self.root(cur))
@@ -549,7 +584,6 @@ class FoundingCompleteness(_S015NegativeBase):
     NO_PLATFORM_ROOT_SCAFFOLD = frozenset({
         "test_neg_nonroot_limb8_no_coordinator",
         "test_neg_nonroot_duplicate_active_versions",
-        "test_neg_nonroot_stale_active_version",
         "test_neg_root_limb5_no_requirement",
     })
 
@@ -596,11 +630,13 @@ class FoundingCompleteness(_S015NegativeBase):
         )
 
     def test_neg_root_limb4_no_founder_steward_assignment(self):
-        """Root founding requires an active Founder and Steward assignment.
+        """The required root offices must both be active at founding.
 
         Cases:
         test_neg_root_limb4_no_founder_steward_assignment
+        test_neg_root_limb7_no_privacy_coordinator_assignment
         test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates
+        test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates
         """
 
         with self.subTest(case="test_neg_root_limb4_no_founder_steward_assignment"):
@@ -615,6 +651,17 @@ class FoundingCompleteness(_S015NegativeBase):
                     self.refuses(
                         lambda cur: found_root(cur, assignment_states={"INTEVIA_FOUNDER_STEWARD": state}),
                         contains="S015 founding completion update refused",
+                    )
+
+        with self.subTest(case="test_neg_root_limb7_no_privacy_coordinator_assignment"):
+            self.refuses(lambda cur: found_root(cur, skip={"pc_assignment"}), contains="limb 7")
+
+        with self.subTest(case="test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"):
+            for state in ("SUSPENDED", "ENDED", "PROPOSED"):
+                with self.subTest(state=state):
+                    self.refuses(
+                        lambda cur: found_root(cur, assignment_states={"INTEVIA_PRIVACY_COORDINATOR": state}),
+                        contains="limb 7",
                     )
 
     def test_neg_root_limb5_no_requirement(self):
@@ -651,24 +698,6 @@ class FoundingCompleteness(_S015NegativeBase):
             cur.execute("SELECT count(*) FROM core_organismroledefinition")
             self.assertEqual(cur.fetchone()[0], 0)
 
-    def test_neg_root_limb7_no_privacy_coordinator_assignment(self):
-        """Root founding requires an active Privacy Coordinator assignment.
-
-        Cases:
-        test_neg_root_limb7_no_privacy_coordinator_assignment
-        test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates
-        """
-
-        with self.subTest(case="test_neg_root_limb7_no_privacy_coordinator_assignment"):
-            self.refuses(lambda cur: found_root(cur, skip={"pc_assignment"}), contains="limb 7")
-
-        with self.subTest(case="test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"):
-            for state in ("SUSPENDED", "ENDED", "PROPOSED"):
-                with self.subTest(state=state):
-                    self.refuses(
-                        lambda cur: found_root(cur, assignment_states={"INTEVIA_PRIVACY_COORDINATOR": state}),
-                        contains="limb 7",
-                    )
 
     def test_neg_root_limb8_five_of_six_codes(self):
         """Root founding requires every reserved role code to be active.
@@ -700,11 +729,13 @@ class FoundingCompleteness(_S015NegativeBase):
             self.refuses(lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, False)]}), contains="exactly one active COORDINATOR")
 
     def test_neg_nonroot_duplicate_active_versions(self):
-        """Founding permits at most one active version of a role.
+        """Root and ordinary founding require exactly one current active role version.
 
         Cases:
         test_neg_nonroot_duplicate_active_versions
+        test_neg_nonroot_stale_active_version
         test_neg_root_duplicate_active_versions
+        test_neg_root_stale_active_version
         """
 
         with self.subTest(case="test_neg_nonroot_duplicate_active_versions"):
@@ -718,14 +749,6 @@ class FoundingCompleteness(_S015NegativeBase):
                 inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, True)]
                 self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="s015_0021_role_active_uniq")
 
-    def test_neg_nonroot_stale_active_version(self):
-        """The active role version at founding must be current.
-
-        Cases:
-        test_neg_nonroot_stale_active_version
-        test_neg_root_stale_active_version
-        """
-
         with self.subTest(case="test_neg_nonroot_stale_active_version"):
             self.refuses(
                 lambda cur: found_nonroot(cur, active_versions={"COORDINATOR": [(1, True), (2, False)]}),
@@ -736,6 +759,7 @@ class FoundingCompleteness(_S015NegativeBase):
             with self._root_scaffold():
                 inv = {c: [(1, True)] for c in SIX_CODES}; inv["COORDINATOR"] = [(1, True), (2, False)]
                 self.refuses(lambda cur: found_root(cur, active_versions=inv), contains="not the current version")
+
 
 
 class FoundingCoordinatorBinding(_S015NegativeBase):
@@ -749,47 +773,50 @@ class FoundingCoordinatorBinding(_S015NegativeBase):
         return cur.fetchone()
 
     def test_neg_founding_coordinator_must_name_its_own_founding_act(self):
-        other_event_uuid, _ = self.commits(
-            lambda cur: self._other_founding_references(cur, f"binding-act-{fresh()}"),
+        """The founding Coordinator must cite both its own founding act and its authority decision.
+
+        Cases:
+        test_neg_founding_coordinator_must_name_its_own_founding_act
+        test_neg_founding_coordinator_must_carry_its_own_authority_decision
+        """
+        other_event_uuid, other_decision_reference = self.commits(
+            lambda cur: self._other_founding_references(cur, f"binding-{fresh()}")
         )
 
-        def attempt(cur):
-            found_organism(
-                cur,
-                f"binding-target-{fresh()}",
-                root=False,
-                founding_assignment_overrides={
-                    "evidence_reference": f"founding-batch:{other_event_uuid}",
-                },
+        with self.subTest(case="test_neg_founding_coordinator_must_name_its_own_founding_act"):
+            def attempt(cur):
+                found_organism(
+                    cur,
+                    f"binding-target-{fresh()}",
+                    root=False,
+                    founding_assignment_overrides={
+                        "evidence_reference": f"founding-batch:{other_event_uuid}",
+                    },
+                )
+
+            self.refuses(
+                attempt,
+                contains="S2B office attribution refused: the founding appointment must name this LO's founding act",
             )
 
-        self.refuses(
-            attempt,
-            contains="S2B office attribution refused: the founding appointment must name this LO's founding act",
-        )
+        with self.subTest(case="test_neg_founding_coordinator_must_carry_its_own_authority_decision"):
+            def attempt(cur):
+                found_organism(
+                    cur,
+                    f"binding-target-{fresh()}",
+                    root=False,
+                    founding_assignment_overrides={
+                        "authority_decision_reference": other_decision_reference,
+                    },
+                )
 
-    def test_neg_founding_coordinator_must_carry_its_own_authority_decision(self):
-        _, other_decision_reference = self.commits(
-            lambda cur: self._other_founding_references(cur, f"binding-decision-{fresh()}"),
-        )
-
-        def attempt(cur):
-            found_organism(
-                cur,
-                f"binding-target-{fresh()}",
-                root=False,
-                founding_assignment_overrides={
-                    "authority_decision_reference": other_decision_reference,
-                },
+            self.refuses(
+                attempt,
+                contains=(
+                    "S2B office attribution refused: the founding appointment must carry "
+                    "that founding act's authority decision"
+                ),
             )
-
-        self.refuses(
-            attempt,
-            contains=(
-                "S2B office attribution refused: the founding appointment must carry "
-                "that founding act's authority decision"
-            ),
-        )
 
 
 # ------------------------------------------------------------------ §5.5.1 — the five reserved names

@@ -31,6 +31,8 @@ from uuid import UUID, uuid5
 from django.db import connections
 from django.db.models import Q, QuerySet
 
+from src.intevia.services.cq_voting_state import voting_enabled
+
 from core.models import (
     Application,
     ApplicationDecision,
@@ -1440,7 +1442,8 @@ class ProductionApplicationAuthorityProvider:
           and folding ACTIVE, else DENIED;
         - an effective Coordinator office for the actor, except for a holder
           ending their own office, else E_NOT_EFFECTIVE_COORDINATOR;
-        - no effective configuration with cq_active True, else C_ROUTE_IS_CQ.
+        - voting off for a direct transition, except a holder's own END or a
+          verified named vacancy appointment, else C_ROUTE_IS_CQ.
 
         ASSIGN then checks consent using the proposal actor read from the
         state-event table. Consent rows must be effective by effective_at
@@ -1598,24 +1601,17 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.E_NOT_EFFECTIVE_COORDINATOR)
         else:
             office = None
-        configuration = _effective_version(
-            self.database_alias,
-            organism,
-            OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
-            request.effective_at,
-            request.evaluated_at,
-        )
-        if departure or volunteering:
-            from src.intevia.services.clock import database_now
+        # A holder may relinquish their own office. An authenticated departure END
+        # has already been bound to the same member and its qualified parent.
+        if not holder_resignation and vacancy is None:
+            if volunteering:
+                from src.intevia.services.clock import database_now
 
-            now = database_now(self.database_alias)
-            current_config = _effective_version(
-                self.database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, now, now,
-            )
-            if current_config is not None and current_config.cq_active is True:
+                now = database_now(self.database_alias)
+                if voting_enabled(self.database_alias, organism.pk, now, now):
+                    return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
+            if voting_enabled(self.database_alias, organism.pk, request.effective_at, request.evaluated_at):
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
-        if configuration is not None and configuration.cq_active is True and vacancy is None:
-            return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
 
         facts: dict[str, object] = {
             "a": str(assignment.assignment_uuid),
@@ -2491,7 +2487,9 @@ class ProductionApplicationAuthorityProvider:
         )
         if configuration is None:
             return self._refuse(request, S015AuthorityRefusalCode.C_CONFIGURATION_NOT_ESTABLISHED)
-        if configuration.cq_active is True or configuration.inherit_portal_cq_settings is True:
+        if configuration.inherit_portal_cq_settings is True or voting_enabled(
+            self.database_alias, organism.pk, request.effective_at, request.evaluated_at,
+        ):
             return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
         if target["code"].startswith("INTEVIA_"):
             return self._refuse(request, S015AuthorityRefusalCode.C_RESERVED_ROOT_OFFICE)
@@ -3677,7 +3675,8 @@ class ProductionApplicationAuthorityProvider:
         if request.action is OrganismAction.CLAIM_APPLICATION:
             if settings.processing_responsibility != "LO":
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
-            if configuration.cq_active is True and self._eligible_coordinator_count(organism, request) != 1:
+            enabled = voting_enabled(self.database_alias, organism.pk, request.effective_at, request.evaluated_at)
+            if enabled and self._eligible_coordinator_count(organism, request) != 1:
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
         claim = CSAAssignment.objects.using(self.database_alias).filter(
             application=application,
@@ -3689,7 +3688,7 @@ class ProductionApplicationAuthorityProvider:
                 return self._refuse(request, S015AuthorityRefusalCode.DENIED)
             facts = self._coordinator_facts(request, membership, office, configuration, settings)
             facts["k"] = "C"
-            facts["t"] = "CQ_INACTIVE" if configuration.cq_active is not True else "SOLE_COORDINATOR"
+            facts["t"] = "SOLE_COORDINATOR" if enabled else "CQ_INACTIVE"
             return self._qualified(request, facts)
         if request.action is OrganismAction.REASSIGN_APPLICATION:
             if engagement is None or claim is None:
@@ -3756,7 +3755,7 @@ class ProductionApplicationAuthorityProvider:
           E_NOT_EFFECTIVE_COORDINATOR. The basis is FIRST_CONFIGURATION;
         - otherwise inherit_portal_cq_settings True refuses C_ROUTE_IS_CQ.
           For a configuration change naming a version, a candidate recorded
-          by evaluated_at that would set cq_active or either require-CQ flag
+          by evaluated_at that would set either require-CQ flag
           to False, while CQ is active and changing LO settings requires CQ,
           refuses C_CHANGE_SELF_AUTHORISING. Then, with CQ active and the
           action's require-CQ flag True (the application question's flag for
@@ -3808,6 +3807,7 @@ class ProductionApplicationAuthorityProvider:
         else:
             if configuration.inherit_portal_cq_settings is True:
                 return self._refuse(request, S015AuthorityRefusalCode.C_ROUTE_IS_CQ)
+            enabled = voting_enabled(self.database_alias, organism.pk, request.effective_at, request.evaluated_at)
             if request.action is OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION and request.version_uuid is not None:
                 candidate = LOGovernanceConfigurationVersion.objects.using(self.database_alias).filter(
                     version_uuid=request.version_uuid,
@@ -3816,11 +3816,10 @@ class ProductionApplicationAuthorityProvider:
                 ).first()
                 if (
                     candidate is not None
-                    and configuration.cq_active is True
+                    and enabled
                     and configuration.require_cq_to_change_lo_settings is True
                     and (
-                        candidate.cq_active is False
-                        or candidate.require_cq_to_change_lo_settings is False
+                        candidate.require_cq_to_change_lo_settings is False
                         or candidate.require_cq_to_change_application_question is False
                     )
                 ):
@@ -3830,14 +3829,14 @@ class ProductionApplicationAuthorityProvider:
                 if request.action is OrganismAction.EFFECT_APPLICATION_QUESTION
                 else configuration.require_cq_to_change_lo_settings
             )
-            if configuration.cq_active is True and cq_required is True:
+            if enabled and cq_required is True:
                 refusal_code = (
                     S015AuthorityRefusalCode.SE_OPT_IN_NEEDS_CQ
                     if request.action is OrganismAction.EFFECT_ENTITLEMENT_ELECTION
                     else S015AuthorityRefusalCode.C_ROUTE_IS_CQ
                 )
                 return self._refuse(request, refusal_code)
-            route_basis = "CQ_INACTIVE" if configuration.cq_active is not True else "CHANGE_FLAG_NO"
+            route_basis = "CHANGE_FLAG_NO" if enabled else "CQ_INACTIVE"
         nomination_entitlement_reference = None
         if request.version_uuid is not None:
             model, prefix = _VERSION_SPECS[request.action]

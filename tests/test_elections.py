@@ -35,9 +35,10 @@ class ElectionTests(TransactionTestCase):
             ("Joint", "This counting method is unsupported. Hold the election before opening."),
             ("Undated", "Review the term. Supply an end and any start with a time zone, with the end after the start or current time."),
         ]:
-            with self.subTest(provision=provision), self.assertRaises(cq.CQRefused) as refused:
-                fx.call(self, scope, citation, provision=provision)
-            self.assertEqual(str(refused.exception), expected)
+            with self.subTest(provision=provision):
+                with self.assertRaises(cq.CQRefused) as refused:
+                    fx.call(self, scope, citation, provision=provision)
+                self.assertEqual(str(refused.exception), expected)
         election = fx.call(self, scope, citation)
         nomination = fx.nominate(election, trustee)
         ballot = fx.open_election(election)
@@ -61,7 +62,13 @@ class ElectionTests(TransactionTestCase):
         """ELECT-02. Direct-member and Board elections use their own electorate and exact consenting office proposal."""
         rules = {"Treasurer": {"type": "OFFICE", "place": "TREASURER", "body": "LO_MEMBERSHIP"},
                  "Chair": {"type": "OFFICE", "place": "CHAIR", "body": "GOVERNANCE"}}
-        lo, founder, scope, circle, citation = fx.owner(seats=3, elected=(), rules=rules)
+        lo, founder, scope, circle, citation = fx.owner(seats=3, elected=(), rules=rules, voting=False)
+        offices = {
+            section: fx.define_office(lo, founder, rule["place"], rule["body"], section, citation,
+                                      board_members=rule["body"] == "GOVERNANCE")
+            for section, rule in rules.items()
+        }
+        fx.enable_voting(scope)
         second = board.seat_trustee(lo, founder, circle, 1)
         third = board.seat_trustee(lo, founder, circle, 2)
         member = law.add_member(lo)
@@ -72,8 +79,7 @@ class ElectionTests(TransactionTestCase):
             with self.subTest(section=section):
                 rule = rules[section]
                 candidate = third if circle_scope else second
-                assignment = fx.office_proposal(lo, founder, candidate, rule["place"], rule["body"], section, citation,
-                                                board_members=bool(circle_scope), self_proposed=bool(circle_scope))
+                assignment = fx.office_proposal(lo, founder, candidate, offices[section], self_proposed=bool(circle_scope))
                 election = fx.call(self, scope | circle_scope, citation, provision=section, place=rule["place"])
                 nom = fx.nominate(election, candidate, by=None if circle_scope else founder, assignment=assignment.assignment_uuid)
                 if not circle_scope:
@@ -121,17 +127,18 @@ class ElectionTests(TransactionTestCase):
             ({"threshold": "FRACTION", "numerator": 3, "denominator": 2},
              "Review the qualification threshold and any fraction in the cited electoral provision."),
         ]:
-            with self.subTest(instruction=values), self.assertRaises(cq.CQRefused) as refused:
-                try:
-                    with transaction.atomic(), connection.cursor() as cur:
-                        cur.execute(
-                            "SELECT public.elect_check_count(settings || %s::jsonb, %s::jsonb, statement_timestamp()) "
-                            "FROM public.cq_platform_defaults",
-                            [json.dumps(values), json.dumps(values)],
-                        )
-                except IntegrityError as exc:
-                    cq.translate_refusal(exc)
-            self.assertEqual(str(refused.exception), expected)
+            with self.subTest(instruction=values):
+                with self.assertRaises(cq.CQRefused) as refused:
+                    try:
+                        with transaction.atomic(), connection.cursor() as cur:
+                            cur.execute(
+                                "SELECT public.elect_check_count(settings || %s::jsonb, %s::jsonb, statement_timestamp()) "
+                                "FROM public.cq_platform_defaults",
+                                [json.dumps(values), json.dumps(values)],
+                            )
+                    except IntegrityError as exc:
+                        cq.translate_refusal(exc)
+                self.assertEqual(str(refused.exception), expected)
 
     def test_secret_receipts_and_withdrawal_across_reads(self):
         """ELECT-04. Secret per-voter receipts and aggregate reads survive settled withdrawal. No appointment or automatic tie rerun."""
@@ -209,3 +216,54 @@ class ElectionTests(TransactionTestCase):
             except IntegrityError as exc:
                 cq.translate_refusal(exc)
         self.assertEqual(str(forged.exception), cq.MESSAGES["CQ_COMPLETE"])
+
+    def test_hard_storage_applies_the_constitutional_seat_route_at_birthing(self):
+        """HARD-H2. A stored admission must use the route available for that exact seat at its cut."""
+        from src.intevia.services import organism_governance_service as governance
+
+        lo, founder = law.ordinary_birth(board_seats=4, elected=(2,), external=(3,))
+        circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
+        founding = models.CircleParticipation.objects.select_related("decision").get(
+            circle=circle, membership__identity=founder)
+        self.assertEqual(founding.decision.route, "CIRCLE_FOUNDING")
+
+        # A valid appointment goes through the same installed trigger and commits.
+        member = board.seat_trustee(lo, founder, circle, 1)
+        admitted = models.CircleParticipation.objects.select_related("decision").get(
+            circle=circle, membership__identity=member)
+        positive = admitted.decision
+        self.assertEqual((positive.route, positive.constitutional_route, positive.deciding_party),
+                         ("GOVERNANCE_CONSTITUTIONAL", "APPOINTMENT", "office:LO_COORDINATOR"))
+
+        service = governance.OrganismGovernanceService(authority=board.authority(), clock=support.database_now)
+        for number, rejected_routes in [(2, ("GOVERNANCE_CONSTITUTIONAL", "CIRCLE_FOUNDING")),
+                                        (3, ("GOVERNANCE_CONSTITUTIONAL",))]:
+            applicant = law.add_member(lo)
+            seat = f"trustee-{number}"
+            request = service.request_governance_seat(governance.RequestGovernanceSeatCommand(
+                **board.command_args(lo, applicant), circle_uuid=circle.circle_uuid,
+                seat_rule_uuid=positive.seat_rule_uuid, seat_id=seat))
+            pending = models.CircleJoinRequest.objects.get(request_uuid=request.request_uuid)
+            for route in rejected_routes:
+                with self.subTest(seat=seat, route=route):
+                    is_founding = route == "CIRCLE_FOUNDING"
+                    decider = applicant if is_founding else founder
+                    at = support.database_now()
+                    with self.assertRaises(IntegrityError) as refused, transaction.atomic():
+                        models.CircleAdmissionDecision.objects.create(
+                            request=pending, route=route,
+                            constitutional_route="NOT_APPLICABLE" if is_founding else "APPOINTMENT",
+                            deciding_party="FOUNDING_BODY" if is_founding else "office:LO_COORDINATOR",
+                            deciding_identity=decider, self_decision=is_founding, outcome="ACCEPT",
+                            authority_decision_reference=positive.authority_decision_reference,
+                            settings_basis=positive.settings_basis.rsplit("#", 1)[0] + "#" + seat,
+                            seat_id=seat, seat_rule_uuid=positive.seat_rule_uuid,
+                            actor_state="LIVING_ORGANISM", actor_capacity="STANDING",
+                            entry_mode="TRANSPORT", enterer_identity=decider,
+                            composing_rule_state="NA_TRANSPORT", composer_state="NA_TRANSPORT",
+                            occurred_at=at, effective_at=at, received_at=at)
+                    self.assertEqual(refused.exception.__cause__.diag.message_primary, "SBG_SEAT_ROUTE_UNAVAILABLE",
+                                     "The exact seat route must refuse before any decision or place is stored.")
+                    self.assertFalse(models.CircleAdmissionDecision.objects.filter(request=pending).exists())
+                    self.assertFalse(models.CircleParticipation.objects.filter(
+                        circle=circle, membership=pending.membership).exists())

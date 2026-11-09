@@ -225,11 +225,12 @@ class SRHSafeguardPureTests(SimpleTestCase):
                 request = replace(c3._post("RECORD_ROLE_DEFINITION", target),
                     living_organism_id=organism_id, evaluated_at=now, effective_at=now)
                 with patch("src.intevia.services.organism_application_authority._effective_version",
-                           return_value=SimpleNamespace(cq_active=False, inherit_portal_cq_settings=False)), \
+                           return_value=SimpleNamespace(inherit_portal_cq_settings=False)), \
+                     patch("src.intevia.services.organism_application_authority.voting_enabled", return_value=False), \
                      patch.object(provider, "_current_member", return_value=True):
                     try:
                         result = provider._qualify_role_definition(request,
-                            SimpleNamespace(organism_id=organism_id), None, None)
+                            SimpleNamespace(organism_id=organism_id, pk=1), None, None)
                     except Exception as exc:
                         self.fail(f"The reserved-office {action} request should be refused before any definition lookup; it raised {type(exc).__name__} instead.")
                 self.assertIsInstance(result, S015PostFoundingAuthorityRefusal,

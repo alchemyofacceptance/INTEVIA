@@ -1,4 +1,5 @@
 """C3 on the run-owned PostgreSQL clone. No wall-clock waits or provider network."""
+import json
 from datetime import timedelta
 from uuid import uuid4
 
@@ -8,9 +9,10 @@ from django.test import TransactionTestCase
 from core import models
 from core.organism_contract import OrganismAction
 from src.intevia.services import authority_lifecycle as life
+from src.intevia.services import cq
 from src.intevia.services import organism_application_service as commands
 from src.intevia.services import scoped_determinations as s
-from src.intevia.services.organism_authority import S015Authority
+from src.intevia.services.organism_authority import S015Authority, S015AuthorityDenied
 from tests import s015_0021_support as fixtures
 from tests import test_sr_office_actions as office_fixtures
 from tests.test_c1_rejoin import _attempt
@@ -49,7 +51,7 @@ class LifecycleTests(TransactionTestCase):
         self.service.effect_gateway_version(commands.EffectGatewayVersionCommand(
             **self.keys(self.holder), living_organism_id=self.lo.organism_id, action=action, version_uuid=draft.version_uuid))
 
-    def new_claim(self):
+    def new_claim(self, *, expected_basis=None):
         applicant = fixtures.register_test_learner(username="c3-applicant-" + uuid4().hex)
         # Front-door BIRTHING eligibility is outside this unit. Only SUBMIT uses
         # the existing O-24 provider. Claim, replacement and decision use production.
@@ -57,8 +59,12 @@ class LifecycleTests(TransactionTestCase):
                                                       clock=fixtures.database_now)
         app = submit.submit_application(commands.SubmitApplicationCommand(
             **self.keys(applicant), living_organism_id=self.lo.organism_id, answer="Participate"))
-        self.service.claim_application(commands.ClaimApplicationCommand(
-            **self.keys(self.holder), application_uuid=app.application_uuid))
+        command = commands.ClaimApplicationCommand(**self.keys(self.holder), application_uuid=app.application_uuid)
+        self.service.claim_application(command)
+        if expected_basis is not None:
+            authority = models.AuthorityDecision.objects.get(request_reference=command.request_reference, action="CLAIM_APPLICATION")
+            facts = json.loads(authority.authority_reference.removeprefix("s015a1:"))
+            self.assertEqual(facts["t"], expected_basis)
         return models.CSAAssignment.objects.get(application__application_uuid=app.application_uuid)
 
     def decide(self, claim, person):
@@ -108,8 +114,14 @@ class LifecycleTests(TransactionTestCase):
             **self.keys(person), application_uuid=self.claim.application.application_uuid))
 
     def test_ended_basis_preserves_prior_decision(self):
-        earlier = self.new_claim()
+        """Completed decisions retain their first claim basis across a voting change and supersession."""
+        earlier = self.new_claim(expected_basis="CQ_INACTIVE")
+        original = life.first_engagement(earlier.application)
+        cq.change_settings(credential=self.holder.credential, organism_uuid=self.lo.organism_id,
+                           changes={"enabled": True}, predecessor=None, request_uuid=uuid4())
+        self.new_claim(expected_basis="SOLE_COORDINATOR")
         self.decide(earlier, self.holder)
+        self.assertEqual(life.first_engagement(earlier.application).settings_basis, original.settings_basis)
         history = models.ApplicationDecision.objects.get(application=earlier.application)
         old_ref = history.authority_decision_reference
         source = life._source("default", self.claim)
@@ -141,6 +153,7 @@ class LifecycleTests(TransactionTestCase):
                          "The earlier decision must retain its original authority and assignment.")
 
     def test_lapse_at_exclusive_boundary(self):
+        """Current authority controls each case, including expiry and collective first-claim authority."""
         self.aside()
         person, finding = self.nominee()
         self.reassign(person)
@@ -153,6 +166,15 @@ class LifecycleTests(TransactionTestCase):
         self.assertEqual((replacement.lifecycle_finding_id, problem(before), problem(self.until)),
                          (finding.pk, None, "The replacement has no current independent qualification on this case."),
                          "The independent qualification must stop at the instant its instrument expires, even before a worker runs.")
+
+        # The two eligible Coordinators cannot claim another case directly under CQ.
+        cq.change_settings(credential=self.holder.credential, organism_uuid=self.lo.organism_id,
+                           changes={"enabled": True}, predecessor=None, request_uuid=uuid4())
+        before = models.CSAAssignment.objects.count()
+        with self.assertRaises(S015AuthorityDenied) as refused:
+            self.new_claim()
+        self.assertEqual(refused.exception.refusal_code.value, "C_ROUTE_IS_CQ")
+        self.assertEqual(models.CSAAssignment.objects.count(), before)
 
     def test_recusal_is_local_and_derived_reviewer_refuses(self):
         other = self.new_claim()
@@ -227,7 +249,9 @@ class LifecycleTests(TransactionTestCase):
         self.assertFalse(models.ApplicationDecision.objects.filter(application=self.claim.application).exists(),
                          "The applicant must retain an open case.")
 
-        from src.intevia.services.organism_application_reads import OrganismApplicationReader
+        from src.intevia.services.organism_application_reads import (
+            OrganismApplicationReader,
+        )
         reader = OrganismApplicationReader(authority=self.fx.authority, clock=fixtures.database_now)
         visible = reader.read_authority_hold(self.claim.application.application_uuid, self.claim.application.applicant)
         queue = reader.governance_holds(self.lo.pk, member.identity)

@@ -115,12 +115,18 @@ class CQClarityTests(TransactionTestCase):
     def topic(self, scope, *, category="DISCUSSION", category_id=None, topic_type="SUGGESTION",
               title="Review the opening hours", markdown="Open on Saturdays"):
         """Start a fresh topic, optionally in a category already obtained on this board."""
+        category_ids = getattr(self, "topic_category_ids", None)
+        key = (scope["organism_uuid"], scope.get("circle_uuid"), category)
+        if category_ids is not None and category_id is None:
+            category_id = category_ids.get(key)
         if category_id is None:
             disc.ensure_board(**scope, request_uuid=uuid4())
             categories = disc.board_categories(**scope)["categories"]
             category_id = next(
                 c["category_uuid"] for c in categories if c["functional_code"] == category
             )
+            if category_ids is not None:
+                category_ids[key] = category_id
         thread = uuid4()
         result = posts.start_topic(
             **scope,

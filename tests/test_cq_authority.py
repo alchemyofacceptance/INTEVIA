@@ -15,6 +15,7 @@ from src.intevia.services import discussion as disc
 from src.intevia.services import discussion_posts as posts
 from src.intevia.services import guiding_intentions as gi
 from tests import cq_authority_support as board_support
+from tests import cq_settings_support as motions
 from tests import s015_0021_support as support
 from tests import test_cq_clarity as clarity
 from tests import test_cq_decisions as decisions
@@ -85,8 +86,8 @@ class CQAuthorityTests(TransactionTestCase):
         title="Adopt the attached instrument",
     ):
         journey, version, first = self.motion(scope, attachment, title, category_id=category_id, suggestion=suggestion)
-        managed = self.ready(journey, version, people, officer)
-        ballot = cq.finish_clarity(**managed, request_uuid=uuid4())
+        managed = journey if officer is None else journey | {"credential": officer.credential}
+        ballot = motions.open_motion(managed, version, people)
         self.assertEqual(
             self.facts(ballot)["facts"]["attachment_fingerprint"],
             self.facts(first)["facts"]["attachment_fingerprint"],
@@ -161,6 +162,10 @@ class CQAuthorityTests(TransactionTestCase):
         # Admission of a gateway change must own its transaction. The second LO
         # needs only its founding seat to discriminate the superseded-Birthing refusal.
         other, governor = law.ordinary_birth(offering_choice="FREE", board_seats=1)
+        from src.intevia.services.cq_voting_state import voting_enabled
+        cut = support.database_now()
+        self.assertEqual((voting_enabled("default", lo.pk, cut, cut),
+                          voting_enabled("default", other.pk, cut, cut)), (True, False))
         other_circle = models.Circle.objects.get(
             parent_organism=other, kind="GOVERNANCE"
         )
@@ -237,7 +242,7 @@ class CQAuthorityTests(TransactionTestCase):
     def test_membership_protected_act_once_and_stale_disposition(self):
         """DISC3-03. The membership adopts an Article. A competing approved target stays unapplied."""
         lo, scope, people, _ = self.ordinary(3)
-        self.configure(scope, {"enabled": True})
+        self.configure(scope, {"enabled": True, "clarity_stage": False})
         document = law.Document(people[0])
         attached = self.attachment(lo, document)
         stale = self.attachment(lo, document)
@@ -668,7 +673,7 @@ class CQAuthorityTests(TransactionTestCase):
         previous = gi.intention_history(**scope, gi_uuid=prior["gi"])["current"][
             "authority_source"
         ]
-        self.configure(scope, {"enabled": True})
+        self.configure(scope, {"enabled": True, "clarity_stage": False})
         self.assertEqual(
             gi.intention_history(**scope, gi_uuid=prior["gi"])["current"][
                 "authority_source"
@@ -757,7 +762,7 @@ class CQAuthorityTests(TransactionTestCase):
         lo, scope, people, circle = self.ordinary(3, board=True)
         founder, officer = people[:2]
         citation, _ = gi_fixture.local_law(lo, founder)
-        enabled = self.configure(scope, {"enabled": True})
+        enabled = self.configure(scope, {"enabled": True, "clarity_stage": False})
         board = scope | {"circle_uuid": circle.circle_uuid}
         circles.activate(**board, request_uuid=uuid4())
         board_support.appoint_board_coordinator(lo, circle, founder, officer)
@@ -986,7 +991,7 @@ class CQAuthorityTests(TransactionTestCase):
     def test_concurrent_final_answer_rollback_and_reversal(self):
         """DISC3-08. Domain failure rolls back the final answer. Two real connections replay one effect."""
         lo, scope, people, _ = self.ordinary(3)
-        self.configure(scope, {"enabled": True})
+        self.configure(scope, {"enabled": True, "clarity_stage": False})
         attachment = self.attachment(lo, law.Document(people[0]))
         journey, ballot = self.ballot(scope, attachment, people)
         for person in people[:2]:

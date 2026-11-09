@@ -312,6 +312,7 @@ class CircleOperationsTests(TransactionTestCase):
         self.assertEqual(models.CircleAdmissionDecision.objects.get(request=application).pk, place.decision_id)
 
     def test_circle_departure_direct_write_and_atomicity(self):
+        """A personal departure preserves its place history and only lawful recovery can fill the vacancy."""
         circle = self.form()
         member = self.fx._member()
         person = member.identity
@@ -450,13 +451,35 @@ class CircleOperationsTests(TransactionTestCase):
                 composing_rule_state="NA_TRANSPORT", composer_state="NA_TRANSPORT",
                 occurred_at=at,effective_at=at,received_at=at)
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        from src.intevia.services import cq
+
+        # Observe the Off route, then restore this vacancy for the same volunteer at On.
+        # test_owned_work_waits_for_an_authorised_parent also commits an RC1 recovery.
+        with transaction.atomic():
+            volunteer_office = commands.recover_circle(
+                **own, circle_uuid=sibling_circle.circle_uuid, request_uuid=uuid4()
+            )
+            event = models.ContextualRoleAssignmentStateEvent.objects.get(
+                assignment__assignment_uuid=volunteer_office, assignment__membership=member, action="ASSIGN"
+            )
+            self.assertTrue(event.evidence_reference.endswith("|RC1"))
+            transaction.set_rollback(True)
+
+        # Use the service's normal commit boundary for the LO-office recovery with CQ on.
+        cq.change_settings(**self.args, changes={"enabled": True}, predecessor=None, request_uuid=uuid4())
+        with self.assertRaises(places.CircleAccessRefused) as refused:
+            commands.recover_circle(**own, circle_uuid=sibling_circle.circle_uuid, request_uuid=uuid4())
+        self.assertEqual(str(refused.exception), "This volunteer appointment needs a governed CQ vote.")
         recovery = dict(**self.args, circle_uuid=sibling_circle.circle_uuid, request_uuid=uuid4())
         parent_office = commands.recover_circle(**recovery)
         self.assertEqual(commands.recover_circle(**recovery), parent_office)
         joined = models.CircleParticipation.objects.get(circle=sibling_circle, recovery_office__isnull=False)
         self.assertEqual(joined.membership_id, founder.pk)
         self.assertIsNone(joined.decision_id)
-        assigned = models.ContextualRoleAssignmentStateEvent.objects.get(assignment__assignment_uuid=parent_office,action="ASSIGN")
+        assigned = models.ContextualRoleAssignmentStateEvent.objects.get(
+            assignment__assignment_uuid=parent_office, assignment__membership=founder, action="ASSIGN"
+        )
         self.assertTrue(assigned.evidence_reference.endswith("|CB1"))
         with self.assertRaises(places.CircleAccessRefused):
             commands.recover_circle(**own, circle_uuid=sibling_circle.circle_uuid, request_uuid=uuid4())

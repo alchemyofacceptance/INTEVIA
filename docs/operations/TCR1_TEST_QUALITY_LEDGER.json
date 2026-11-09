@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "ELECT P2",
-  "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-  "baseline_methods": 245,
-  "candidate_methods": 253,
+  "package": "HARD P1b",
+  "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+  "baseline_methods": 253,
+  "candidate_methods": 243,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -62,7 +62,8 @@
       "baseline": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
       "source": "ELECT_CANDIDATE_TABLE.json",
       "status": "VC whole-job run pending",
-      "superseded_by": "ELECT_P1B_VC"
+      "superseded_by": "ELECT_P1B_VC",
+      "resolved_by": "ELECT_P1_VC_RUN"
     },
     "ELECT_P1_VC_RUN": {
       "source": "01_AUTHORITY/VC_CHECK_ELECT_P1_CI_JOB_v1_0.md",
@@ -74,7 +75,8 @@
       "source": "ELECT_CANDIDATE_TABLE.json",
       "baseline": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
       "status": "P1b VC whole-job run pending",
-      "superseded_by": "ELECT_P1B_VC"
+      "superseded_by": "ELECT_P1B_VC",
+      "resolved_by": "ELECT_P1B_VC"
     },
     "ELECT_P1B_VC": {
       "source": "01_AUTHORITY/VC_CHECK_ELECT_P1B_CI_JOB_v1_0.md",
@@ -85,7 +87,53 @@
       "candidate_commit": null,
       "baseline": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
       "source": "ELECT_CANDIDATE_TABLE.json",
-      "status": "P2 VC whole-job run pending"
+      "status": "P2 VC whole-job run pending",
+      "resolved_by": "ELECT_LANDING_1050F2F5"
+    },
+    "ELECT_LANDING_1050F2F5": {
+      "commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+      "tree": "b9c39067bb19bb6d5167b8ee796d2641e007ce89",
+      "runs": [
+        {
+          "source": "VC_CHECK_CI_ELECT_RUN1_v1_0.md",
+          "record_sha256": "8a2c0ec5c8f8a24e0bcc99582c1fc9dae8f41ff41f1081ec8949a35c0e64cd2e",
+          "run": "42530022435",
+          "attempt": 1
+        },
+        {
+          "source": "VC_CHECK_CI_ELECT_MAIN_RUN_v1_0.md",
+          "record_sha256": "9b9dbb435639555b83675b7c2e59a690ccec2db41d2fbd53726f59939cd5efc7",
+          "run": "42532225953",
+          "attempt": 1
+        }
+      ],
+      "scope": "ELECT whole job, 253 product methods, SR-ROUNDTRIP once, 29/29 recurring faults. Admission-only break/restore evidence remains separate."
+    },
+    "HARD_P1_PENDING": {
+      "source": "HARD_CANDIDATE_TABLE.json",
+      "candidate_commit": null,
+      "base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+      "qualification": null,
+      "status": "Candidate supplied. VC PostgreSQL run and measured saving pending.",
+      "resolved_by": "HARD_P1_VC_RUN"
+    },
+    "HARD_P1_VC_RUN": {
+      "source": "VC_CHECK_HARD_P1_CI_JOB_v1_0.md",
+      "record_sha256": "f06ede092587f421aa84271d0b429f807204b401171c7194e0963ccb872dc1a4",
+      "return_sha256": "43449f9369af585a8c373ae8d7efa8b492ebea6d9685a5667437768f5e97c458",
+      "candidate_commit": "38213f2e4aab549f0e08f0aa9d92221381864bdf",
+      "tree": "b849e636629c39f0098598f23006e99b47d26878",
+      "base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+      "base_qualification": "QUALIFYING",
+      "qualification": "NOT QUALIFYING",
+      "scope": "242 of 243 product tests passed. E1 stopped the Circle departure method. All 29 recurring faults discriminated. S015 saving provisional."
+    },
+    "HARD_P1B_PENDING": {
+      "source": "HARD_CANDIDATE_TABLE.json",
+      "base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+      "candidate_commit": null,
+      "qualification": null,
+      "status": "Mechanical correction handed to VC. Exact P1b whole-job evidence pending."
     }
   },
   "source_index": {
@@ -183,11 +231,12 @@
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 253,
-    "folded": 35,
+    "active": 243,
+    "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
-    "ELECT_methods": 8
+    "ELECT_methods": 8,
+    "HARD_methods_added": 1
   },
   "tests": [
     {
@@ -1483,7 +1532,7 @@
       "baseline_label": "test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
       "status": "active",
       "current_label": "test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
-      "claim": "Ending an office authority basis appends to its chain, holds an open claim, replays idempotently, and keeps earlier decisions intact",
+      "claim": "Completed decisions retain their first claim basis across a voting change and supersession.",
       "unit_TAR": [
         {
           "source": "C3_TAR_TABLE_v1_1.md",
@@ -1498,6 +1547,15 @@
           ],
           "unit_ids": [
             "C3-01"
+          ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "base:test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision"
           ]
         }
       ],
@@ -1518,24 +1576,37 @@
       ],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "b97fe35561d0b18cb1f42c55dfdcb72599096a5cd7eabd05fb4e2f8192457b08"
       },
-      "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:110"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_c3_lifecycle.py:116"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
       "baseline_label": "test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
       "status": "active",
       "current_label": "test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
-      "claim": "A replacement's independent qualification stops at its instrument's exclusive expiry instant, before any worker runs",
+      "claim": "Current authority controls each case, including expiry and collective first-claim authority.",
       "unit_TAR": [
         {
           "source": "C3_TAR_TABLE_v1_1.md",
@@ -1550,6 +1621,15 @@
           ],
           "unit_ids": [
             "C3-02"
+          ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "base:test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary"
           ]
         }
       ],
@@ -1570,17 +1650,30 @@
       ],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "b97fe35561d0b18cb1f42c55dfdcb72599096a5cd7eabd05fb4e2f8192457b08"
       },
-      "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:143"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_c3_lifecycle.LifecycleTests.test_lapse_at_exclusive_boundary",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_c3_lifecycle.py:155"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_recusal_is_local_and_derived_reviewer_refuses",
@@ -1632,7 +1725,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:157"
+      "current_source": "tests/test_c3_lifecycle.py:179"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_replacement_retains_original_rule_after_change",
@@ -1684,7 +1777,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:202"
+      "current_source": "tests/test_c3_lifecycle.py:224"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_no_replacement_preserves_work_and_routes_hold",
@@ -1736,7 +1829,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:216"
+      "current_source": "tests/test_c3_lifecycle.py:238"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_title_cannot_supply_procedural_mandate",
@@ -1788,7 +1881,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_c3_lifecycle.py:239"
+      "current_source": "tests/test_c3_lifecycle.py:263"
     },
     {
       "obligation": "base:test_circle_operations.CircleOperationsTests.test_two_places_one_person_foreign_membership_hidden",
@@ -1887,7 +1980,7 @@
       "baseline_label": "test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity",
       "status": "active",
       "current_label": "test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity",
-      "claim": "A direct Circle-departure write needs its source; departure is atomic; a last-place dissolution carries its cause; CIRCLE_RESEAT_INCOMPLETE and CIRCLE_DISSOLUTION_SOURCE guards hold",
+      "claim": "A personal departure preserves its place history and only lawful recovery can fill the vacancy.",
       "unit_TAR": [
         {
           "source": "CIRCLES_TAR_TABLE_v1_4_P4b.md",
@@ -1896,6 +1989,28 @@
           ],
           "unit_ids": [
             "CIR-06"
+          ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "base:test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity"
+          ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1b.md",
+          "lines": [
+            13,
+            95,
+            96,
+            97,
+            98
+          ],
+          "unit_ids": [
+            "base:test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity"
           ]
         }
       ],
@@ -1916,16 +2031,35 @@
       ],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "4fd2c8f48d785a6ec5a245e3e37378ff1cce909950266a9296d799a65bd66c6a"
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_circle_operations.CircleOperationsTests.test_circle_departure_direct_write_and_atomicity",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        },
+        {
+          "unit": "HARD P1b",
+          "event": "P1 witness errored during forced constraint processing",
+          "run": "HARD_P1_VC_RUN",
+          "prior_candidate_method_file_lf_sha256": "20bdba3f86ae49a327b4c93f70e9e325de75f7f433acacd3e7c5075cc7b41708"
+        }
+      ],
       "current_source": "tests/test_circle_operations.py:314"
     },
     {
@@ -1977,7 +2111,7 @@
         ]
       },
       "history": [],
-      "current_source": "tests/test_circle_operations.py:508"
+      "current_source": "tests/test_circle_operations.py:531"
     },
     {
       "obligation": "base:test_circle_operations.CircleOperationsTests.test_circle_coordinator_operating_journey",
@@ -2030,7 +2164,7 @@
         "change_record": "TE_TAR_v1_0_P2.md / test_circle_operations.CircleOperationsTests.test_circle_coordinator_operating_journey"
       },
       "history": [],
-      "current_source": "tests/test_circle_operations.py:607",
+      "current_source": "tests/test_circle_operations.py:630",
       "baseline_claim": "CIR-08: Circle-only vs LO-only office scoping, birth atomicity with substituted founder evidence, appointment consent rules, role-definition unique indexes, work opening, migration 0061 and 0060 reverse preflights"
     },
     {
@@ -2195,15 +2329,24 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            16
+          ],
+          "unit_ids": [
+            "base:test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -2216,7 +2359,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
       },
       "history": [
         {
@@ -2226,9 +2371,19 @@
           "previous_source": "tests/test_cq_authority.py:109",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_authority.py:109"
+      "current_source": "tests/test_cq_authority.py:110"
     },
     {
       "obligation": "base:test_cq_authority.CQAuthorityTests.test_defeated_attachment_has_no_effect",
@@ -2291,7 +2446,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:179"
+      "current_source": "tests/test_cq_authority.py:184"
     },
     {
       "obligation": "base:test_cq_authority.CQAuthorityTests.test_membership_protected_act_once_and_stale_disposition",
@@ -2317,15 +2472,24 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            18
+          ],
+          "unit_ids": [
+            "base:test_cq_authority.CQAuthorityTests.test_membership_protected_act_once_and_stale_disposition"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -2338,7 +2502,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
       },
       "history": [
         {
@@ -2348,9 +2514,19 @@
           "previous_source": "tests/test_cq_authority.py:238",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_authority.CQAuthorityTests.test_membership_protected_act_once_and_stale_disposition",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_authority.py:237"
+      "current_source": "tests/test_cq_authority.py:242"
     },
     {
       "obligation": "base:test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
@@ -2410,7 +2586,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:349",
+      "current_source": "tests/test_cq_authority.py:354",
       "baseline_claim": "DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2."
     },
     {
@@ -2437,15 +2613,24 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            17
+          ],
+          "unit_ids": [
+            "base:test_cq_authority.CQAuthorityTests.test_lo_gi_lifecycle_and_interim_authority"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -2459,7 +2644,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
       },
       "history": [
         {
@@ -2469,9 +2656,19 @@
           "previous_source": "tests/test_cq_authority.py:663",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_authority.CQAuthorityTests.test_lo_gi_lifecycle_and_interim_authority",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_authority.py:662",
+      "current_source": "tests/test_cq_authority.py:667",
       "baseline_claim": "DISC3-05. Members create, revise and retire. The prior office act retains its source."
     },
     {
@@ -2498,15 +2695,24 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "base:test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -2520,7 +2726,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
       },
       "history": [
         {
@@ -2530,9 +2738,19 @@
           "previous_source": "tests/test_cq_authority.py:756",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_authority.py:755",
+      "current_source": "tests/test_cq_authority.py:760",
       "baseline_claim": "DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI."
     },
     {
@@ -2593,7 +2811,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:807",
+      "current_source": "tests/test_cq_authority.py:812",
       "baseline_claim": "DISC3-07. A new body starts afresh. Recusals and the boundary on personal authority follow the matter."
     },
     {
@@ -2620,15 +2838,24 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            15
+          ],
+          "unit_ids": [
+            "base:test_cq_authority.CQAuthorityTests.test_concurrent_final_answer_rollback_and_reversal"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -2641,7 +2868,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
       },
       "history": [
         {
@@ -2651,9 +2880,19 @@
           "previous_source": "tests/test_cq_authority.py:987",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_authority.CQAuthorityTests.test_concurrent_final_answer_rollback_and_reversal",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_authority.py:986"
+      "current_source": "tests/test_cq_authority.py:991"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_free_settings_versions_and_authority",
@@ -2719,7 +2958,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:145"
+      "current_source": "tests/test_cq_clarity.py:151"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_subscriber_initiation_and_reporting_history_on_lapse",
@@ -2785,7 +3024,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:263"
+      "current_source": "tests/test_cq_clarity.py:269"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_timed_preparation_and_idempotent_rule_catch_up",
@@ -2851,7 +3090,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:358"
+      "current_source": "tests/test_cq_clarity.py:364"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_wording_revisions_confirmations_and_early_lock",
@@ -2917,7 +3156,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:405"
+      "current_source": "tests/test_cq_clarity.py:411"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_at_deadline_unclear_members_and_free_clarity_setting",
@@ -2983,7 +3222,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:505"
+      "current_source": "tests/test_cq_clarity.py:511"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_access_refusal_rollback_and_populated_reversal",
@@ -3056,7 +3295,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:878",
+      "current_source": "tests/test_cq_clarity.py:884",
       "baseline_claim": "DISC2-06: disclosure refusal comes before role details, request reuse is no backdoor, event pair is immutable, caller rollback leaves nothing, migration 0074 reversal refused while CQ history exists"
     },
     {
@@ -3123,7 +3362,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:945"
+      "current_source": "tests/test_cq_clarity.py:951"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_competing_wording_completion_and_due_catch_up",
@@ -3189,7 +3428,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:1398"
+      "current_source": "tests/test_cq_clarity.py:1404"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_riverside_and_default_quorum_boundaries",
@@ -3328,7 +3567,7 @@
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases",
-      "claim": "DISC2-11: a quorate default tie is Not Qualified; threshold fraction and bases",
+      "claim": "DISC2-11. The registered fault must change this specific tie assertion.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -3347,6 +3586,15 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            20
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases"
+          ]
         }
       ],
       "review": {
@@ -3362,9 +3610,9 @@
         "cq-default-tie-refusal"
       ],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -3379,7 +3627,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
       },
       "history": [
         {
@@ -3389,6 +3639,16 @@
           "previous_source": "tests/test_cq_decisions.py:279",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_decisions.CQDecisionTests.test_default_tie_and_exact_threshold_bases",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
       "current_source": "tests/test_cq_decisions.py:280"
@@ -3457,7 +3717,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:332"
+      "current_source": "tests/test_cq_decisions.py:330"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_concurrent_settings_and_opening_snapshot",
@@ -3523,7 +3783,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:460"
+      "current_source": "tests/test_cq_decisions.py:458"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_open_read_embargo_and_early_release",
@@ -3589,7 +3849,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:496"
+      "current_source": "tests/test_cq_decisions.py:494"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_one_fresh_retry_exhausts_automation",
@@ -3655,14 +3915,14 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:616"
+      "current_source": "tests/test_cq_decisions.py:614"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
-      "claim": "DISC2-16: any result reader follows the exact change and ILC basis without answer data",
+      "claim": "DISC2-16. Any result reader follows its exact change and ILC basis, without answer data.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -3681,6 +3941,15 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            21
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace"
+          ]
         }
       ],
       "review": {
@@ -3694,9 +3963,9 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -3709,7 +3978,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
       },
       "history": [
         {
@@ -3719,9 +3990,19 @@
           "previous_source": "tests/test_cq_decisions.py:689",
           "change": "July links to SETTLE; version, institutional event, fingerprints, actors, timing and counting rule remain checkable. Names of July voters remain absent.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_decisions.CQDecisionTests.test_july_reporting_rule_and_decision_trace",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:701"
+      "current_source": "tests/test_cq_decisions.py:699"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_reporting_switch_mid_vote_and_permanent_totals_only",
@@ -3787,7 +4068,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:787"
+      "current_source": "tests/test_cq_decisions.py:784"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_circle_probation_access_and_reference_audience",
@@ -3853,7 +4134,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:831"
+      "current_source": "tests/test_cq_decisions.py:828"
     },
     {
       "obligation": "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
@@ -3879,6 +4160,15 @@
           "unit_ids": [
             "DISC4-P1-SETUP"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            19
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
+          ]
         }
       ],
       "review": {
@@ -3892,9 +4182,9 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
@@ -3908,7 +4198,9 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
-        }
+        },
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
       },
       "history": [
         {
@@ -3918,9 +4210,19 @@
           "previous_source": "tests/test_cq_decisions.py:932",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:949",
+      "current_source": "tests/test_cq_decisions.py:946",
       "baseline_claim": "DISC2-19: last answer, numbered result and both chain entries share one commit; forged act refused; migration 0075 reversal refused"
     },
     {
@@ -3997,7 +4299,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:1021",
+      "current_source": "tests/test_cq_decisions.py:1031",
       "baseline_claim": "DISC2-20: an LO member without a seat can follow a GOVERNANCE result and its rule"
     },
     {
@@ -5914,8 +6216,13 @@
         "P1_normal_label": "test_law_acts.LawActTests.test_competing_adoptions_replay_supersession_and_retirement",
         "baseline_recurring_faults": [],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
         }
       },
       "history": [
@@ -5966,8 +6273,13 @@
         "P1_normal_label": "test_law_acts.LawActTests.test_protected_authority_members_and_root",
         "baseline_recurring_faults": [],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
         }
       },
       "history": [
@@ -6018,8 +6330,13 @@
         "P1_normal_label": "test_law_acts.LawActTests.test_nominations_deferral_and_closed_routes",
         "baseline_recurring_faults": [],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
         }
       },
       "history": [
@@ -6076,8 +6393,13 @@
         "P1_normal_label": "test_law_acts.LawActTests.test_inherited_citation_keeps_exact_version_across_successors_and_gap",
         "baseline_recurring_faults": [],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
         }
       },
       "history": [
@@ -6143,8 +6465,13 @@
         "P1_normal_label": "test_law_acts.LawActTests.test_charters_enter_whole_and_inherited_protection_refuses_retirement",
         "baseline_recurring_faults": [],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "a8357311ab0d2be699f99fab53073b2c1e15c57d40ac0cabd7855ca1f00973de"
         }
       },
       "history": [
@@ -7280,8 +7607,18 @@
       "baseline_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
-      "claim": "Sequence 2 with no predecessor is refused (adjacency_ck)",
-      "unit_TAR": [],
+      "claim": "Chain successors must be adjacent, unique and on the same anchor.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            34
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 161,
@@ -7293,25 +7630,48 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
       "current_source": "tests/test_s015_0021_negative_direct_sql.py:148"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
       "baseline_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
       "claim": "A second successor of the same predecessor is refused (pred_uniq)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            34
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 158,
@@ -7323,25 +7683,55 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:153"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
+          "successor": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
+          "case": "test_neg_fork_second_successor"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_fork_second_successor",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:148"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
       "baseline_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
       "claim": "Skipping a sequence number (1 to 3) is refused ('append order')",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            34
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 164,
@@ -7353,25 +7743,55 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:159"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
+          "successor": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
+          "case": "test_neg_skip_sequence"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_skip_sequence",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:148"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
       "baseline_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
       "claim": "A predecessor belonging to another anchor is refused (predecessor_fk)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            34
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 162,
@@ -7383,17 +7803,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:164"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
+          "successor": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_orphan_sequence_two_without_predecessor",
+          "case": "test_neg_predecessor_of_another_anchor"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.ChainClosure.test_neg_predecessor_of_another_anchor",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:148"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_head_rewind",
@@ -7430,7 +7870,7 @@
           "case": "test_neg_head_rewind"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:177",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:185",
       "baseline_claim": "Rewinding head_event_id to an earlier event is refused ('head pointer')",
       "folded_cases": [
         {
@@ -7474,7 +7914,7 @@
           "case": "test_neg_head_null_while_events_exist"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:177"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:185"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ChainClosure.test_neg_anchor_without_sequence_one_at_commit",
@@ -7505,7 +7945,7 @@
         "change_record": "TE_TAR_v1_0_P2.md / test_s015_0021_negative_direct_sql.ChainClosure.test_neg_anchor_without_sequence_one_at_commit"
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:194",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:202",
       "baseline_claim": "An anchor (planning case) with no sequence-1 event fails at commit"
     },
     {
@@ -7536,7 +7976,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:200"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:208"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_caller_supplied_recorded_at",
@@ -7566,15 +8006,25 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:211"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:219"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
       "baseline_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
-      "claim": "Event times must satisfy the received-time bounds.",
-      "unit_TAR": [],
+      "claim": "Stored event times must satisfy both their order and their timestamp domain.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            38
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 187,
@@ -7586,14 +8036,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -7601,9 +8053,19 @@
           "event": "case retained",
           "successor": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
           "case": "test_neg_occurred_after_received"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:216",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:224",
       "baseline_claim": "occurred_at after received_at is refused (four_time_ck)",
       "folded_cases": [
         {
@@ -7618,7 +8080,17 @@
       "status": "folded",
       "current_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
       "claim": "received_at in the future is refused (four_time_ck)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            38
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_received_in_the_future"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 188,
@@ -7630,14 +8102,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -7645,17 +8119,37 @@
           "event": "fold",
           "successor": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
           "case": "test_neg_received_in_the_future"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:216"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:224"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
       "baseline_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
       "claim": "A -infinity timestamp is refused (domain_ck)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            38
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 193,
@@ -7667,17 +8161,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:234"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
+          "successor": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_occurred_after_received",
+          "case": "test_neg_timestamp_outside_domain"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_timestamp_outside_domain",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:224"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_temporal_basis_missing_when_retrospective",
@@ -7714,7 +8228,7 @@
           "case": "test_neg_temporal_basis_missing_when_retrospective"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:247"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:256"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_temporal_basis_polarity_mismatch",
@@ -7751,7 +8265,7 @@
           "case": "test_neg_temporal_basis_polarity_mismatch"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:247"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:256"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_temporal_basis_reference_blank",
@@ -7788,7 +8302,7 @@
           "case": "test_neg_temporal_basis_reference_blank"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:349"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:358"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FourTimeGrammar.test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables",
@@ -7825,7 +8339,7 @@
           "case": "test_neg_temporal_basis_null_kind_with_reference_on_all_twelve_tables"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:247",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:256",
       "baseline_claim": "NULL basis kind with a basis reference is refused on all 12 event tables (12 subTests)",
       "folded_cases": [
         {
@@ -7874,7 +8388,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:290"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:299"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_circle_active_on_event",
@@ -7916,7 +8430,7 @@
         ]
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:298"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:307"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_assignment_seventh_token",
@@ -7953,7 +8467,7 @@
           "case": "test_neg_assignment_seventh_token"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:310",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:319",
       "baseline_claim": "Assignment resulting state outside the allowed set ('RESTRICTED') is refused (vocab_ck)",
       "folded_cases": [
         {
@@ -7997,7 +8511,7 @@
           "case": "test_neg_assignment_action_outside_six"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:310"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:319"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_planning_result_fourth_token",
@@ -8027,7 +8541,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:337"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:346"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_fingerprint_old_shape_on_anchor",
@@ -8064,7 +8578,7 @@
           "case": "test_neg_fingerprint_old_shape_on_anchor"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:407"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:424"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_decision_reference_wrong_prefix",
@@ -8094,7 +8608,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:344"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:353"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.VocabulariesAndShapes.test_neg_reference_not_canonical",
@@ -8131,7 +8645,7 @@
           "case": "test_neg_reference_not_canonical"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:349",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:358",
       "baseline_claim": "A blank evidence_reference is refused (canonical_ck)",
       "folded_cases": [
         {
@@ -8168,7 +8682,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:367"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:376"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_update_of_cache_value_same_value",
@@ -8205,7 +8719,7 @@
           "case": "test_neg_raw_update_of_cache_value_same_value"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:377",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:386",
       "baseline_claim": "Raw UPDATE state = 'ACTIVE' on core_livingorganism is refused ('database-computed')",
       "folded_cases": [
         {
@@ -8253,15 +8767,25 @@
           "case": "test_neg_raw_update_of_fingerprint"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:377"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:386"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
       "baseline_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
-      "claim": "Raw UPDATE of state_known_at without a refresh ticket is refused",
-      "unit_TAR": [],
+      "claim": "A cache refresh requires its ticket and admissible knowledge coordinates.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            33
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 152,
@@ -8273,25 +8797,48 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:396"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:405"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
       "baseline_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
       "claim": "s015_refresh_governed_cache with known_at in the future is refused",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            33
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 156,
@@ -8303,17 +8850,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:400"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
+          "successor": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_raw_coordinate_update_without_ticket",
+          "case": "test_neg_refresh_known_at_in_future"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_refresh_known_at_in_future",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:405"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_insert_with_non_empty_set_fingerprint",
@@ -8350,7 +8917,7 @@
           "case": "test_neg_insert_with_non_empty_set_fingerprint"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:407",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:424",
       "baseline_claim": "INSERT of a Circle with a non-empty-set (s015f4:...) fingerprint is refused ('insert-time fingerprint')",
       "folded_cases": [
         {
@@ -8387,7 +8954,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:428"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:445"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_obligation_raw_value_update",
@@ -8424,7 +8991,7 @@
           "case": "test_neg_obligation_raw_value_update"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:377"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:386"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_read_route_never_serves_cache_at_other_coordinates",
@@ -8454,7 +9021,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:432"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:449"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.CacheBoundary.test_neg_non_owner_cannot_write_register",
@@ -8484,7 +9051,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:438"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:455"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.PriorState.test_neg_prior_state_not_the_effective_order_predecessor",
@@ -8521,7 +9088,7 @@
           "case": "test_neg_prior_state_not_the_effective_order_predecessor"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:446",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:463",
       "baseline_claim": "prior_state must equal the effective-order predecessor's resulting state",
       "folded_cases": [
         {
@@ -8565,15 +9132,25 @@
           "case": "test_neg_prior_state_non_null_at_empty_predecessor_set"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:446"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:463"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
       "baseline_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
-      "claim": "Membership and role definition in different organisms is refused ('assignment structure')",
-      "unit_TAR": [],
+      "claim": "An assignment must match its membership, role and Circle scopes.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            39
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 207,
@@ -8585,25 +9162,48 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:492"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:509"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
       "baseline_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
       "claim": "A role/circle scope mismatch on an assignment is refused ('role scope')",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            39
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 210,
@@ -8615,17 +9215,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:501"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
+          "successor": "test_s015_0021_negative_direct_sql.Structure.test_neg_membership_and_role_in_different_organisms",
+          "case": "test_neg_scope_circle_mismatch"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_scope_circle_mismatch",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:509"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_founder_steward_for_non_founder",
@@ -8655,15 +9275,25 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:510"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:537"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
       "baseline_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
-      "claim": "A membership mentoring itself is refused (mentor_distinct_ck)",
-      "unit_TAR": [],
+      "claim": "A mentorship must name a distinct member of the same LO.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            40
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 211,
@@ -8675,25 +9305,48 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:524"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:551"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
       "baseline_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
       "claim": "MENTORSHIP condition with no mentor is refused (mentorship_requires_mentor_ck)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            40
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 209,
@@ -8705,25 +9358,55 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:529"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
+          "successor": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
+          "case": "test_neg_mentorship_without_mentor"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentorship_without_mentor",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:551"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
       "baseline_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
       "claim": "A mentor membership in another organism is refused ('condition structure')",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            40
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 208,
@@ -8735,17 +9418,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:534"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
+          "successor": "test_s015_0021_negative_direct_sql.Structure.test_neg_self_mentor",
+          "case": "test_neg_mentor_in_other_organism"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.Structure.test_neg_mentor_in_other_organism",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:551"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.Structure.test_neg_assessment_declares_absent_roster",
@@ -8775,7 +9478,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:541"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:576"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb1_no_sequence_one_event",
@@ -8812,7 +9515,7 @@
           "case": "test_neg_root_limb1_no_sequence_one_event"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:568",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:602",
       "baseline_claim": "Root founding with no sequence-1 LO event fails at commit",
       "folded_cases": [
         {
@@ -8849,7 +9552,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:589"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:623"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb3_founder_membership_chain_empty",
@@ -8879,15 +9582,25 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:592"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:626"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
-      "claim": "Root founding requires an active Founder and Steward assignment.",
-      "unit_TAR": [],
+      "claim": "The required root offices must both be active at founding.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            36
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 175,
@@ -8899,14 +9612,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -8914,9 +9629,19 @@
           "event": "case retained",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
           "case": "test_neg_root_limb4_no_founder_steward_assignment"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:598",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:632",
       "baseline_claim": "Root founding with no FOUNDER_STEWARD assignment is refused",
       "folded_cases": [
         {
@@ -8931,7 +9656,17 @@
       "status": "folded",
       "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
       "claim": "FOUNDER_STEWARD assignment SUSPENDED/ENDED/PROPOSED at founding coordinates is refused (3 subTests)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            36
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 174,
@@ -8943,14 +9678,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -8958,9 +9695,19 @@
           "event": "fold",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
           "case": "test_neg_root_limb4_founder_steward_not_active_at_founding_coordinates"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:598"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:632"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb5_no_requirement",
@@ -8997,7 +9744,7 @@
           "case": "test_neg_root_limb5_no_requirement"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:620",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:667",
       "baseline_claim": "Root founding without a coverage requirement is refused ('limb 5')",
       "folded_cases": [
         {
@@ -9041,7 +9788,7 @@
           "case": "test_neg_root_limb6_no_assessment"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:635",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:682",
       "baseline_claim": "Root founding without a coverage assessment is refused ('limb 6')",
       "folded_cases": [
         {
@@ -9053,10 +9800,20 @@
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
       "claim": "Root founding requires an active Privacy Coordinator assignment.",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            36
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 178,
@@ -9068,14 +9825,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9083,9 +9842,26 @@
           "event": "case retained",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
           "case": "test_neg_root_limb7_no_privacy_coordinator_assignment"
+        },
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+          "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
+          "case": "test_neg_root_limb7_no_privacy_coordinator_assignment"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:654",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:632",
       "baseline_claim": "Root founding with no PRIVACY_COORDINATOR assignment is refused ('limb 7')",
       "folded_cases": [
         {
@@ -9098,9 +9874,19 @@
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates",
       "status": "folded",
-      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
       "claim": "PRIVACY_COORDINATOR assignment SUSPENDED/ENDED/PROPOSED is refused (3 subTests)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            36
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 179,
@@ -9112,14 +9898,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9127,9 +9915,26 @@
           "event": "fold",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
           "case": "test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"
+        },
+        {
+          "phase": "HARD P1",
+          "event": "redirect folded case",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+          "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb4_no_founder_steward_assignment",
+          "case": "test_neg_root_limb7_privacy_coordinator_not_active_at_founding_coordinates"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb7_no_privacy_coordinator_assignment",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:654"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:632"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_limb8_five_of_six_codes",
@@ -9166,7 +9971,7 @@
           "case": "test_neg_root_limb8_five_of_six_codes"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:673",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:702",
       "baseline_claim": "Root founding with only five of six reserved role definitions is refused ('limb 8')",
       "folded_cases": [
         {
@@ -9210,7 +10015,7 @@
           "case": "test_neg_root_limb8_inactive_code"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:673"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:702"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_duplicate_active_versions",
@@ -9218,7 +10023,17 @@
       "status": "folded",
       "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
       "claim": "Root founding with two active COORDINATOR versions is refused (role_active_uniq)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            35
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_duplicate_active_versions"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 170,
@@ -9230,14 +10045,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9245,17 +10062,37 @@
           "event": "fold",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
           "case": "test_neg_root_duplicate_active_versions"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:702"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:731"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_stale_active_version",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_stale_active_version",
       "status": "folded",
-      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
       "claim": "Root founding where the active COORDINATOR version is not the current one is refused",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            35
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_root_stale_active_version"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 182,
@@ -9267,14 +10104,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9282,9 +10121,26 @@
           "event": "fold",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
           "case": "test_neg_root_stale_active_version"
+        },
+        {
+          "phase": "HARD P1",
+          "event": "redirect folded case",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+          "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
+          "case": "test_neg_root_stale_active_version"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:721"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:731"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_limb8_no_coordinator",
@@ -9321,7 +10177,7 @@
           "case": "test_neg_nonroot_limb8_no_coordinator"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:688",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:717",
       "baseline_claim": "Non-root founding with no COORDINATOR definition is refused",
       "folded_cases": [
         {
@@ -9365,15 +10221,25 @@
           "case": "test_neg_nonroot_limb8_inactive_coordinator"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:688"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:717"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
-      "claim": "Founding permits at most one active version of a role.",
-      "unit_TAR": [],
+      "claim": "Root and ordinary founding require exactly one current active role version.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            35
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 165,
@@ -9385,14 +10251,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9400,9 +10268,19 @@
           "event": "case retained",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
           "case": "test_neg_nonroot_duplicate_active_versions"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:702",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:731",
       "baseline_claim": "Non-root founding with two active COORDINATOR versions is refused (role_active_uniq)",
       "folded_cases": [
         {
@@ -9414,10 +10292,20 @@
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
       "claim": "The active role version at founding must be current.",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            35
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 169,
@@ -9429,14 +10317,16 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
       "history": [
         {
@@ -9444,9 +10334,26 @@
           "event": "case retained",
           "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
           "case": "test_neg_nonroot_stale_active_version"
+        },
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+          "successor": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_duplicate_active_versions",
+          "case": "test_neg_nonroot_stale_active_version"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_nonroot_stale_active_version",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:721",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:731",
       "baseline_claim": "Non-root founding where the active version is not the current one is refused",
       "folded_cases": [
         {
@@ -9490,7 +10397,7 @@
           "case": "test_neg_nonroot_limb5_no_requirement"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:620"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:667"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCompleteness.test_neg_zero_rows_after_refused_founding",
@@ -9527,15 +10434,25 @@
           "case": "test_neg_zero_rows_after_refused_founding"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:635"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:682"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
       "status": "active",
       "current_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
-      "claim": "Founding Coordinator ASSIGN naming another LO's founding act is refused (S2B attribution)",
-      "unit_TAR": [],
+      "claim": "The founding Coordinator must cite both its own founding act and its authority decision.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            37
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 185,
@@ -9547,25 +10464,48 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:751"
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:775"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
       "baseline_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
-      "status": "active",
-      "current_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
+      "status": "folded",
+      "current_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
       "claim": "Founding Coordinator ASSIGN carrying another LO's authority decision is refused (S2B attribution)",
-      "unit_TAR": [],
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            37
+          ],
+          "unit_ids": [
+            "base:test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 184,
@@ -9577,17 +10517,37 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "536c1950e842d6fcb89d107000926640570d33909ea59c398d0ff9462428a7f2"
       },
-      "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:771"
+      "history": [
+        {
+          "phase": "HARD P1",
+          "event": "fold",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
+          "successor": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_name_its_own_founding_act",
+          "case": "test_neg_founding_coordinator_must_carry_its_own_authority_decision"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_s015_0021_negative_direct_sql.FoundingCoordinatorBinding.test_neg_founding_coordinator_must_carry_its_own_authority_decision",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:775"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.ReservedRoleCodes.test_neg_each_reserved_name_on_non_root",
@@ -9624,7 +10584,7 @@
           "case": "test_neg_each_reserved_name_on_non_root"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:801",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:828",
       "baseline_claim": "Each of the five reserved role codes on a non-root LO is refused ('only by the platform root'); 5 subTests",
       "folded_cases": [
         {
@@ -9668,7 +10628,7 @@
           "case": "test_neg_non_root_founding_with_founder_steward_defined"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:801"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:828"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.PlatformRoot.test_neg_true_row_refused_while_unset_check_present",
@@ -9743,7 +10703,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:841"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:868"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.PlatformRoot.test_neg_update_flag_refused_either_direction",
@@ -9773,7 +10733,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:845"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:872"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.PlatformRoot.test_neg_bare_true_row_without_population",
@@ -9810,7 +10770,7 @@
           "case": "test_neg_bare_true_row_without_population"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:568"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:602"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.RoleDefinitionImmutability.test_neg_each_fixed_column",
@@ -9847,7 +10807,7 @@
           "case": "test_neg_each_fixed_column"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:853",
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:880",
       "baseline_claim": "UPDATE of each of 5 fixed role-definition columns is refused ('immutable'); 5 subTests",
       "folded_cases": [
         {
@@ -9891,7 +10851,7 @@
           "case": "test_neg_delete_and_truncate"
         }
       ],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:853"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:880"
     },
     {
       "obligation": "base:test_s015_0021_negative_direct_sql.LockOrder.test_neg_noncanonical_two_organism_write",
@@ -9921,7 +10881,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_s015_0021_negative_direct_sql.py:875"
+      "current_source": "tests/test_s015_0021_negative_direct_sql.py:902"
     },
     {
       "obligation": "base:test_s015_0022_contract.S0150022ContractTests.test_lawful_resolution_insert_commits",
@@ -10495,8 +11455,18 @@
       "baseline_label": "test_sr_definitions.SRDefinitionCommandTests.test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence",
       "status": "active",
       "current_label": "test_sr_definitions.SRDefinitionCommandTests.test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence",
-      "claim": "When CQ governs, DEFINE/AMEND/RETIRE are refused C_ROUTE_IS_CQ and only intake plus decision are retained",
-      "unit_TAR": [],
+      "claim": "O-07. Voting on in DISCUSSION refuses all three definition acts with attempt evidence only.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            41
+          ],
+          "unit_ids": [
+            "base:test_sr_definitions.SRDefinitionCommandTests.test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 234,
@@ -10508,16 +11478,29 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_definitions.SRDefinitionCommandTests.test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "18903ece6012ba180549d98bd4845dac66df1b00edcdb30715310e2a28fef87c"
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_sr_definitions.SRDefinitionCommandTests.test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
       "current_source": "tests/test_sr_definitions.py:511"
     },
     {
@@ -10548,7 +11531,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_definitions.py:546"
+      "current_source": "tests/test_sr_definitions.py:538"
     },
     {
       "obligation": "base:test_sr_definitions.SRDefinitionCommandTests.test_06_class_c_missing_citation_and_retirement_holder_rollback",
@@ -10578,7 +11561,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_definitions.py:570"
+      "current_source": "tests/test_sr_definitions.py:562"
     },
     {
       "obligation": "base:test_sr_definitions.SRDefinitionCommandTests.test_07_sr30_reached_at_real_command_commit",
@@ -10614,7 +11597,7 @@
         "change_record": "TE_TAR_v1_0_P2.md / test_sr_definitions.SRDefinitionCommandTests.test_07_sr30_reached_at_real_command_commit"
       },
       "history": [],
-      "current_source": "tests/test_sr_definitions.py:658",
+      "current_source": "tests/test_sr_definitions.py:650",
       "baseline_claim": "With local citation validation bypassed, DB trigger sr_30 refuses at command commit",
       "folded_cases": [
         {
@@ -10660,7 +11643,7 @@
           "case": "test_08_sr20_reached_at_real_command_commit"
         }
       ],
-      "current_source": "tests/test_sr_definitions.py:658"
+      "current_source": "tests/test_sr_definitions.py:650"
     },
     {
       "obligation": "base:test_sr_definitions.SRDefinitionCommandTests.test_09_completed_retry_and_changed_content_and_malformed_receipt",
@@ -10690,7 +11673,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_definitions.py:683"
+      "current_source": "tests/test_sr_definitions.py:675"
     },
     {
       "obligation": "base:test_sr_definitions.SRDefinitionCommandTests.test_10_real_founding_still_records_c1_definition",
@@ -10720,7 +11703,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_definitions.py:698"
+      "current_source": "tests/test_sr_definitions.py:690"
     },
     {
       "obligation": "base:test_sr_h_safeguards.SROfficeSafeguardTests.test_01_stale_assign_is_refused_by_database",
@@ -10877,8 +11860,18 @@
       "baseline_label": "test_sr_h_safeguards.SRHSafeguardPureTests.test_05_provider_refuses_reserved_amend_and_retire_targets",
       "status": "active",
       "current_label": "test_sr_h_safeguards.SRHSafeguardPureTests.test_05_provider_refuses_reserved_amend_and_retire_targets",
-      "claim": "The provider refuses AMEND and RETIRE targets naming a reserved INTEVIA_ code, before any lookup",
-      "unit_TAR": [],
+      "claim": "O-14 boundary: the real definition qualifier refuses reserved AMEND/RETIRE targets without a stored reserved row.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            42
+          ],
+          "unit_ids": [
+            "base:test_sr_h_safeguards.SRHSafeguardPureTests.test_05_provider_refuses_reserved_amend_and_retire_targets"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 243,
@@ -10890,16 +11883,29 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_h_safeguards.SRHSafeguardPureTests.test_05_provider_refuses_reserved_amend_and_retire_targets",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "5f9cfc61a4940c7bda28f41aa89e8a55b0bbcb8ee3f992c0d5ef62de2a6d4c3f"
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_sr_h_safeguards.SRHSafeguardPureTests.test_05_provider_refuses_reserved_amend_and_retire_targets",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
       "current_source": "tests/test_sr_h_safeguards.py:212"
     },
     {
@@ -10930,7 +11936,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_h_safeguards.py:240"
+      "current_source": "tests/test_sr_h_safeguards.py:241"
     },
     {
       "obligation": "base:test_sr_h_safeguards.SRHSafeguardPureTests.test_07_admission_experiments_require_explicit_selection",
@@ -10960,7 +11966,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_h_safeguards.py:276"
+      "current_source": "tests/test_sr_h_safeguards.py:277"
     },
     {
       "obligation": "base:test_sr_office_actions.SROfficeActionTests.test_01_board_and_custom_office_routes_commit_and_replay",
@@ -11096,8 +12102,18 @@
       "baseline_label": "test_sr_office_actions.SROfficeActionTests.test_05_named_body_uses_only_its_recorded_alternative",
       "status": "active",
       "current_label": "test_sr_office_actions.SROfficeActionTests.test_05_named_body_uses_only_its_recorded_alternative",
-      "claim": "A named-body appointing route is refused without its route; a later alternative cannot authorise an old chain",
-      "unit_TAR": [],
+      "claim": "The exact named-body alternative can appoint only while voting is off.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            43
+          ],
+          "unit_ids": [
+            "base:test_sr_office_actions.SROfficeActionTests.test_05_named_body_uses_only_its_recorded_alternative"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 255,
@@ -11109,16 +12125,29 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+        "source_commit": null,
         "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_office_actions.SROfficeActionTests.test_05_named_body_uses_only_its_recorded_alternative",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_method_file_lf_sha256": "04c963d6d5f24e1cd30758f89c2ae2c958137ab51fcaf08538759da7faf234c2"
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_sr_office_actions.SROfficeActionTests.test_05_named_body_uses_only_its_recorded_alternative",
+          "prior_candidate_run": "P2_PENDING",
+          "prior_source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+          "prior_candidate_method_file_lf_sha256": null,
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ],
       "current_source": "tests/test_sr_office_actions.py:340"
     },
     {
@@ -11149,7 +12178,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_office_actions.py:358"
+      "current_source": "tests/test_sr_office_actions.py:400"
     },
     {
       "obligation": "base:test_sr_office_actions.SROfficeActionTests.test_07_all_office_entries_translate_real_contention_and_retry",
@@ -11180,7 +12209,7 @@
         "change_record": "TE_TAR_v1_0_P2.md / test_sr_office_actions.SROfficeActionTests.test_07_all_office_entries_translate_real_contention_and_retry"
       },
       "history": [],
-      "current_source": "tests/test_sr_office_actions.py:449",
+      "current_source": "tests/test_sr_office_actions.py:491",
       "baseline_claim": "Real advisory-lock conflict on each of 5 office entries rolls back as contention, then the exact retry succeeds",
       "folded_cases": [
         {
@@ -11240,7 +12269,7 @@
           "source": "test_sr_provider.SRProviderTests.test_06_participation_requirement_refuses_proposal_and_assignment"
         }
       ],
-      "current_source": "tests/test_sr_office_actions.py:509",
+      "current_source": "tests/test_sr_office_actions.py:551",
       "baseline_claim": "Participation in GOVERNANCE is required for nomination and appointment; observation before Circle creation sees nothing; closed Circle and ended participation refuse"
     },
     {
@@ -11271,7 +12300,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_sr_office_actions.py:586"
+      "current_source": "tests/test_sr_office_actions.py:628"
     },
     {
       "obligation": "base:test_sr_office_actions.SROfficeActionTests.test_10_all_office_entries_reject_changed_retries_and_bad_receipts",
@@ -11308,7 +12337,7 @@
           "case": "test_10_all_office_entries_reject_changed_retries_and_bad_receipts"
         }
       ],
-      "current_source": "tests/test_sr_office_actions.py:449"
+      "current_source": "tests/test_sr_office_actions.py:491"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_01_non_coordinator_assign_as_party_act_refused_by_attribution_guard",
@@ -11351,12 +12380,17 @@
           "sr-c2-attribution-gate"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11417,12 +12451,17 @@
           "sr-c2-late-consent"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11481,12 +12520,17 @@
           "sr-c2-lawful-chain-overrefusal"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11545,12 +12589,17 @@
           "sr-c2-founder-protection"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11611,12 +12660,17 @@
           "sr-c2-held-cache-only"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11677,12 +12731,17 @@
           "sr-c2-propose-superseded"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11741,12 +12800,17 @@
           "sr-c2-reserved-root"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11814,12 +12878,17 @@
           "sr-c2-held-cross-organism"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11932,12 +13001,17 @@
           "sr-c2-attribution-gate"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -11997,12 +13071,17 @@
           "sr-c2-already-held"
         ],
         "ELECT_P1": {
-          "reference": "ELECT_P1_PENDING",
+          "reference": "ELECT_P1_VC_RUN",
           "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         },
         "ELECT_P1b": {
-          "reference": "ELECT_P1B_PENDING",
+          "reference": "ELECT_P1B_VC",
           "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
         }
       },
       "history": [
@@ -12248,7 +13327,7 @@
           "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
         }
       },
-      "current_source": "tests/test_cq_settings_authority.py:33",
+      "current_source": "tests/test_cq_settings_authority.py:34",
       "history": [
         {
           "unit": "DISC4 P2",
@@ -12273,6 +13352,15 @@
           "unit_ids": [
             "DISC4-02"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            22
+          ],
+          "unit_ids": [
+            "DISC4-02"
+          ]
         }
       ],
       "review": null,
@@ -12280,24 +13368,34 @@
       "recurring_controls": [],
       "evidence": {
         "source_commit": null,
-        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "candidate_method_file_lf_sha256": "70ae6236d313ab5485e74aed7f584855b395ef207d8cf10385209dffd6cc83d6",
         "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-02",
         "DISC4_P2": {
           "reference": "DISC4_P2_PENDING",
           "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
         }
       },
-      "current_source": "tests/test_cq_settings_authority.py:97",
+      "current_source": "tests/test_cq_settings_authority.py:98",
       "history": [
         {
           "unit": "DISC4 P2",
           "scope": "source lines only",
           "previous_source": "tests/test_cq_settings_authority.py:91",
           "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_02_only_qualified_current_target_takes_effect",
+          "prior_candidate_run": "DISC4_P1_PENDING",
+          "prior_source_commit": null,
+          "prior_candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+          "prior_break": null,
+          "prior_restored": null
         }
       ]
     },
@@ -12316,6 +13414,15 @@
           "unit_ids": [
             "DISC4-03"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            23
+          ],
+          "unit_ids": [
+            "DISC4-03"
+          ]
         }
       ],
       "review": null,
@@ -12323,24 +13430,34 @@
       "recurring_controls": [],
       "evidence": {
         "source_commit": null,
-        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-        "candidate_run": "DISC4_P1_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+        "candidate_method_file_lf_sha256": "70ae6236d313ab5485e74aed7f584855b395ef207d8cf10385209dffd6cc83d6",
         "change_record": "DISC4_TAR_v1_0_P1.md / DISC4-03",
         "DISC4_P2": {
           "reference": "DISC4_P2_PENDING",
           "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
         }
       },
-      "current_source": "tests/test_cq_settings_authority.py:179",
+      "current_source": "tests/test_cq_settings_authority.py:180",
       "history": [
         {
           "unit": "DISC4 P2",
           "scope": "source lines only",
           "previous_source": "tests/test_cq_settings_authority.py:173",
           "change": "P1 method body and assertions compare equal by AST. P1 whole-job evidence: DISC4_P1_VC."
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_03_office_route_obeys_voting_state",
+          "prior_candidate_run": "DISC4_P1_PENDING",
+          "prior_source_commit": null,
+          "prior_candidate_method_file_lf_sha256": "0f6e0e84e374bdffe509de83d790b6699bf08fddbaace65075d6f293cb51a123",
+          "prior_break": null,
+          "prior_restored": null
         }
       ]
     },
@@ -12377,7 +13494,7 @@
           "candidate_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27"
         }
       },
-      "current_source": "tests/test_cq_settings_authority.py:292",
+      "current_source": "tests/test_cq_settings_authority.py:366",
       "history": [
         {
           "unit": "DISC4 P2",
@@ -12402,22 +13519,42 @@
           "unit_ids": [
             "DISC4-05"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            24
+          ],
+          "unit_ids": [
+            "DISC4-05"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_cq_settings_authority.py:350",
+      "current_source": "tests/test_cq_settings_authority.py:424",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-        "candidate_run": "DISC4_P2_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+        "candidate_method_file_lf_sha256": "70ae6236d313ab5485e74aed7f584855b395ef207d8cf10385209dffd6cc83d6",
         "change_record": "DISC4_TAR_v1_0_P2.md / DISC4-05"
       },
-      "history": []
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_05_circle_reporting_inherits_or_uses_its_vote",
+          "prior_candidate_run": "DISC4_P2_PENDING",
+          "prior_source_commit": null,
+          "prior_candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ]
     },
     {
       "obligation": "DISC4-06",
@@ -12434,22 +13571,42 @@
           "unit_ids": [
             "DISC4-06"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            25
+          ],
+          "unit_ids": [
+            "DISC4-06"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_cq_settings_authority.py:512",
+      "current_source": "tests/test_cq_settings_authority.py:585",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-        "candidate_run": "DISC4_P2_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+        "candidate_method_file_lf_sha256": "70ae6236d313ab5485e74aed7f584855b395ef207d8cf10385209dffd6cc83d6",
         "change_record": "DISC4_TAR_v1_0_P2.md / DISC4-06"
       },
-      "history": []
+      "history": [
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_cq_settings_authority.CQSettingsAuthorityTests.test_06_reporting_trace_respects_audience_and_lapse",
+          "prior_candidate_run": "DISC4_P2_PENDING",
+          "prior_source_commit": null,
+          "prior_candidate_method_file_lf_sha256": "7f4a7a0e4941c2bc5e79d554d4b9d33c8b982804d1c4975fee7dbb2f5b886b27",
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ]
     },
     {
       "obligation": "ELECT-01",
@@ -12466,6 +13623,15 @@
           "unit_ids": [
             "ELECT-01"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            31
+          ],
+          "unit_ids": [
+            "ELECT-01"
+          ]
         }
       ],
       "review": null,
@@ -12474,11 +13640,16 @@
       "current_source": "tests/test_elections.py:23",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P1B_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        }
       },
       "history": [
         {
@@ -12486,6 +13657,22 @@
           "previous_source": "tests/test_elections.py:23",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "f184bebd3252bab3c7917193cabdec58f4eabd7044086d81d24ffd1b3a02eabe"
+        },
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_P1B_VC",
+          "previous_source": "tests/test_elections.py:23",
+          "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_elections.ElectionTests.test_member_election_seats_trustee_before_activation",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+          "prior_break": null,
+          "prior_restored": null
         }
       ]
     },
@@ -12504,19 +13691,33 @@
           "unit_ids": [
             "ELECT-02"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            32
+          ],
+          "unit_ids": [
+            "ELECT-02"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:60",
+      "current_source": "tests/test_elections.py:61",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P1B_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        }
       },
       "history": [
         {
@@ -12524,6 +13725,22 @@
           "previous_source": "tests/test_elections.py:52",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "f184bebd3252bab3c7917193cabdec58f4eabd7044086d81d24ffd1b3a02eabe"
+        },
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_P1B_VC",
+          "previous_source": "tests/test_elections.py:60",
+          "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_elections.ElectionTests.test_office_election_follows_constitutional_body_and_consent",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+          "prior_break": null,
+          "prior_restored": null
         }
       ]
     },
@@ -12542,19 +13759,33 @@
           "unit_ids": [
             "ELECT-03"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            29
+          ],
+          "unit_ids": [
+            "ELECT-03"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:95",
+      "current_source": "tests/test_elections.py:101",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P1B_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        }
       },
       "history": [
         {
@@ -12562,6 +13793,22 @@
           "previous_source": "tests/test_elections.py:87",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "f184bebd3252bab3c7917193cabdec58f4eabd7044086d81d24ffd1b3a02eabe"
+        },
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_P1B_VC",
+          "previous_source": "tests/test_elections.py:95",
+          "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_elections.ElectionTests.test_count_requires_turnout_then_a_unique_qualified_candidate",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+          "prior_break": null,
+          "prior_restored": null
         }
       ]
     },
@@ -12585,14 +13832,19 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:136",
+      "current_source": "tests/test_elections.py:143",
       "evidence": {
-        "source_commit": null,
+        "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
         "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P1B_PENDING",
+        "candidate_run": "ELECT_LANDING_1050F2F5",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        }
       },
       "history": [
         {
@@ -12600,6 +13852,12 @@
           "previous_source": "tests/test_elections.py:108",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "f184bebd3252bab3c7917193cabdec58f4eabd7044086d81d24ffd1b3a02eabe"
+        },
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_P1B_VC",
+          "previous_source": "tests/test_elections.py:136",
+          "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
         }
       ]
     },
@@ -12625,14 +13883,19 @@
       "recurring_controls": [
         "MUT-elect-result-person-seat"
       ],
-      "current_source": "tests/test_elections.py:178",
+      "current_source": "tests/test_elections.py:185",
       "evidence": {
-        "source_commit": null,
+        "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
         "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P1B_PENDING",
+        "candidate_run": "ELECT_LANDING_1050F2F5",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        }
       },
       "history": [
         {
@@ -12640,6 +13903,12 @@
           "previous_source": "tests/test_elections.py:150",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "f184bebd3252bab3c7917193cabdec58f4eabd7044086d81d24ffd1b3a02eabe"
+        },
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_P1B_VC",
+          "previous_source": "tests/test_elections.py:178",
+          "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
         }
       ]
     },
@@ -12658,21 +13927,52 @@
           "unit_ids": [
             "ELECT-06"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            26
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_election_mandates.py:155",
+      "current_source": "tests/test_election_mandates.py:153",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P2_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        }
       },
-      "history": []
+      "history": [
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_LANDING_1050F2F5",
+          "previous_source": "tests/test_election_mandates.py:155",
+          "previous_candidate_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_election_mandates.ElectionMandateTests.test_committee_grant_and_return_move_only_the_named_election",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ]
     },
     {
       "obligation": "ELECT-07",
@@ -12689,21 +13989,52 @@
           "unit_ids": [
             "ELECT-07"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            27
+          ],
+          "unit_ids": [
+            "ELECT-07"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_election_mandates.py:238",
+      "current_source": "tests/test_election_mandates.py:237",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P2_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        }
       },
-      "history": []
+      "history": [
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_LANDING_1050F2F5",
+          "previous_source": "tests/test_election_mandates.py:238",
+          "previous_candidate_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_election_mandates.ElectionMandateTests.test_settings_ballot_keeps_its_opening_mandate_during_transfer",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ]
     },
     {
       "obligation": "ELECT-08",
@@ -12720,6 +14051,15 @@
           "unit_ids": [
             "ELECT-08"
           ]
+        },
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            28
+          ],
+          "unit_ids": [
+            "ELECT-08"
+          ]
         }
       ],
       "review": null,
@@ -12728,60 +14068,83 @@
       "current_source": "tests/test_election_mandates.py:300",
       "evidence": {
         "source_commit": null,
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_P2_PENDING",
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+        "ELECT_landing": {
+          "reference": "ELECT_LANDING_1050F2F5",
+          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        }
       },
-      "history": []
+      "history": [
+        {
+          "unit": "ELECT phase",
+          "run": "ELECT_LANDING_1050F2F5",
+          "previous_source": "tests/test_election_mandates.py:300",
+          "previous_candidate_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+        },
+        {
+          "unit": "HARD P1",
+          "event": "previous evidence retained",
+          "previous_label": "test_election_mandates.ElectionMandateTests.test_vacancy_starts_one_cited_route_and_holds_constitutional_silence",
+          "prior_candidate_run": "ELECT_LANDING_1050F2F5",
+          "prior_source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
+          "prior_break": null,
+          "prior_restored": null
+        }
+      ]
+    },
+    {
+      "obligation": "HARD-H2",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_hard_storage_applies_the_constitutional_seat_route_at_birthing",
+      "status": "active",
+      "claim": "HARD-H2. A stored admission must use the route available for that exact seat at its cut.",
+      "unit_TAR": [
+        {
+          "source": "HARD_TAR_v1_0_P1.md",
+          "lines": [
+            30
+          ],
+          "unit_ids": [
+            "HARD-H2"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "candidate_run": "HARD_P1_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af"
+      },
+      "history": [],
+      "current_source": "tests/test_elections.py:220"
     }
   ],
   "previous_unit": {
-    "package": "DISC4 P2",
-    "baseline_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-    "baseline_methods": 239,
-    "candidate_methods": 245,
+    "package": "ELECT P2",
+    "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+    "baseline_methods": 245,
+    "candidate_methods": 253,
     "coverage": {
       "unit_tables": 13,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 245,
+      "active": 253,
       "folded": 35,
       "retired": 2,
-      "DISC4_methods": 6
-    },
-    "previous_unit": {
-      "package": "DISC4 P1",
-      "baseline_commit": "d249bc8fa4a27f2f18f25c1d93440b01b74aaaca",
-      "baseline_methods": 239,
-      "candidate_methods": 243,
-      "coverage": {
-        "unit_tables": 13,
-        "SR_C2_staging_tables": 1,
-        "historical_carryovers": 90,
-        "DISC3_methods": 8,
-        "active": 243,
-        "folded": 35,
-        "retired": 2,
-        "DISC4_methods": 4
-      },
-      "previous_unit": {
-        "package": "TE P2",
-        "baseline_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
-        "baseline_methods": 276,
-        "candidate_methods": 239,
-        "coverage": {
-          "unit_tables": 13,
-          "SR_C2_staging_tables": 1,
-          "historical_carryovers": 90,
-          "DISC3_methods": 8,
-          "active": 239,
-          "folded": 35,
-          "retired": 2
-        }
-      }
+      "DISC4_methods": 6,
+      "ELECT_methods": 8
     }
   }
 }

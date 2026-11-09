@@ -14,10 +14,13 @@ from tests import test_sr_office_actions as office
 ARTICLE = "Article 7"
 
 
-def provision(owner, lo, rules):
+def provision(owner, lo, rules, *, vacancies=None):
+    body = {"elections": rules}
+    if vacancies is not None:
+        body["vacancies"] = vacancies
     doc = law.Document(owner)
     version = doc.service.create_successor_version(
-        identity=doc.author, resource_id=doc.name, content=json.dumps({"elections": rules}),
+        identity=doc.author, resource_id=doc.name, content=json.dumps(body),
         evidence_reference="fixture:election:constitution",
     )
     doc.transition("publish_library_resource")
@@ -28,14 +31,19 @@ def provision(owner, lo, rules):
     return {"binding_uuid": proposal.proposal, "version_id": version.pk}
 
 
-def owner(*, seats=2, elected=(1,), rules=None):
+def owner(*, seats=2, elected=(1,), rules=None, voting=True):
     lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=seats, elected=elected)
     circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
     citation = provision(founder, lo, rules or {ARTICLE: seat()})
     scope = {"credential": founder.credential, "organism_uuid": lo.organism_id}
-    # Before adding the rest of the electorate, the sole founder can select the opening rule.
-    cq.change_settings(**scope, changes={"clarity_stage": False, "enabled": True}, predecessor=None, request_uuid=uuid4())
+    if voting:
+        enable_voting(scope)
     return lo, founder, scope, circle, citation
+
+
+def enable_voting(scope):
+    cq.change_settings(**scope, changes={"clarity_stage": False, "enabled": True},
+                       predecessor=None, request_uuid=uuid4())
 
 
 def seat(**changes):
@@ -65,12 +73,8 @@ def cast(journey, ballot, person, choice="QUALIFIED", request=None):
                      choice=choice, request_uuid=request or uuid4())
 
 
-def office_proposal(lo, founder, member, place, body, provision_name, citation, *, board_members, self_proposed):
+def define_office(lo, founder, place, body, provision_name, citation, *, board_members):
     from src.intevia.services import organism_role_definition_service as definitions
-    from src.intevia.services.organism_office_consent_service import (
-        OfficeAppointmentConsentService,
-    )
-    from src.intevia.services.organism_role_service import OrganismRoleService
 
     fx = office.SROfficeActionTests()
     fx.actor, fx.organism = founder, lo
@@ -87,6 +91,18 @@ def office_proposal(lo, founder, member, place, body, provision_name, citation, 
     result = definitions.OrganismRoleDefinitionService(authority=authority, clock=support.database_now).record_role_definition(
         fx._command(content=definition))
     role = models.OrganismRoleDefinition.objects.get(role_uuid=result.role_definition_uuid)
+    return role
+
+
+def office_proposal(lo, founder, member, role, *, self_proposed):
+    from src.intevia.services.organism_office_consent_service import (
+        OfficeAppointmentConsentService,
+    )
+    from src.intevia.services.organism_role_service import OrganismRoleService
+
+    fx = office.SROfficeActionTests()
+    fx.actor, fx.organism = founder, lo
+    authority = board.authority()
     membership = models.OrganismMembership.objects.get(living_organism=lo, identity=member)
     roles = OrganismRoleService(authority=authority, clock=support.database_now)
     proposed = roles.propose_assignment(fx._proposal_command(role, membership, actor=member if self_proposed else founder))

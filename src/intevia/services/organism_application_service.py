@@ -44,6 +44,7 @@ from core.models import (
     OrganismMembership, OrganismMembershipTransition,
 )
 from core.organism_contract import OrganismAction
+from src.intevia.services.cq_voting_state import voting_enabled
 from src.intevia.services.organism_authority import (
     QualifiedS015AuthorityDecision, S015Authority, S015AuthorityDenied,
     S015AuthorityRefusalCode, S015OwnApplicantAuthorityRequest, authority_target_fingerprint,
@@ -1406,8 +1407,8 @@ class OrganismApplicationService:
         received_at, version_kind DRAFT or EFFECT). The draft path
         creates the gateway if there is none; the effect path refuses
         "S3FU gateway closed" without one. gateway_at is the database's
-        clock_timestamp(). If the governance configuration in effect at
-        gateway_at has cq_active true, inherited portal settings raise
+        clock_timestamp(). If a governance configuration exists and the
+        DISCUSSION setting enables voting at that cut, inherited portal settings raise
         not-yet-implemented S3-IL-INHERIT, and a CQ required for this
         change (the question flag for a question, the LO settings flag
         otherwise) raises S3-IL-CQ.
@@ -1578,7 +1579,7 @@ class OrganismApplicationService:
         configuration = _effective_gateway_version(
             self._alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, gateway_at,
         )
-        if configuration is not None and configuration.cq_active is True:
+        if configuration is not None and voting_enabled(self._alias, organism.pk, gateway_at, gateway_at):
             if configuration.inherit_portal_cq_settings is True:
                 raise S015OperationNotYetImplemented("gateway_inherited_configuration", "S3-IL-INHERIT", "PORTAL")
             cq_required = (configuration.require_cq_to_change_application_question if action is OrganismAction.EFFECT_APPLICATION_QUESTION

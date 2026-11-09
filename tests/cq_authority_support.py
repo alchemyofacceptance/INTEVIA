@@ -38,7 +38,7 @@ def command_args(lo, actor):
     }
 
 
-def form_board(lo, founder, size, elected=()):
+def form_board(lo, founder, size, elected=(), external=()):
     service = governance.OrganismGovernanceService(
         authority=authority(), clock=support.database_now
     )
@@ -57,6 +57,8 @@ def form_board(lo, founder, size, elected=()):
         }
         for number in range(size)
     ]
+    for number in external:
+        seats[number]["deciding_body"] = "external:Trustee Appointments Panel"
     service.adopt_governing_instrument(
         governance.AdoptGoverningInstrumentCommand(
             **adoption_args,

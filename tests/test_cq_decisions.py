@@ -279,9 +279,8 @@ class CQDecisionTests(TransactionTestCase):
 
     def test_default_tie_and_exact_threshold_bases(self):
         """DISC2-11. The registered fault must change this specific tie assertion."""
-        _, scope, people, version = self.setup_board(4)
-        journey, _ = self.confirmed(scope, people)
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        _, scope, people, version = self.setup_board(4, changes={"clarity_stage": False})
+        journey, ballot = cq_settings_support.prepared_ballot(self, scope)
         for index, member in enumerate(people):
             self.cast(
                 journey, ballot, member, "QUALIFIED" if index < 2 else "NOT_QUALIFIED"
@@ -302,8 +301,7 @@ class CQDecisionTests(TransactionTestCase):
             },
             version,
         )
-        other, _ = self.confirmed(scope, people)
-        second = cq.finish_clarity(**other, request_uuid=uuid4())
+        other, second = cq_settings_support.prepared_ballot(self, scope)
         for member, choice in zip(
             people, ("QUALIFIED", "QUALIFIED", "NOT_QUALIFIED", "ABSTAIN"), strict=True
         ):
@@ -700,10 +698,9 @@ class CQDecisionTests(TransactionTestCase):
 
     def test_july_reporting_rule_and_decision_trace(self):
         """DISC2-16. Any result reader follows its exact change and ILC basis, without answer data."""
-        lo, scope, people, enabled = self.setup_board(3, beta=True)
+        lo, scope, people, enabled = self.setup_board(3, beta=True, changes={"clarity_stage": False})
         changed = self.configure(scope, {"reporting": "TOTALS_ONLY"}, enabled)
-        journey, _ = self.confirmed(scope, people)
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        journey, ballot = cq_settings_support.prepared_ballot(self, scope)
         for member in people:
             self.cast(journey, ballot, member)
         view = journey | {"credential": people[2].credential}
@@ -1015,6 +1012,19 @@ class CQDecisionTests(TransactionTestCase):
                     migration.reverse(None, editor)
                 self.assertEqual(str(stopped.exception), refusal)
                 self.assertEqual(read_back(), expected)
+
+        hard = import_module("core.migrations.0081_hard_voting_authority")
+        with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
+            hard.uninstall(None, editor)
+            self.assertIsNone(hard.installed(cursor, hard.SELECTOR))
+            for signature, previous, _ in hard.edits():
+                self.assertEqual(hard.installed(cursor, signature), hard.body(previous), signature)
+            self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
+            hard.install(None, editor)
+            for signature, _, replacement in hard.edits():
+                self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
+            self.assertEqual(hard.installed(cursor, hard.SELECTOR), hard.body(hard.SELECTOR_SQL))
+        self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True
 

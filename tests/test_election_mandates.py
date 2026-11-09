@@ -32,14 +32,12 @@ class ElectionMandateTests(TransactionTestCase):
             board_seats=4 if empty_seat else 3,
             elected=(3,) if empty_seat else (),
         )
+        return self.activate_board(lo, founder)
+
+    def activate_board(self, lo, founder):
         circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
         general = {"organism_uuid": lo.organism_id, "credential": founder.credential}
-        cq.change_settings(
-            **general,
-            changes={"clarity_stage": False, "enabled": True},
-            predecessor=None,
-            request_uuid=uuid4(),
-        )
+        fx.enable_voting(general)
         chair = board.seat_trustee(lo, founder, circle, 1)
         third = board.seat_trustee(lo, founder, circle, 2)
         circles.activate(**general, circle_uuid=circle.circle_uuid, request_uuid=uuid4())
@@ -154,6 +152,7 @@ class ElectionMandateTests(TransactionTestCase):
 
     def test_committee_grant_and_return_move_only_the_named_election(self):
         """ELECT-06. A competent Board grant and return move only administration of one member-elected place."""
+        self.topic_category_ids = {}
         lo, general, governed, trustees = self.board(empty_seat=True)
         founder, chair, _ = trustees
         candidate = law.add_member(lo)
@@ -237,6 +236,7 @@ class ElectionMandateTests(TransactionTestCase):
 
     def test_settings_ballot_keeps_its_opening_mandate_during_transfer(self):
         """ELECT-07. The original membership can finish its open decision after settings pass to a Circle."""
+        self.topic_category_ids = {}
         lo, general, governed, trustees = self.board()
         committee = self.committee(general)
         local = general | {"circle_uuid": committee.circle_uuid}
@@ -299,39 +299,26 @@ class ElectionMandateTests(TransactionTestCase):
 
     def test_vacancy_starts_one_cited_route_and_holds_constitutional_silence(self):
         """ELECT-08. C2 office ending, active Board co-option, retained trustee place and a silent constitution."""
-        lo, general, governed, trustees = self.board()
-        founder, chair, third = trustees
+        lo, founder = law.ordinary_birth(offering_choice="COMPLIMENTARY_BETA", board_seats=3)
         terms = {
             label: {"type": "OFFICE", "place": label.upper(), "body": "GOVERNANCE"}
             for label in ("Treasurer", "Secretary")
         }
-        citation, _ = self.constitution(
-            lo,
-            founder,
-            general,
-            trustees,
-            {
-                "elections": terms,
-                "vacancies": {
-                    "Interim Treasurer": {
-                        "type": "OFFICE",
-                        "place": "TREASURER",
-                        "route": "COOPTION",
-                        "authority": "GOVERNANCE",
-                        "election": "Treasurer",
-                    }
-                },
-            },
-        )
-        rule = {"binding_uuid": citation["binding"], "version_id": citation["version"]}
+        vacancies = {"Interim Treasurer": {
+            "type": "OFFICE", "place": "TREASURER", "route": "COOPTION",
+            "authority": "GOVERNANCE", "election": "Treasurer",
+        }}
+        rule = fx.provision(founder, lo, terms, vacancies=vacancies)
+        offices = {label: fx.define_office(lo, founder, label.upper(), "GOVERNANCE", label, rule,
+                                          board_members=True) for label in terms}
+        _, general, governed, trustees = self.activate_board(lo, founder)
+        _, chair, third = trustees
         roles = OrganismRoleService(authority=board.authority(), clock=support.database_now)
         helper = office.SROfficeActionTests()
         helper.actor, helper.organism = founder, lo
         for label in ("Treasurer", "Secretary"):
             place = label.upper()
-            assignment = fx.office_proposal(
-                lo, founder, third, place, "GOVERNANCE", label, rule, board_members=True, self_proposed=True
-            )
+            assignment = fx.office_proposal(lo, founder, third, offices[label], self_proposed=True)
             journey = fx.call(self, governed, rule, provision=label, place=place)
             fx.nominate(journey, third, assignment=assignment.assignment_uuid)
             ballot = fx.open_election(journey)

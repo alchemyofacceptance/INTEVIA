@@ -1,6 +1,7 @@
 """DISC4. An LO's recorded voting authority governs its settings."""
 
 from dataclasses import replace
+from datetime import timedelta
 from importlib import import_module
 from uuid import uuid4
 
@@ -96,7 +97,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
 
     def test_02_only_qualified_current_target_takes_effect(self):
         """DISC4-02. Only a competent, current, qualified patch takes effect: wrong body, defeat, other result kinds, stale target and forgery."""
-        lo, scope, people, original = self.setup_board(3)
+        lo, scope, people, original = self.setup_board(3, changes={"clarity_stage": False})
         journey, wording = motions.propose(self, scope, {"vote_days": 9}, original)
         ballot = motions.open_motion(journey, wording, people)
         lost = motions.settle(
@@ -178,7 +179,70 @@ class CQSettingsAuthorityTests(TransactionTestCase):
 
     def test_03_office_route_obeys_voting_state(self):
         """DISC4-03. Bootstrap, below three, third member, voted switch-off, restart, outsider and the exact below-three motion."""
-        lo, scope, people, first = self.setup_board(2)
+        from core.organism_contract import OrganismAction
+        from src.intevia.services import organism_application_service as gateway
+        from src.intevia.services import organism_entitlement_service as entitlements
+        from src.intevia.services.cq_voting_state import voting_enabled
+        from src.intevia.services.organism_authority import S015AuthorityDenied
+
+        lo, owner, scope = self.owner()
+        people = [owner, fixtures.add_member(lo)]
+        authority = boards.authority()
+        service = gateway.OrganismApplicationService(authority=authority, clock=support.database_now)
+        config = OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION
+        question = OrganismAction.EFFECT_APPLICATION_QUESTION
+        governed = {"cq_active": False, "governance_enabled": False, "inherit_portal_cq_settings": False,
+                    "require_cq_to_change_lo_settings": True, "require_cq_to_change_application_question": True}
+        prompt = {"question_text": "What would you contribute?", "answer_format": "LONG_ANSWER"}
+
+        def gateway_args(action):
+            at = support.database_now()
+            return {"credential": owner.credential, "living_organism_id": lo.organism_id, "action": action,
+                    "occurred_at": at, "effective_at": at, "request_reference": uuid4().hex, "idempotency_key": uuid4().hex}
+
+        def draft(action, fields):
+            return service.save_gateway_draft(gateway.GatewayDraftCommand(**gateway_args(action), fields=fields))
+
+        def effect(action, version):
+            return service.effect_gateway_version(gateway.EffectGatewayVersionCommand(
+                **gateway_args(action), version_uuid=version.version_uuid))
+
+        def check_refusal(code, fn, *values):
+            with self.assertRaises(S015AuthorityDenied) as denied:
+                fn(*values)
+            self.assertEqual(denied.exception.refusal_code.value, code)
+            if code == "SE_OPT_IN_NEEDS_CQ":
+                # SE supplies the caller's explanation; its actual provider reason
+                # must also distinguish entitlement election from a settings edit.
+                self.assertEqual(denied.exception.__cause__.refusal_code.value, code)
+
+        def boundary(act, expected):
+            row = self.facts(act)
+            e, k = row["effective_at"], row["recorded_at"]
+            tick = timedelta.resolution
+            self.assertEqual(voting_enabled("default", lo.pk, e - tick, k), not expected)
+            self.assertEqual(voting_enabled("default", lo.pk, e, k - tick), not expected)
+            self.assertEqual(voting_enabled("default", lo.pk, e, k), expected)
+            with connection.cursor() as cursor:
+                cut = max(e, k)
+                cursor.execute("SELECT (public.cq_settings_at(%s,%s)->>'enabled')::boolean", [lo.pk, cut])
+                self.assertEqual(cursor.fetchone()[0], voting_enabled("default", lo.pk, cut, cut))
+
+        effect(config, draft(config, governed))
+        relaxed_question = governed | {"require_cq_to_change_application_question": False}
+        downgrade = draft(config, relaxed_question)
+        carried_false = draft(config, governed)
+        first = self.configure(scope, {"enabled": True})
+        boundary(first, True)
+        check_refusal("C_CHANGE_SELF_AUTHORISING", effect, config, downgrade)
+        check_refusal("C_ROUTE_IS_CQ", effect, config, carried_false)
+        check_refusal("C_ROUTE_IS_CQ", draft, question, prompt)
+        policy = models.OrganismEntitlementPolicyText.objects.latest("policy_version")
+        se = entitlements.OrganismEntitlementService(authority=authority, clock=support.database_now)
+        check_refusal("SE_OPT_IN_NEEDS_CQ", se.activate_beta, entitlements.EntitlementElectionCommand(
+            credential=owner.credential, living_organism_uuid=lo.organism_id, request_reference=uuid4().hex,
+            idempotency_key=uuid4().hex, occurred_at=support.database_now(), policy_version=policy.policy_version,
+            policy_text_sha256=policy.text_sha256))
         small = self.configure(scope, {"vote_days": 4}, first)
         facts = self.facts(small)["facts"]
         self.assertEqual(
@@ -224,6 +288,8 @@ class CQSettingsAuthorityTests(TransactionTestCase):
             str(denied.exception), "This discussion is unavailable to you."
         )
         off = self.configure(scope, {"enabled": False}, small)
+        boundary(off, False)
+        effect(config, draft(config, relaxed_question))
         self.refused(
             "CQ_SETTINGS_RESTART",
             "Re-enable CQ with the recorded settings, then put the change to the members.",
@@ -247,6 +313,14 @@ class CQSettingsAuthorityTests(TransactionTestCase):
             [v["act_uuid"] for v in cq.settings_history(**scope)],
             [first, small, off, restart],
         )
+
+        permitted = draft(question, prompt)
+        applied = effect(question, permitted)
+        self.assertEqual(applied.version_uuid, permitted.version_uuid)
+        self.assertTrue(models.LivingOrganismEvent.objects.filter(
+            living_organism=lo, action=question.value,
+            authority_decision_reference=applied.authority_decision_reference,
+        ).exists(), "A non-governed question must still take effect while voting is on.")
 
         # The whole LO still has three members. One is ineligible for this motion.
         change, wording = motions.propose(self, scope, {"vote_days": 6}, restart)
@@ -378,7 +452,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
             fixtures.command(founder, article)
         )
         self.assertEqual(enacted.route, "SOLE_MEMBER_COORDINATOR")
-        initial = self.configure(scope, {"enabled": True})
+        initial = self.configure(scope, {"enabled": True, "clarity_stage": False})
         voters = [founder, fixtures.add_member(lo), fixtures.add_member(lo)]
         for voter in voters[1:]:
             membership = models.OrganismMembership.objects.get(
@@ -436,8 +510,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
         for other in (scope, sibling):
             self.assertEqual(cq.settings(**other)["settings"]["reporting"], "NAMED")
         self.assertEqual(cq.settings_history(**sibling), [])
-        old, _ = self.confirmed(local, voters)
-        old_ballot = cq.finish_clarity(**old, request_uuid=uuid4())
+        old, old_ballot = motions.prepared_ballot(self, local)
 
         citation = {
             "binding": str(article.proposal),
@@ -483,9 +556,9 @@ class CQSettingsAuthorityTests(TransactionTestCase):
             choice="TOTALS_ONLY",
             predecessor=version,
         )
-        later, _ = self.confirmed(local, voters)
+        later, later_ballot = motions.prepared_ballot(self, local)
         after = motions.settle(
-            later, cq.finish_clarity(**later, request_uuid=uuid4()), voters
+            later, later_ballot, voters
         )
         trace = cq_reads.reporting_decision(**later, result_uuid=after["post_uuid"])
         self.assertEqual(
@@ -511,6 +584,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
 
     def test_06_reporting_trace_respects_audience_and_lapse(self):
         """DISC4-06. GOVERNANCE result audience, local choice over lapse, stale entitlement at settlement, and a voted return to inheritance."""
+        self.topic_category_ids = {}
         lo, founder = fixtures.ordinary_birth(
             offering_choice="COMPLIMENTARY_BETA", board_seats=3
         )

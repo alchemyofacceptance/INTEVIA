@@ -509,25 +509,17 @@ class SRDefinitionCommandTests(TransactionTestCase):
         self.assertEqual(models.OrganismRoleDefinition.objects.filter(code=first.code,living_organism=self.organism).count(),2, msg='Repeating creation and refusing re-creation of the retired custom role should leave exactly its two historical versions; the version count differs.')
 
     def test_04_cq_refusal_on_all_three_acts_retains_only_attempt_evidence(self):
-        """O-07: class A matrix for A1/A2/A3; fixture CQ read is injected.
+        """O-07. Voting on in DISCUSSION refuses all three definition acts with attempt evidence only."""
+        from src.intevia.services import cq
 
-        The patch sees every effective-version read during the command. Only a
-        governance-configuration object is changed; the exact C_ROUTE_IS_CQ
-        assertion exposes a different earlier refusal rather than accepting it.
-        """
         command, row = self._define_custom()
-        original = __import__("src.intevia.services.organism_application_authority",fromlist=["_effective_version"])._effective_version
-        def cq(*args,**kwargs):
-            config = original(*args,**kwargs)
-            if config is not None and isinstance(config,models.LOGovernanceConfigurationVersion):
-                config.cq_active = True
-            return config
+        cq.change_settings(credential=self.actor.credential, organism_uuid=self.organism.organism_id,
+                           changes={"enabled": True}, predecessor=None, request_uuid=uuid4())
         for action in ("DEFINE","AMEND","RETIRE"):
             candidate = self._command(action,row=row if action != "DEFINE" else None,
                 content=command.content if action != "RETIRE" else None)
             before = self._snapshot()
-            with patch("src.intevia.services.organism_application_authority._effective_version",side_effect=cq):
-                error = self._failure(candidate,S015AuthorityDenied)
+            error = self._failure(candidate,S015AuthorityDenied)
             self.assertEqual(error.refusal_code.value,"C_ROUTE_IS_CQ")
             self.assertEqual(str(error),'This change to an office definition could not be made by the Coordinators alone: this organisation decides such matters through its Collective Questioning process. No office has been created or changed; the request and this refusal are on record. Raise it through that process.')
             after = self._unchanged_except(before,"AuthorityDecision","CommandIntake")
