@@ -27,9 +27,8 @@ and its source are included in the result and receipt, not separate
 event columns. A proposed term is fingerprinted but the PROPOSE event
 and result establish no term.
 
-assignment_in_effect combines the cached assignment state with the
-recorded FIXED-term cutoff, returning False at and after effective_until.
-This module exposes no command that automatically records term expiry.
+assignment_in_effect folds the assignment and its term at effective and
+knowledge coordinates. A dependent Board office also requires its place.
 open_nominations folds assignment state at supplied effective and
 knowledge coordinates and excludes nominations with an eligible
 DECLINE or WITHDRAW record.
@@ -807,65 +806,24 @@ def _insert_assignment_event_row(
         return cursor.fetchone()[0]
 
 
-def _head_assign_term(
-    *,
-    database_alias: str,
-    assignment_id: int,
-) -> tuple[str, datetime | None] | None:
-    """Return the term recorded on the assignment's latest ASSIGN event, or None.
-
-    Reads effective_until_state and effective_until from the ASSIGN event
-    with the highest sequence for this assignment, by raw SQL on
-    database_alias. Returns None when no ASSIGN event exists. Does not look
-    at later END or REASSIGN events.
-    """
-    with connections[database_alias].cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT effective_until_state, effective_until
-              FROM public.core_contextualroleassignmentstateevent
-             WHERE assignment_id = %s AND action = 'ASSIGN'
-             ORDER BY sequence DESC
-             LIMIT 1
-            """,
-            [assignment_id],
-        )
-        row = cursor.fetchone()
-    if row is None:
-        return None
-    return str(row[0]), row[1]
-
-
 def assignment_in_effect(
     assignment: ContextualRoleAssignment,
     at: datetime,
     *,
     database_alias: str = "default",
+    known_at: datetime | None = None,
 ) -> bool:
-    """Apply the recorded fixed-term expiry check to the supplied assignment's state.
-
-    Requires type(assignment) to be ContextualRoleAssignment, otherwise
-    raises TypeError. Validates at as a timestamp and reads the latest
-    ASSIGN event's term from database_alias.
-
-    Returns False when that term is FIXED, effective_until is present,
-    and at is at or after effective_until. Otherwise returns whether
-    the supplied assignment object's state is ACTIVE.
-
-    Does not refresh the supplied object, fold events at at, check the
-    appointment's start against at, or filter the term read by effective
-    or knowledge time. This is not a historical as-of-state query.
-
-    Applies no tolling and performs no writes. Reaching the fixed-term end
-    changes this return value without recording an ending.
-    """
+    """Return competence at the effective instant from evidence known at the cut."""
     if type(assignment) is not ContextualRoleAssignment:
         raise TypeError("assignment must be a ContextualRoleAssignment")
     moment = _validate_timestamp(at, "at")
-    term = _head_assign_term(database_alias=database_alias, assignment_id=assignment.pk)
-    if term is not None and term[0] == "FIXED" and term[1] is not None and moment >= term[1]:
-        return False
-    return assignment.state == "ACTIVE"
+    known = None if known_at is None else _validate_timestamp(known_at, "known_at")
+    with connections[database_alias].cursor() as cursor:
+        cursor.execute(
+            "SELECT public.elect_office_effective(%s,%s,coalesce(%s,statement_timestamp()))",
+            [assignment.pk, moment, known],
+        )
+        return cursor.fetchone()[0]
 
 
 OFFICE_ACTION_MESSAGES = {
@@ -1305,14 +1263,9 @@ class OrganismRoleService(_OrganismCommandService):
                 request_uuid=exc.request_uuid,
             ) from exc
 
-    def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime) -> bool:
-        """Apply assignment_in_effect using this service's database alias.
-
-        Uses the supplied object's state and the latest recorded ASSIGN term,
-        with at used for the fixed-term expiry check. Does not refresh the
-        object or reconstruct its historical state.
-        """
-        return assignment_in_effect(assignment, at, database_alias=self._alias)
+    def assignment_in_effect(self, assignment: ContextualRoleAssignment, at: datetime, *, known_at: datetime | None = None) -> bool:
+        """Read competence using this database and the supplied or current knowledge cut."""
+        return assignment_in_effect(assignment, at, known_at=known_at, database_alias=self._alias)
 
     def open_nominations(
         self,
@@ -2049,7 +2002,8 @@ class OrganismRoleService(_OrganismCommandService):
 
         Match C2's cached-ACTIVE OR effective fold, across versions of the same
         LO-scoped code, for this membership only, excluding this nomination.
-        One database clock cut is used for this observation. Raw result: bool.
+        A proved Board-office end releases that term. One database clock cut
+        supplies the knowledge coordinate. Raw result: bool.
         """
         with connections[self._alias].cursor() as cursor:
             cursor.execute("SELECT clock_timestamp()")
@@ -2060,11 +2014,15 @@ class OrganismRoleService(_OrganismCommandService):
                 WHERE held.membership_id = %s AND held.id <> %s
                   AND d.living_organism_id = %s AND d.code = %s
                   AND d.scope = 'LIVING_ORGANISM'
+                  AND (d.kind IS DISTINCT FROM 'BOARD_OFFICE' OR NOT EXISTS(
+                      SELECT FROM public.core_contextualroleassignmentstateevent started
+                      WHERE started.assignment_id=held.id AND started.action='ASSIGN'
+                      AND public.elect_office_deadline(started.id,%s)<=%s))
                   AND (held.state = 'ACTIVE' OR public.s015_fold_effective_state(
                       'core_contextualroleassignment', held.id, %s, %s) = 'ACTIVE'))""",
                 [assignment.membership_id, assignment.pk,
                  assignment.membership.living_organism_id, assignment.role_definition.code,
-                 effective_at, known_at])
+                 known_at, effective_at, effective_at, known_at])
             return cursor.fetchone()[0]
 
     def _verify_assign_consent(

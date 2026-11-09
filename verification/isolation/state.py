@@ -133,6 +133,8 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0073_discussion_posts": {"core_governedrule": 3},
     "0076_cq_authority": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0077_cq_settings_authority": {"core_governedrule": 3, "core_cqreportingdefault": 1},
+    "0083_elect_board_continuity": {"core_governedrule": 3, "core_cqreportingdefault": 1},
+    "0082_elect_term_continuity": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0081_hard_voting_authority": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0080_elect_authority_and_vacancy": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0079_elect_and_seat": {"core_governedrule": 3, "core_cqreportingdefault": 1},
@@ -195,7 +197,8 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0074_cq_clarity": 660, "0075_cq_decisions": 663, "0076_cq_authority": 664,
                           "0077_cq_settings_authority": 664,
                           "0078_cq_circle_reporting": 664, "0079_elect_and_seat": 669,
-                          "0080_elect_authority_and_vacancy": 680, "0081_hard_voting_authority": 680}  # 20 register and 11 operation triggers; VC measures on PG17
+                          "0080_elect_authority_and_vacancy": 680, "0081_hard_voting_authority": 680,
+                          "0082_elect_term_continuity": 680, "0083_elect_board_continuity": 681}  # 20 register and 11 operation triggers; VC measures on PG17
 # Non-core contributions, keyed by exact (app_label, migration_name).
 # email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)
 # and ema_template_truncate_immutable (TRUNCATE), both on

@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "HARD P1b",
-  "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-  "baseline_methods": 253,
-  "candidate_methods": 243,
+  "package": "ELECT P3 P2e",
+  "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+  "baseline_methods": 243,
+  "candidate_methods": 248,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -134,6 +134,34 @@
       "candidate_commit": null,
       "qualification": null,
       "status": "Mechanical correction handed to VC. Exact P1b whole-job evidence pending."
+    },
+    "ELECT_P3_P1_PENDING": {
+      "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+      "commit": null,
+      "run": null,
+      "break": null,
+      "restored": null
+    },
+    "ELECT_P3_P2_PENDING": {
+      "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+      "commit": null,
+      "run": null,
+      "break": null,
+      "restored": null
+    },
+    "ELECT_P3_P2B_PENDING": {
+      "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+      "commit": null,
+      "run": null,
+      "break": null,
+      "restored": null
+    },
+    "ELECT_P3_P2E_PENDING": {
+      "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
     }
   },
   "source_index": {
@@ -224,18 +252,34 @@
     "ELECT_TAR_v1_0_P2.md": {
       "path_in_ELECT_return": "02_DESIGN/ELECT_TAR_v1_0_P2.md",
       "sha256": "d6e8e1ffe5745b64c6637ffeac21d960910ca0fa6a6ebf741ca335c033c3f08f"
+    },
+    "ELECT_P3_TAR_v1_0_P1.md": {
+      "sha256": "5bc0cbda625ae661095c2ea047bd3c1175c5a6f76931643128b983e9cb5617f7",
+      "source": "ELECT P3 P1 carrier"
+    },
+    "ELECT_P3_TAR_v1_0_P2.md": {
+      "sha256": "38049d2cbe7a5ab6b6d8e336c839e0354d7f2e14f1d2f9cfe0f75924b5cbd190",
+      "source": "ELECT P3 P2 carrier"
+    },
+    "ELECT_P3_TAR_v1_0_P2b.md": {
+      "sha256": "f5fc6b6b7278564c87c2b064ca6dc51414b0b52f3e436c1df29d7ea34209e70b",
+      "source": "ELECT P3 P2b carrier"
+    },
+    "ELECT_P3_TAR_v1_0_P2e.md": {
+      "sha256": "170fddcd1e20aac704737b17927f81fefaf90674d3b5d839856a68bb90a28522",
+      "source": "ELECT P3 P2e carrier"
     }
   },
   "coverage": {
-    "unit_tables": 13,
+    "unit_tables": 17,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 243,
+    "active": 248,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
-    "ELECT_methods": 8,
+    "ELECT_methods": 13,
     "HARD_methods_added": 1
   },
   "tests": [
@@ -4169,6 +4213,33 @@
           "unit_ids": [
             "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
           ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P1.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
         }
       ],
       "review": {
@@ -4183,24 +4254,11 @@
       "recurring_controls": [],
       "evidence": {
         "source_commit": null,
-        "normal": "BASE_MAIN",
-        "candidate_run": "HARD_P1_PENDING",
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "P1_normal": "P1_RELAY",
-        "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
-        "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
-        "DISC4_P1": {
-          "candidate_commit": null,
-          "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
-          "normal": null,
-          "break": null,
-          "restored": null,
-          "reference": "DISC4_P1_PENDING"
-        },
-        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
+        "candidate_method_file_lf_sha256": "1ab88747a17698f87b245c9cd5cdc26d8588b2e16db5401ae0a0188ed2af925e"
       },
       "history": [
         {
@@ -4220,6 +4278,55 @@
           "prior_candidate_method_file_lf_sha256": null,
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "ELECT P3 P1",
+          "previous_source": "tests/test_cq_decisions.py:946",
+          "previous_evidence": {
+            "source_commit": null,
+            "normal": "BASE_MAIN",
+            "candidate_run": "HARD_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "P1_normal": "P1_RELAY",
+            "P1_normal_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
+            "baseline_recurring_faults": [],
+            "change_record": "TE_TAR_v1_0_P2.md / test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
+            "DISC4_P1": {
+              "candidate_commit": null,
+              "candidate_file_lf_sha256": "31c91fd5a18489ff3669e707210c963f4bc39c85ace4e29b4f80f7b1b8b43c74",
+              "normal": null,
+              "break": null,
+              "restored": null,
+              "reference": "DISC4_P1_PENDING"
+            },
+            "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2",
+          "previous_source": "tests/test_cq_decisions.py:946",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "e9398644eb0c25b477d1c5b2e2620683d7b86cfaadd3332a0b6648ba6c08dcf7"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_cq_decisions.py:946",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "1ab88747a17698f87b245c9cd5cdc26d8588b2e16db5401ae0a0188ed2af925e"
+          }
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -4299,7 +4406,7 @@
           "evidence": "DISC4_P1_PENDING"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:1031",
+      "current_source": "tests/test_cq_decisions.py:1042",
       "baseline_claim": "DISC2-20: an LO member without a seat can follow a GOVERNANCE result and its rule"
     },
     {
@@ -6232,7 +6339,7 @@
           "scope": "fixture module or source location"
         }
       ],
-      "current_source": "tests/test_law_acts.py:122"
+      "current_source": "tests/test_law_acts.py:124"
     },
     {
       "obligation": "base:test_law_acts.LawActTests.test_protected_authority_members_and_root",
@@ -6289,7 +6396,7 @@
           "scope": "fixture module or source location"
         }
       ],
-      "current_source": "tests/test_law_acts.py:170"
+      "current_source": "tests/test_law_acts.py:172"
     },
     {
       "obligation": "base:test_law_acts.LawActTests.test_nominations_deferral_and_closed_routes",
@@ -6346,7 +6453,7 @@
           "scope": "fixture module or source location"
         }
       ],
-      "current_source": "tests/test_law_acts.py:221"
+      "current_source": "tests/test_law_acts.py:223"
     },
     {
       "obligation": "base:test_law_acts.LawActTests.test_inherited_citation_keeps_exact_version_across_successors_and_gap",
@@ -6409,7 +6516,7 @@
           "scope": "fixture module or source location"
         }
       ],
-      "current_source": "tests/test_law_acts.py:295"
+      "current_source": "tests/test_law_acts.py:297"
     },
     {
       "obligation": "base:test_law_acts.LawActTests.test_charters_enter_whole_and_inherited_protection_refuses_retirement",
@@ -6481,7 +6588,7 @@
           "scope": "fixture module or source location"
         }
       ],
-      "current_source": "tests/test_law_acts.py:408"
+      "current_source": "tests/test_law_acts.py:410"
     },
     {
       "obligation": "base:test_law_records.LawRecordTests.test_overlapping_versions_and_competing_first_windows",
@@ -12406,7 +12513,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:509"
+      "current_source": "tests/test_sr_office_guards.py:520"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_02_non_coordinator_assign_without_consent_refused_by_consent_guard",
@@ -12477,7 +12584,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:527"
+      "current_source": "tests/test_sr_office_guards.py:538"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
@@ -12494,6 +12601,33 @@
           "unit_ids": [
             "SR-C2-03"
           ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P1.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "SR C2-03"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "SR C2-03"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "SR C2-03"
+          ]
         }
       ],
       "review": {
@@ -12509,29 +12643,12 @@
         "sr-c2-lawful-chain-overrefusal"
       ],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
-        "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "P1_normal": "P1_RELAY",
-        "P1_normal_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
-        "baseline_recurring_faults": [
-          "sr-c2-lawful-chain-overrefusal"
-        ],
-        "ELECT_P1": {
-          "reference": "ELECT_P1_VC_RUN",
-          "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
-        },
-        "ELECT_P1b": {
-          "reference": "ELECT_P1B_VC",
-          "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
-        },
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
-        }
+        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
       },
       "history": [
         {
@@ -12544,9 +12661,62 @@
           "previous_source": "tests/test_sr_office_guards.py:555",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "ELECT P3 P1",
+          "previous_source": "tests/test_sr_office_guards.py:563",
+          "previous_evidence": {
+            "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+            "normal": "BASE_MAIN",
+            "candidate_run": "P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "P1_normal": "P1_RELAY",
+            "P1_normal_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
+            "baseline_recurring_faults": [
+              "sr-c2-lawful-chain-overrefusal"
+            ],
+            "ELECT_P1": {
+              "reference": "ELECT_P1_VC_RUN",
+              "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+            },
+            "ELECT_P1b": {
+              "reference": "ELECT_P1B_VC",
+              "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+            },
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+            }
+          }
+        },
+        {
+          "unit": "ELECT P3 P2",
+          "previous_source": "tests/test_sr_office_guards.py:569",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "903066b25bbd76c590368513dae274a7dcafae08694433a46ef7d60f1ef582ab"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_sr_office_guards.py:574",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
+          }
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:563"
+      "current_source": "tests/test_sr_office_guards.py:574"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_04_founder_held_non_coordinator_office_not_caught_by_founder_protection",
@@ -12615,7 +12785,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:612"
+      "current_source": "tests/test_sr_office_guards.py:623"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_05_second_assign_while_office_held_refused",
@@ -12686,7 +12856,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:662"
+      "current_source": "tests/test_sr_office_guards.py:673"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_06_propose_refused_without_custom_entitlement_and_on_superseded_version",
@@ -12757,7 +12927,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:716"
+      "current_source": "tests/test_sr_office_guards.py:727"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_07_reserved_root_office_act_refused_at_the_guard",
@@ -12826,7 +12996,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:753"
+      "current_source": "tests/test_sr_office_guards.py:764"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_08_circle_scope_unguarded_and_other_holdings_do_not_count_as_held",
@@ -12904,7 +13074,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:795"
+      "current_source": "tests/test_sr_office_guards.py:806"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
@@ -12975,6 +13145,33 @@
           "unit_ids": [
             "SR-C2-09"
           ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P1.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "SR C2-09"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "SR C2-09"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "SR C2-09"
+          ]
         }
       ],
       "review": {
@@ -12990,29 +13187,12 @@
         "sr-c2-attribution-gate"
       ],
       "evidence": {
-        "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
-        "normal": "BASE_MAIN",
-        "candidate_run": "P2_PENDING",
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "P1_normal": "P1_RELAY",
-        "P1_normal_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
-        "baseline_recurring_faults": [
-          "sr-c2-attribution-gate"
-        ],
-        "ELECT_P1": {
-          "reference": "ELECT_P1_VC_RUN",
-          "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
-        },
-        "ELECT_P1b": {
-          "reference": "ELECT_P1B_VC",
-          "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
-        },
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
-        }
+        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
       },
       "history": [
         {
@@ -13025,9 +13205,62 @@
           "previous_source": "tests/test_sr_office_guards.py:862",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "ELECT P3 P1",
+          "previous_source": "tests/test_sr_office_guards.py:870",
+          "previous_evidence": {
+            "source_commit": "a099b83b78ca9bfd69196e19d8939c77efdbff09",
+            "normal": "BASE_MAIN",
+            "candidate_run": "P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "P1_normal": "P1_RELAY",
+            "P1_normal_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
+            "baseline_recurring_faults": [
+              "sr-c2-attribution-gate"
+            ],
+            "ELECT_P1": {
+              "reference": "ELECT_P1_VC_RUN",
+              "candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+            },
+            "ELECT_P1b": {
+              "reference": "ELECT_P1B_VC",
+              "candidate_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+            },
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+            }
+          }
+        },
+        {
+          "unit": "ELECT P3 P2",
+          "previous_source": "tests/test_sr_office_guards.py:876",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "903066b25bbd76c590368513dae274a7dcafae08694433a46ef7d60f1ef582ab"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_sr_office_guards.py:881",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
+          }
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:870",
+      "current_source": "tests/test_sr_office_guards.py:881",
       "baseline_claim": "Installed bodies at head equal the expected ones; SR migrations reverse to 0051 and reapply cleanly; with an occupied office both 0053 and 0052 reverse refuse and change nothing"
     },
     {
@@ -13097,7 +13330,7 @@
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:900"
+      "current_source": "tests/test_sr_office_guards.py:911"
     },
     {
       "obligation": "base:test_sr_provider.SRProviderPureTests.test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context",
@@ -13637,7 +13870,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:23",
+      "current_source": "tests/test_elections.py:24",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -13705,7 +13938,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:61",
+      "current_source": "tests/test_elections.py:62",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -13773,7 +14006,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:101",
+      "current_source": "tests/test_elections.py:102",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -13832,7 +14065,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:143",
+      "current_source": "tests/test_elections.py:144",
       "evidence": {
         "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
         "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
@@ -13866,12 +14099,21 @@
       "baseline_label": null,
       "status": "active",
       "current_label": "test_elections.ElectionTests.test_result_authorises_exact_person_and_place",
-      "claim": "ELECT-05. An actual result binds winner, place and term. Refuse substitutions and reuse the same receipt/effect.",
+      "claim": "First authorise the actual winner, seat, start and a fixed end, then move just that end one microsecond and separately substitute null. Both must refuse. The original wrong person, seat, start, replay and storage checks remain.",
       "unit_TAR": [
         {
           "source": "ELECT_TAR_v1_0_P1b.md",
           "lines": [
             11
+          ],
+          "unit_ids": [
+            "ELECT-05"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P1.md",
+          "lines": [
+            8
           ],
           "unit_ids": [
             "ELECT-05"
@@ -13883,19 +14125,14 @@
       "recurring_controls": [
         "MUT-elect-result-person-seat"
       ],
-      "current_source": "tests/test_elections.py:185",
+      "current_source": "tests/test_elections.py:186",
       "evidence": {
-        "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "candidate_run": "ELECT_LANDING_1050F2F5",
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
-        }
+        "candidate_method_file_lf_sha256": "bebd395c98a87a07d6aad23558ecdc27afc9a0cc152911afc5a908326b786279"
       },
       "history": [
         {
@@ -13909,6 +14146,23 @@
           "run": "ELECT_P1B_VC",
           "previous_source": "tests/test_elections.py:178",
           "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        {
+          "unit": "ELECT P3 P1",
+          "previous_source": "tests/test_elections.py:185",
+          "previous_evidence": {
+            "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+            "candidate_run": "ELECT_LANDING_1050F2F5",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+            }
+          }
         }
       ]
     },
@@ -14127,24 +14381,307 @@
         "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af"
       },
       "history": [],
-      "current_source": "tests/test_elections.py:220"
+      "current_source": "tests/test_elections.py:226"
+    },
+    {
+      "obligation": "ELECT-09",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_term_boundaries_and_adjacent_succession",
+      "status": "active",
+      "claim": "A Treasury appointment supplies power inside its own interval. At the exact end, before an END row exists, the named equality assertion must be false. At the same known cut the prior instant is true. An independent connection waits, commits and sees zero work. Three actual voters elect adjacent trustees. The successor cannot exercise the place before handover. Includes exact personal and caller refusals.",
+      "unit_TAR": [
+        {
+          "source": "ELECT_P3_TAR_v1_0_P1.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "ELECT-09"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-09"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-09"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [
+        "MUT-elect-exclusive-term-end"
+      ],
+      "history": [
+        {
+          "unit": "ELECT P3 P2",
+          "previous_source": "tests/test_elections.py:277",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "bebd395c98a87a07d6aad23558ecdc27afc9a0cc152911afc5a908326b786279"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_elections.py:277",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7a5b76bbe39213fe08732063b11446a0c048f5810642ce364828f0888012a0db"
+          }
+        }
+      ],
+      "current_source": "tests/test_elections.py:277",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2B_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+      }
+    },
+    {
+      "obligation": "ELECT-10",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_recognised_incumbents_require_constitution_consent_and_remaining_term",
+      "status": "active",
+      "claim": "Only the named authority recognises a consenting eligible incumbent on the cited place and remainder. No authority is backdated to the AGM.",
+      "unit_TAR": [
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_elections.py:421",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7a5b76bbe39213fe08732063b11446a0c048f5810642ce364828f0888012a0db"
+          }
+        }
+      ],
+      "current_source": "tests/test_elections.py:421",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2B_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+      }
+    },
+    {
+      "obligation": "ELECT-11",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_holder_notice_seat_dependent_offices_and_vacancies",
+      "status": "active",
+      "claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election.",
+      "unit_TAR": [
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "ELECT-11"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2b.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "ELECT-11"
+          ]
+        },
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2e.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "ELECT-11"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "unit": "ELECT P3 P2b",
+          "previous_source": "tests/test_elections.py:534",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7a5b76bbe39213fe08732063b11446a0c048f5810642ce364828f0888012a0db"
+          }
+        },
+        {
+          "unit": "ELECT P3 P2e",
+          "previous_source": "tests/test_elections.py:547",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2B_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+          }
+        }
+      ],
+      "current_source": "tests/test_elections.py:547",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2E_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+      }
+    },
+    {
+      "obligation": "ELECT-12",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_future_office_tracks_original_seat_term_and_lo_departure",
+      "status": "active",
+      "claim": "A dependent successor tracks the original Board seat and its earliest known ending.",
+      "unit_TAR": [
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2e.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "ELECT-12"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [],
+      "current_source": "tests/test_elections.py:711",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2E_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+      }
+    },
+    {
+      "obligation": "ELECT-13",
+      "baseline_label": null,
+      "current_label": "test_elections.ElectionTests.test_advance_cites_dated_resignation_assessment_before_term_catch_up",
+      "status": "active",
+      "claim": "An advance at or after the constitutional date cannot open an unassessed resignation vacancy.",
+      "unit_TAR": [
+        {
+          "source": "ELECT_P3_TAR_v1_0_P2e.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-13"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [],
+      "current_source": "tests/test_elections.py:761",
+      "evidence": {
+        "source_commit": null,
+        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "candidate_run": "ELECT_P3_P2E_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+      }
     }
   ],
   "previous_unit": {
-    "package": "ELECT P2",
-    "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-    "baseline_methods": 245,
-    "candidate_methods": 253,
+    "package": "HARD P1b",
+    "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+    "baseline_methods": 253,
+    "candidate_methods": 243,
     "coverage": {
       "unit_tables": 13,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 253,
-      "folded": 35,
+      "active": 243,
+      "folded": 46,
       "retired": 2,
       "DISC4_methods": 6,
-      "ELECT_methods": 8
+      "ELECT_methods": 8,
+      "HARD_methods_added": 1
+    },
+    "earlier": {
+      "package": "ELECT P2",
+      "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+      "baseline_methods": 245,
+      "candidate_methods": 253,
+      "coverage": {
+        "unit_tables": 13,
+        "SR_C2_staging_tables": 1,
+        "historical_carryovers": 90,
+        "DISC3_methods": 8,
+        "active": 253,
+        "folded": 35,
+        "retired": 2,
+        "DISC4_methods": 6,
+        "ELECT_methods": 8
+      }
     }
   }
 }

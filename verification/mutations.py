@@ -27,6 +27,18 @@ from verification.recording import RecordingRunnerMixin
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
 MUTATIONS = {
+    "elect-exclusive-term-end": {
+        "follow_up": "ELECT-09 recurring control",
+        "intended": "The officer can still act at the exclusive end before catch-up.",
+        "targets": ["test_elections.ElectionTests.test_term_boundaries_and_adjacent_succession"],
+        "sql": ["""DO $fault$
+DECLARE src text; marker text:='p_at < p_end) -- ELECT_EXCLUSIVE_END';
+BEGIN
+ SELECT pg_get_functiondef('public.elect_term_includes(timestamptz,timestamptz,timestamptz)'::regprocedure) INTO src;
+ IF strpos(src,marker)=0 THEN RAISE EXCEPTION 'Missing exclusive term-end discriminator'; END IF;
+ EXECUTE replace(src,marker,'p_at <= p_end) -- deliberate inclusive end');
+END $fault$;"""],
+    },
     "elect-result-person-seat": {
         "follow_up": "ELECT-05 recurring control",
         "intended": "A qualified election authorises someone else or another place.",

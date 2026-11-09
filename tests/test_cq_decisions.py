@@ -1013,8 +1013,12 @@ class CQDecisionTests(TransactionTestCase):
                 self.assertEqual(str(stopped.exception), refusal)
                 self.assertEqual(read_back(), expected)
 
-        hard = import_module("core.migrations.0081_hard_voting_authority")
+        terms = import_module("core.migrations.0082_elect_term_continuity")
+        continuity = import_module("core.migrations.0083_elect_board_continuity")
+        hard = terms.hard
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
+            continuity.uninstall(None, editor)
+            terms.uninstall(None, editor)
             hard.uninstall(None, editor)
             self.assertIsNone(hard.installed(cursor, hard.SELECTOR))
             for signature, previous, _ in hard.edits():
@@ -1024,6 +1028,13 @@ class CQDecisionTests(TransactionTestCase):
             for signature, _, replacement in hard.edits():
                 self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
             self.assertEqual(hard.installed(cursor, hard.SELECTOR), hard.body(hard.SELECTOR_SQL))
+            terms.install(None, editor)
+            for signature, _, replacement in terms.edits():
+                self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
+            continuity.install(None, editor)
+            for _, replacement in continuity.edits():
+                signature = continuity.signature(replacement)
+                self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True

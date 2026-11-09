@@ -118,12 +118,8 @@ def _present_application_audiences(
     an applicant is never also processing, even when a Coordinator.
 
     processing: an ACTIVE membership in the LO named by organism_pk
-    has an ACTIVE LO-scope COORDINATOR assignment with a qualifying
-    term. Membership and assignment states are read as stored, not
-    historically folded. _head_assign_term reads the ASSIGN event
-    with the highest sequence, without a time cut or consultation of
-    later END or REASSIGN events. An absent term, non-FIXED term or
-    null end qualifies; a FIXED term with an end requires at < end.
+    has an LO-scope COORDINATOR assignment in effect at the supplied
+    effective and knowledge cut.
 
     With application None, applicant is False. Reads only; database
     and term-evaluation errors propagate. Used by _authorise_read and
@@ -151,13 +147,11 @@ def _present_application_audiences(
         membership__state="ACTIVE",
         role_definition__code="COORDINATOR",
         role_definition__scope="LIVING_ORGANISM",
-        state="ACTIVE",
     )
-    from src.intevia.services.organism_role_service import _head_assign_term
+    from src.intevia.services.organism_role_service import assignment_in_effect
 
     for office in offices:
-        term = _head_assign_term(database_alias=database_alias, assignment_id=office.pk)
-        if term is None or term[0] != "FIXED" or term[1] is None or at < term[1]:
+        if assignment_in_effect(office, at, known_at=at, database_alias=database_alias):
             return True, False, True
     return True, False, False
 

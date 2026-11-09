@@ -5979,6 +5979,9 @@ class CircleAdmissionDecision(_S015AppendOnly):
                 ) | models.Q(
                     route="GOVERNANCE_CONSTITUTIONAL", constitutional_route="COOPTION",
                     deciding_party="body:GOVERNANCE", deciding_identity__isnull=True, outcome="ACCEPT",
+                ) | models.Q(
+                    route="GOVERNANCE_CONSTITUTIONAL", constitutional_route="RECOGNITION",
+                    deciding_identity__isnull=True, outcome="ACCEPT",
                 ),
                 name="sbg_circledecision_route_shape_ck",
             ),
@@ -6110,8 +6113,10 @@ class CircleParticipationEnd(_S015AppendOnly):
         constraints = [
             models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="elect-term:"),
                                     name="elect_one_scheduled_end"),
-            models.UniqueConstraint(fields=("participation",), condition=~models.Q(composing_rule_reference__startswith="elect-term:"),
-                                    name="elect_one_other_end"),
+            models.UniqueConstraint(fields=("participation",), condition=~models.Q(composing_rule_reference__startswith="elect-term:") &
+                ~models.Q(composing_rule_reference__startswith="elect-resign:"), name="elect_one_other_end"),
+            models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="elect-resign:"),
+                                    name="elect_one_resignation"),
             models.CheckConstraint(
                 condition=models.Q(
                     actor_state="NONE",

@@ -25,6 +25,14 @@ def refuse(reason):
     )
 
 
+def pending_elected_successor(alias, event_uuid, membership_id, kind, effective_at, received_at):
+    """Consult the same future-mandate predicate as the departure storage guard."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT public.elect_pending_successor(%s,%s,%s,%s,%s)",
+                       [event_uuid, membership_id, kind, effective_at, received_at])
+        return cursor.fetchone()[0]
+
+
 def coverage_assessment(alias, member, at, known):
     from src.intevia.services.organism_coverage import roster_at
 
@@ -61,6 +69,7 @@ class Departure:
     received_at: object
     fingerprint: str
     offices: list
+    reserved_offices: list
     closing_head: object
     start_recovery: bool
     membership_event_uuid: object
@@ -107,6 +116,12 @@ class Departure:
                 )
 
     def finish(self, transition):
+        if self.reserved_offices:
+            with connections[self.roles._alias].cursor() as cursor:
+                for office in self.reserved_offices:
+                    cursor.execute("SELECT public.elect_cancel_pending_office(%s,%s)",
+                                   [office.pk, transition.event_uuid])
+
         from src.intevia.services.organism_conditions import end_departing_relationships
 
         end_departing_relationships(self, transition)
@@ -188,12 +203,18 @@ def prepare_departure(
         .order_by("pk")
     )
     offices = []
+    reserved_offices = []
     for assignment in heads:
         head = assignment.head_state_event
         if head is not None and head.recorded_at > received_at:
             refuse(
                 "An office changed after this request was received. Check the office history and confirm a fresh departure."
             )
+        if (head is not None and head.action == "ASSIGN" and head.effective_at > received_at
+                and (head.evidence_reference or "").startswith("elect-result:")
+                and pending_elected_successor(alias, head.event_uuid, membership.pk, "OFFICE", effective_at, received_at)):
+            reserved_offices.append(assignment)
+            continue
         if head is None or head.effective_at > effective_at:
             refuse(
                 "An office change starts after the requested date or lacks a head. Check the leaving date."
@@ -307,6 +328,7 @@ def prepare_departure(
         received_at,
         fingerprint,
         qualified,
+        reserved_offices,
         closing_head,
         opening,
         event_uuid,

@@ -14,10 +14,14 @@ from tests import test_sr_office_actions as office
 ARTICLE = "Article 7"
 
 
-def provision(owner, lo, rules, *, vacancies=None):
+def provision(owner, lo, rules, *, vacancies=None, recognitions=None, resignations=None):
     body = {"elections": rules}
     if vacancies is not None:
         body["vacancies"] = vacancies
+    if recognitions is not None:
+        body["recognitions"] = recognitions
+    if resignations is not None:
+        body["resignations"] = resignations
     doc = law.Document(owner)
     version = doc.service.create_successor_version(
         identity=doc.author, resource_id=doc.name, content=json.dumps(body),
@@ -31,10 +35,10 @@ def provision(owner, lo, rules, *, vacancies=None):
     return {"binding_uuid": proposal.proposal, "version_id": version.pk}
 
 
-def owner(*, seats=2, elected=(1,), rules=None, voting=True):
+def owner(*, seats=2, elected=(1,), rules=None, voting=True, vacancies=None):
     lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=seats, elected=elected)
     circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
-    citation = provision(founder, lo, rules or {ARTICLE: seat()})
+    citation = provision(founder, lo, rules or {ARTICLE: seat()}, vacancies=vacancies)
     scope = {"credential": founder.credential, "organism_uuid": lo.organism_id}
     if voting:
         enable_voting(scope)

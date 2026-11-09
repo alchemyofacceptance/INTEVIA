@@ -418,16 +418,14 @@ class OrganismMembershipReader:
     def _view(self, membership: OrganismMembership, now: datetime) -> OwnMembershipView:
         """Build the OwnMembershipView for one membership at the reading time.
 
-        offices keeps the (code, scope) of each ACTIVE role assignment on this
-        membership, ordered by role code, scope and primary key, for which
-        assignment_in_effect (organism_role_service) reports the assignment in
-        effect at that time.
+        Include the code and scope of each assignment on this membership
+        that assignment_in_effect finds in effect at the reading time.
+        Order by role code, scope and primary key.
         """
         from src.intevia.services.organism_role_service import assignment_in_effect
 
         offices = ContextualRoleAssignment.objects.using(self._alias).filter(
             membership=membership,
-            state="ACTIVE",
         ).select_related("role_definition").order_by(
             "role_definition__code", "role_definition__scope", "pk",
         )
@@ -1296,24 +1294,26 @@ class OrganismMembershipService(_OrganismCommandService):
     ) -> S015MembershipRefused | None:
         """Return the authored refusal for a departure dated before a seat began, or None.
 
-        Finds the membership's earliest participation (by effective_at, recorded_at,
-        pk) whose effective_at is after the departure's effective_at, regardless of
-        any ending, and returns the SBG_DEPARTURE_PRECEDES_PARTICIPATION refusal for
-        it. Returns None when there is none.
-
-        received_at is the bound request's receipt time, used in the refusal's
-        text.
+        An adjacent-term election recorded before departure reserves a place
+        the successor has yet to take. All other future starts retain the
+        existing refusal, ordered by effective time, record time and key.
         """
-        participation = (
+        from src.intevia.services.organism_departure import pending_elected_successor
+
+        future = (
             CircleParticipation.objects.using(self._alias)
-            .filter(
-                membership=membership,
-                effective_at__gt=effective_at,
-            )
+            .filter(membership=membership, effective_at__gt=effective_at)
+            .select_related("decision")
             .order_by("effective_at", "recorded_at", "pk")
-            .first()
         )
-        if participation is None:
+        for participation in future:
+            if (participation.decision_id is None
+                    or participation.decision.constitutional_route != "ELECTION"
+                    or not pending_elected_successor(
+                        self._alias, participation.participation_uuid, membership.pk,
+                        "SEAT", effective_at, received_at)):
+                break
+        else:
             return None
 
         identity = membership.identity
@@ -1430,34 +1430,16 @@ class OrganismMembershipService(_OrganismCommandService):
     ) -> None:
         """Compose departure endings for eligible, not-already-ended participations.
 
-        Within the caller's transaction, select and lock this membership's
-        participations with effective_at at or before the supplied effective_at,
-        ordered by primary key and using select_for_update(of=("self",)).
-        The query applies no recorded_at cutoff. Return if it selects no rows.
-
-        Read the selected participations' existing endings, without an ending-date
-        filter. Fetch the U-3 composition rule by its fixed UUID, version 1 and code,
-        then skip every participation with an existing ending.
-
-        For each remaining participation, create a CircleParticipationEnd with
-        actor NONE, null actor and access epoch, capacity NA_NO_PARTY, entry mode
-        COMPOSED, and REFERENCE states for the rule and composer. Use the member's
-        identity as enterer and composer, the fetched rule and its reference, and
-        transition.event_uuid as the causal link. Set effective_at and occurred_at
-        to the supplied effective_at, and received_at to the supplied received_at;
-        recorded_at is assigned by the database.
-
-        Create no separate authority decision. This helper neither selects nor
-        refuses participations starting after effective_at; the caller's earlier
-        check and the database completeness guard address that condition.
+        Under the LO and membership locks the preflight has already refused
+        every future start except a verified election reservation. Cancel
+        that reservation at its own start, keeping the departure as its
+        cause. Current places end at departure. A later scheduled term or
+        resignation cannot prevent an earlier membership ending.
         """
         participations = list(
             CircleParticipation.objects.using(self._alias)
             .select_for_update(of=("self",))
-            .filter(
-                membership=membership,
-                effective_at__lte=effective_at,
-            )
+            .filter(membership=membership)
             .order_by("pk")
         )
         if not participations:
@@ -1467,6 +1449,7 @@ class OrganismMembershipService(_OrganismCommandService):
             CircleParticipationEnd.objects.using(self._alias)
             .filter(participation_id__in=[item.pk for item in participations])
             .exclude(composing_rule_reference__startswith="elect-term:", effective_at__gt=effective_at)
+            .exclude(composing_rule_reference__startswith="elect-resign:", effective_at__gt=effective_at)
             .values_list("participation_id", flat=True)
         )
         composing_rule = GovernedRule.objects.using(self._alias).get(
@@ -1495,7 +1478,7 @@ class OrganismMembershipService(_OrganismCommandService):
                 composer_identity=membership.identity,
                 composed_from_event_uuid=transition.event_uuid,
                 occurred_at=effective_at,
-                effective_at=effective_at,
+                effective_at=max(effective_at, participation.effective_at),
                 received_at=received_at,
             )
 

@@ -3522,7 +3522,7 @@ class OrganismGovernanceService:
         For each participation recorded by received_at in the LO's GOVERNANCE
         Circles under the current rule whose seat_id the next version omits:
         refuses with SBG_VERSION_DROPS_HELD_SEAT when no ending is recorded by
-        received_at, or when the latest recorded ending's effective_at is later
+        received_at, or when the earliest known ending's effective_at is later
         than the new version's effective_from (SB-G build commission v1.0,
         section 9).
         """
@@ -3540,8 +3540,9 @@ class OrganismGovernanceService:
                 continue
             ending = CircleParticipationEnd.objects.using(self._alias).filter(
                 participation=participation,
+                received_at__lte=received_at,
                 recorded_at__lte=received_at,
-            ).order_by("-recorded_at", "-pk").first()
+            ).order_by("effective_at", "pk").first()
             if ending is None or ending.effective_at > effective_from:
                 self._refuse(
                     S015AuthorityRefusalCode.SBG_VERSION_DROPS_HELD_SEAT,

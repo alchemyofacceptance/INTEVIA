@@ -130,6 +130,22 @@ MESSAGES = {
     "ELECT_CHOICE": "Choose a candidate on this ballot, or use a permitted confirmation or abstention.",
     "ELECT_OCCUPIED": "This place is occupied. Review its recorded term before calling another election.",
     "ELECT_RESULT": "This result does not authorise this person for this place. Use the applicable result.",
+    "ELECT_HANDOVER_UNKNOWN": "The cited provision gives no confirmed handover date. Supply the provision and evidence of its date.",
+    "ELECT_HOLDER_EXPIRED": "Your term has ended. Check the vacancy or succession record for this place.",
+    "ELECT_RECOGNISER": "This recognition requires the authority named in the constitution. Refer it to that body.",
+    "ELECT_ORIGINAL": "The original appointment is unverified. Cite its decision and the evidence required by the constitution.",
+    "ELECT_RESIGN_DATE": "This resignation date cannot be used. It must fall within your current term and not before your notice. Check the date the constitution gives.",
+    "ELECT_REMAINDER": "The remaining term cannot be established. Cite the term provision, its version and the appointment dates.",
+    "ELECT_RECOGNITION_CONSENT": "The holder has not confirmed this place. Ask them to record their consent.",
+    "ELECT_RECOGNITION_EXPIRED": "This appointment has ended. Check the vacancy route.",
+    "ELECT_RECOGNITION_OCCUPIED": "This place is already occupied for that period. Check the incumbency record.",
+    "ELECT_RESIGN_HOLDER": "Only the holder can resign this Board place. The holder must give their own notice.",
+    "ELECT_NOTICE_DATE": "Your notice is recorded. The effective date needs a constitutional basis. Refer it to the competent body.",
+    "ELECT_CONT_REQUEST": "This request already records a different act. Check the receipt or use a new request.",
+    "ELECT_SUCCESSOR_LOST": "The successor is no longer eligible. Check the constitutional filling route.",
+    "ELECT_VACANCY_VOTING": "The vacancy is recorded. Its filling route requires voting to be on before an election can open.",
+    "ELECT_HOLDER_EARLY": "Your term has not started. Check the start recorded for this place.",
+    "ELECT_HANDOVER": "These terms do not meet at the recorded handover. Check the place and both terms before calling the election.",
     "ELECT_TERM": "This prospective succession needs the term-continuity route. Hold it for that route.",
     "CQ_COMPLETE": "The CQ act could not complete with its authority and complete lineage. No changes were committed.",
 }
@@ -474,7 +490,7 @@ def catch_up(*, credential):
                     except IntegrityError as error:
                         code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
                         if code in ELECTION_METHOD_MESSAGES or code in {"ELECT_EMPTY", "ELECT_CHANGED", "ELECT_CITATION",
-                                    "ELECT_OCCUPIED", "ELECT_TERM", "ELECT_GOVERNANCE", "ELECT_VACANCY_BOARD",
+                                    "ELECT_OCCUPIED", "ELECT_TERM", "ELECT_HANDOVER", "ELECT_HANDOVER_UNKNOWN", "ELECT_GOVERNANCE", "ELECT_VACANCY_BOARD",
                                     "ELECT_VACANCY_LINK", "ELECT_VACANCY_NOMINEE", "ELECT_VACANCY_ROUTE", "ELECT_VACANCY_HOLD"}:
                             continue
                         raise

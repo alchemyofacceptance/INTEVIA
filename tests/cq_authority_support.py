@@ -38,7 +38,7 @@ def command_args(lo, actor):
     }
 
 
-def form_board(lo, founder, size, elected=(), external=()):
+def form_board(lo, founder, size, elected=(), external=(), *, seat_founder=True):
     service = governance.OrganismGovernanceService(
         authority=authority(), clock=support.database_now
     )
@@ -71,6 +71,8 @@ def form_board(lo, founder, size, elected=(), external=()):
     created = service.create_governance_circle(
         governance.CreateGovernanceCircleCommand(**command_args(lo, founder))
     )
+    if not seat_founder:
+        return
     service.seat_governance_circle(
         governance.SeatFoundingGovernanceCircleCommand(
             **command_args(lo, founder),

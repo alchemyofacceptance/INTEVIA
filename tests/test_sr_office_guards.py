@@ -448,10 +448,21 @@ class SROfficeFixture:
     @staticmethod
     def _election_guard_bodies():
         election = import_module("core.migrations.0079_elect_and_seat")
-        return {
+        terms = import_module("core.migrations.0082_elect_term_continuity")
+        guards = {
             election.name(new): new.split(" AS $$", 1)[1].rsplit("$$;", 1)[0]
             for _, new in election.other_edits()
         }
+        for _, _, new in terms.edits():
+            name = election.name(new)
+            if name in guards:
+                guards[name] = terms.hard.body(new)
+        continuity = import_module("core.migrations.0083_elect_board_continuity")
+        for _, new in continuity.edits():
+            name = election.name(new)
+            if name in guards:
+                guards[name] = terms.hard.body(new)
+        return guards
 
     def _installed_body(self, function_name):
         with connection.cursor() as cur:
@@ -595,7 +606,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         body = self._installed_body("s2b_guard_office_attribution")
         root = import_module("core.migrations.0062_root_genesis")
         self.assertEqual(body, self._election_guard_bodies()["s2b_guard_office_attribution"],
-                         msg="The installed attribution safeguard must match its 0079 body.")
+                         msg="The installed attribution safeguard must match its 0083 body.")
         self.assertIn(root.OFFICE_BRANCH, body, msg="The complete 0062 GENESIS office exception must survive.")
         self.assertEqual(body.count("           AND v_role_code = 'COORDINATOR'\n"), 1, msg="The founding self-appointment branch should retain exactly one Coordinator condition; that condition is missing or repeated.")
         self.assertIn(
@@ -881,8 +892,8 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The installed definition-update safeguard must retain its 0053 body.")
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertIn(("core", HEAD_0052), applied, msg="The migration history should retain 0052 beneath 0053; its record is missing.")
-        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0079 body.")
-        self.assertEqual(at_head["consent"], guards["s2b_guard_assign_consent"], msg="The installed consent safeguard must match its 0079 body.")
+        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0083 body.")
+        self.assertEqual(at_head["consent"], guards["s2b_guard_assign_consent"], msg="The installed consent safeguard must match its 0083 body.")
         expected = REQUIRED_TRIGGER_COUNT[at_head["head"]] + sum(
             delta for key, delta in NON_CORE_TRIGGER_DELTAS.items() if key in applied
         )

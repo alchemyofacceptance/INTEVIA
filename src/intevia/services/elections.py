@@ -19,9 +19,37 @@ def attachment(*, organism_uuid, binding_uuid, version_id, provision, place, vac
 
 
 def call(*, version_uuid, binding_uuid, version_id, provision, place, vacancy_uuid=None, **scope):
-    return cq.put_forward(**scope, version_uuid=version_uuid,
-                          attachment=attachment(organism_uuid=scope["organism_uuid"], binding_uuid=binding_uuid,
-                                                version_id=version_id, provision=provision, place=place, vacancy_uuid=vacancy_uuid))
+    proposal = attachment(organism_uuid=scope["organism_uuid"], binding_uuid=binding_uuid,
+                          version_id=version_id, provision=provision, place=place, vacancy_uuid=vacancy_uuid)
+    if vacancy_uuid is None:
+        return cq.put_forward(**scope, version_uuid=version_uuid, attachment=proposal)
+    try:
+        with transaction.atomic():
+            return _call_vacancy(scope, version_uuid, proposal, vacancy_uuid)
+    except IntegrityError as error:
+        cq.translate_refusal(error)
+
+
+def _call_vacancy(scope, version_uuid, proposal, vacancy_uuid):
+    spec = proposal["spec"]
+    actor = disc._actor(scope["credential"])
+    cq._lock(cq._id(scope["request_uuid"]), cq._id(scope["organism_uuid"]))
+    admission = cq_reads._scope(actor, scope["organism_uuid"], scope.get("circle_uuid"), scope["thread_uuid"])
+    if not admission["thread_audience"]:
+        raise disc.DiscussionUnavailable()
+    if disc._rows("""SELECT 1 FROM public.core_electvacancy v JOIN public.core_discboard b ON b.organism_id=v.organism_id
+        WHERE b.board_uuid=%s AND v.ending=%s AND v.place=%s AND v.instruction->>'binding'=%s
+        AND v.instruction->>'version'=%s AND v.instruction->>'election'=%s
+        AND v.instruction->>'route' IN ('BY_ELECTION','BOARD_CQ','COOPTION')
+        AND NOT EXISTS(SELECT FROM public.core_cqact replay WHERE replay.act_uuid=%s AND replay.organism_id=v.organism_id
+          AND replay.thread_uuid=%s AND replay.actor_id=%s AND replay.operation='INITIATE')
+        AND public.disc_member_state(v.organism_id,%s,statement_timestamp())='ACTIVE'
+        AND public.elect_admin_office(v.organism_id,b.board_uuid,%s::jsonb,%s,statement_timestamp()) IS NOT NULL
+        AND (public.cq_settings_values_at(v.organism_id,statement_timestamp(),statement_timestamp())->>'enabled')::boolean IS FALSE""",
+        [admission["board_uuid"], vacancy_uuid, spec["place"], str(spec["binding"]), str(spec["version"]), spec["provision"], scope["request_uuid"],
+         scope["thread_uuid"], actor.pk, actor.pk, json.dumps(proposal), actor.pk]):
+        raise cq.CQRefused("ELECT_VACANCY_VOTING")
+    return cq.put_forward(**scope, version_uuid=version_uuid, attachment=proposal)
 
 
 def nominate(*, person_uuid, assignment_uuid=None, statement="", **scope):
@@ -89,14 +117,37 @@ def authorising_result(*, credential, organism_uuid, event_uuid):
     disc._read_uuid(event_uuid)
     rows = disc._rows("""SELECT i.act_uuid AS implementation,(i.request->>'result')::uuid AS result,o.act_uuid AS ballot,
         o.facts->'administrator_mandate' AS administration, i.facts->'domain_plan'->>'place' AS place,
-        i.facts->'domain_plan'->'winner'->>'person' AS person,i.facts->'domain_plan'->>'body' AS electorate
+        i.facts->'domain_plan'->'winner'->>'person' AS person,i.facts->'domain_plan'->>'body' AS electorate,
+        (i.facts->'domain_plan'->>'start')::timestamptz AS term_start,
+        (i.facts->'domain_plan'->>'end')::timestamptz AS term_end,
+        (i.facts->'domain_plan'->>'incumbent')::uuid AS preceding_occupancy,
+        support.composed_from_event_uuid AS supporting_place_end_act,
+        support.composing_rule_reference AS supporting_place_end_rule,
+        support.effective_at AS supporting_place_ends_at,
+        CASE WHEN i.facts->'domain_plan' ? 'incumbent' AND
+          (support.effective_at<=award.effective_at OR NOT EXISTS(
+          SELECT FROM public.core_organismmembership m WHERE m.id=(i.facts->'domain_plan'->'winner'->>'member')::bigint
+          AND NOT EXISTS(SELECT FROM public.core_organismmembershiptransition t WHERE t.membership_id=m.id
+              AND t.resulting_state='ENDED' AND t.recorded_at<=statement_timestamp()
+              AND public.elect_pending_successor(i.act_uuid,m.id,i.facts->'domain_plan'->>'type',t.effective_at,t.received_at))
+          AND public.s015_fold_effective_state('core_organismmembership',m.id,
+              (i.facts->'domain_plan'->>'start')::timestamptz,statement_timestamp())='ACTIVE'
+          AND (coalesce((i.facts->'domain_plan'->>'participation_required')::boolean,false)=false
+            OR public.circle_place_at((i.facts->'domain_plan'->>'circle')::bigint,m.id,
+                (i.facts->'domain_plan'->>'start')::timestamptz,statement_timestamp()))))
+        THEN 'ELECT_SUCCESSOR_LOST' END AS eligibility_reason
         FROM public.core_cqact i JOIN public.core_cqact o ON o.act_uuid=(i.facts->'domain_plan'->>'ballot')::uuid
+        LEFT JOIN public.core_contextualroleassignmentstateevent award ON award.event_uuid=i.act_uuid AND award.action='ASSIGN'
+        LEFT JOIN LATERAL public.elect_office_support_ending(award.id,statement_timestamp()) support
+          ON award.effective_until IS NULL OR support.effective_at<=award.effective_until
         WHERE i.organism_id=%s AND i.act_uuid=%s AND i.operation='IMPLEMENT' AND i.facts->'domain_plan'->>'domain'='ELECTION'
         AND public.cq3_result_visible((i.request->>'result')::uuid,i.organism_id,%s,statement_timestamp())""",
         [owner, event_uuid, actor.pk])
     if not rows:
         raise disc.DiscussionUnavailable()
-    return rows[0]
+    row = rows[0]
+    row["eligibility_message"] = cq.MESSAGES.get(row.pop("eligibility_reason"))
+    return row
 
 
 def catch_up_vacancies(*, credential):
@@ -150,6 +201,31 @@ def vacancies(*, credential, organism_uuid, ending_uuid=None):
       [actor.pk, actor.pk, actor.pk, actor.pk, actor.pk, owner, ending_uuid, ending_uuid])
 
 
+def _holder_term_refusal(owner, actor, role, instruction, effective):
+    """Explain a named Board officer's own time boundary after ordinary audience checks."""
+    authority = instruction.get("authority") or ""
+    if (instruction.get("route") != "APPOINTMENT" or role.appointing_body_reference != authority
+            or not authority.startswith("office:") or authority == "office:LO_COORDINATOR"):
+        return "ELECT_VACANCY_APPOINTER"
+    rows = disc._rows("""
+        SELECT e.effective_at AS starts,public.elect_office_deadline(e.id,statement_timestamp()) AS ends,
+               statement_timestamp() AS known
+        FROM public.core_organismroledefinition d JOIN public.core_contextualroleassignment a ON a.role_definition_id=d.id
+        JOIN public.core_organismmembership m ON m.id=a.membership_id
+        JOIN public.core_contextualroleassignmentstateevent e ON e.assignment_id=a.id AND e.action='ASSIGN'
+        WHERE d.living_organism_id=%s AND d.scope='LIVING_ORGANISM' AND d.kind='BOARD_OFFICE'
+        AND d.code=%s AND m.identity_id=%s AND greatest(e.recorded_at,e.received_at)<=statement_timestamp()
+        ORDER BY e.effective_at DESC,e.id DESC""", [owner, authority.removeprefix("office:"), actor.pk])
+    if rows and effective is not None:
+        for row in rows:
+            if row["starts"] <= effective and row["starts"] <= row["known"]:
+                if row["ends"] is not None and row["ends"] <= max(effective, row["known"]):
+                    return "ELECT_HOLDER_EXPIRED"
+                return "ELECT_VACANCY_APPOINTER"
+        return "ELECT_HOLDER_EARLY"
+    return "ELECT_VACANCY_APPOINTER"
+
+
 def appoint_to_vacancy(*, credential, organism_uuid, ending_uuid, command):
     """Exercise a named office's route through SR's normal consent, authority and receipt writer."""
     from core.models import ContextualRoleAssignment
@@ -178,9 +254,113 @@ def appoint_to_vacancy(*, credential, organism_uuid, ending_uuid, command):
                 admitted = disc._rows("""SELECT public.elect_named_appointment(%s,%s,%s,%s,statement_timestamp()) AS ending""",
                                        [owner, assignment.role_definition_id, actor.pk, command.effective_at])
                 if admitted[0]["ending"] != ending_uuid:
-                    raise cq.CQRefused("ELECT_VACANCY_APPOINTER")
+                    raise cq.CQRefused(_holder_term_refusal(owner, actor, assignment.role_definition,
+                                                            record["instruction"], command.effective_at))
         # SR owns a separate command intake transaction. Bind the exact vacancy in its qualified request.
         roles = OrganismRoleService(authority=S015Authority(provider=ProductionApplicationAuthorityProvider()), clock=database_now)
         return roles.transition_assignment(replace(command, request_reference=f"elect-vacancy:{ending_uuid}"))
     except IntegrityError as exc:
         cq.translate_refusal(exc)
+
+
+def catch_up_terms(*, credential, organism_uuid):
+    """Record outstanding Board term consequences in one authorised LO. Safe to repeat."""
+    try:
+        with transaction.atomic():
+            actor = disc._actor(credential)
+            owner = cq._read_owner(actor, organism_uuid)
+            disc._rows("SELECT id FROM public.core_livingorganism WHERE id=%s FOR UPDATE", [owner])
+            state = disc._rows("SELECT public.disc_member_state(%s,%s,statement_timestamp()) AS state",
+                               [owner, actor.pk])
+            if state[0]["state"] != "ACTIVE":
+                raise disc.DiscussionUnavailable()
+            offices = disc._rows("""
+                SELECT a.id FROM public.core_contextualroleassignment a
+                JOIN public.core_organismroledefinition d ON d.id=a.role_definition_id
+                CROSS JOIN LATERAL public.elect_due_office(a.id,statement_timestamp()) q
+                WHERE d.living_organism_id=%s ORDER BY q.due,a.id""", [owner])
+            recorded = 0
+            for office in offices:
+                rows = disc._rows("SELECT public.elect_record_term_end(%s,%s,%s) AS changed",
+                                  [owner, office["id"], actor.pk])
+                recorded += int(rows[0]["changed"])
+            notices = disc._rows("""SELECT a.act_uuid FROM public.core_cqact a
+                WHERE a.organism_id=%s AND a.operation='BOARD_RESIGN' AND (a.facts->>'end')::timestamptz<=statement_timestamp()
+                AND NOT EXISTS(SELECT FROM public.core_coverageassessment x JOIN public.core_essentialcoveragecase c ON c.id=x.case_id
+                  WHERE c.living_organism_id=a.organism_id AND x.evidence_reference='elect-resignation:'||a.act_uuid)
+                ORDER BY a.ordinal""", [owner])
+            for notice in notices:
+                rows = disc._rows("SELECT public.elect_resignation_coverage(%s,%s,%s) AS changed",
+                                  [owner, notice["act_uuid"], actor.pk])
+                recorded += int(rows[0]["changed"])
+            # Fixed seat endings already exist. Pass due ones to the unchanged
+            # ELECT route. Office END inserts use its existing deferred trigger.
+            seats = disc._rows("""
+                SELECT s.ending FROM public.elect_vacancy_sources s
+                WHERE s.organism_id=%s AND s.kind='SEAT'
+                AND greatest(s.effective_at,s.recorded_at)<=statement_timestamp()
+                AND NOT EXISTS(SELECT FROM public.core_electvacancy v WHERE v.ending=s.ending)
+                AND NOT public.elect_already_replaced(s,statement_timestamp())
+                ORDER BY s.effective_at,s.ending""", [owner])
+            for seat in seats:
+                rows = disc._rows("SELECT public.elect_start_vacancy(%s,%s,%s) AS changed",
+                                  [owner, seat["ending"], actor.pk])
+                recorded += int(rows[0]["changed"])
+        return recorded
+    except IntegrityError as error:
+        cq.translate_refusal(error)
+
+
+def confirm_recognition(*, claim, **scope):
+    """The incumbent confirms the exact external appointment and its remaining term."""
+    return _continuity_command("RECOGNITION_CONSENT", {"claim": claim}, **scope)
+
+
+def recognise_incumbent(*, claim, consent_uuid=None, result_uuid=None, **scope):
+    """Record the constitutional recognition separately from the original appointment."""
+    return _continuity_command("RECOGNISE", {"claim": claim, "consent": consent_uuid, "result": result_uuid}, **scope)
+
+
+def resign_board_place(*, participation_uuid, binding_uuid=None, version_id=None, provision=None,
+                       notice_uuid=None, **scope):
+    """Give or complete the holder's notice. Return the act, effect and any referral message."""
+    return _continuity_command("BOARD_RESIGN", {
+        "participation": participation_uuid, "binding": binding_uuid, "version": version_id,
+        "provision": provision, "notice": notice_uuid,
+    }, **scope)
+
+
+def _continuity_command(operation, fields, *, credential, organism_uuid, request_uuid):
+    try:
+        with transaction.atomic():
+            actor = disc._actor(credential)
+            key, owner = cq._id(request_uuid), cq._id(organism_uuid)
+            received = cq._lock(key, owner)
+            disc._rows("""SELECT public.cq_source(lo.id,NULL,NULL,%s,%s,statement_timestamp())
+                         FROM public.core_livingorganism lo WHERE lo.organism_id=%s""", [operation, actor.pk, owner])
+            act = cq._execute(actor, owner, None, None, operation, key, fields, received)
+            row = disc._rows("SELECT facts->>'effect' AS effect FROM public.core_cqact WHERE act_uuid=%s", [act])[0]
+            return {"act": act, "effect": row["effect"], "message": (
+                cq.MESSAGES["ELECT_NOTICE_DATE"] if row["effect"] == "AWAITING_BASIS" else None)}
+    except IntegrityError as error:
+        cq.translate_refusal(error)
+
+
+@transaction.atomic
+def board_continuity(*, credential, organism_uuid, act_uuid=None):
+    """Follow recognised incumbencies and Board notices to their own institutional receipts."""
+    actor = disc._actor(credential)
+    owner = cq._read_owner(actor, organism_uuid)
+    if act_uuid is not None:
+        disc._read_uuid(act_uuid)
+    return disc._rows("""
+        SELECT a.act_uuid,a.operation,a.actor_id AS enterer,a.authority_source,a.request,
+               a.facts,a.received_at,a.effective_at,a.recorded_at,e.event_uuid AS ilc_event,
+               h.act_uuid AS holder_consent,h.actor_id AS consent_enterer,h.effective_at AS consented_at
+        FROM public.core_cqact a JOIN public.core_livingorganismevent e ON e.event_uuid=a.act_uuid
+        LEFT JOIN public.core_cqact h ON h.act_uuid::text=a.facts->>'consent' AND h.organism_id=a.organism_id
+          AND h.operation='RECOGNITION_CONSENT'
+        WHERE a.organism_id=%s AND a.operation IN ('RECOGNISE','BOARD_RESIGN')
+        AND (%s::uuid IS NULL OR a.act_uuid=%s) AND (a.authority_source->>'kind'<>'CQ_RESULT'
+          OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,statement_timestamp()))
+        ORDER BY a.ordinal""", [owner, act_uuid, act_uuid, actor.pk])
