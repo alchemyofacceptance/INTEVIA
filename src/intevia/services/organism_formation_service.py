@@ -2591,6 +2591,7 @@ class BirthingCommand:
     policy_version: int
     policy_text_sha256: str
     effective_at: datetime | None = None
+    committee_chair_board_member: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3120,6 +3121,8 @@ class OrganismBirthingService(_OrganismCommandService):
                         "policy_text_sha256": command.policy_text_sha256,
                         "policy_version": command.policy_version,
                         "schema": "s015-birthing-v2",
+                        **({"committee_chair_board_member": command.committee_chair_board_member}
+                           if command.committee_chair_board_member is not None else {}),
                     },
                 )
                 acquire_organism_command_mutex(
@@ -3281,6 +3284,10 @@ class OrganismBirthingService(_OrganismCommandService):
                         else f"rule:{governance_rule.rule_uuid}@{governance_rule.version}"
                     ),
                 }
+                if command.committee_chair_board_member is not None:
+                    if not configuration.governance_enabled:
+                        raise ValueError("Choose a committee chair rule only for a GOVERNANCE Board.")
+                    body["settings"]["committee_chair_board_member"] = command.committee_chair_board_member
                 try:
                     LOBirthingSnapshot.objects.using(self._alias).create(
                         snapshot_uuid=snapshot_uuid,

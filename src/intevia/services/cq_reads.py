@@ -422,6 +422,7 @@ def implementation_record(
                l.binding_uuid AS adopted_binding,ending.binding_id AS ended_binding,
                p.permission_uuid AS release_permission,p.authority_source AS permission_source,
                f.fact_uuid AS publication,s.act_uuid AS settings_version,
+               i.facts->'domain_plan'->'committee' AS committee,
                CASE WHEN i.facts->'domain_plan'->>'domain'='CIRCLE_REPORTING' THEN i.act_uuid END AS circle_reporting_version
           FROM public.core_cqact i JOIN public.core_livingorganismevent e ON e.event_uuid=i.act_uuid
           LEFT JOIN public.core_cqact s ON s.organism_id=i.organism_id AND s.operation='SETTINGS'

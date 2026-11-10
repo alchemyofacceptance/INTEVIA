@@ -32,6 +32,8 @@ from uuid import UUID
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connections, transaction
 
+from src.intevia.services.committees import work_holder
+
 from core.models import (
     Identity,
     Service,
@@ -1213,7 +1215,8 @@ class ServiceActivityService:
         actor = self._lock_actor(command.credential)
 
         assignment = self._get_assignment(activity)
-        if assignment.assignee_id != actor.pk:
+        committee_work = activity.initiating_domain_reference.startswith(("committee:", "board:"))
+        if not committee_work and assignment.assignee_id != actor.pk:
             raise ServiceActivityActorError("actor must be the assignee for ACCEPT")
 
         target_fp = _target_fingerprint(action, command.activity_id)
@@ -1233,6 +1236,12 @@ class ServiceActivityService:
         if existing is not None:
             self._resolve_replay(existing, actor.access_epoch, fingerprint)
             return self._reconstruct_accept(existing, command.activity_id)
+
+        if committee_work and (
+            work_holder(activity, assignment, self._alias, occurred_at) != actor.pk
+            or work_holder(activity, assignment, self._alias) != actor.pk
+        ):
+            raise ServiceActivityActorError("This work has returned to the chair. Ask the chair to reassign it.")
 
         if activity.state != ServiceActivityState.ASSIGNED.value:
             raise ServiceActivityLifecycleError("Activity must be ASSIGNED for ACCEPT")
@@ -1373,7 +1382,8 @@ class ServiceActivityService:
         actor = self._lock_actor(command.credential)
 
         assignment = self._get_assignment(activity)
-        if assignment.assignee_id != actor.pk:
+        committee_work = activity.initiating_domain_reference.startswith(("committee:", "board:"))
+        if not committee_work and assignment.assignee_id != actor.pk:
             raise ServiceActivityActorError("actor must be the assignee for DECLINE")
 
         target_fp = _target_fingerprint(action, command.activity_id)
@@ -1393,6 +1403,12 @@ class ServiceActivityService:
         if existing is not None:
             self._resolve_replay(existing, actor.access_epoch, fingerprint)
             return self._reconstruct_decline(existing, command.activity_id)
+
+        if committee_work and (
+            work_holder(activity, assignment, self._alias, occurred_at) != actor.pk
+            or work_holder(activity, assignment, self._alias) != actor.pk
+        ):
+            raise ServiceActivityActorError("This work has returned to the chair. Ask the chair to reassign it.")
 
         if activity.state != ServiceActivityState.ASSIGNED.value:
             raise ServiceActivityLifecycleError("Activity must be ASSIGNED for DECLINE")
@@ -1562,7 +1578,8 @@ class ServiceActivityService:
         actor = self._lock_actor(command.credential)
 
         assignment = self._get_assignment(activity)
-        if assignment.assignee_id != actor.pk:
+        committee_work = activity.initiating_domain_reference.startswith(("committee:", "board:"))
+        if not committee_work and assignment.assignee_id != actor.pk:
             raise ServiceActivityActorError("actor must be the assignee for SUBMIT")
 
         target_fp = _target_fingerprint(action, command.activity_id)
@@ -1585,6 +1602,12 @@ class ServiceActivityService:
         if existing is not None:
             self._resolve_replay(existing, actor.access_epoch, fingerprint)
             return self._reconstruct_submit(existing, command.activity_id)
+
+        if committee_work and (
+            work_holder(activity, assignment, self._alias, occurred_at) != actor.pk
+            or work_holder(activity, assignment, self._alias) != actor.pk
+        ):
+            raise ServiceActivityActorError("This work has returned to the chair. Ask the chair to reassign it.")
 
         if activity.state != ServiceActivityState.IN_PROGRESS.value:
             raise ServiceActivityLifecycleError("Activity must be IN_PROGRESS for SUBMIT")

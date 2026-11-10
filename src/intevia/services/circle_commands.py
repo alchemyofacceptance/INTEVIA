@@ -339,6 +339,9 @@ def recover_circle(*, credential, organism_uuid, circle_uuid, request_uuid, alia
                               public.circle_direct_volunteer(%s,%s,%s)""",
                            [lo.pk,actor.pk,at,at,circle.pk,at,at,lo.pk,at,at])
             authority, vacant, direct = cursor.fetchone()
+            cursor.execute("SELECT public.cmt_empty(%s,%s,%s)", [circle.pk, at, at])
+            if cursor.fetchone()[0] and (authority or models.CircleParticipation.objects.using(alias).filter(circle=circle, membership=member).exists()):
+                raise CircleAccessRefused("The committee chair's place is empty. Ask the Board to fill it under the forming law.")
             cursor.execute("""SELECT p.id FROM public.core_circleparticipation p WHERE p.circle_id=%s AND p.membership_id=%s
                             AND public.circle_office_place(%s,%s,'place:'||p.participation_uuid,%s,%s)""",
                            [circle.pk,member.pk,circle.pk,member.pk,at,at])
@@ -647,7 +650,7 @@ def leave(
         )
 
 
-def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="default"):
+def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_chair_board_member=None, alias="default"):
     """Complete the ruled birth using authority bound to its opening and this activation."""
     from src.intevia.services.organism_command_support import _canonical_uuid
 
@@ -655,14 +658,21 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="def
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
         events = models.CircleStateEvent.objects.using(alias)
+        choice = committee_chair_board_member
+        if choice is not None and (circle.kind != "GOVERNANCE" or type(choice) is not bool):
+            raise CircleAccessRefused("Choose Yes or No for the GOVERNANCE Board's committee chairs.")
         with connections[alias].cursor() as cur:
             # The institutional actor and human enterer are separate physical columns.
-            cur.execute("""SELECT circle_id,action,resulting_state,enterer_identity_id FROM public.core_circlestateevent
+            cur.execute("""SELECT circle_id,action,resulting_state,enterer_identity_id,evidence_reference FROM public.core_circlestateevent
                            WHERE event_uuid=%s""", [request_uuid])
             prior = cur.fetchone()
         if prior is not None:
-            if prior == (circle.pk, "ACTIVATE", "ACTIVE", actor.pk):
-                return request_uuid
+            if prior[:4] == (circle.pk, "ACTIVATE", "ACTIVE", actor.pk):
+                suffix = prior[4].rsplit("|", 1)[-1]
+                if choice is None and suffix not in {"cr:Y", "cr:N"}:
+                    return request_uuid
+                if choice is not None and suffix in ({"cr:Y","cr:BY"} if choice else {"cr:N","cr:BN"}):
+                    return request_uuid
             unavailable()
         opening = events.filter(circle=circle, sequence=1).first()
         if opening is None:
@@ -679,6 +689,12 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="def
                     unavailable()
                 cur.execute("SELECT public.cq3_birth_proof(%s,%s,%s,%s)", [circle.pk, actor.pk, at, at])
                 ref, = cur.fetchone()
+                cur.execute("SELECT public.cmt_activation_suffix(%s,%s,%s,%s,%s)", [lo.pk,ref,choice,at,at])
+                suffix, = cur.fetchone()
+                if ref is not None and suffix is None and choice is not None:
+                    raise CircleAccessRefused("The chair choice conflicts with its constitutional or Birthing basis.")
+                if ref is not None and suffix:
+                    ref += suffix
                 cur.execute("SELECT 's015d1:'||public.c2_target(%s::text||':'||%s::text||':'||%s::text)",
                             [circle.circle_uuid, request_uuid, ref])
                 decision, = cur.fetchone()
@@ -694,6 +710,7 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, alias="def
             problem, = cur.fetchone()
         if problem is not None:
             reasons = {
+                "CMT_ACTIVATION_CHOICE": "Choose whether committee chairs must be Board members before activating GOVERNANCE.",
                 "CIRCLE_G4_TIME": "The activation times do not establish the required order.",
                 "CIRCLE_G4_FORMATION": "This Circle needs its governed formation and recorded purpose.",
                 "CIRCLE_G4_LATER_EVENT": "A later change is already scheduled on this Circle.",

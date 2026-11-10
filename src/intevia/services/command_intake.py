@@ -1765,6 +1765,8 @@ def _birthing_shape(command: object) -> IntakeShape:
     request_reference = _canonical_key(command.request_reference, "request_reference", 128)
     idempotency_key = _canonical_key(command.idempotency_key, "idempotency_key", 120)
     organism_uuid = _canonical_uuid(command.living_organism_uuid, "living_organism_uuid")
+    if command.committee_chair_board_member is not None and type(command.committee_chair_board_member) is not bool:
+        raise ValueError("Choose Yes or No for the Board's committee chairs.")
     if command.offering_choice not in {"FREE", "COMPLIMENTARY_BETA"}:
         raise ValueError("offering_choice is invalid")
     effective_at = (
@@ -1779,6 +1781,8 @@ def _birthing_shape(command: object) -> IntakeShape:
         command={
             "effective_at": effective_at,
             "offering_choice": command.offering_choice,
+            **({"committee_chair_board_member": command.committee_chair_board_member}
+               if command.committee_chair_board_member is not None else {}),
             "policy_text_sha256": command.policy_text_sha256,
             "policy_version": command.policy_version,
         },

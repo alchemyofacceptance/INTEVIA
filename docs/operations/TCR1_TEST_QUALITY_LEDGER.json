@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "ELECT P3 P2e",
+  "package": "COMMITTEES P1g2",
   "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
   "baseline_methods": 243,
-  "candidate_methods": 248,
+  "candidate_methods": 254,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -162,6 +162,114 @@
       "run": null,
       "restored": null,
       "break": null
+    },
+    "COMMITTEES_P1_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "COMMITTEES_P1b_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "COMMITTEES_P1c_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "VC_P1BT": {
+      "scope": "P1b only; targeted PostgreSQL",
+      "seconds": {
+        "C-01": "11.207",
+        "C-02": "28.043",
+        "ELECT-06": "40.853",
+        "ELECT-10": "4.073",
+        "DISC2-19": "3.643"
+      }
+    },
+    "COMMITTEES_P1d_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "VC_P1C2T": {
+      "scope": "P1c2 only; targeted PostgreSQL 17.11, six methods OK; 110.291 s",
+      "seconds": {
+        "C-01": 10.875,
+        "C-02": 27.624,
+        "C-03": 22.914,
+        "ELECT-06": 37.284,
+        "ELECT-10": 3.785,
+        "DISC2-19": 3.284
+      }
+    },
+    "COMMITTEES_P1e_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "VC_P1DT_AND_P1DT2": {
+      "scope": "P1d only; see VC_PRERUN_P1DT_TIMES.txt",
+      "elapsed_seconds": {
+        "C-01": "10.519",
+        "C-02": "26.867",
+        "C-03": "23.240",
+        "C-04": "43.501 cold, 42.896 warm",
+        "C-05": "62.766 cold, 31.092 warm",
+        "ELECT-06": "61.121 cold, 37.706 warm",
+        "ELECT-10": "4.193",
+        "DISC2-19": "3.558"
+      }
+    },
+    "COMMITTEES_P1f_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "VC_P1ET_AND_P1ET2": {
+      "source": "VC_PRERUN_P1ET_TIMES.txt",
+      "sha256": "ffd6a1f372c9a51337aff781ee3527bfef8b06ed48687beabdd5e902d6f568bf",
+      "scope": "P1e targeted runs. The combined C-04 passed assertions but exceeded the time limit.",
+      "c04_first_seconds": 45.875,
+      "c04_warm_seconds": 47.911
+    },
+    "COMMITTEES_P1g_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
+    },
+    "VC_COMMITTEES_P1F_DIRECTION": {
+      "source": "00_DIRECTION_COMMITTEES_P1G_v1_0.md",
+      "sha256": "9dba4535adc9beeac7f9b902627cb9004a198748488658b95d578dd9037fc6a1",
+      "scope": "The VC reports a whole-job pass on the exact P1f predecessor. Counts 254/30 and SR-ROUNDTRIP. P1g has mechanical evidence only."
+    },
+    "VC_P1GT": {
+      "source": "04_VC_EVIDENCE/VC_PRERUN_P1GT_LOG_AND_DIAG.txt",
+      "sha256": "349977e447a417bf4d6a7422dbd593d2050a20312c2c040c534f359f804276a9",
+      "scope": "VC PostgreSQL targeted P1g run, 3 passed and C-02 failed. Probe from a scratch copy.",
+      "c02_s": 29.261
+    },
+    "COMMITTEES_P1g2_PENDING": {
+      "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+      "commit": null,
+      "run": null,
+      "restored": null,
+      "break": null
     }
   },
   "source_index": {
@@ -268,19 +376,52 @@
     "ELECT_P3_TAR_v1_0_P2e.md": {
       "sha256": "170fddcd1e20aac704737b17927f81fefaf90674d3b5d839856a68bb90a28522",
       "source": "ELECT P3 P2e carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1.md": {
+      "sha256": "6e71f313bb18095a893256b67d60801eca82e010b05b0fbe1987cd79ed3be8fc",
+      "source": "COMMITTEES P1 carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1b.md": {
+      "sha256": "ec93bd31d4b0a45b1c91f056913f15e79c02d693804d0a7bd4564552dbf0c0c6",
+      "source": "COMMITTEES P1b carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1c.md": {
+      "sha256": "c77e830a8a29651ae674b9deaefa28f79a7ac227bb41b96a837f9978979a13ca",
+      "source": "COMMITTEES P1c carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1d.md": {
+      "sha256": "6eeed5f4f17f68c8afcf509908bbb16912f4eefa9c1d466848f5764f47570a11",
+      "source": "COMMITTEES P1d carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1e.md": {
+      "sha256": "22ef1839bc67abef389c5fc3ee46a2ac77f2df77124ef48d3bf3bd84bb97854f",
+      "source": "COMMITTEES P1e carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1f.md": {
+      "sha256": "a68dea7fed9a68489508d27a4ea7d6e46ef816f0555f98c4fa185b72a66f5b1d",
+      "source": "COMMITTEES P1f carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1g.md": {
+      "sha256": "2b9bbb17b360020794e4f0b4f89261b47d155e8c03dc01342e48f93a7ca0d959",
+      "source": "COMMITTEES P1g carrier"
+    },
+    "COMMITTEES_TAR_v1_0_P1g2.md": {
+      "sha256": "0d8079e97de42fc72e2621730c235af98123da71c3752e935d465ad22e67c65c",
+      "source": "COMMITTEES P1g2 carrier"
     }
   },
   "coverage": {
-    "unit_tables": 17,
+    "unit_tables": 18,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 248,
+    "active": 254,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
     "ELECT_methods": 13,
-    "HARD_methods_added": 1
+    "HARD_methods_added": 1,
+    "COMMITTEES_methods": 6
   },
   "tests": [
     {
@@ -4240,6 +4381,42 @@
           "unit_ids": [
             "DISC2-19"
           ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            14
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
         }
       ],
       "review": {
@@ -4253,12 +4430,12 @@
       "admission_registry": [],
       "recurring_controls": [],
       "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
-        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-        "candidate_run": "ELECT_P3_P2B_PENDING",
+        "candidate_run": "COMMITTEES_P1e_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "1ab88747a17698f87b245c9cd5cdc26d8588b2e16db5401ae0a0188ed2af925e"
+        "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
       },
       "history": [
         {
@@ -4327,6 +4504,66 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "1ab88747a17698f87b245c9cd5cdc26d8588b2e16db5401ae0a0188ed2af925e"
           }
+        },
+        {
+          "unit": "COMMITTEES P1",
+          "change": "Historical reversal fixture traverses 0084 first",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2B_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "1ab88747a17698f87b245c9cd5cdc26d8588b2e16db5401ae0a0188ed2af925e"
+          }
+        },
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
+          },
+          "change": "TAR current source."
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -14171,7 +14408,7 @@
       "baseline_label": null,
       "status": "active",
       "current_label": "test_election_mandates.ElectionMandateTests.test_committee_grant_and_return_move_only_the_named_election",
-      "claim": "ELECT-06. A competent Board grant and return move only administration of one member-elected place.",
+      "claim": "ELECT-06. A competent Board grant and return move only administration of one member-elected place. A self-nominated administrator stands aside and the Board names the substitute for the same contest. P1g: The forming instrument names its elected candidate as stand-in. The existing self-nomination recuses that person. The Board names a different eligible member for the contest. That person can prepare/open it and the electorate returns its result under the original scoped grant.",
       "unit_TAR": [
         {
           "source": "ELECT_TAR_v1_0_P2.md",
@@ -14190,24 +14427,73 @@
           "unit_ids": [
             "ELECT-06"
           ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1g.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "ELECT-06"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_election_mandates.py:153",
+      "current_source": "tests/test_election_mandates.py:157",
       "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
-        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_run": "HARD_P1_PENDING",
+        "candidate_run": "COMMITTEES_P1g_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
-        }
+        "candidate_method_file_lf_sha256": "01f8e07489bb05315cdd70e42fa262a96895741a744522aaf611d1460b8819b1"
       },
       "history": [
         {
@@ -14225,6 +14511,83 @@
           "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "COMMITTEES P1",
+          "previous_source": "tests/test_election_mandates.py:153",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "candidate_run": "HARD_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+            }
+          }
+        },
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7b413af3480ef530f1b20901425f4f82a8baf4245aa1c6a42fe124a28a0f90c0"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7b413af3480ef530f1b20901425f4f82a8baf4245aa1c6a42fe124a28a0f90c0"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7b413af3480ef530f1b20901425f4f82a8baf4245aa1c6a42fe124a28a0f90c0"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7b413af3480ef530f1b20901425f4f82a8baf4245aa1c6a42fe124a28a0f90c0"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "7d701fb98a6c909778e1a27d08664b9a7f5b7c5a5150bd9cc18bee56dd3b53b4"
+          },
+          "change": "U13"
         }
       ]
     },
@@ -14257,19 +14620,14 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_election_mandates.py:237",
+      "current_source": "tests/test_election_mandates.py:255",
       "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
-        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_run": "HARD_P1_PENDING",
+        "candidate_run": "COMMITTEES_P1g_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
-        }
+        "candidate_method_file_lf_sha256": "01f8e07489bb05315cdd70e42fa262a96895741a744522aaf611d1460b8819b1"
       },
       "history": [
         {
@@ -14287,6 +14645,23 @@
           "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "source_commit": null,
+            "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "candidate_run": "HARD_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+            }
+          },
+          "change": "Identical method body; its module changed."
         }
       ]
     },
@@ -14319,19 +14694,14 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_election_mandates.py:300",
+      "current_source": "tests/test_election_mandates.py:318",
       "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
-        "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_run": "HARD_P1_PENDING",
+        "candidate_run": "COMMITTEES_P1g_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
-        "ELECT_landing": {
-          "reference": "ELECT_LANDING_1050F2F5",
-          "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
-        }
+        "candidate_method_file_lf_sha256": "01f8e07489bb05315cdd70e42fa262a96895741a744522aaf611d1460b8819b1"
       },
       "history": [
         {
@@ -14349,6 +14719,23 @@
           "prior_candidate_method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "source_commit": null,
+            "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "candidate_run": "HARD_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "40c10c7eed2998e3f4cf337f485754e0bde9e33d6a4138d94bd94120bbe8086c",
+            "ELECT_landing": {
+              "reference": "ELECT_LANDING_1050F2F5",
+              "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+              "method_file_lf_sha256": "2237847ce24c2a627d9ae4822f29ed18189cdf236109efe25b8119aef6bf68df"
+            }
+          },
+          "change": "Identical method body; its module changed."
         }
       ]
     },
@@ -14464,7 +14851,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_recognised_incumbents_require_constitution_consent_and_remaining_term",
       "status": "active",
-      "claim": "Only the named authority recognises a consenting eligible incumbent on the cited place and remainder. No authority is backdated to the AGM.",
+      "claim": "The recognition evidence refuses reversal at 0083. The probe runs before the new 0084 chair choice exists, then the Board activates and the outsider refusal is checked.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2.md",
@@ -14479,6 +14866,42 @@
           "source": "ELECT_P3_TAR_v1_0_P2b.md",
           "lines": [
             7
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            13
           ],
           "unit_ids": [
             "ELECT-10"
@@ -14500,16 +14923,76 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "7a5b76bbe39213fe08732063b11446a0c048f5810642ce364828f0888012a0db"
           }
+        },
+        {
+          "unit": "COMMITTEES P1",
+          "change": "Historical reversal fixture traverses 0084 first",
+          "previous_evidence": {
+            "source_commit": null,
+            "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+            "candidate_run": "ELECT_P3_P2B_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+          }
+        },
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "d5ca7d74b48ce156bd35e7ed718274669afb84726c8758f61d4e0544098df28e"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "d5ca7d74b48ce156bd35e7ed718274669afb84726c8758f61d4e0544098df28e"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "d5ca7d74b48ce156bd35e7ed718274669afb84726c8758f61d4e0544098df28e"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "d5ca7d74b48ce156bd35e7ed718274669afb84726c8758f61d4e0544098df28e"
+          },
+          "change": "TAR current source."
         }
       ],
       "current_source": "tests/test_elections.py:421",
       "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
-        "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-        "candidate_run": "ELECT_P3_P2B_PENDING",
+        "candidate_run": "COMMITTEES_P1e_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+        "candidate_method_file_lf_sha256": "a5d4fb29e78d72182d4a7bd3428b82fcd61e50deb529380d66c4130f26b10d48"
       }
     },
     {
@@ -14646,6 +15129,881 @@
         "candidate_break": null,
         "candidate_restored": null,
         "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+      }
+    },
+    {
+      "obligation": "C-01",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_paired_designation_on_the_free_route",
+      "status": "active",
+      "claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1g.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "21f2a86d6935b51f48716e5271b6c57a3f83dcfc9b7e2550cc30a6bf51e04b32"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "26e20c836c0c772b0593676dd3f12ed7b09b2ed5803b522c233213f306ea4532"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "4acd2e31ec9d513e446c7fc1e3ffdc881a927682166bd170a38ddd53a05ae05d"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "672cdadfb404dade207c587d8af64119f42d2312eded17c2edabc5ca2a92684e"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1f",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "ab4695f7e266f495d47429e3b396159cc11512ca68575542a3b2d381e2a86efb"
+          },
+          "change": "Identical method body; containing file changed."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "G3"
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "Method bytes match P1g; same module as C-02."
+        }
+      ],
+      "current_source": "tests/test_committees.py:60",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+      }
+    },
+    {
+      "obligation": "C-02",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_level_ceiling_exact_recommendation_and_parent_scope",
+      "status": "active",
+      "claim": "A level-two committee can recommend the exact instrument to the Board and form a child under an express delegation. Its own attempt to adopt is refused. The child receives its own ceiling. The applied plan cites the exact recommendation result, and the LAW binding points to that version and implementation. P1g: An express right to adopt both Policy and Procedure in the reserves area still produces CMT_LEVEL_2 for either class. The original recommendation, its adoption and the parent’s lawful child formation remain. The child uses its own chair rule. The sole trustee’s Circle departure records a TRUSTEE gap under the Board’s LO Policy. P1g2 isolates loss of the last trustee while another child member remains and the mandate stays live.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1g.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1g2.md",
+          "lines": [
+            5
+          ],
+          "unit_ids": [
+            "C-02"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "21f2a86d6935b51f48716e5271b6c57a3f83dcfc9b7e2550cc30a6bf51e04b32"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "26e20c836c0c772b0593676dd3f12ed7b09b2ed5803b522c233213f306ea4532"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "4acd2e31ec9d513e446c7fc1e3ffdc881a927682166bd170a38ddd53a05ae05d"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "672cdadfb404dade207c587d8af64119f42d2312eded17c2edabc5ca2a92684e"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1f",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "ab4695f7e266f495d47429e3b396159cc11512ca68575542a3b2d381e2a86efb"
+          },
+          "change": "Identical method body; containing file changed."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "G2, U11"
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "U11 witness corrected"
+        }
+      ],
+      "current_source": "tests/test_committees.py:220",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+      }
+    },
+    {
+      "obligation": "C-03",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_chair_and_floor_follow_the_constitution_at_the_seat_boundary",
+      "status": "active",
+      "claim": "Missing choice leaves no activation. Explicit Yes is part of the exact activation, with idempotent replay and changed-choice refusal. An effective Board Policy changes the fallback, terms take precedence over that fallback and the cited Article governs over the terms. The original exclusive seat boundary, gap, single END and lawful replacement remain. P1g: The original fixed term, activation, effective Article, resignation and replacement stand. The existing two-cut query now checks the CHAIR gap date and the common custody due-date reader evaluated one microsecond after the known exclusive term boundary.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1g.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-03"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "21f2a86d6935b51f48716e5271b6c57a3f83dcfc9b7e2550cc30a6bf51e04b32"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "26e20c836c0c772b0593676dd3f12ed7b09b2ed5803b522c233213f306ea4532"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "4acd2e31ec9d513e446c7fc1e3ffdc881a927682166bd170a38ddd53a05ae05d"
+          },
+          "change": "Method body retained; p1c2t time in current TAR."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "672cdadfb404dade207c587d8af64119f42d2312eded17c2edabc5ca2a92684e"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1f",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "ab4695f7e266f495d47429e3b396159cc11512ca68575542a3b2d381e2a86efb"
+          },
+          "change": "Identical method body; containing file changed."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "G1"
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "Method bytes match P1g; same module as C-02."
+        }
+      ],
+      "current_source": "tests/test_committees.py:332",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+      }
+    },
+    {
+      "obligation": "C-04",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_end_boundary_and_stale_decision_preserve_history",
+      "status": "active",
+      "claim": "A dated level-four mandate permits investigation immediately before its exclusive end and gives CMT_ENDED at the boundary. REPORT is refused with CMT_LEVEL_4.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1f.md",
+          "lines": [
+            7,
+            16,
+            17
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "21f2a86d6935b51f48716e5271b6c57a3f83dcfc9b7e2550cc30a6bf51e04b32"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "26e20c836c0c772b0593676dd3f12ed7b09b2ed5803b522c233213f306ea4532"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "4acd2e31ec9d513e446c7fc1e3ffdc881a927682166bd170a38ddd53a05ae05d"
+          },
+          "change": "Witness rewrite and current timing budget."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "672cdadfb404dade207c587d8af64119f42d2312eded17c2edabc5ca2a92684e"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1f",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "ab4695f7e266f495d47429e3b396159cc11512ca68575542a3b2d381e2a86efb"
+          },
+          "change": "Separated dated and task endings; see C-06."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "Identical method body; its module changed."
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "Method bytes match P1g; same module as C-02."
+        }
+      ],
+      "current_source": "tests/test_committees.py:570",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+      }
+    },
+    {
+      "obligation": "C-06",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_task_completion_ends_delegation_and_preserves_history",
+      "status": "active",
+      "claim": "The Board completes the parent task during a qualifying vote. Only the parent-formed child loses authority. The report and parent history remain readable. The 3–1 frozen Policy records NO_EFFECT and CMT_ENDED and has no binding.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1f.md",
+          "lines": [
+            8,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "unit_ids": [
+            "C-06"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1f",
+          "split_from": "test_committees.CommitteeTests.test_end_boundary_and_stale_decision_preserve_history",
+          "prior_TAR": "COMMITTEES_TAR_v1_0_P1e.md",
+          "line": 10
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "Identical method body; its module changed."
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "Method bytes match P1g; same module as C-02."
+        }
+      ],
+      "current_source": "tests/test_committees.py:997",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+      }
+    },
+    {
+      "obligation": "C-05",
+      "baseline_label": null,
+      "current_label": "test_committees.CommitteeTests.test_reserves_work_returns_once_and_stays_with_the_board_without_a_chair",
+      "status": "active",
+      "claim": "The level-one committee adopts the exact reserves Policy used as the basis of a single CSA. Committee CQ binds it to the chair and reassigns it to a second effective office. The holder’s departure returns it once to the named chair. The chair’s departure leaves it held for the Board pending C1-113. Each former holder receives the exact SERVICE refusal. The original assignment and both historical holders remain readable. A separate Board CSA starts with its Chair, moves to a trustee identified solely by place and returns on that trustee’s dated resignation. The lookup stays keyed by the original seat through the Chair’s own subsequent resignation and Board hold. Exact receipt chain, clause, exclusive date, historic holder and former-holder refusals are checked. The office selector resolves the real Chair assignment.",
+      "unit_TAR": [
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "C-05"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1b.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "C-05"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1c.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "C-05"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1d.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "C-05"
+          ]
+        },
+        {
+          "source": "COMMITTEES_TAR_v1_0_P1e.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "C-05"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "history": [
+        {
+          "package": "COMMITTEES P1b",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "21f2a86d6935b51f48716e5271b6c57a3f83dcfc9b7e2550cc30a6bf51e04b32"
+          },
+          "change": "See the P1b TAR for delta and timing."
+        },
+        {
+          "package": "COMMITTEES P1c",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1b_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "26e20c836c0c772b0593676dd3f12ed7b09b2ed5803b522c233213f306ea4532"
+          },
+          "change": "See P1c TAR and p1bt predecessor timings."
+        },
+        {
+          "package": "COMMITTEES P1d",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1c_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "4acd2e31ec9d513e446c7fc1e3ffdc881a927682166bd170a38ddd53a05ae05d"
+          },
+          "change": "Witness rewrite and current timing budget."
+        },
+        {
+          "package": "COMMITTEES P1e",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1d_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "672cdadfb404dade207c587d8af64119f42d2312eded17c2edabc5ca2a92684e"
+          },
+          "change": "TAR current source."
+        },
+        {
+          "package": "COMMITTEES P1f",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1e_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "ab4695f7e266f495d47429e3b396159cc11512ca68575542a3b2d381e2a86efb"
+          },
+          "change": "Identical method body; containing file changed."
+        },
+        {
+          "package": "COMMITTEES P1g",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1f_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "2b02dc1b1b0e01d1a1ec740e663ebf5f90b8e202fe122a3de8c508d1466ddba0"
+          },
+          "change": "Identical method body; its module changed."
+        },
+        {
+          "package": "COMMITTEES P1g2",
+          "prior_evidence": {
+            "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+            "source_commit": null,
+            "candidate_run": "COMMITTEES_P1g_PENDING",
+            "candidate_break": null,
+            "candidate_restored": null,
+            "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
+          },
+          "change": "Method bytes match P1g; same module as C-02."
+        }
+      ],
+      "current_source": "tests/test_committees.py:632",
+      "evidence": {
+        "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
+        "source_commit": null,
+        "candidate_run": "COMMITTEES_P1g2_PENDING",
+        "candidate_break": null,
+        "candidate_restored": null,
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
       }
     }
   ],

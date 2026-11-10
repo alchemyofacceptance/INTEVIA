@@ -34,13 +34,17 @@ class ElectionMandateTests(TransactionTestCase):
         )
         return self.activate_board(lo, founder)
 
-    def activate_board(self, lo, founder):
+    def activate_board(self, lo, founder, activation_probe=None):
         circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
         general = {"organism_uuid": lo.organism_id, "credential": founder.credential}
         fx.enable_voting(general)
         chair = board.seat_trustee(lo, founder, circle, 1)
         third = board.seat_trustee(lo, founder, circle, 2)
-        circles.activate(**general, circle_uuid=circle.circle_uuid, request_uuid=uuid4())
+        activation = general | {"circle_uuid": circle.circle_uuid, "request_uuid": uuid4()}
+        if activation_probe is None:
+            circles.activate(**activation)
+        else:
+            activation_probe(activation)
         board.appoint_board_coordinator(lo, circle, founder, chair)
         return (
             lo,
@@ -152,13 +156,16 @@ class ElectionMandateTests(TransactionTestCase):
 
     def test_committee_grant_and_return_move_only_the_named_election(self):
         """ELECT-06. A competent Board grant and return move only administration of one member-elected place."""
+        from tests import committee_support as c
+
         self.topic_category_ids = {}
         lo, general, governed, trustees = self.board(empty_seat=True)
         founder, chair, _ = trustees
         candidate = law.add_member(lo)
         members = [*trustees, candidate]
         committee = self.committee(general)
-        self.hand_over_committee_office(lo, general, committee, founder, chair)
+        self.hand_over_committee_office(lo, general, committee, founder, candidate)
+        c.join(general | {"credential": candidate.credential}, committee, chair)
         recipient = str(committee.circle_uuid)
         citation, permission = self.constitution(
             lo,
@@ -166,6 +173,7 @@ class ElectionMandateTests(TransactionTestCase):
             general,
             members,
             {
+                "committees": {"chair_board_member": False},
                 "elections": {"Trustee": fx.seat(place="trustee-3")},
                 "authority_transfers": {
                     "Delegation": {
@@ -189,9 +197,14 @@ class ElectionMandateTests(TransactionTestCase):
                 purpose="Form the Nominations & Elections committee to administer the trustee election.",
             )
 
+        # The named stand-in is also standing in this contest. The Board must name another.
+        _, forming = c.mandate(lo, founder, committee, "2", chair=candidate, stand_in=str(candidate.identity_id))
+        adoption = json.loads(wording("LO_MEMBERSHIP", recipient, None)) | {
+            "committee": forming, "election_powers": ["CALL_NOMINATIONS", "PREPARE_SLATE", "RUN_ELECTION"]}
         decision, effect = self.policy(
-            lo, general, governed, trustees, wording("LO_MEMBERSHIP", recipient, None)
+            lo, general, governed, trustees, json.dumps(adoption)
         )
+        self.assertEqual(effect["committee"]["stand_in"], str(candidate.identity_id))
         history = elections.power_history(**general, scope=scope)
         self.assertEqual(
             [(h["result"], h["ilc_event"], h["membership_decision"], h["predecessor"]) for h in history],
@@ -201,12 +214,17 @@ class ElectionMandateTests(TransactionTestCase):
         rule = {"binding_uuid": citation["binding"], "version_id": citation["version"]}
         with self.assertRaisesMessage(cq.CQRefused, cq.MESSAGES["ELECT_CALL"]):
             fx.call(self, general, rule, provision="Trustee", place="trustee-3")
-        administered = general | {"credential": chair.credential}
+        administered = general | {"credential": candidate.credential}
         with self.assertRaisesMessage(cq.CQRefused, cq.MESSAGES["CQ_BODY"]):
             fx.call(self, governed, rule, provision="Trustee", place="trustee-3")
         journey = fx.call(self, administered, rule, provision="Trustee", place="trustee-3")
         fx.nominate(journey, candidate)
-        ballot = fx.open_election(journey)
+        with self.assertRaisesMessage(cq.CQRefused, cq.MESSAGES["CMT_RECUSED"]):
+            cq.mark_prepared(**journey, request_uuid=uuid4())
+        stand_in = c.step(governed, effect["committee"]["binding"], "NAME_ADMIN",
+                          contest=str(journey["thread_uuid"]), administrator=str(founder.identity_id))
+        self.decision(governed, stand_in, trustees)
+        ballot = fx.open_election(journey | {"credential": founder.credential})
         self.assertEqual(cq_reads.vote_status(**journey)["eligible"], 4)
         for member in members:
             fx.cast(journey, ballot, member)

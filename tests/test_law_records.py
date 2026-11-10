@@ -47,7 +47,7 @@ def query_one(statement, params=()):
 
 
 class Document:
-    def __init__(self, identity):
+    def __init__(self, identity, *, content="[#1] First version."):
         role, _ = models.Role.objects.get_or_create(name="LAW library fixture role")
         models.ProfileRole.objects.get_or_create(identity=identity, role=role)
         self.author = identity.credential
@@ -58,7 +58,7 @@ class Document:
         self.resource = self.service.create_resource(
             identity=self.author,
             resource_id=self.name,
-            content="[#1] First version.",
+            content=content,
             evidence_reference="fixture:law:creation",
         )
         self.first = self.resource.current_version

@@ -494,7 +494,7 @@ class ElectionTests(TransactionTestCase):
         # The sole active founder consents to and recognises their exact AGM
         # seat. The recognised place supplies the real Birthing prerequisite.
         lo, founder = law.ordinary_birth(board_seats=3, elected=(1, 2), seat_founder=False,
-                                         before_birthing=before_birthing)
+                                         before_birthing=before_birthing, birth_chair_choice=None)
         scope, claim = data["scope"], data["claim"]
         with self.assertRaises(cq.CQRefused) as closed:
             elections.recognise_incumbent(**scope, claim=claim, request_uuid=uuid4())
@@ -530,15 +530,17 @@ class ElectionTests(TransactionTestCase):
         recorded = elections.recognise_incumbent(**scope, claim=claim, consent_uuid=consent, result_uuid=result, request_uuid=uuid4())
         row, = elections.board_continuity(**scope, act_uuid=recorded["act"])
         self.assertEqual((row["authority_source"]["kind"], row["authority_source"]["reference"]), ("CQ_RESULT", str(result)))
-        circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
-        circle_commands.activate(**scope, circle_uuid=circle.circle_uuid, request_uuid=uuid4())
-        circle.refresh_from_db()
-        self.assertEqual(circle.state, "ACTIVE")
+        # Reach the populated historical reversal before recording an 0084 activation choice.
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
         with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
+            import_module("core.migrations.0084_committee_mandates").change(editor, True)
             migration.uninstall(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.")
+        circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
+        circle_commands.activate(**scope, circle_uuid=circle.circle_uuid, request_uuid=uuid4(), committee_chair_board_member=False)
+        circle.refresh_from_db()
+        self.assertEqual(circle.state, "ACTIVE")
         outsider = support.register_test_learner(username="other-" + uuid4().hex)
         with self.assertRaises(disc.DiscussionUnavailable) as unknown:
             elections.board_continuity(**(scope | {"credential": outsider.credential}), act_uuid=recorded["act"])

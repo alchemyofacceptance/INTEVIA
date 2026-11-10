@@ -42,7 +42,7 @@ def adoption(lo, doc, law_class="POLICY"):
                            operation="ADOPT", intent="ADOPT", law_class=law_class, version=1)
 
 
-def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elected=(), external=(), before_birthing=None, seat_founder=True):
+def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elected=(), external=(), before_birthing=None, seat_founder=True, birth_chair_choice=False):
     """Use the existing registration, founding, gateway, phases and Birthing commands."""
     tag = uuid4().hex
     founder = support.register_test_learner(username="law-founder-" + tag)
@@ -96,7 +96,8 @@ def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elect
     key = uuid4().hex
     formation.OrganismBirthingService(clock=support.database_now).birth_living_organism(formation.BirthingCommand(
         credential=founder.credential, living_organism_uuid=lo.organism_id, request_reference="birth:" + key,
-        idempotency_key=key, offering_choice=offering_choice, policy_version=version, policy_text_sha256=digest))
+        idempotency_key=key, offering_choice=offering_choice, policy_version=version, policy_text_sha256=digest,
+        committee_chair_board_member=birth_chair_choice if board_seats else None))
     return lo, founder
 
 

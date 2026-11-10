@@ -13,6 +13,8 @@ from uuid import UUID
 from django.contrib.auth.models import User
 from django.db import connections, transaction
 
+from src.intevia.services.committees import work_holder
+
 from core.models import (
     Identity,
     Service,
@@ -543,7 +545,7 @@ class ServiceActivityReadService:
         if not (
             submit_transition.actor_id
             == submission.submitted_by_id
-            == assignment.assignee_id
+            == work_holder(activity, assignment, self._alias, submission.submitted_at)
         ):
             raise ServiceActivityReadLineageError(
                 "submit actor, submitter, and immutable assignee must match"
@@ -559,7 +561,7 @@ class ServiceActivityReadService:
             "occurred_at": submit_transition.occurred_at,
             "schema": _SUBMISSION_QUALIFICATION_SCHEMA,
             "source_authority_reference": submit_transition.authority_reference,
-            "subject_identity_id": assignment.assignee.identity_id,
+            "subject_identity_id": submission.submitted_by.identity_id,
             "submit_transition_lineage_reference": (
                 submit_transition.lineage_reference
             ),
@@ -577,8 +579,8 @@ class ServiceActivityReadService:
             submit_transition_pk=submit_transition.pk,
             submit_transition_sequence=submit_transition.sequence,
             submit_transition_lineage_reference=submit_transition.lineage_reference,
-            subject_pk=assignment.assignee_id,
-            subject_identity_id=assignment.assignee.identity_id,
+            subject_pk=submission.submitted_by_id,
+            subject_identity_id=submission.submitted_by.identity_id,
             actor_identity_id=submit_transition.actor.identity_id,
             actor_equals_assignee=True,
             occurred_at=submit_transition.occurred_at,
@@ -694,7 +696,7 @@ class ServiceActivityReadService:
         if viewer.pk == activity.created_by_id:
             return
         # Assignee direct visibility
-        if assignment is not None and viewer.pk == assignment.assignee_id:
+        if assignment is not None and viewer.pk == work_holder(activity, assignment, self._alias):
             return
         # Third-party: require injected provider visible=True
         evaluated_at = self._clock()
@@ -862,7 +864,7 @@ class ServiceActivityReadService:
             # submitter must equal assignee
             if assignment is None:
                 raise ServiceActivityReadLineageError("submission without assignment")
-            if submission.submitted_by_id != assignment.assignee_id:
+            if submission.submitted_by_id != work_holder(activity, assignment, self._alias, submission.submitted_at):
                 raise ServiceActivityReadLineageError("submitter is not the assignee")
         else:
             if submission is not None:

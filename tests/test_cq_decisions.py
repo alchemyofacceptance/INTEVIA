@@ -1017,6 +1017,8 @@ class CQDecisionTests(TransactionTestCase):
         continuity = import_module("core.migrations.0083_elect_board_continuity")
         hard = terms.hard
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
+            committees = import_module("core.migrations.0084_committee_mandates")
+            committees.change(editor, True)
             continuity.uninstall(None, editor)
             terms.uninstall(None, editor)
             hard.uninstall(None, editor)
@@ -1035,6 +1037,7 @@ class CQDecisionTests(TransactionTestCase):
             for _, replacement in continuity.edits():
                 signature = continuity.signature(replacement)
                 self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
+            committees.change(editor, False)
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True
