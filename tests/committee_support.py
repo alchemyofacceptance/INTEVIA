@@ -111,11 +111,13 @@ def formation_board(case, *, offering, seats=3, recognise_founder=None, activati
         board_seats=seats,
         seat_founder=recognise_founder is None,
         before_birthing=recognise_founder,
+        board_minimum=None if recognise_founder is None else law.FIXTURE_BOARD_MINIMUM,
         birth_chair_choice=False if activation_probe is None else None,
     )
     if recognise_founder is None:
         charter, version = first_version(
-            founder, {"committees": {"chair_board_member": False}} | (charter_fields or {})
+            founder, law.board_makeup_fields(law.FIXTURE_BOARD_MINIMUM)
+            | {"committees": {"chair_board_member": False}} | (charter_fields or {})
         )
         article = replace(
             law.adoption(lo, charter, "ARTICLE"), version=version.version_number
@@ -166,3 +168,73 @@ def decide_instrument(case, scope, attachment, voters):
     )
     case.assertEqual(len(receipts), 1, "One settlement must apply this exact proposal.")
     return receipts[0]
+
+
+def assigned_activity(founder, circle, binding, *, worker=None, with_service=False):
+    """Create the real published Service and the chair’s assigned activity."""
+    from dataclasses import asdict
+    from src.intevia.services import service_activity_service as activities
+    from src.intevia.services.service_service import GovernedService
+    from src.intevia.services.service_authority import (
+        ServiceCommandAuthority,
+        ServiceCommandAuthorityResponse,
+    )
+    from tests.test_law_records import LibraryFixtureCapability
+
+    from tests import s015_0021_support as support
+
+    class ActivityGrant:
+        def authorise(self, *, request):
+            return ServiceCommandAuthorityResponse(
+                **asdict(request), authority_reference="fixture:reserve-work"
+            )
+
+    source = GovernedService(
+        authority=law.ContributionAuthority(LibraryFixtureCapability())
+    )
+    catalog = source.create_service(
+        identity=founder.credential,
+        service_id="reserves-" + uuid4().hex,
+        capability_purpose="Review reserves",
+        domain_intent="Service",
+        evidence_reference="fixture:reserves",
+    )
+    source.transition_service(
+        identity=founder.credential,
+        service_id=catalog.service_id,
+        command="publish_service",
+        evidence_reference="fixture:publish",
+    )
+    service = activities.ServiceActivityService(
+        authority=ServiceCommandAuthority(provider=ActivityGrant()),
+        clock=support.database_now,
+    )
+    activity_id = uuid4()
+
+    def command():
+        return dict(
+            credential=founder.credential,
+            request_reference=uuid4().hex,
+            idempotency_key=uuid4().hex,
+            occurred_at=support.database_now(),
+            activity_id=activity_id,
+        )
+
+    service.create_service_activity(
+        activities.CreateServiceActivityCommand(
+            **command(),
+            service_version_pk=catalog.current_version_id,
+            initiating_domain=activities.InitiatingDomain.SERVICE,
+            initiating_domain_reference="committee:" + str(circle.circle_uuid),
+            activity_basis_reference=binding,
+        )
+    )
+    service.assign_service_activity(
+        activities.AssignServiceActivityCommand(
+            **command(),
+            assignee_identity_id=(worker or founder).identity_id,
+            assignment_reference="reserve-review",
+            assignment_basis_reference="fixture:committee-chair",
+        )
+    )
+    return (activity_id, service) if with_service else activity_id

@@ -6114,7 +6114,10 @@ class CircleParticipationEnd(_S015AppendOnly):
             models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="elect-term:"),
                                     name="elect_one_scheduled_end"),
             models.UniqueConstraint(fields=("participation",), condition=~models.Q(composing_rule_reference__startswith="elect-term:") &
-                ~models.Q(composing_rule_reference__startswith="elect-resign:"), name="elect_one_other_end"),
+                ~models.Q(composing_rule_reference__startswith="elect-resign:") &
+                ~models.Q(composing_rule_reference__startswith="c108-stand-down:"), name="elect_one_other_end"),
+            models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="c108-stand-down:"),
+                                    name="c108_one_standdown_place"),
             models.UniqueConstraint(fields=("participation",), condition=models.Q(composing_rule_reference__startswith="elect-resign:"),
                                     name="elect_one_resignation"),
             models.CheckConstraint(

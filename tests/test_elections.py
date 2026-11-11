@@ -534,6 +534,12 @@ class ElectionTests(TransactionTestCase):
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
         with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
+            import_module("core.migrations.0090_stand_down_supersession").uninstall(None, editor)
+            import_module("core.migrations.0089_members_restore_board").uninstall(None, editor)
+            import_module("core.migrations.0088_constitutional_board_makeup").uninstall(None, editor)
+            import_module("core.migrations.0087_members_stand_down").uninstall(None, editor)
+            import_module("core.migrations.0086_board_continuity").uninstall(None, editor)
+            import_module("core.migrations.0085_board_voting").uninstall(None, editor)
             import_module("core.migrations.0084_committee_mandates").change(editor, True)
             migration.uninstall(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.")
@@ -657,6 +663,10 @@ class ElectionTests(TransactionTestCase):
         events = models.ContextualRoleAssignmentStateEvent.objects
         chair_end = events.get(assignment=assignments["Chair"], action="END")
         self.assertEqual(chair_end.effective_at, ending.effective_at)
+        self.assertEqual(ending.composing_rule_reference, "elect-resign:" + str(end["act"]))
+        self.assertEqual(law.query_one("""SELECT count(*) FROM public.elect_vacancy_sources
+            WHERE organism_id=%s AND ending IN (%s,%s)""",
+            [lo.pk, place.participation_uuid, chair_end.event_uuid]), 2)
         self.assertFalse(assignment_in_effect(appointment, handover, known_at=support.database_now()))
         self.assertTrue(assignment_in_effect(appointment, handover, known_at=known_before))
         self.assertFalse(events.filter(assignment=assignments["Treasurer"], action="END").exists())
@@ -759,6 +769,13 @@ class ElectionTests(TransactionTestCase):
         self.assertEqual((info["supporting_place_end_act"], info["supporting_place_ends_at"]),
                          (transition.event_uuid, transition.effective_at))
         self.assertEqual(self._office_deadline(award, known), seat_end)
+        # The earliest actual ending supersedes the scheduled end. Both
+        # original sources remain identifiable after departure.
+        self.assertEqual(law.query_one("""SELECT effective_at FROM public.elect_vacancy_sources
+            WHERE organism_id=%s AND ending=%s""", [lo.pk, seat.participation_uuid]), transition.effective_at)
+        self.assertTrue(models.CircleParticipationEnd.objects.filter(
+            participation=seat, composing_rule_reference="elect-term:" + str(seat_vote),
+            effective_at=seat_end).exists())
 
     def test_advance_cites_dated_resignation_assessment_before_term_catch_up(self):
         """ELECT-13. First vacancy writer binds the exact assessment across a future date."""

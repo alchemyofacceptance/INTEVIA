@@ -59,9 +59,24 @@ MESSAGES = {
     'CMT_POWER': 'The grant does not cover this electoral act or place. Refer it to the recorded holder.',
     'CMT_RECUSED': 'You are a candidate in this election. Ask another authorised administrator to act.',
     'CMT_ADMIN': 'The Board may name an eligible member for this contest after the administrator stands aside.',
+    "CMT_WORK_STAND_DOWN": (
+        "This work passed to the LO Coordinator(s) when the Board stood down. "
+        "This request cannot change it. Its custody record is unchanged. "
+        "Ask an LO Coordinator to pick it up or arrange reassignment."
+    ),
     'CMT_WORK': 'This work has returned to the chair. Ask the chair to reassign it.',
     'CMT_NO_CHAIR': 'There is no effective chair to receive this work. Refer it to the Board.',
     'CMT_WORK_LAW': 'No governing work-transfer clause is in force. Ask the Board to identify or adopt one.',
+    "CQ_BOARD_ACTIVE": (
+        "Switching voting off was refused. Voting stays on while the Board is active. "
+        "Nothing changed. Put Board stand-down to the members or the body named in the "
+        "constitution. Your LO Coordinator(s) can help."
+    ),
+    "CQ_SETTINGS_TIME": (
+        "Voting authority could not be checked because the effective or knowledge time was missing. "
+        "Nothing changed. Retry with both times. If the service supplied them, ask the service "
+        "administrator to check the request."
+    ),
     "CQ_SETTINGS_WORDING": "The attached wording differs from the proposed settings. Attach the exact change again.",
     "CQ_SETTINGS_REFERRAL": "Use the exact settings motion that closed below three eligible members. A Coordinator who declared a conflict cannot decide it.",
     "CQ_SETTINGS_VOTE": "The members decide these settings by vote. Put the change forward as a Suggestion.",
@@ -79,7 +94,7 @@ MESSAGES = {
     "CQ_PROBATION_VOTE": "Probationary members may discuss but cannot vote.",
     "CQ_ABSTAIN_OFF": "Abstention is not available for this vote.",
     "CQ_DUPLICATE": "You have already answered this vote.",
-    "CQ_CHOICE": "Choose Qualified, Not Qualified or Abstain.",
+    "CQ_CHOICE": "Choose For, Against or Abstain.",
     "CQ_NO_DUE": "No CQ phase transition is due.",
     "CQ_SETTINGS_OFFICE": "Only this Living Organism's effective Coordinator may change its CQ settings.",
     "CQ_REPORT_DATE": "Choose a reporting effective time at or after this decision and its preceding reporting rule.",
@@ -98,6 +113,13 @@ MESSAGES = {
     "CQ_REFERRAL_MATTER": "Carry the exact referred motion and attachment into the new Suggestion.",
     "CQ_REFERRAL_USED": "This referral already has a receiving CQ journey.",
     "CQ_BODY": "This board cannot decide this act. Put it forward in the body that owns it.",
+    "CQ_RESTORE_OFF": "The Board cannot be restored while voting is off. Its state is unchanged. Ask an effective LO Coordinator to re-enable the recorded voting settings, then put restoration to the deciding body.",
+    "CQ_RESTORE_TENURE": "This restoration does not cover the current stood-down Board. Its state is unchanged. Check the latest Board decision. Your LO Coordinator(s) can help trace it.",
+    "CQ_RESTORE_PENDING": "Restoration is already authorised for this Board. It remains inactive until its trustees are seated. Follow the existing decision. Your LO Coordinator(s) can present it for activation.",
+    "CQ_RESTORE_SEATING": "This seat needs a current restoration decision and voting on. No trustee has been seated. Follow the members’ decision and the constitutional election or recognition route. Ask the LO Coordinator(s) for the record.",
+    "CQ_RESTORE_ROSTER": "An existing Board place has no award under this restoration decision. The Board remains inactive. Review the place and its original term. Your LO Coordinator(s) can help reconcile its governing record.",
+    "CQ_RESTORE_TERM": "This restoration election needs a term stated in the cited provision. The seat has not been filled. Check the term in the constitution. The LO Coordinator(s) can help locate the governing version.",
+    "CQ_STAND_DOWN_DATE": "Choose stand-down at the result. A separately dated stand-down is not yet available.",
     "CQ_ATTACHMENT": "This board cannot carry out this exact proposal. Check the body, version and current law.",
     "CQ_SUGGESTION": "Only a Suggestion can be put forward for CQ.",
     "CQ_EXISTS": "This Suggestion already has a CQ journey.",
@@ -248,6 +270,37 @@ def _execute(actor, owner, board, thread, operation, key, args, received):
     )[0]["act"]
 
 
+def _admit_settings(key, actor, fields, owner):
+    # Except for a well-formed Off attempt, admission keeps its usual
+    # precedence. That attempt must reach storage to leave its refusal.
+    def admit():
+        disc._rows(
+            """SELECT public.cq4_direct_admit(lo.id,%s,%s,%s,%s,%s,statement_timestamp())
+               FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
+            [key, actor.pk, actor.access_epoch, fields.get("changes") == {"enabled": True},
+             _id(fields.get("below_three_result"), nullable=True), owner],
+        )
+
+    off_attempt = (
+        isinstance(fields.get("changes"), dict)
+        and fields["changes"].get("enabled") is False
+        and (fields.get("predecessor") is None or isinstance(fields["predecessor"], UUID))
+        and "below_three_result" not in fields
+    )
+    if off_attempt:
+        try:
+            with transaction.atomic():
+                admit()
+        except IntegrityError as denied:
+            code = getattr(getattr(denied.__cause__, "diag", None), "message_primary", None)
+            if code != "CQ_SETTINGS_VOTE":
+                raise
+            # The input trigger repeats admission and returns this same
+            # public reason. It can commit a receipt if the Board rule applies.
+    else:
+        admit()
+
+
 def _command(
     credential,
     organism_uuid,
@@ -295,12 +348,7 @@ def _command(
                 [board, thread, operation, actor.pk, owner],
             )
             if operation == "SETTINGS":
-                disc._rows(
-                    """SELECT public.cq4_direct_admit(lo.id,%s,%s,%s,%s,%s,statement_timestamp())
-                       FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
-                    [key, actor.pk, actor.access_epoch, fields.get("changes") == {"enabled": True},
-                     _id(fields.get("below_three_result"), nullable=True), owner],
-                )
+                _admit_settings(key, actor, fields, owner)
             if operation == "ANSWER":
                 disc._rows(
                     "SELECT public.cq_answer_eligible(%s,%s,%s,%s,statement_timestamp())",
@@ -320,9 +368,18 @@ def _command(
             # Input type validation before json.dumps avoids accidental coercion.
             if operation == "SETTINGS" and not isinstance(fields.get("changes"), dict):
                 raise CQRefused("CQ_SETTINGS_INPUT")
-            return _execute(
-                actor, owner, board, thread, operation, key, fields, received
-            )
+            act = _execute(actor, owner, board, thread, operation, key, fields, received)
+            if act is not None:
+                return act
+            code = disc._rows(
+                """SELECT facts->>'code' AS code FROM public.core_cqact
+                   WHERE act_uuid=%s AND organism_id=(SELECT id FROM public.core_livingorganism
+                   WHERE organism_id=%s) AND actor_id=%s AND operation='REFUSE_VOTING_OFF'""",
+                [key, owner, actor.pk],
+            )[0]["code"]
+        # A normal caller gets its refusal after the receipt and ILC event commit.
+        # A caller that owns an outer transaction owns the final commit as usual.
+        raise CQRefused(code)
     except IntegrityError as exc:
         translate_refusal(exc)
 
@@ -360,6 +417,27 @@ def settings_attachment(*, organism_uuid, predecessor, changes, reporting_effect
     if reporting_effective_from is not None:
         spec["reporting_effective_from"] = reporting_effective_from
     return _settings_proposal("SETTINGS", spec)
+
+
+def stand_down_attachment(*, organism_uuid, circle_uuid, lifecycle_uuid, board_uuid, citation=None):
+    """Freeze the Board tenure and deciding body for a stand-down at the CQ result."""
+    spec = {
+        "organism": str(organism_uuid), "circle": str(circle_uuid),
+        "act": "STAND_DOWN", "lifecycle": str(lifecycle_uuid),
+        "body": str(board_uuid), "effective_at": "AT_RESULT", "citation": citation,
+    }
+    return {"kind": "BOARD_STAND_DOWN", "spec": spec,
+            "text": json.dumps(spec, sort_keys=True, default=_json_reference)}
+
+
+def restoration_attachment(*, organism_uuid, circle_uuid, stand_down_uuid, board_uuid, citation=None):
+    """Put restoration of this precise Board tenure to its competent body."""
+    spec = {
+        "organism": str(organism_uuid), "circle": str(circle_uuid), "act": "RESTORE",
+        "stand_down": str(stand_down_uuid), "body": str(board_uuid), "citation": citation,
+    }
+    return {"kind": "BOARD_RESTORE", "spec": spec,
+            "text": json.dumps(spec, sort_keys=True, default=_json_reference)}
 
 
 def circle_reporting_attachment(*, organism_uuid, circle_uuid, predecessor, reporting):
@@ -499,7 +577,7 @@ def catch_up(*, credential):
                 if rows:
                     try:
                         with transaction.atomic():
-                            _execute(
+                            act = _execute(
                                 actor,
                                 item["owner"],
                                 item["board_uuid"],
@@ -516,7 +594,8 @@ def catch_up(*, credential):
                                     "ELECT_VACANCY_LINK", "ELECT_VACANCY_NOMINEE", "ELECT_VACANCY_ROUTE", "ELECT_VACANCY_HOLD"}:
                             continue
                         raise
-                    changed = True
+                    if act is not None:
+                        changed = True
         return "Due work recorded." if changed else "Nothing is due."
     except IntegrityError as exc:
         translate_refusal(exc)

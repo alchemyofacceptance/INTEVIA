@@ -1,5 +1,6 @@
 """L-04–L-08. Governed LAW acts and the reading of an office citation."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from hashlib import sha256
@@ -42,7 +43,33 @@ def adoption(lo, doc, law_class="POLICY"):
                            operation="ADOPT", intent="ADOPT", law_class=law_class, version=1)
 
 
-def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elected=(), external=(), before_birthing=None, seat_founder=True, birth_chair_choice=False):
+FIXTURE_BOARD_MINIMUM = 3
+
+
+def board_makeup_fields(minimum, maximum=None):
+    bounds = {"minimum": minimum}
+    if maximum is not None:
+        bounds["maximum"] = maximum
+    return {"board_makeup": bounds}
+
+
+def board_makeup_document(founder, minimum, maximum=None):
+    """Publish the exact structured Board provision as a first LIBRARY version."""
+    content = json.dumps(board_makeup_fields(minimum, maximum), sort_keys=True)
+    return Document(founder, content=content)
+
+
+def adopt_board_makeup(lo, founder, minimum, maximum=None, *, law_class="ARTICLE"):
+    document = board_makeup_document(founder, minimum, maximum)
+    proposal = adoption(lo, document, law_class)
+    receipt = law.OrganismLawService().adopt_law(command(founder, proposal))
+    if receipt.status != "ADOPT":
+        raise AssertionError(f"The fixture’s Board provision needs an adoption: {receipt.message}")
+    return proposal.proposal, document.first.pk
+
+
+def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elected=(), external=(),
+                   before_birthing=None, seat_founder=True, birth_chair_choice=False, board_minimum=FIXTURE_BOARD_MINIMUM):
     """Use the existing registration, founding, gateway, phases and Birthing commands."""
     tag = uuid4().hex
     founder = support.register_test_learner(username="law-founder-" + tag)
@@ -87,6 +114,9 @@ def ordinary_birth(*, offering_choice="COMPLIMENTARY_BETA", board_seats=0, elect
         from tests.cq_authority_support import form_board
         form_board(lo, founder, board_seats, elected, external, seat_founder=seat_founder)
     phase("GERMINATING", "BIRTHING")
+    if board_seats and board_minimum is not None:
+        # A real fixture Article. The seat roster alone says nothing about the minimum.
+        adopt_board_makeup(lo, founder, board_minimum)
     if before_birthing is not None:
         before_birthing(lo, founder)
     text = "Disposable L rehearsal offering. The founder elects the complimentary beta package."

@@ -4,7 +4,7 @@ from datetime import timedelta
 from hashlib import sha256
 from uuid import uuid4
 
-from django.db import connection
+from django.db import connection, transaction
 from django.test import TransactionTestCase
 
 from core import models
@@ -119,71 +119,8 @@ class CommitteeTests(TransactionTestCase):
         self.assertEqual(len(committees.history(**local)), 1)
 
         # One real activity follows the mandate from a live committee to a Board decision.
-        from dataclasses import asdict
-        from src.intevia.services import service_activity_service as activities
-        from src.intevia.services.service_service import GovernedService
-        from src.intevia.services.service_authority import (
-            ServiceCommandAuthority,
-            ServiceCommandAuthorityResponse,
-        )
-        from tests.test_law_records import LibraryFixtureCapability
-
         binding = forming["spec"]["proposal"]
-
-        class ActivityGrant:
-            def authorise(self, *, request):
-                return ServiceCommandAuthorityResponse(
-                    **asdict(request), authority_reference="fixture:reserve-work"
-                )
-
-        source = GovernedService(
-            authority=law.ContributionAuthority(LibraryFixtureCapability())
-        )
-        catalog = source.create_service(
-            identity=founder.credential,
-            service_id="reserves-" + uuid4().hex,
-            capability_purpose="Review reserves",
-            domain_intent="Service",
-            evidence_reference="fixture:reserves",
-        )
-        source.transition_service(
-            identity=founder.credential,
-            service_id=catalog.service_id,
-            command="publish_service",
-            evidence_reference="fixture:publish",
-        )
-        service = activities.ServiceActivityService(
-            authority=ServiceCommandAuthority(provider=ActivityGrant()),
-            clock=support.database_now,
-        )
-        activity_id = uuid4()
-
-        def command():
-            return dict(
-                credential=founder.credential,
-                request_reference=uuid4().hex,
-                idempotency_key=uuid4().hex,
-                occurred_at=support.database_now(),
-                activity_id=activity_id,
-            )
-
-        service.create_service_activity(
-            activities.CreateServiceActivityCommand(
-                **command(),
-                service_version_pk=catalog.current_version_id,
-                initiating_domain=activities.InitiatingDomain.SERVICE,
-                initiating_domain_reference="committee:" + str(circle.circle_uuid),
-                activity_basis_reference=binding,
-            )
-        )
-        service.assign_service_activity(
-            activities.AssignServiceActivityCommand(
-                **command(),
-                assignee_identity_id=founder.identity_id,
-                assignment_reference="reserve-review",
-                assignment_basis_reference="fixture:committee-chair",
-            )
-        )
+        activity_id = c.assigned_activity(founder, circle, binding)
         bound = c.decide_instrument(
             self, local, c.step(local, binding, "BIND_WORK", activity=str(activity_id)), voters
         )
@@ -1156,3 +1093,315 @@ class CommitteeTests(TransactionTestCase):
             ),
             (reported["implementation"], "REPORT", "Reserves reviewed."),
         )
+
+    def test_members_stand_down_board_and_recover_its_authority(self):
+        """C108-03. One members' result ends the Board and returns its powers and work."""
+        from dataclasses import replace
+        from uuid import UUID
+
+        from src.intevia.services import organism_role_definition_service as definitions
+        from src.intevia.services import service_activity_service as activities
+        from src.intevia.services.organism_office_consent_service import (
+            OfficeAppointmentConsentService,
+        )
+        from src.intevia.services.organism_role_service import OrganismRoleService
+        from tests import (
+            cq_authority_support,
+            test_sr_office_actions,
+            test_sr_office_guards,
+        )
+
+        due = support.database_now() + timedelta(days=1)  # Fixture date, still future at settlement.
+        committee_id = uuid4()
+        article = {}
+        secretary = None
+
+        def cite(lo, founder, binding, version):
+            nonlocal secretary
+            article.update(binding=str(binding), version=version)
+            # The LO Coordinator can appoint the Secretary here, before voting opens.
+            helper = test_sr_office_actions.SROfficeActionTests()
+            helper.actor, helper.organism = founder, lo
+            definition = definitions.DefinitionContent(code="SECRETARY", provisions=(
+                definitions.DefinitionProvision("OFFICE_BASIS", "Secretary", str(version)),))
+            authority = cq_authority_support.authority()
+            source = definitions.OrganismRoleDefinitionService(authority=authority, clock=support.database_now)
+            defined = source.record_role_definition(helper._command(content=definition))
+            role = models.OrganismRoleDefinition.objects.get(role_uuid=defined.role_definition_uuid)
+            secretary = fx.office_proposal(lo, founder, founder, role, self_proposed=True)
+            OrganismRoleService(authority=authority, clock=support.database_now).transition_assignment(
+                helper._transition_command(secretary, "ASSIGN"))
+
+        lo, general, board, voters = c.formation_board(
+            self, offering="FREE", after_article=cite, charter_fields={
+                "offices": {"Secretary": "The Secretary keeps the minutes."},
+                "resignations": {"Notice": {"place": "trustee-1", "effect": "DATED", "effective_at": due.isoformat()}},
+                "elections": {"Treasurer": {"type": "OFFICE", "body": "GOVERNANCE", "place": "TREASURER"}},
+                "authority_transfers": {"Delegate": {"grantor": "GOVERNANCE", "power": "RUN_ELECTION",
+                    "election": "Treasurer", "recipients": [str(committee_id)]}},
+            },
+        )
+        founder = voters[0]
+        gov = models.Circle.objects.get(circle_uuid=board["circle_uuid"])
+        circle = circles.form(**general, circle_uuid=committee_id, request_uuid=uuid4(), kind="GENERIC",
+                              name="Reserves committee", purpose="Review reserves and administer the Treasurer election.")
+        local = general | {"circle_uuid": committee_id}
+        # The worker holds the committee office but never the LO Coordinator office.
+        worker = voters[1]
+        place = c.join(general, circle, worker)
+        c.join(general, circle, voters[2])
+        authority = cq_authority_support.authority()
+        roles = OrganismRoleService(authority=authority, clock=support.database_now)
+        office_id = uuid4()
+        roles.nominate_circle_coordinator(**local, participation_uuid=place.participation_uuid,
+                                          assignment_uuid=office_id, request_uuid=uuid4())
+        appointment = models.ContextualRoleAssignment.objects.get(assignment_uuid=office_id)
+        consent = test_sr_office_actions.SROfficeActionTests()._consent_command(place.membership, appointment)
+        OfficeAppointmentConsentService(authority=authority, clock=support.database_now).record_office_consent(consent)
+        roles.appoint_circle_coordinator(**local, assignment_uuid=office_id, request_uuid=uuid4())
+        documents = []
+
+        def publish(author, contents):
+            pair = c.first_version(author, contents)
+            documents.append(pair)
+            return pair
+
+        scope = article | {"power": "RUN_ELECTION", "provision": "Treasurer", "place": "TREASURER"}
+        work = {"committee_work": {"return_to": "CHAIR"}}
+        forming, _ = c.mandate(
+            lo, founder, circle, "1", publisher=publish, chair=worker, terms=work, policy_fields=work | {
+                "authority_transfer": {"scope": scope, "citation": article | {"provision": "Delegate"},
+                    "from": "GOVERNANCE", "to": str(committee_id), "predecessor": None}},
+        )
+        binding = forming["spec"]["proposal"]
+        grant = c.decide_instrument(self, board, forming, voters)
+        self.assertEqual(elections.power_history(**general, scope=scope)[-1]["holder"], str(committee_id))
+        activity_id, service = c.assigned_activity(founder, circle, binding, worker=worker, with_service=True)
+        bound = c.decide_instrument(self, local, c.step(local, binding, "BIND_WORK", activity=str(activity_id)), voters)
+
+        places = dict(models.CircleParticipation.objects.filter(circle=gov).values_list("pk", "participation_uuid"))
+        offices = set(models.ContextualRoleAssignment.objects.filter(circle=gov).values_list("pk", flat=True))
+        self.assertEqual(len(places), 3)
+        self.assertTrue(offices)
+        offices.add(secretary.pk)
+        office_events = models.ContextualRoleAssignmentStateEvent.objects.filter(assignment=secretary)
+        award = office_events.get(action="ASSIGN")
+        # A physical, prospective END on an existing assignment. Refresh the cache
+        # at receipt, while the later END is already the newest recorded chain link.
+        with transaction.atomic(), connection.cursor() as cur:
+            scheduled_pk = test_sr_office_guards._lo_transition(
+                cur, {"lo": lo.pk, "basis": lo.founding_authority_basis_id},
+                enterer_id=founder.pk, enterer_membership_id=secretary.membership_id,
+                assignment_id=secretary.pk, assignment_uuid=secretary.assignment_uuid,
+                predecessor_id=award.pk, sequence=award.sequence + 1,
+                action="END", prior_state="ACTIVE", resulting_state="ENDED",
+                at=support.database_now(), effective_at=due, tag="c108-secretary-" + uuid4().hex)
+        scheduled = office_events.get(pk=scheduled_pk)
+        self.assertEqual((scheduled.action, scheduled.effective_at), ("END", due))
+        self.assertLess(scheduled.recorded_at, due)
+        self.assertEqual(law.query_one("SELECT ending FROM public.elect_vacancy_sources WHERE ending=%s",
+                                     [scheduled.event_uuid]), scheduled.event_uuid)
+        seat = models.CircleParticipation.objects.get(circle=gov, seat_id="trustee-1", membership__identity=worker)
+        notice = elections.resign_board_place(**(general | {"credential": worker.credential}),
+            participation_uuid=seat.participation_uuid, binding_uuid=UUID(article["binding"]),
+            version_id=article["version"], provision="Notice", request_uuid=uuid4())
+        self.assertEqual(notice["effect"], "DATED")
+        original = models.CircleParticipationEnd.objects.get(participation=seat, composed_from_event_uuid=notice["act"])
+        self.assertEqual(original.effective_at, due)
+        known_before = support.database_now()
+        activity = models.ServiceActivity.objects.get(activity_id=activity_id)
+        assignment = models.ServiceActivityAssignment.objects.get(activity=activity)
+        self.assertEqual(committees.work_holder(activity, assignment, "default", person=worker.pk), worker.pk)
+        life = models.CircleStateEvent.objects.get(circle=gov, action="ACTIVATE")
+        att = cq.stand_down_attachment(organism_uuid=lo.organism_id, circle_uuid=gov.circle_uuid,
+                                       lifecycle_uuid=life.event_uuid, board_uuid=disc._board_id(lo.organism_id, None))
+        decision = c.decide_instrument(self, general, att, voters)
+        result = decision["result"]
+        marker = "c108-stand-down:" + str(result)
+        edge = models.CircleStateEvent.objects.get(circle=gov, evidence_reference=marker)
+        self.assertLess(edge.effective_at, original.effective_at)
+        self.assertIn(original.pk, decision["plan"]["targets"]["superseded_place_endings"])
+        self.assertIn(str(scheduled.event_uuid), decision["plan"]["targets"]["superseded_office_endings"])
+        self.assertLess(scheduled.recorded_at, edge.effective_at)
+        down = office_events.get(action="END", evidence_reference=marker)
+        self.assertEqual((down.predecessor_id, down.sequence, down.effective_at, down.prior_state,
+                          down.resulting_state, down.evidence_reference),
+                         (scheduled.pk, scheduled.sequence + 1, edge.effective_at, "ACTIVE", "ENDED", marker))
+
+        def office_history():
+            with connection.cursor() as cur:  # l1_commitment is database-assigned and not on the model.
+                cur.execute("""SELECT event_uuid,sequence,predecessor_id,action,resulting_state,effective_at,
+                    recorded_at,evidence_reference,l1_commitment FROM public.core_contextualroleassignmentstateevent
+                    WHERE assignment_id=%s ORDER BY sequence""", [secretary.pk])
+                return cur.fetchall()
+
+        before_replay = office_history()
+        (answer,) = disc._rows("""SELECT a.thread_uuid,a.act_uuid,a.request->>'ballot' AS ballot
+            FROM public.core_cqact a JOIN public.core_cqact r ON r.act_uuid=%s
+            WHERE a.thread_uuid=r.thread_uuid AND a.operation='ANSWER' AND a.actor_id=%s
+              AND a.request->>'ballot'=r.request->>'ballot'""", [result, voters[-1].pk])
+        self.assertEqual(cq.answer(**(general | {"credential": voters[-1].credential}), thread_uuid=answer["thread_uuid"],
+            ballot_uuid=UUID(answer["ballot"]), request_uuid=answer["act_uuid"], choice="QUALIFIED"), answer["act_uuid"])
+        self.assertEqual(office_history(), before_replay)
+        self.assertEqual(list(office_events.filter(action="END").order_by("sequence").values_list(
+            "event_uuid", "effective_at", "recorded_at", "evidence_reference")),
+            [(scheduled.event_uuid, due, scheduled.recorded_at, scheduled.evidence_reference),
+             (down.event_uuid, edge.effective_at, down.recorded_at, marker)])
+        self.assertEqual(list(models.CircleParticipationEnd.objects.filter(participation=seat)
+            .order_by("effective_at").values_list("effective_at", "composed_from_event_uuid")),
+            [(edge.effective_at, result), (due, notice["act"])])
+        self.assertEqual(law.query_one("SELECT public.elect_place_end(%s,%s)", [seat.pk, known_before]), due)
+        self.assertEqual(law.query_one("SELECT public.elect_place_end(%s,statement_timestamp())", [seat.pk]), edge.effective_at)
+        self.assertEqual((edge.action, edge.prior_state, edge.resulting_state), ("STAND_DOWN", "ACTIVE", "DORMANT"))
+        self.assertEqual(law.query_one("SELECT public.cq3_board(%s,statement_timestamp(),statement_timestamp())",
+                                       [lo.pk]), None)
+        self.assertCountEqual(models.CircleParticipationEnd.objects.filter(
+            composing_rule_reference=marker, composed_from_event_uuid=result, effective_at=edge.effective_at
+        ).values_list("participation_id", flat=True), places)
+        ended = dict(models.ContextualRoleAssignmentStateEvent.objects.filter(
+            evidence_reference=marker, action="END", resulting_state="ENDED", effective_at=edge.effective_at
+        ).values_list("assignment_id", "event_uuid"))
+        self.assertEqual(set(ended), offices)
+        self.assertCountEqual([row["identity_id"] for row in disc._rows(
+            """SELECT identity_id FROM public.core_organismmembership WHERE living_organism_id=%s
+            AND public.disc_member_state(%s,identity_id,statement_timestamp())='ACTIVE'""", [lo.pk, lo.pk]
+        )], [v.pk for v in voters])
+        self.assertEqual(decision["plan"]["targets"]["mandates"], [str(binding)])
+        self.assertFalse(law.query_one("SELECT public.cmt_live(%s,statement_timestamp(),statement_timestamp())", [binding]))
+        self.assertTrue(law.query_one("""SELECT EXISTS(SELECT FROM public.l_laws_at(%s,statement_timestamp(),
+            statement_timestamp()) WHERE binding=%s)""", [lo.organism_id, binding]))
+        history = elections.power_history(**general, scope=scope)
+        self.assertEqual([(r["result"], r["holder"]) for r in history],
+                         [(grant["result"], str(committee_id)), (result, "LO_MEMBERSHIP")])
+        self.assertEqual(history[-1]["predecessor"], str(grant["implementation"]))
+        (receipt,) = disc._rows("SELECT receipt,cause FROM public.core_cmtcustody WHERE predecessor=%s",
+                                [bound["implementation"]])
+        self.assertEqual(receipt["cause"], {"stand_down": str(result), "custodian": "LO_COORDINATORS", "organism": lo.pk})
+        self.assertEqual(committees.work_holder(activity, assignment, "default", person=founder.pk), founder.pk)
+        self.assertIsNone(committees.work_holder(activity, assignment, "default", person=voters[1].pk))
+        expected = ("This work passed to the LO Coordinator(s) when the Board stood down. "
+                    "This request cannot change it. Its custody record is unchanged. "
+                    "Ask an LO Coordinator to pick it up or arrange reassignment.")
+        with self.assertRaisesMessage(activities.ServiceActivityActorError, expected):
+            service.accept_service_assignment(activities.AcceptServiceAssignmentCommand(
+                credential=worker.credential, request_reference=uuid4().hex, idempotency_key=uuid4().hex,
+                occurred_at=support.database_now(), activity_id=activity_id))
+        with self.assertRaisesMessage(cq.CQRefused, expected):
+            c.start(self, local, c.step(local, binding, "REASSIGN_WORK", activity=str(activity_id),
+                predecessor=str(receipt["receipt"]), office=str(office_id)))
+        self.assertFalse(disc._rows("SELECT receipt FROM public.core_cmtcustody WHERE predecessor=%s", [receipt["receipt"]]))
+        elections.catch_up_vacancies(credential=founder.credential)
+        for table in ("elect_vacancy_sources", "core_electvacancy"):
+            self.assertEqual(law.query_one("SELECT count(*) FROM public." + table +
+                " WHERE organism_id=%s AND ending=ANY(%s::uuid[])", [lo.pk, [*places.values(), *ended.values(), scheduled.event_uuid]]), 0)
+        # Retire the Board-adopted Policy by the pre-GOVERNANCE route. The Board's original act survives.
+        doc, version = documents[-1]
+        retire = replace(law.adoption(lo, doc), operation="RETIRE", intent="RETIRE", predecessor=UUID(str(binding)),
+                         version=version.version_number).content()
+        changed = c.decide_instrument(self, general, {"kind": "LAW", "text": version.content, "spec": retire}, voters)
+        self.assertEqual(changed["plan"]["route"], "CQ_MEMBERSHIP")
+        self.assertFalse(law.query_one("""SELECT EXISTS(SELECT FROM public.l_laws_at(%s,statement_timestamp(),
+            statement_timestamp()) WHERE binding=%s)""", [lo.organism_id, binding]))
+        current = cq.settings(**general)
+        off = cq.settings_attachment(organism_uuid=lo.organism_id, predecessor=current["version"], changes={"enabled": False})
+        c.decide_instrument(self, general, off, voters)
+        self.assertIs(cq.settings(**general)["settings"]["enabled"], False)
+
+    def test_members_restore_the_same_board_on_its_new_elected_terms(self):
+        """C1-108-R. A restoration vote authorises the same Board only after its constitutional seats are filled."""
+        import json
+        from datetime import datetime
+
+        self.topic_category_ids = {}
+        # Three founding/appointed seats and three distinct seats reserved for election.
+        lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=6, elected=(3, 4, 5), board_minimum=None)
+        member_board = disc._board_id(lo.organism_id, None)
+        origin = support.database_now()
+        rules = {f"Seat {n}": fx.seat(place=f"trustee-{n}", term={"end": (origin + timedelta(days=n)).isoformat()})
+                 for n in (3, 4, 5)}
+        text = {"board_makeup": {"minimum": 3}, "board_restoration": {"Restore": {"body": str(member_board)}},
+                "committees": {"chair_board_member": False}, "elections": rules}
+        charter = law.Document(founder, content=json.dumps(text, sort_keys=True))
+        proposal = law.adoption(lo, charter, "ARTICLE")
+        self.assertEqual(law.law.OrganismLawService().adopt_law(law.command(founder, proposal)).status, "ADOPT")
+        citation = {"binding_uuid": proposal.proposal, "version_id": charter.first.pk}
+        provision = {"binding": str(proposal.proposal), "version": charter.first.pk, "provision": "Restore"}
+
+        _, general, board, people = self.activate_board(lo, founder)
+        gov = models.Circle.objects.get(circle_uuid=board["circle_uuid"])
+        first = models.CircleStateEvent.objects.get(circle=gov, action="ACTIVATE")
+        committee = self.committee(general)
+        forming, _ = c.mandate(lo, founder, committee, "1", publisher=c.first_version)
+        formed = c.decide_instrument(self, board, forming, people)
+        binding = forming["spec"]["proposal"]
+        self.assertTrue(formed["plan"]["committee"])
+
+        def stand_down(tenure):
+            return cq.stand_down_attachment(organism_uuid=lo.organism_id, circle_uuid=gov.circle_uuid,
+                                            lifecycle_uuid=tenure, board_uuid=member_board)
+
+        down = c.decide_instrument(self, general, stand_down(first.event_uuid), people)["result"]
+        att = cq.restoration_attachment(organism_uuid=lo.organism_id, circle_uuid=gov.circle_uuid,
+                                        stand_down_uuid=down, board_uuid=member_board, citation=provision)
+        off_att = cq.settings_attachment(organism_uuid=lo.organism_id, predecessor=cq.settings(**general)["version"],
+                                         changes={"enabled": False})
+        c.decide_instrument(self, general, off_att, people)
+        with self.assertRaisesMessage(cq.CQRefused, cq.MESSAGES["CQ_RESTORE_OFF"]):
+            c.start(self, general, att)
+        enabled = cq.change_settings(**general, request_uuid=uuid4(), predecessor=cq.settings(**general)["version"],
+                                     changes={"enabled": True})
+        grant = c.decide_instrument(self, general, att, people)
+        self.assertEqual((grant["plan"]["domain"], grant["plan"]["stand_down"], grant["plan"]["citation"]),
+                         ("BOARD_RESTORE", str(down), provision))
+        def read_effect():
+            thread = law.query_one("SELECT thread_uuid FROM public.core_cqact WHERE act_uuid=%s", [grant["result"]])
+            return cq_reads.implementation_record(**general, thread_uuid=thread, result_uuid=grant["result"])["effect"]
+
+        before = read_effect()
+        self.assertEqual(before["restoration_decision"]["citation"], provision)
+        self.assertNotIn("restored_board", before)
+        activation = general | {"circle_uuid": gov.circle_uuid, "request_uuid": uuid4(),
+                                "restoration_result_uuid": grant["result"]}
+        awards = {}
+        for n, person in zip((3, 4, 5), people, strict=True):
+            if n == 5:
+                with self.assertRaisesMessage(circles.CircleAccessRefused, "The Board remains inactive."):
+                    circles.activate(**activation)
+                self.assertIsNone(law.query_one("SELECT public.cq3_board(%s,statement_timestamp(),statement_timestamp())",
+                                                [lo.pk]))
+            election = fx.call(self, general, citation, provision=f"Seat {n}", place=f"trustee-{n}")
+            fx.nominate(election, person)
+            ballot = fx.open_election(election)
+            for voter in people:
+                fx.cast(election, ballot, voter)
+            win = cq_reads.vote_status(**election)["result_uuid"]
+            awards[f"trustee-{n}"] = (str(person.identity_id), str(win), (origin + timedelta(days=n)))
+
+        pending = c.start(self, general, cq.settings_attachment(
+            organism_uuid=lo.organism_id, predecessor=enabled, changes={"enabled": False}))
+        self.assertEqual(circles.activate(**activation), activation["request_uuid"])
+        self.assertEqual(circles.activate(**activation), activation["request_uuid"])
+        gov.refresh_from_db()
+        self.assertEqual((gov.state, gov.head_event.event_uuid), ("ACTIVE", activation["request_uuid"]))
+        record = read_effect()["restored_board"]
+        facts = record["facts"]
+        self.assertEqual((record["activation"], record["enterer"], facts["result"], facts["stand_down"],
+                          facts["circle"], facts["citation"]), (str(activation["request_uuid"]), str(founder.identity_id),
+                          str(grant["result"]), str(down), str(gov.circle_uuid), provision))
+        self.assertEqual(facts["makeup"]["minimum_sources"][0]["binding"], str(proposal.proposal))
+        self.assertEqual(facts["makeup"]["minimum"], 3)
+        self.assertNotEqual(grant["result"], activation["request_uuid"])
+        decision_at = law.query_one("SELECT effective_at FROM public.core_cqact WHERE act_uuid=%s", [grant["result"]])
+        self.assertLessEqual(decision_at, datetime.fromisoformat(record["effective_at"]))
+        self.assertEqual({x["place"]: (x["person"], x["decision"], datetime.fromisoformat(x["end"]))
+                          for x in facts["seats"]}, awards)
+        for seat in facts["seats"]:
+            self.assertEqual((seat["admission"], seat["binding"], seat["version"]),
+                             ("ELECTION", str(proposal.proposal), charter.first.pk))
+            self.assertLess(datetime.fromisoformat(seat["start"]), datetime.fromisoformat(seat["end"]))
+        self.assertEqual(cq.phase(**pending)["phase"], "CLOSED")
+        self.assertFalse(law.query_one("SELECT public.cmt_live(%s,statement_timestamp(),statement_timestamp())", [binding]))
+        with self.assertRaises(cq.CQRefused):
+            c.start(self, general, stand_down(first.event_uuid))
+        self.assertEqual(law.query_one("SELECT public.c108_active_lifecycle(%s,statement_timestamp(),statement_timestamp())",
+                                      [gov.pk]), activation["request_uuid"])

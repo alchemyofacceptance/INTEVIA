@@ -14,8 +14,10 @@ from tests import test_sr_office_actions as office
 ARTICLE = "Article 7"
 
 
-def provision(owner, lo, rules, *, vacancies=None, recognitions=None, resignations=None):
+def provision(owner, lo, rules, *, vacancies=None, recognitions=None, resignations=None, board_minimum=None):
     body = {"elections": rules}
+    if board_minimum is not None:
+        body.update(law.board_makeup_fields(board_minimum))
     if vacancies is not None:
         body["vacancies"] = vacancies
     if recognitions is not None:
@@ -36,9 +38,10 @@ def provision(owner, lo, rules, *, vacancies=None, recognitions=None, resignatio
 
 
 def owner(*, seats=2, elected=(1,), rules=None, voting=True, vacancies=None):
-    lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=seats, elected=elected)
+    lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=seats, elected=elected, board_minimum=None)
     circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
-    citation = provision(founder, lo, rules or {ARTICLE: seat()}, vacancies=vacancies)
+    citation = provision(founder, lo, rules or {ARTICLE: seat()}, vacancies=vacancies,
+                         board_minimum=law.FIXTURE_BOARD_MINIMUM)
     scope = {"credential": founder.credential, "organism_uuid": lo.organism_id}
     if voting:
         enable_voting(scope)

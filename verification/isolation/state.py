@@ -134,6 +134,12 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0076_cq_authority": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0077_cq_settings_authority": {"core_governedrule": 3, "core_cqreportingdefault": 1},
     "0083_elect_board_continuity": {"core_governedrule": 3, "core_cqreportingdefault": 1},
+    "0086_board_continuity": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
+    "0087_members_stand_down": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
+    "0088_constitutional_board_makeup": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
+    "0089_members_restore_board": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0},
+    "0090_stand_down_supersession": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0},
+    "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
     "0084_committee_mandates": {
         "core_governedrule": 3, "core_cqreportingdefault": 1,
         "cmt_refresh_batch": 0,  # The deferred drain deletes the transaction's work row.
@@ -203,6 +209,12 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0078_cq_circle_reporting": 664, "0079_elect_and_seat": 669,
                           "0080_elect_authority_and_vacancy": 680, "0081_hard_voting_authority": 680,
                           "0082_elect_term_continuity": 680, "0083_elect_board_continuity": 681,
+                          "0086_board_continuity": 703,  # Three cause guards and one activation trigger.
+                          "0087_members_stand_down": 703,  # Three cause guards and one activation trigger.
+                          "0088_constitutional_board_makeup": 703,  # No change to triggers.
+                          "0089_members_restore_board": 708,  # Five restoration/seat/receipt triggers.
+                          "0090_stand_down_supersession": 708,  # P4c retains the trigger inventory.
+                          "0085_board_voting": 699,  # No trigger added or removed.
                           "0084_committee_mandates": 699}  # 681 at 0083 + 8 sources, 3 batch, 1 custody effect, 6 record guards
 # Non-core contributions, keyed by exact (app_label, migration_name).
 # email_foundation/0001_initial creates ema_template_immutable (UPDATE/DELETE)

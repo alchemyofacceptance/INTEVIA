@@ -44,7 +44,25 @@ def history(*, credential, organism_uuid, circle_uuid):
     )
 
 
-def work_holder(activity, assignment, alias, at=None):
+def work_refusal(activity, assignment, alias, person):
+    """Give a former worker the reason recorded on the current custody receipt."""
+    from src.intevia.services.cq import MESSAGES
+
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            """SELECT EXISTS(
+                SELECT FROM public.cmt_worker(%s,statement_timestamp(),statement_timestamp()) worker
+                JOIN public.core_cmtcustody held ON held.receipt=worker.receipt
+                WHERE held.cause ? 'stand_down' AND held.cause->>'custodian'='LO_COORDINATORS'
+                AND (%s OR EXISTS(SELECT FROM public.core_cmtcustody prior
+                    WHERE prior.activity=held.activity AND prior.holder=%s)))""",
+            [activity.pk, assignment.assignee_id == person, person],
+        )
+        after_stand_down, = cursor.fetchone()
+    return MESSAGES["CMT_WORK_STAND_DOWN" if after_stand_down else "CMT_WORK"]
+
+
+def work_holder(activity, assignment, alias, at=None, *, person=None):
     if (
         activity.initiating_domain != "service"
         or not activity.initiating_domain_reference.startswith(("committee:", "board:"))
@@ -55,9 +73,12 @@ def work_holder(activity, assignment, alias, at=None):
             """SELECT holder FROM public.cmt_worker(%s,coalesce(%s,statement_timestamp()),statement_timestamp())""",
             [activity.pk, at],
         )
-        row = cursor.fetchone()
-    if row is not None:
-        return row[0]
+        rows = cursor.fetchall()
+    if rows:
+        holders = {row[0] for row in rows}
+        if person is not None:
+            return person if person in holders else None
+        return holders.pop() if len(holders) == 1 else None
     # Until the Board binds the work there is no authority to act for its seat.
     return None if activity.initiating_domain_reference.startswith("board:") else assignment.assignee_id
 

@@ -192,7 +192,7 @@ class CQDecisionTests(TransactionTestCase):
         )
         self.refused(
             "CQ_CHOICE",
-            "Choose Qualified, Not Qualified or Abstain.",
+            "Choose For, Against or Abstain.",
             self.cast,
             journey=journey,
             ballot=ballot,
@@ -1018,6 +1018,18 @@ class CQDecisionTests(TransactionTestCase):
         hard = terms.hard
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
             committees = import_module("core.migrations.0084_committee_mandates")
+            board_voting = import_module("core.migrations.0085_board_voting")
+            board_continuity = import_module("core.migrations.0086_board_continuity")
+            stand_down = import_module("core.migrations.0087_members_stand_down")
+            makeup = import_module("core.migrations.0088_constitutional_board_makeup")
+            restoration = import_module("core.migrations.0089_members_restore_board")
+            supersession = import_module("core.migrations.0090_stand_down_supersession")
+            supersession.uninstall(None, editor)
+            restoration.uninstall(None, editor)
+            makeup.uninstall(None, editor)
+            stand_down.uninstall(None, editor)
+            board_continuity.uninstall(None, editor)
+            board_voting.uninstall(None, editor)
             committees.change(editor, True)
             continuity.uninstall(None, editor)
             terms.uninstall(None, editor)
@@ -1038,6 +1050,12 @@ class CQDecisionTests(TransactionTestCase):
                 signature = continuity.signature(replacement)
                 self.assertEqual(hard.installed(cursor, signature), hard.body(replacement), signature)
             committees.change(editor, False)
+            board_voting.install(None, editor)
+            board_continuity.install(None, editor)
+            stand_down.install(None, editor)
+            makeup.install(None, editor)
+            restoration.install(None, editor)
+            supersession.install(None, editor)
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True

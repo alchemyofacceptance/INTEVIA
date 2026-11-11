@@ -29,6 +29,7 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 S015_TRUNCATE_GUARDIANS = {
     "cmt_refresh_batch": "cmt_batch_no_truncate",
     "core_cmtcomposition": "s015_cmt_no_truncate",
+    "core_c108restoration": "c108_restore_no_truncate",
     "core_cmtcustody": "s015_cmt_no_truncate",
     "core_electvacancy": "s015_elect_vacancy_no_truncate",
     "core_electvacancyfill": "s015_elect_fill_no_truncate",
@@ -116,6 +117,7 @@ S015_TRUNCATE_GUARDIANS = {
 S015_UNMODELLED_RESET_TABLES = (
     "cmt_refresh_batch",
     "core_cmtcomposition",
+    "core_c108restoration",
     "core_cmtcustody",
     "core_electvacancy",
     "core_electvacancyfill",

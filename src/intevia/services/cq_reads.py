@@ -6,10 +6,10 @@ from src.intevia.services import discussion as disc
 from src.intevia.services.law_records import _records
 
 RESULT_LABELS = {
-    "QUALIFIED": "Qualified.",
-    "NOT_QUALIFIED_VOTE": "Not Qualified.",
+    "QUALIFIED": "Carried.",
+    "NOT_QUALIFIED_VOTE": "Not carried.",
     "NO_DECISION_SLATE_CHANGED": "A candidate withdrew. A fresh election is required.",
-    "NOT_QUALIFIED_TIE": "Not Qualified. The vote was tied.",
+    "NOT_QUALIFIED_TIE": "Not carried. The vote was tied.",
     "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION": "Insufficient participation. No decision was reached.",
     "NO_DECISION_FEWER_THAN_THREE": "Fewer than three eligible members remained. No decision was reached.",
 }
@@ -97,6 +97,11 @@ def _present(row):
     row["post_type"] = "GROUP_GAZE"
     row["event_kind"] = row.get("event_kind") or "DECISION"
     row["hidden"] = False
+    if count["kind"] == "NO_DECISION_BOARD_ACTIVATED":
+        row.pop("participants", None)
+        row["markdown"] = row["effect_reason"]
+        row["reporting_link_label"] = "View reporting decision"
+        return row
     if row["ballot"] is None:
         row.pop("participants")
         row["markdown"] = (
@@ -282,8 +287,9 @@ def vote_status(
          o.effective_at AS opened_at,(o.facts->>'deadline')::timestamptz AS deadline,
          o.facts->'reporting_rule' AS reporting_rule,o.facts->'attempt' AS attempt,
          (o.facts->>'version')::uuid AS wording_version,r.act_uuid AS result_uuid
-         FROM public.core_cqact o LEFT JOIN public.core_cqact r ON r.operation='SETTLE'
-            AND r.request->>'ballot'=o.act_uuid::text
+         FROM public.core_cqact o LEFT JOIN public.core_cqact r ON r.thread_uuid=o.thread_uuid AND
+           ((r.operation='SETTLE' AND r.request->>'ballot'=o.act_uuid::text) OR
+            (r.operation='CLOSE' AND r.request ? 'activation' AND r.facts->>'ballot'=o.act_uuid::text))
          WHERE o.board_uuid=%s AND o.thread_uuid=%s AND o.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
             AND (%s::uuid IS NULL OR o.act_uuid=%s) ORDER BY o.ordinal DESC LIMIT 1""",
         [board["board_uuid"], thread_uuid, ballot_uuid, ballot_uuid],
@@ -297,7 +303,7 @@ def vote_status(
             post = _present(outcomes[0])
             return {
                 "phase": "CLOSED"
-                if post["count"]["kind"] == "NO_DECISION_COORDINATOR_CLOSED"
+                if post["count"]["kind"] in ("NO_DECISION_COORDINATOR_CLOSED", "NO_DECISION_BOARD_ACTIVATED")
                 else "RESULT",
                 "ballot": None,
                 "result_uuid": post["post_uuid"],
@@ -315,9 +321,11 @@ def vote_status(
         )
         status["own_receipt"] = receipts[0]["receipt"] if receipts else None
     if status["result_uuid"] is not None:
-        status["phase"] = "RESULT"
         status["result"] = _result(
             board["board_uuid"], thread_uuid, status["result_uuid"]
+        )
+        status["phase"] = (
+            "CLOSED" if status["result"]["count"]["kind"] == "NO_DECISION_BOARD_ACTIVATED" else "RESULT"
         )
         return status
     status.update(
@@ -422,9 +430,17 @@ def implementation_record(
                l.binding_uuid AS adopted_binding,ending.binding_id AS ended_binding,
                p.permission_uuid AS release_permission,p.authority_source AS permission_source,
                f.fact_uuid AS publication,s.act_uuid AS settings_version,
+               CASE WHEN i.facts#>>'{domain_plan,domain}'='BOARD_RESTORE'
+                    THEN (i.facts->'domain_plan')-'circle_id' END AS restoration_decision,
+               CASE WHEN rr.activation IS NOT NULL THEN jsonb_build_object(
+                 'activation',rr.activation,'effective_at',restored.effective_at,'enterer',presenter.identity_id,
+                 'recorded_at',restored.recorded_at,'facts',rr.facts) END AS restored_board,
                i.facts->'domain_plan'->'committee' AS committee,
                CASE WHEN i.facts->'domain_plan'->>'domain'='CIRCLE_REPORTING' THEN i.act_uuid END AS circle_reporting_version
           FROM public.core_cqact i JOIN public.core_livingorganismevent e ON e.event_uuid=i.act_uuid
+          LEFT JOIN public.core_c108restoration rr ON rr.result::text=i.request->>'result'
+          LEFT JOIN public.core_circlestateevent restored ON restored.event_uuid=rr.activation
+          LEFT JOIN public.core_identity presenter ON presenter.id=restored.enterer_identity_id
           LEFT JOIN public.core_cqact s ON s.organism_id=i.organism_id AND s.operation='SETTINGS'
              AND s.request->>'result'=i.request->>'result'
           LEFT JOIN public.core_giact g ON g.act_uuid=(i.facts->'domain_plan'->'payload'->>'request')::uuid
@@ -450,4 +466,19 @@ def implementation_record(
         permission = effect["permission_source"]
         if permission["kind"] == "CQ_RESULT" and "result_post" not in permission:
             effect.pop("release_permission")
+    if "restored_board" in effect:
+        seats = effect["restored_board"]["facts"]["seats"]
+        # The tenure records the trustees. A cross-body award link keeps the
+        # originating result's audience, including a recognition decided by CQ.
+        visible = {str(row["award"]) for row in disc._rows(
+            """SELECT a.act_uuid AS award FROM public.core_cqact a
+               WHERE a.act_uuid=ANY(%s::uuid[]) AND (
+                 (a.operation='RECOGNISE' AND a.request->>'result' IS NULL)
+                 OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,statement_timestamp()))""",
+            [[seat["award"] for seat in seats], actor.pk],
+        )}
+        for seat in seats:
+            if seat["award"] not in visible:
+                for key in ("award", "participation", "decision"):
+                    seat.pop(key, None)
     return {"result": result["post_uuid"], "effect": effect}

@@ -138,7 +138,7 @@ class _ExactProvider:
 
 
 def _qualified_decision(*, actor_id, membership_id, action, target, request_tag, at, living_organism_uuid,
-                        assignment_uuid=None):
+                        assignment_uuid=None, effective_at=None):
     """One QUALIFIED decision row for `target`, written by the production authority service inside
     the caller's atomic block. Returns (authority_decision_reference, authority_reference)."""
     actor = Identity.objects.get(pk=actor_id)
@@ -153,7 +153,7 @@ def _qualified_decision(*, actor_id, membership_id, action, target, request_tag,
         idempotency_key=f"sr-c2:idem:{request_tag}",
         received_at=at,
         target_fingerprint=authority_target_fingerprint(target),
-        effective_at=at,
+        effective_at=at if effective_at is None else effective_at,
         target=target,
         living_organism_id=uuid.UUID(str(living_organism_uuid)),
         assignment_uuid=uuid.UUID(str(assignment_uuid)) if assignment_uuid else None,
@@ -290,10 +290,12 @@ def _consent(cur, ids, *, nominee_identity_id, nominee_membership_id, nominee_me
 
 
 def _lo_transition(cur, ids, *, enterer_id, enterer_membership_id, assignment_id, assignment_uuid, predecessor_id,
-                   sequence, action, prior_state, resulting_state, at, tag, decision=True, refresh_cache=True):
+                   sequence, action, prior_state, resulting_state, at, tag, decision=True, refresh_cache=True, effective_at=None):
     """The LO's act on the chain (ASSIGN, END or REASSIGN): actor LIVING_ORGANISM, entered by
     `enterer_id`, with a QUALIFIED decision whose target names the assignment (installed 157-160).
+    For a scheduled act, effective_at is its effect; at remains its receipt and cache cut.
     Returns the event id."""
+    effect = at if effective_at is None else effective_at
     lo_uuid = _lo_uuid(cur, ids["lo"])
     overrides = {
         "actor_state": "LIVING_ORGANISM", "actor_id": None, "actor_access_epoch": None,
@@ -311,12 +313,13 @@ def _lo_transition(cur, ids, *, enterer_id, enterer_membership_id, assignment_id
         reference, authority_reference = _qualified_decision(
             actor_id=enterer_id, membership_id=enterer_membership_id,
             action=OrganismAction.TRANSITION_CONTEXTUAL_ROLE, target=target,
-            request_tag=f"{tag}:{action.lower()}", at=at, living_organism_uuid=lo_uuid, assignment_uuid=assignment_uuid,
+            request_tag=f"{tag}:{action.lower()}", at=at, effective_at=effect,
+            living_organism_uuid=lo_uuid, assignment_uuid=assignment_uuid,
         )
         overrides.update({"authority_decision_reference": reference, "evidence_reference": authority_reference})
     event_id, _recorded = append_event(
         cur, EVENT_TABLE, assignment_id, sequence, action, prior_state, resulting_state, enterer_id, ids["basis"],
-        f"{tag}:{action.lower()}", pred_id=predecessor_id, eff=at, occ=at, rec=at, overrides=overrides,
+        f"{tag}:{action.lower()}", pred_id=predecessor_id, eff=effect, occ=at, rec=at, overrides=overrides,
     )
     if refresh_cache:
         refresh(cur, "core_contextualroleassignment", assignment_id, at)
@@ -459,6 +462,11 @@ class SROfficeFixture:
                 guards[name] = terms.hard.body(new)
         continuity = import_module("core.migrations.0083_elect_board_continuity")
         for _, new in continuity.edits():
+            name = election.name(new)
+            if name in guards:
+                guards[name] = terms.hard.body(new)
+        stand_down = import_module("core.migrations.0087_members_stand_down")
+        for _, _, new in stand_down.edits():
             name = election.name(new)
             if name in guards:
                 guards[name] = terms.hard.body(new)
@@ -606,7 +614,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         body = self._installed_body("s2b_guard_office_attribution")
         root = import_module("core.migrations.0062_root_genesis")
         self.assertEqual(body, self._election_guard_bodies()["s2b_guard_office_attribution"],
-                         msg="The installed attribution safeguard must match its 0083 body.")
+                         msg="The installed attribution safeguard must match its 0087 body.")
         self.assertIn(root.OFFICE_BRANCH, body, msg="The complete 0062 GENESIS office exception must survive.")
         self.assertEqual(body.count("           AND v_role_code = 'COORDINATOR'\n"), 1, msg="The founding self-appointment branch should retain exactly one Coordinator condition; that condition is missing or repeated.")
         self.assertIn(
@@ -892,7 +900,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The installed definition-update safeguard must retain its 0053 body.")
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertIn(("core", HEAD_0052), applied, msg="The migration history should retain 0052 beneath 0053; its record is missing.")
-        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0083 body.")
+        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0087 body.")
         self.assertEqual(at_head["consent"], guards["s2b_guard_assign_consent"], msg="The installed consent safeguard must match its 0083 body.")
         expected = REQUIRED_TRIGGER_COUNT[at_head["head"]] + sum(
             delta for key, delta in NON_CORE_TRIGGER_DELTAS.items() if key in applied

@@ -10,7 +10,14 @@ from django.test import TransactionTestCase
 
 from core import models
 from src.intevia.services import circle_commands as circles
-from src.intevia.services import cq, cq_reads, law_acts, library_laws, library_policy
+from src.intevia.services import (
+    cq,
+    cq_reads,
+    cq_voting_state,
+    law_acts,
+    library_laws,
+    library_policy,
+)
 from src.intevia.services import discussion as disc
 from src.intevia.services import discussion_posts as posts
 from src.intevia.services import guiding_intentions as gi
@@ -21,6 +28,12 @@ from tests import test_cq_clarity as clarity
 from tests import test_cq_decisions as decisions
 from tests import test_guiding_intentions as gi_fixture
 from tests import test_law_acts as law
+
+BOARD_VOTING_MESSAGE = (
+    "Switching voting off was refused. Voting stays on while the Board is active. "
+    "Nothing changed. Put Board stand-down to the members or the body named in the "
+    "constitution. Your LO Coordinator(s) can help."
+)
 
 
 class CQAuthorityTests(TransactionTestCase):
@@ -108,8 +121,8 @@ class CQAuthorityTests(TransactionTestCase):
         )
 
     def test_first_activation_requires_birthing_voting_and_three_seats(self):
-        """DISC3-01. Only the recorded formation and real operative seats authorise first activation."""
-        lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=3)
+        """DISC3-01. First activation proves the seated trustees satisfy their own operative law."""
+        lo, founder = law.ordinary_birth(offering_choice="FREE", board_seats=5, board_minimum=None)
         circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
         scope = {"credential": founder.credential, "organism_uuid": lo.organism_id}
         request = scope | {"circle_uuid": circle.circle_uuid, "request_uuid": uuid4()}
@@ -118,16 +131,70 @@ class CQAuthorityTests(TransactionTestCase):
         refusal = (
             "The Birthing choice is recorded. Activation still needs operative voting."
         )
-        with self.exact_refusal(
-            circles.CircleAccessRefused,
-            "Activation needs at least three current trustees in distinct constitutional seats who can vote.",
-        ):
-            circles.activate(**request)
         switched = self.configure(scope, {"enabled": False}, version)
-        board_support.seat_trustee(lo, founder, circle, 2)
+        for seat in (2, 3):
+            board_support.seat_trustee(lo, founder, circle, seat)
         with self.exact_refusal(circles.CircleAccessRefused, refusal):
             circles.activate(**request)
-        self.configure(scope, {"enabled": True}, switched)
+        enabled = self.configure(scope, {"enabled": True}, switched)
+        silent_at = support.database_now()
+        # Four real trustees would have passed the old hard-coded three.
+        with self.exact_refusal(
+            circles.CircleAccessRefused,
+            "GOVERNANCE could not be activated. No local Article, Bylaw or Policy in force states the Board’s minimum "
+            "number of trustees. The Board remains inactive. State the minimum in the constitution, a Bylaw or a Policy, "
+            "with the maximum if one applies. Ask the LO Coordinator(s) to arrange adoption and try again.",
+        ):
+            circles.activate(**request)
+        outside_range = (
+            "GOVERNANCE could not be activated. The eligible trustees in distinct constitutional seats do not meet "
+            "the Board size stated in the governing law. The Board remains inactive. Check the seated trustees against "
+            "that provision and try again. The LO Coordinator(s) can help with the seat records."
+        )
+        # Four exceed a Policy ceiling of three while GOVERNANCE is dormant.
+        policy, policy_version = law.adopt_board_makeup(lo, founder, 3, 3, law_class="POLICY")
+        with self.exact_refusal(circles.CircleAccessRefused, outside_range):
+            circles.activate(**request)
+        policy_at = support.database_now()
+
+        # The same four members adopt an Article requiring five.
+        self.topic_category_ids = {}
+        document = law.board_makeup_document(founder, 5, 5)
+        article = self.attachment(lo, document)
+        people = motions.voters(scope)
+        self.assertEqual(len(people), 4)
+        making, law_ballot = self.ballot(scope, article, people)
+        self.assertEqual(self.qualification(making, law_ballot, people)["disposition"], "APPLIED")
+        binding = article["spec"]["proposal"]
+
+        def makeup(at):
+            return disc._rows("SELECT public.c108_board_makeup(%s,%s,statement_timestamp()) AS rule",
+                              [lo.pk, at])[0]["rule"]
+
+        self.assertEqual(makeup(silent_at)["problem"], "CIRCLE_G4_MAKEUP_MISSING")
+        previous = makeup(policy_at)
+        self.assertEqual((previous["minimum"], previous["maximum"], previous["minimum_sources"][0]["binding"],
+                          previous["minimum_sources"][0]["version"]), (3, 3, str(policy), policy_version))
+        current = makeup(support.database_now())
+        source = {"binding": str(binding), "version": document.first.pk,
+                  "version_number": document.first.version_number, "class": "ARTICLE"}
+        self.assertEqual((current["minimum"], current["maximum"], current["minimum_sources"], current["maximum_sources"]),
+                         (5, 5, [source], [source]))
+        with self.exact_refusal(circles.CircleAccessRefused, outside_range):
+            circles.activate(**request)
+        self.assertFalse(models.CircleStateEvent.objects.filter(circle=circle, action="ACTIVATE").exists())
+        board_support.seat_trustee(lo, founder, circle, 4)
+        # The five seated voters share the same activation across the three Off motions.
+        pending, _ = motions.propose(self, scope, {"enabled": False}, enabled)
+        clarity_motion, _ = motions.propose(self, scope, {"enabled": False}, enabled)
+        cq.mark_prepared(**clarity_motion, request_uuid=uuid4())
+        voting, wording = motions.propose(self, scope, {"enabled": False}, enabled)
+        ballot = motions.open_motion(voting, wording, motions.voters(scope))
+        other_motion, _, post = self.topic(scope)
+        cq.put_forward(**other_motion, request_uuid=uuid4(), version_uuid=post["version"])
+        off_motions = (pending, clarity_motion, voting)
+        self.assertEqual([cq.phase(**motion)["phase"] for motion in off_motions],
+                         ["PREPARATION", "CLARITY", "VOTING"])
         circle.refresh_from_db()
         with (
             self.assertRaisesRegex(IntegrityError, "CIRCLE_G4_AUTHORITY"),
@@ -144,10 +211,37 @@ class CQAuthorityTests(TransactionTestCase):
                 uuid4(),
                 support.database_now(),
             )
+        self.assertEqual([cq.phase(**motion)["phase"] for motion in off_motions],
+                         ["PREPARATION", "CLARITY", "VOTING"])
         self.assertEqual(circles.activate(**request), request["request_uuid"])
         self.assertEqual(circles.activate(**request), request["request_uuid"])
         circle.refresh_from_db()
         self.assertEqual(circle.state, "ACTIVE")
+        citation = f"{binding}@{document.first.pk}"
+        self.assertIn(f"|min:{citation}|max:{citation}|proof:", circle.head_event.evidence_reference)
+        reason = "A Board became active; voting stays on while a Board is active"
+        for motion in off_motions:
+            with self.subTest(thread=motion["thread_uuid"]):
+                self.assertEqual(cq.phase(**motion)["phase"], "CLOSED")
+                status = cq_reads.vote_status(**motion)
+                self.assertEqual((status["phase"], status["result"]["markdown"]), ("CLOSED", reason))
+                receipt = self.facts(status["result_uuid"])
+                self.assertEqual(receipt["authority_source"], {
+                    "kind": "RULE", "route": "GOVERNANCE_ACTIVATION", "reference": str(request["request_uuid"]),
+                })
+                self.assertEqual(receipt["facts"]["count"], {"kind": "NO_DECISION_BOARD_ACTIVATED", "cqt_applied": False})
+                self.assertTrue(models.LivingOrganismEvent.objects.filter(event_uuid=receipt["act_uuid"]).exists())
+        self.assertEqual(cq_reads.vote_status(**voting, ballot_uuid=ballot)["phase"], "CLOSED")
+        self.assertEqual(cq.phase(**other_motion)["phase"], "PREPARATION")
+        with self.exact_refusal(cq.CQRefused, "No CQ phase transition is due."):
+            cq._command(**voting, request_uuid=uuid4(), operation="SETTLE", ballot=ballot)
+        cq.catch_up(credential=founder.credential)
+        self.assertEqual(law.query_one("""SELECT count(*) FROM public.core_cqact
+            WHERE organism_id=%s AND operation='CLOSE' AND request->>'activation'=%s""",
+            [lo.pk, str(request["request_uuid"])]), 3)
+        self.assertEqual(law.query_one("""SELECT count(*) FROM public.core_cqact
+            WHERE thread_uuid=%s AND operation='SETTLE'""", [voting["thread_uuid"]]), 0)
+
         snapshot = models.LOBirthingSnapshot.objects.get(living_organism=lo)
         self.assertIn(
             "birth:" + str(snapshot.snapshot_uuid), circle.head_event.evidence_reference
@@ -180,6 +274,109 @@ class CQAuthorityTests(TransactionTestCase):
                 circle_uuid=other_circle.circle_uuid,
                 request_uuid=uuid4(),
             )
+
+    def test_active_board_keeps_voting_on_and_records_the_refusal(self):
+        """C1-108-V. Active GOVERNANCE refuses Off and records the attempt without a motion or a settings change."""
+        lo, scope, people, board = self.ordinary(3, board=True)
+        actor = people[0]
+        at = support.database_now()
+        self.assertFalse(cq_voting_state.voting_enabled("default", lo.pk, at, at))
+        for effective, known in ((None, at), (at, None)):
+            with self.subTest(effective=effective, known=known):
+                with self.exact_refusal(
+                    cq.CQRefused,
+                    "Voting authority could not be checked because the effective or knowledge time was missing. "
+                    "Nothing changed. Retry with both times. If the service supplied them, ask the service "
+                    "administrator to check the request.",
+                ):
+                    cq_voting_state.voting_enabled("default", lo.pk, effective, known)
+                with self.assertRaises(IntegrityError) as denied, transaction.atomic():
+                    law.query_one(
+                        "SELECT public.cq_settings_values_at(%s,%s,%s)",
+                        [lo.pk, effective, known],
+                    )
+                self.assertEqual(
+                    denied.exception.__cause__.diag.message_primary, "CQ_SETTINGS_TIME"
+                )
+
+        version = self.configure(scope, {"enabled": True, "clarity_stage": False})
+        circles.activate(**scope, circle_uuid=board.circle_uuid, request_uuid=uuid4())
+        patch = {"enabled": False}
+        proposal = cq.settings_attachment(
+            organism_uuid=lo.organism_id, predecessor=version, changes=patch
+        )
+        journey, _, topic = self.topic(scope, markdown=proposal["text"])
+        opening, personal, raw = uuid4(), uuid4(), uuid4()
+
+        def counts():
+            return disc._rows(
+                """SELECT count(*) FILTER (WHERE operation='SETTINGS') AS versions,
+                count(*) FILTER (WHERE operation='INITIATE') AS motions FROM public.core_cqact
+                WHERE organism_id=%s""",
+                [lo.pk],
+            )[0]
+
+        before = counts()
+        for _ in range(2):
+            with self.exact_refusal(cq.CQRefused, BOARD_VOTING_MESSAGE):
+                cq.put_forward(
+                    **journey,
+                    version_uuid=topic["version"],
+                    request_uuid=opening,
+                    attachment=proposal,
+                )
+        personal_message = "The members decide these settings by vote. Put the change forward as a Suggestion."
+        with self.exact_refusal(cq.CQRefused, personal_message):
+            cq.change_settings(
+                **scope, predecessor=version, changes=patch, request_uuid=personal
+            )
+
+        # Bypass both service admission and cq_execute. No SETTINGS row is inserted.
+        rows = disc._rows(
+            """INSERT INTO public.core_cqact(act_uuid,organism_id,operation,actor_id,
+             actor_epoch,received_at,request) VALUES (%s,%s,'SETTINGS',%s,%s,statement_timestamp(),
+             jsonb_build_object('predecessor',%s::uuid,'changes','{"enabled":false}'::jsonb))
+             RETURNING operation""",
+            [raw, lo.pk, actor.pk, actor.access_epoch, version],
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(counts(), before)
+        self.assertEqual(cq.settings(**scope)["version"], version)
+        self.assertTrue(cq.settings(**scope)["settings"]["enabled"])
+        for key, op, code, message in (
+            (opening, "INITIATE", "CQ_BOARD_ACTIVE", BOARD_VOTING_MESSAGE),
+            (personal, "SETTINGS", "CQ_SETTINGS_VOTE", personal_message),
+            (raw, "SETTINGS", "CQ_SETTINGS_VOTE", personal_message),
+        ):
+            with self.subTest(act=key):
+                (receipt,) = disc._rows(
+                    """SELECT a.operation,a.request->>'operation' AS attempted,
+                    a.facts,a.actor_id,e.enterer_identity_id,e.action,e.occurred_at,e.received_at,
+                    e.effective_at,e.recorded_at,a.fingerprint=e.payload_fingerprint AS bound
+                    FROM public.core_cqact a JOIN public.core_livingorganismevent e ON e.event_uuid=a.act_uuid
+                    AND e.living_organism_id=a.organism_id WHERE a.organism_id=%s AND a.act_uuid=%s""",
+                    [lo.pk, key],
+                )
+                self.assertEqual(
+                    (receipt["operation"], receipt["attempted"], receipt["facts"]),
+                    (
+                        "REFUSE_VOTING_OFF",
+                        op,
+                        {"code": code, "rule": "CQ_BOARD_ACTIVE", "reason": message},
+                    ),
+                )
+                self.assertEqual(
+                    (
+                        receipt["actor_id"],
+                        receipt["enterer_identity_id"],
+                        receipt["action"],
+                        receipt["bound"],
+                    ),
+                    (actor.pk, actor.pk, "RECORD_CQ", True),
+                )
+                self.assertEqual(receipt["occurred_at"], receipt["received_at"])
+                self.assertLessEqual(receipt["received_at"], receipt["effective_at"])
+                self.assertEqual(receipt["effective_at"], receipt["recorded_at"])
 
     def test_defeated_attachment_has_no_effect(self):
         """DISC3-02. Mutation target is the first no-binding assertion after a real defeated vote."""
@@ -422,6 +619,8 @@ class CQAuthorityTests(TransactionTestCase):
             title="Publish Safeguarding Policy v2",
         )
         pub_result = self.qualification(publish, ballot, people)
+        self.assertFalse(law.query_one("""SELECT public.c108_stand_down_authorised(
+            %s,%s,statement_timestamp(),statement_timestamp())""", [pub_result["post_uuid"], circle.pk]))
         self.assertEqual(pub_result["disposition"], "APPLIED")
         published = cq_reads.implementation_record(
             **publish, result_uuid=pub_result["post_uuid"]
@@ -522,7 +721,8 @@ class CQAuthorityTests(TransactionTestCase):
             (second.content, {"kind": "CQ_RESULT", "route": "CQ_GOVERNANCE_CIRCLE"}),
         )
 
-        off = self.configure(scope, {"enabled": False}, settings)
+        with self.exact_refusal(cq.CQRefused, BOARD_VOTING_MESSAGE):
+            motions.propose(self, scope, {"enabled": False}, settings)
         retirement = replace(
             next_policy,
             proposal=uuid4(),
@@ -540,38 +740,6 @@ class CQAuthorityTests(TransactionTestCase):
             ),
         )
         self.assertEqual(self.binding_count(adoption), 1)
-
-        # With voting off, a new instrument has no past Board vote to undo.
-        new_name = "interim-" + uuid4().hex
-        new_version = library_policy.draft_policy(
-            **(policy_args | {"resource_reference": new_name}),
-            content="[#1] Interim Policy.",
-            request_uuid=uuid4(),
-        )
-        office_scope = scope | {"credential": officer.credential}
-        library_policy.publish_policy(
-            **office_scope,
-            version_id=new_version.pk,
-            request_uuid=uuid4(),
-            route="GOVERNANCE_INTERIM",
-        )
-        fresh = replace(
-            prior,
-            resource=new_name,
-            proposal=uuid4(),
-            requested_route="GOVERNANCE_INTERIM",
-        )
-        interim = law_acts.OrganismLawService().adopt_law(law.command(officer, fresh))
-        self.assertEqual(
-            (interim.status, interim.route), ("ADOPT", "GOVERNANCE_INTERIM")
-        )
-        self.configure(scope, {"enabled": True}, off)
-        historical = next(
-            r
-            for r in library_laws.our_laws(**reader)["laws"]
-            if r["binding"] == fresh.proposal
-        )
-        self.assertEqual(historical["authority_source"]["route"], "GOVERNANCE_INTERIM")
 
     def gi_cycle(self, scope, people, citation, route):
         """Witness three separate proposals on the same GI, each with a real result."""
@@ -758,7 +926,7 @@ class CQAuthorityTests(TransactionTestCase):
         )
 
     def test_circle_gi_and_governance_birth_only(self):
-        """DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI."""
+        """DISC3-06. An active Board keeps voting on. A Circle votes on its own GI."""
         lo, scope, people, circle = self.ordinary(3, board=True)
         founder, officer = people[:2]
         citation, _ = gi_fixture.local_law(lo, founder)
@@ -767,27 +935,10 @@ class CQAuthorityTests(TransactionTestCase):
         circles.activate(**board, request_uuid=uuid4())
         board_support.appoint_board_coordinator(lo, circle, founder, officer)
         board["credential"] = officer.credential
-        disabled = self.configure(scope, {"enabled": False}, enabled)
+        with self.exact_refusal(cq.CQRefused, BOARD_VOTING_MESSAGE):
+            motions.propose(self, scope, {"enabled": False}, enabled)
         args = gi_fixture.arguments(lo, officer, citations=[citation])
         args["route"] = "GOVERNANCE_INTERIM"
-        birth = gi.create_intention(**args)
-        office = gi.intention_history(**scope, gi_uuid=birth["gi"])["current"][
-            "authority_source"
-        ]
-        self.assertEqual(office["route"], "GOVERNANCE_INTERIM")
-        with self.exact_refusal(gi.GIRefused, gi.AUTHORITY_MESSAGE):
-            gi.revise_intention(
-                **(args | {"request_uuid": uuid4(), "predecessor": birth["version"]})
-            )
-        with self.exact_refusal(gi.GIRefused, gi.AUTHORITY_MESSAGE):
-            gi.retire_intention(
-                **(scope | {"credential": officer.credential}),
-                gi_uuid=birth["gi"],
-                request_uuid=uuid4(),
-                predecessor=birth["version"],
-                route="GOVERNANCE_INTERIM",
-            )
-        self.configure(scope, {"enabled": True}, disabled)
         with self.exact_refusal(
             gi.GIRefused,
             "CQ is active. Put this Guiding Intention to the LO membership.",
@@ -802,12 +953,6 @@ class CQAuthorityTests(TransactionTestCase):
                 **gi_fixture.arguments(lo, officer, circle=circle, citations=[citation])
             )
         self.gi_cycle(board, people, citation, "CQ_CIRCLE")
-        self.assertEqual(
-            gi.intention_history(**scope, gi_uuid=birth["gi"])["current"][
-                "authority_source"
-            ],
-            office,
-        )
 
     def test_below_three_referral_and_office_limits(self):
         """DISC3-07. A new body starts afresh. Recusals and the boundary on personal authority follow the matter."""

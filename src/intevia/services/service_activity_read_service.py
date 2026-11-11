@@ -545,7 +545,7 @@ class ServiceActivityReadService:
         if not (
             submit_transition.actor_id
             == submission.submitted_by_id
-            == work_holder(activity, assignment, self._alias, submission.submitted_at)
+            == work_holder(activity, assignment, self._alias, submission.submitted_at, person=submission.submitted_by_id)
         ):
             raise ServiceActivityReadLineageError(
                 "submit actor, submitter, and immutable assignee must match"
@@ -696,7 +696,7 @@ class ServiceActivityReadService:
         if viewer.pk == activity.created_by_id:
             return
         # Assignee direct visibility
-        if assignment is not None and viewer.pk == work_holder(activity, assignment, self._alias):
+        if assignment is not None and viewer.pk == work_holder(activity, assignment, self._alias, person=viewer.pk):
             return
         # Third-party: require injected provider visible=True
         evaluated_at = self._clock()
@@ -864,7 +864,7 @@ class ServiceActivityReadService:
             # submitter must equal assignee
             if assignment is None:
                 raise ServiceActivityReadLineageError("submission without assignment")
-            if submission.submitted_by_id != work_holder(activity, assignment, self._alias, submission.submitted_at):
+            if submission.submitted_by_id != work_holder(activity, assignment, self._alias, submission.submitted_at, person=submission.submitted_by_id):
                 raise ServiceActivityReadLineageError("submitter is not the assignee")
         else:
             if submission is not None:

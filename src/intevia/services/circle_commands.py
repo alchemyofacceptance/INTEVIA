@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from hashlib import sha256
 from uuid import uuid4, uuid5
 
-from django.db import connections, transaction
+from django.db import IntegrityError, connections, transaction
 
 from core import models
 from src.intevia.services import scoped_determinations as scoped
@@ -650,14 +650,39 @@ def leave(
         )
 
 
-def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_chair_board_member=None, alias="default"):
+_BOARD_MAKEUP_REFUSALS = {
+    "CIRCLE_G4_MAKEUP_MISSING": (
+        "GOVERNANCE could not be activated. No local Article, Bylaw or Policy in force states the Board’s minimum "
+        "number of trustees. The Board remains inactive. State the minimum in the constitution, a Bylaw or a Policy, "
+        "with the maximum if one applies. Ask the LO Coordinator(s) to arrange adoption and try again."
+    ),
+    "CIRCLE_G4_MAKEUP_INVALID": (
+        "GOVERNANCE could not be activated. The Board makeup provisions do not give a consistent, supported range "
+        "of whole trustee numbers. The Board remains inactive. Check the minimum and any maximum in the governing "
+        "law. The LO Coordinator(s) can put a correction to the body that holds authority."
+    ),
+    "CIRCLE_G4_GOVERNANCE_SEATS": (
+        "GOVERNANCE could not be activated. The eligible trustees in distinct constitutional seats do not meet "
+        "the Board size stated in the governing law. The Board remains inactive. Check the seated trustees against "
+        "that provision and try again. The LO Coordinator(s) can help with the seat records."
+    ),
+}
+
+
+def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_chair_board_member=None,
+             restoration_result_uuid=None, alias="default"):
     """Complete the ruled birth using authority bound to its opening and this activation."""
+    from src.intevia.services import cq
     from src.intevia.services.organism_command_support import _canonical_uuid
 
     request_uuid = _canonical_uuid(request_uuid, "request_uuid")
+    if restoration_result_uuid is not None:
+        restoration_result_uuid = _canonical_uuid(restoration_result_uuid, "restoration_result_uuid")
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
         events = models.CircleStateEvent.objects.using(alias)
+        if restoration_result_uuid is not None and circle.kind != "GOVERNANCE":
+            unavailable()
         choice = committee_chair_board_member
         if choice is not None and (circle.kind != "GOVERNANCE" or type(choice) is not bool):
             raise CircleAccessRefused("Choose Yes or No for the GOVERNANCE Board's committee chairs.")
@@ -668,6 +693,9 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_
             prior = cur.fetchone()
         if prior is not None:
             if prior[:4] == (circle.pk, "ACTIVATE", "ACTIVE", actor.pk):
+                if prior[4].startswith("restore:") or restoration_result_uuid is not None:
+                    if not prior[4].startswith(f"restore:{restoration_result_uuid}|"):
+                        unavailable()
                 suffix = prior[4].rsplit("|", 1)[-1]
                 if choice is None and suffix not in {"cr:Y", "cr:N"}:
                     return request_uuid
@@ -687,8 +715,17 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_
                 cur.execute("SELECT public.circle_lo_office(%s,%s,%s,%s)", [lo.pk, actor.pk, at, at])
                 if cur.fetchone()[0] is None:
                     unavailable()
-                cur.execute("SELECT public.cq3_birth_proof(%s,%s,%s,%s)", [circle.pk, actor.pk, at, at])
-                ref, = cur.fetchone()
+                if restoration_result_uuid is None:
+                    cur.execute("SELECT public.cq3_birth_proof(%s,%s,%s,%s)", [circle.pk, actor.pk, at, at])
+                    ref, = cur.fetchone()
+                else:
+                    cur.execute("""WITH proof AS MATERIALIZED (
+                        SELECT public.c108_restore_details(%s,%s,%s,%s) AS facts)
+                        SELECT facts->>'problem', public.c108_restore_ref(facts) FROM proof""",
+                                [circle.pk, restoration_result_uuid, at, at])
+                    problem, ref = cur.fetchone()
+                    if problem:
+                        raise CircleAccessRefused(_BOARD_MAKEUP_REFUSALS.get(problem) or cq.MESSAGES[problem])
                 cur.execute("SELECT public.cmt_activation_suffix(%s,%s,%s,%s,%s)", [lo.pk,ref,choice,at,at])
                 suffix, = cur.fetchone()
                 if ref is not None and suffix is None and choice is not None:
@@ -718,10 +755,22 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_
                 "CIRCLE_G4_AUTHORITY": "Activation needs the authority for this Circle’s birth.",
                 "CIRCLE_G4_PLACE": "Activation needs a current member place in this Circle.",
                 "CIRCLE_G4_COVERAGE": "Appoint a qualified Coordinator in this Circle before activating it.",
-                "CIRCLE_G4_GOVERNANCE_SEATS": "Activation needs at least three current trustees in distinct constitutional seats who can vote.",
+                **_BOARD_MAKEUP_REFUSALS,
                 "CIRCLE_G4_OPERATIVE_VOTING": "The Birthing choice is recorded. Activation still needs operative voting.",
                 "CIRCLE_G4_GOVERNANCE_AUTHORITY": "GOVERNANCE needs its Birthing choice or whole-membership decision and operative voting.",
                 "CIRCLE_G4_DESIGNATION_AUTHORITY": "This functional Circle needs its founding choice or membership decision.",
             }
-            raise CircleAccessRefused(reasons[problem])
-        return write_event(alias, circle, actor, "ACTIVATE", "ACTIVE", decision, ref, request_uuid, at)
+            raise CircleAccessRefused(reasons.get(problem) or cq.MESSAGES[problem])
+        try:
+            return write_event(alias, circle, actor, "ACTIVATE", "ACTIVE", decision, ref, request_uuid, at)
+        except IntegrityError as error:
+            diagnostic = getattr(error.__cause__, "diag", None)
+            code = getattr(diagnostic, "message_primary", None)
+            if restoration_result_uuid is not None and code in {
+                "CQ_RESTORE_TENURE", "CQ_RESTORE_OFF", "CQ_RESTORE_ROSTER", "CMT_ACTIVATION_CHOICE", "CIRCLE_G4_AUTHORITY"
+            }:
+                message = cq.MESSAGES.get(code) or "The evidence for this restoration changed. Check the deciding body, its provision and the presenting office."
+                raise CircleAccessRefused(message) from error
+            if code in _BOARD_MAKEUP_REFUSALS:
+                raise CircleAccessRefused(_BOARD_MAKEUP_REFUSALS[code]) from error
+            raise

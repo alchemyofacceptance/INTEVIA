@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "COMMITTEES P1g2",
-  "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-  "baseline_methods": 243,
-  "candidate_methods": 254,
+  "package": "C1-108 P4c2",
+  "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+  "baseline_methods": 254,
+  "candidate_methods": 257,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -270,6 +270,82 @@
       "run": null,
       "restored": null,
       "break": null
+    },
+    "C1_108_P1_PENDING": {
+      "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+      "commit": null,
+      "normal": null,
+      "break": null,
+      "restored": null,
+      "source": "VC run pending. No PostgreSQL results available for this candidate."
+    },
+    "C1_108_P1_VC": {
+      "candidate_carrier": "4630c8b7fb4e71cc9bec5553e3599041b4637559776fb0d8f45b335e537c3efc",
+      "scratch_commit": "454016d0",
+      "result": "QUALIFYING",
+      "methods": 255,
+      "isolation": 239,
+      "source": "P2 direction 04_VC_EVIDENCE / P1JOB_QUALIFICATION_DECISION.json and VC_PRERUN_P1T2_LOG.txt"
+    },
+    "C1_108_P2_PENDING": {
+      "source": "VC PostgreSQL and whole-job run pending",
+      "candidate_commit": null
+    },
+    "C1_108_P2_VC": {
+      "result": "QUALIFYING",
+      "methods": 255,
+      "isolation": 239,
+      "source": "P3 direction §0; 04_VC_EVIDENCE"
+    },
+    "C1_108_P3_PENDING": {
+      "source": "VC PostgreSQL and timing pending",
+      "candidate_commit": null
+    },
+    "C1_108_P3_VC": {
+      "source": "P4a direction §0 and 04_VC_EVIDENCE/P3JOB_QUALIFICATION_DECISION.json",
+      "scratch_commit": "14eead4c",
+      "candidate_carrier": "e6dee05365da2c879571d208a6ecf10b8ea68cfd2948025a847936021ba5a1fb",
+      "result": "QUALIFYING",
+      "methods": 256,
+      "isolation": 240
+    },
+    "C1_108_P4a_PENDING": {
+      "source": "VC PostgreSQL and whole-job results pending",
+      "candidate_commit": null
+    },
+    "C1_108_P4a_VC": {
+      "source": "P4b direction §0, 04_VC_EVIDENCE/P4AJOB_QUALIFICATION_DECISION.json",
+      "scratch_commit": "5c157a4d",
+      "carrier": "d0f665513c14e808697c2e01edec79ba87f624f9b21274808bf8d722baf38754",
+      "result": "QUALIFYING",
+      "methods": 256,
+      "isolation": 240
+    },
+    "C1_108_P4b_PENDING": {
+      "source": "VC run, timing and qualification pending",
+      "candidate_commit": null
+    },
+    "C1_108_P4b_VC": {
+      "source": "P4c direction §0, 04_VC_EVIDENCE/P4BJOB_QUALIFICATION_DECISION.json",
+      "tree": "a5a51f05",
+      "carrier": "4cd815e39ed24b55c5ed436b686775d7fd65b326651bc5fb1ce5ae253148d73f",
+      "result": "QUALIFYING",
+      "methods": 257,
+      "isolation": 241
+    },
+    "C1_108_P4c_PENDING": {
+      "source": "P4c VC run and timing pending",
+      "candidate_commit": null
+    },
+    "C1_108_P4c_VC": {
+      "source": "04_VC_EVIDENCE/VC_PRERUN_P4CT_LOG.txt",
+      "tree": "ad47bb68380e1f58c3f4274a50a37dfbe34371fe",
+      "carrier": "f10f3eeccc34bfbf07f0c492debbac632eb53fe3eacb0eed2b46e7a118512265",
+      "result": "Targeted pre-run: 29 passed, 2 errors"
+    },
+    "C1_108_P4c2_PENDING": {
+      "source": "VC PostgreSQL pre-run, timing and whole job pending",
+      "candidate_commit": null
     }
   },
   "source_index": {
@@ -408,20 +484,49 @@
     "COMMITTEES_TAR_v1_0_P1g2.md": {
       "sha256": "0d8079e97de42fc72e2621730c235af98123da71c3752e935d465ad22e67c65c",
       "source": "COMMITTEES P1g2 carrier"
+    },
+    "C1_108_TAR_v1_0_P1.md": {
+      "sha256": "4326b4cea2f898fa1483c1a6948c6c1682da5aec06317d7d71b028d8e146fe77",
+      "source": "C1-108 P1 carrier"
+    },
+    "C1_108_TAR_v1_0_P2.md": {
+      "sha256": "be8956e0b0a16eafdd42f9fd62d16cfaad4250c7140cbba01ca3931cb24d65e2",
+      "source": "C1-108 P2 carrier"
+    },
+    "C1_108_TAR_v1_0_P3.md": {
+      "sha256": "0cccd48a33158663d98986ad2c45d3f845a3949b7c36fd5804b3fb60368af000",
+      "source": "C1-108 P3 carrier"
+    },
+    "C1_108_TAR_v1_0_P4a.md": {
+      "sha256": "100c26245bd9a15bf5b9991b4a2368a262ac3ef8a4ff9c9af03dbb19424e702f",
+      "source": "C1-108 P4a carrier"
+    },
+    "C1_108_TAR_v1_0_P4b.md": {
+      "sha256": "726a549b87dc9d75968d2c00c02595315a8101a9b0e1f4bf05bc203d146443e4",
+      "source": "C1-108 P4b carrier"
+    },
+    "C1_108_TAR_v1_0_P4c.md": {
+      "sha256": "dd5b6fce8b225ce6b41385d8f528ae4a002d83fdb0b2a0029b680c5f58e8ddad",
+      "source": "C1-108 P4c carrier"
+    },
+    "C1_108_TAR_v1_0_P4c2.md": {
+      "sha256": "3ca6bff1bb96702056486e2ae69b9a4a4c8c1317b26edab2804bd89a1e16d4a7",
+      "source": "C1-108 P4c2 carrier"
     }
   },
   "coverage": {
-    "unit_tables": 18,
+    "unit_tables": 25,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 254,
+    "active": 257,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
     "ELECT_methods": 13,
     "HARD_methods_added": 1,
-    "COMMITTEES_methods": 6
+    "COMMITTEES_methods": 6,
+    "C1_108_methods": 3
   },
   "tests": [
     {
@@ -2495,7 +2600,7 @@
       "baseline_label": "test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats",
       "status": "active",
       "current_label": "test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats",
-      "claim": "DISC3-01. Only the recorded formation and real operative seats authorise first activation.",
+      "claim": "DISC3-01. Only the recorded formation and real operative seats authorise first activation. All three genuine phases close with one immutable rule receipt per Off journey. Failed activation rolls back, ordinary motion stays open, a former ballot cannot settle. First activation requires the distinct eligible trustees prescribed by the operative LAW. With four seated, constitutional silence gives the exact missing-law refusal. A Policy maximum of three excludes four. A members’ Article prescribing five supersedes that Policy for both bounds. Four fail, five pass. The single recorded activation cites the exact binding and published version. Historical cuts retain silence and the Policy. Original voting, provenance, replay and Off-motion assertions remain.",
       "unit_TAR": [
         {
           "source": "DISC3_TAR_v1_0_P2.md",
@@ -2523,6 +2628,24 @@
           "unit_ids": [
             "base:test_cq_authority.CQAuthorityTests.test_first_activation_requires_birthing_voting_and_three_seats"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "DISC3-01"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4a.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "DISC3-01"
+          ]
         }
       ],
       "review": null,
@@ -2546,7 +2669,23 @@
           "reference": "DISC4_P1_PENDING"
         },
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d",
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "af402b129731f32be8fe4df8fe2979d373d974969c740eab057e03dac7f8df2d",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 4.668,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4a": {
+          "candidate_method_file_lf_sha256": "2b6fd3837c9c7d7198e18c043fda27226e58f67d33fbce581d308797b4e67041",
+          "run": "C1_108_P4a_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -2566,9 +2705,20 @@
           "prior_candidate_method_file_lf_sha256": null,
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "DISC3-01. Only the recorded formation and real operative seats authorise first activation.",
+          "prior_source": "tests/test_cq_authority.py:110",
+          "change": "C1_108_TAR_v1_0_P2.md / DISC3-01"
+        },
+        {
+          "package": "C1-108 P4a",
+          "previous_claim": "DISC3-01. Only the recorded formation and real operative seats authorise first activation. All three genuine phases close with one immutable rule receipt per Off journey. Failed activation rolls back, ordinary motion stays open, a former ballot cannot settle.",
+          "prior_source": "tests/test_cq_authority.py:123"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:110"
+      "current_source": "tests/test_cq_authority.py:123"
     },
     {
       "obligation": "base:test_cq_authority.CQAuthorityTests.test_defeated_attachment_has_no_effect",
@@ -2718,7 +2868,7 @@
       "baseline_label": "test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
       "status": "active",
       "current_label": "test_cq_authority.CQAuthorityTests.test_scene_five_safeguarding_policy_and_board_boundary",
-      "claim": "DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2.",
+      "claim": "Five trustees vote 4–1 on Policy v2. Its authority remains the Board, including when a Coordinator tries Off and then tries to retire the Policy personally. A qualified Board Policy settlement lacks authority to stand that same Board down. Preserve the original five-trustee Policy journey.",
       "unit_TAR": [
         {
           "source": "DISC3_TAR_v1_0_P2.md",
@@ -2736,6 +2886,24 @@
           ],
           "unit_ids": [
             "DISC4-P1-SETUP"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "DISC3-04"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "DISC3-04"
           ]
         }
       ],
@@ -2759,6 +2927,24 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "a5f8b77165a40a33538cdbb61af2e81244a6bedbefdba96c6543d2477c5a0819",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
+        },
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "af402b129731f32be8fe4df8fe2979d373d974969c740eab057e03dac7f8df2d",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 23.381,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -2769,9 +2955,21 @@
           "previous_source": "tests/test_cq_authority.py:350",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "package": "C1-108 P1",
+          "previous_claim": "DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2.",
+          "prior_source": "tests/test_cq_authority.py:354",
+          "change": "C1_108_TAR_v1_0_P1.md / DISC3-04"
+        },
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "Five trustees vote 4–1 on Policy v2. Its authority remains the Board, including when a Coordinator tries Off and then tries to retire the Policy personally.",
+          "prior_source": "tests/test_cq_authority.py:470",
+          "change": "C1_108_TAR_v1_0_P2.md / DISC3-04"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:354",
+      "current_source": "tests/test_cq_authority.py:508",
       "baseline_claim": "DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2."
     },
     {
@@ -2861,7 +3059,7 @@
       "baseline_label": "test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only",
       "status": "active",
       "current_label": "test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only",
-      "claim": "DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI.",
+      "claim": "Active GOVERNANCE refuses Off. The Board Coordinator must use an LO vote for an LO GI and a Circle votes on its own GI.",
       "unit_TAR": [
         {
           "source": "DISC3_TAR_v1_0_P2.md",
@@ -2889,6 +3087,15 @@
           "unit_ids": [
             "base:test_cq_authority.CQAuthorityTests.test_circle_gi_and_governance_birth_only"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "DISC3-06"
+          ]
         }
       ],
       "review": null,
@@ -2913,7 +3120,16 @@
           "reference": "DISC4_P1_PENDING"
         },
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d"
+        "candidate_method_file_lf_sha256": "61b6480b0928958c427e78a01d8145b1b4a257fb1e71723e6fd919f7db212f7d",
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "a5f8b77165a40a33538cdbb61af2e81244a6bedbefdba96c6543d2477c5a0819",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
+        }
       },
       "history": [
         {
@@ -2933,9 +3149,15 @@
           "prior_candidate_method_file_lf_sha256": null,
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "package": "C1-108 P1",
+          "previous_claim": "DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI.",
+          "prior_source": "tests/test_cq_authority.py:760",
+          "change": "C1_108_TAR_v1_0_P1.md / DISC3-06"
         }
       ],
-      "current_source": "tests/test_cq_authority.py:760",
+      "current_source": "tests/test_cq_authority.py:845",
       "baseline_claim": "DISC3-06. The Board Coordinator can birth an LO GI while voting is off. A Circle votes on its own GI."
     },
     {
@@ -3686,7 +3908,7 @@
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_ballot_conflict_duplicate_abstention_and_eligible_period",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_ballot_conflict_duplicate_abstention_and_eligible_period",
-      "claim": "DISC2-10: one answer per member, own conflict, late member excluded, exact refusals",
+      "claim": "Ballot and eligibility refusals stay distinct. An unsupported choice gives the For / Against / Abstain prompt.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -3704,6 +3926,15 @@
           ],
           "unit_ids": [
             "DISC4-P1-SETUP"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "DISC2-10"
           ]
         }
       ],
@@ -3733,6 +3964,15 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "cf72211c50b2a386bc51c1e5f1f5b778fe79bbfa7f17f19a5631a3d35077a153",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
         }
       },
       "history": [
@@ -3743,6 +3983,12 @@
           "previous_source": "tests/test_cq_decisions.py:159",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "package": "C1-108 P1",
+          "previous_claim": "DISC2-10: one answer per member, own conflict, late member excluded, exact refusals",
+          "prior_source": "tests/test_cq_decisions.py:160",
+          "change": "C1_108_TAR_v1_0_P1.md / DISC2-10"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:160"
@@ -4326,7 +4572,7 @@
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
-      "claim": "DISC2-19. A populated forum/CQ journey keeps its committed history through rollback and reversal.",
+      "claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -4417,6 +4663,60 @@
           "unit_ids": [
             "DISC2-19"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4a.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4b.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4c.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
+          ]
         }
       ],
       "review": {
@@ -4435,7 +4735,53 @@
         "candidate_run": "COMMITTEES_P1e_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
+        "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0",
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "cf72211c50b2a386bc51c1e5f1f5b778fe79bbfa7f17f19a5631a3d35077a153",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
+        },
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "f6a199d6b2876ae279307d4230fd70ce914c96027e83f3091d185057d0d038f3",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 3.616,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "5fc1460d53b1aa4e6913731ffcbb20bfa197110a2cf6098aec8dad9cff1d2a68",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4a": {
+          "candidate_method_file_lf_sha256": "a3825634a51d7ecc4cdd915bacc780ec4a093c35b0cb6ef94cba66580ee18f94",
+          "run": "C1_108_P4a_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4b": {
+          "candidate_method_file_lf_sha256": "7260765f31a8694ce28f4b324231716813bf5fdfce8c57fe6a53a2f1dd78a299",
+          "run": "C1_108_P4b_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4c": {
+          "candidate_method_file_lf_sha256": "b04e3fb384c535bce0a68c30e2c5e086a45fa716a113c04aaee61e4efd32bae9",
+          "run": "C1_108_P4c_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -4564,6 +4910,38 @@
             "candidate_method_file_lf_sha256": "bb6427461994852d700b5e6926e4f0d3e90260b32cf56b93f177c565a4a669f0"
           },
           "change": "TAR current source."
+        },
+        {
+          "package": "C1-108 P1",
+          "previous_claim": "DISC2-19. A populated forum/CQ journey keeps its committed history through rollback and reversal.",
+          "prior_source": "tests/test_cq_decisions.py:946",
+          "change": "C1_108_TAR_v1_0_P1.md / DISC2-19"
+        },
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards.",
+          "prior_source": "tests/test_cq_decisions.py:946",
+          "change": "C1_108_TAR_v1_0_P2.md / DISC2-19"
+        },
+        {
+          "package": "C1-108 P3",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation.",
+          "previous_source": "tests/test_cq_decisions.py:946"
+        },
+        {
+          "package": "C1-108 P4a",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip.",
+          "prior_source": "tests/test_cq_decisions.py:946"
+        },
+        {
+          "package": "C1-108 P4b",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard.",
+          "prior_source": "tests/test_cq_decisions.py:946"
+        },
+        {
+          "package": "C1-108 P4c",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations.",
+          "prior_source": "tests/test_cq_decisions.py:946"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -12828,7 +13206,7 @@
       "baseline_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
       "status": "active",
       "current_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
-      "claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim",
+      "claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim Installed office attribution must equal the exact 0087 body; historical and consent expectations retained.",
       "unit_TAR": [
         {
           "source": "TEST_QUALITY_LEDGER_SR_C2_STAGING_v0_2.md",
@@ -12865,6 +13243,15 @@
           "unit_ids": [
             "SR C2-03"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim"
+          ]
         }
       ],
       "review": {
@@ -12885,7 +13272,14 @@
         "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
+        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496",
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "f296c59853f88b71d0bf77728d73ddd908817319164146f800ed2de03314124e",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -12951,9 +13345,14 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
           }
+        },
+        {
+          "package": "C1-108 P3",
+          "previous_claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim",
+          "previous_source": "tests/test_sr_office_guards.py:574"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:574"
+      "current_source": "tests/test_sr_office_guards.py:579"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_04_founder_held_non_coordinator_office_not_caught_by_founder_protection",
@@ -13318,7 +13717,7 @@
       "baseline_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
       "status": "active",
       "current_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
-      "claim": "The installed office guards and populated 0052 veto survive at the received head.",
+      "claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained.",
       "unit_TAR": [
         {
           "source": "C1B_TAR_TABLE_v1_4.md",
@@ -13409,6 +13808,15 @@
           "unit_ids": [
             "SR C2-09"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused"
+          ]
         }
       ],
       "review": {
@@ -13429,7 +13837,14 @@
         "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
+        "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496",
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "f296c59853f88b71d0bf77728d73ddd908817319164146f800ed2de03314124e",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -13495,9 +13910,14 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "8afef80c54612db047fcef00721cc692ad4d874fdcf54fd87e338e2aefd3a496"
           }
+        },
+        {
+          "package": "C1-108 P3",
+          "previous_claim": "The installed office guards and populated 0052 veto survive at the received head.",
+          "previous_source": "tests/test_sr_office_guards.py:881"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:881",
+      "current_source": "tests/test_sr_office_guards.py:886",
       "baseline_claim": "Installed bodies at head equal the expected ones; SR migrations reverse to 0051 and reapply cleanly; with an occupied office both 0053 and 0052 reverse refuse and change nothing"
     },
     {
@@ -14851,7 +15271,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_recognised_incumbents_require_constitution_consent_and_remaining_term",
       "status": "active",
-      "claim": "The recognition evidence refuses reversal at 0083. The probe runs before the new 0084 chair choice exists, then the Board activates and the outsider refusal is checked.",
+      "claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard. Unwind 0090 on the original fixture so the populated 0083 reversal still refuses at the historical guard.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2.md",
@@ -14902,6 +15322,60 @@
           "source": "COMMITTEES_TAR_v1_0_P1e.md",
           "lines": [
             13
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4a.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4b.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4c.md",
+          "lines": [
+            9
           ],
           "unit_ids": [
             "ELECT-10"
@@ -14983,6 +15457,38 @@
             "candidate_method_file_lf_sha256": "d5ca7d74b48ce156bd35e7ed718274669afb84726c8758f61d4e0544098df28e"
           },
           "change": "TAR current source."
+        },
+        {
+          "package": "C1-108 P1",
+          "previous_claim": "The recognition evidence refuses reversal at 0083. The probe runs before the new 0084 chair choice exists, then the Board activates and the outsider refusal is checked.",
+          "prior_source": "tests/test_elections.py:421",
+          "change": "C1_108_TAR_v1_0_P1.md / ELECT-10"
+        },
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first.",
+          "prior_source": "tests/test_elections.py:421",
+          "change": "C1_108_TAR_v1_0_P2.md / ELECT-10"
+        },
+        {
+          "package": "C1-108 P3",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent.",
+          "previous_source": "tests/test_elections.py:421"
+        },
+        {
+          "package": "C1-108 P4a",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip.",
+          "prior_source": "tests/test_elections.py:421"
+        },
+        {
+          "package": "C1-108 P4b",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back.",
+          "prior_source": "tests/test_elections.py:421"
+        },
+        {
+          "package": "C1-108 P4c",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard.",
+          "prior_source": "tests/test_elections.py:421"
         }
       ],
       "current_source": "tests/test_elections.py:421",
@@ -14992,7 +15498,53 @@
         "candidate_run": "COMMITTEES_P1e_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "a5d4fb29e78d72182d4a7bd3428b82fcd61e50deb529380d66c4130f26b10d48"
+        "candidate_method_file_lf_sha256": "a5d4fb29e78d72182d4a7bd3428b82fcd61e50deb529380d66c4130f26b10d48",
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "3fa852deff303b2876984104dd812b3a2f688dc56606bef7f46203231946b522",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
+        },
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "c73a650af5125456b93794b62563ef86d8fcf2d134bf3b701f01c20cc46115cf",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 3.984,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "8249f0c93fcceb3be941c3d7887fa0bbadad586830f2bf7461af2489222336d8",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4a": {
+          "candidate_method_file_lf_sha256": "7e9fb10a67efaa65cebcd589f54ec1eab12c9ef2625b1a0e6ad1ec1fdc6f5ccc",
+          "run": "C1_108_P4a_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4b": {
+          "candidate_method_file_lf_sha256": "a6fae4087be8cf8808cffd8324e61bbe99b12ed79d5eeeb9e76dbf463b5c9225",
+          "run": "C1_108_P4b_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4c": {
+          "candidate_method_file_lf_sha256": "328b979561871933e65a38f5c3a99350bda15328c350842b607d110d92441440",
+          "run": "C1_108_P4c_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -15000,7 +15552,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_holder_notice_seat_dependent_offices_and_vacancies",
       "status": "active",
-      "claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election.",
+      "claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election. A genuine dated resignation retains its own marker and decision. Its seat and dependent office remain filling sources. Preserve all previous refusal and succession claims.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2.md",
@@ -15024,6 +15576,15 @@
           "source": "ELECT_P3_TAR_v1_0_P2e.md",
           "lines": [
             7
+          ],
+          "unit_ids": [
+            "ELECT-11"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            9
           ],
           "unit_ids": [
             "ELECT-11"
@@ -15057,16 +15618,31 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
           }
+        },
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election.",
+          "prior_source": "tests/test_elections.py:547",
+          "change": "C1_108_TAR_v1_0_P2.md / ELECT-11"
         }
       ],
-      "current_source": "tests/test_elections.py:547",
+      "current_source": "tests/test_elections.py:551",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
         "candidate_run": "ELECT_P3_P2E_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5",
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "c73a650af5125456b93794b62563ef86d8fcf2d134bf3b701f01c20cc46115cf",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 9.547,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -15074,7 +15650,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_future_office_tracks_original_seat_term_and_lo_departure",
       "status": "active",
-      "claim": "A dependent successor tracks the original Board seat and its earliest known ending.",
+      "claim": "A dependent successor tracks the original Board seat and its earliest known ending. Earlier LO departure supplies the effective vacancy date and the original fixed seat-end record survives. Preserve the original bitemporal office claim.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2e.md",
@@ -15084,20 +15660,45 @@
           "unit_ids": [
             "ELECT-12"
           ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "ELECT-12"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "history": [],
-      "current_source": "tests/test_elections.py:711",
+      "history": [
+        {
+          "package": "C1-108 P2",
+          "previous_claim": "A dependent successor tracks the original Board seat and its earliest known ending.",
+          "prior_source": "tests/test_elections.py:711",
+          "change": "C1_108_TAR_v1_0_P2.md / ELECT-12"
+        }
+      ],
+      "current_source": "tests/test_elections.py:719",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
         "candidate_run": "ELECT_P3_P2E_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5",
+        "C1_108_P2": {
+          "candidate_method_file_lf_sha256": "c73a650af5125456b93794b62563ef86d8fcf2d134bf3b701f01c20cc46115cf",
+          "predecessor_run": "C1_108_P1_VC",
+          "predecessor_seconds": 5.689,
+          "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -15136,7 +15737,7 @@
       "baseline_label": null,
       "current_label": "test_committees.CommitteeTests.test_paired_designation_on_the_free_route",
       "status": "active",
-      "claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder.",
+      "claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder. Same C-01 activity creation and assignment extracted unchanged to the shared fixture. Existing positive and negative assertions retained.",
       "unit_TAR": [
         {
           "source": "COMMITTEES_TAR_v1_0_P1.md",
@@ -15187,6 +15788,15 @@
           "source": "COMMITTEES_TAR_v1_0_P1g.md",
           "lines": [
             8
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            7
           ],
           "unit_ids": [
             "C-01"
@@ -15280,6 +15890,11 @@
             "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
           },
           "change": "Method bytes match P1g; same module as C-02."
+        },
+        {
+          "package": "C1-108 P3",
+          "previous_claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder.",
+          "previous_source": "tests/test_committees.py:60"
         }
       ],
       "current_source": "tests/test_committees.py:60",
@@ -15289,7 +15904,14 @@
         "candidate_run": "COMMITTEES_P1g2_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4",
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "fc2cd11b03daa87d8d7eabc8e1f369176201cefe5c45926e117d837d3ea507f2",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -16005,40 +16627,200 @@
         "candidate_restored": null,
         "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
       }
+    },
+    {
+      "obligation": "C1-108-V",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_cq_authority.CQAuthorityTests.test_active_board_keeps_voting_on_and_records_the_refusal",
+      "unit_TAR": [
+        {
+          "source": "C1_108_TAR_v1_0_P1.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "C1-108-V"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "C1_108_P1": {
+          "candidate_base": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+          "candidate_commit": null,
+          "candidate_file_lf_sha256": "a5f8b77165a40a33538cdbb61af2e81244a6bedbefdba96c6543d2477c5a0819",
+          "normal": null,
+          "break": null,
+          "restored": null,
+          "run": "C1_108_P1_PENDING"
+        }
+      },
+      "history": [],
+      "claim": "An active Board keeps voting on, rejects a proposal, a personal Off request and a raw SETTINGS insert, and records the attempts. Missing either cut refuses.",
+      "current_source": "tests/test_cq_authority.py:197"
+    },
+    {
+      "obligation": "C1-108-S",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_committees.CommitteeTests.test_members_stand_down_board_and_recover_its_authority",
+      "unit_TAR": [
+        {
+          "source": "C1_108_TAR_v1_0_P3.md",
+          "lines": [
+            8
+          ],
+          "unit_ids": [
+            "C1-108-S"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4c.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C1-108-S"
+          ]
+        },
+        {
+          "source": "C1_108_TAR_v1_0_P4c2.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C1-108-S"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "C1_108_P3": {
+          "candidate_file_lf_sha256": "fc2cd11b03daa87d8d7eabc8e1f369176201cefe5c45926e117d837d3ea507f2",
+          "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4c": {
+          "candidate_method_file_lf_sha256": "eae94e91342cdfa711df4373246a61962e61b4740be3448fdea447306eab5c69",
+          "run": "C1_108_P4c_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "C1_108_P4c2": {
+          "candidate_method_file_lf_sha256": "2b570046268b896972b7811d7accc000ef757227098eb83e62c4d12b5c123ce5",
+          "run": "C1_108_P4c2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "package": "C1-108 P4c",
+          "previous_claim": "One carried members’ CQ ends the lit Board, its three places and its office; holders stay members. The forming Policy survives, mandate ends, transfer returns to members, custody moves to LO Coordinators. Catch-up opens no vacancy for the exact endings. Members retire that Policy and can vote Off. Dropping an effect breaks its own record or state assertion.",
+          "prior_source": "tests/test_committees.py:1097"
+        },
+        {
+          "package": "C1-108 P4c2",
+          "previous_claim": "One carried members’ CQ ends the lit Board, its three places and its office; holders stay members. The forming Policy survives, mandate ends, transfer returns to members, custody moves to LO Coordinators. Catch-up opens no vacancy for the exact endings. Members retire that Policy and can vote Off. Dropping an effect breaks its own record or state assertion. One dated notice survives the earlier effective stand-down. The record names the superseded end, the exact vote cause and effective date. Replaying the final answer gives exactly one superseding end. Prior knowledge still gives the original date. The vacancy source and instruction tables yield zero. A genuine former worker and an attempted committee reassignment receive the LO Coordinator message. The original powers, membership, Policy and voting-Off assertions remain.",
+          "prior_source": "tests/test_committees.py:1097"
+        }
+      ],
+      "claim": "One carried members’ CQ ends the lit Board, its three places and its office; holders stay members. The forming Policy survives, mandate ends, transfer returns to members, custody moves to LO Coordinators. Catch-up opens no vacancy for the exact endings. Members retire that Policy and can vote Off. Dropping an effect breaks its own record or state assertion. One dated notice survives the earlier effective stand-down. The record names the superseded end, the exact vote cause and effective date. Replaying the final answer gives exactly one superseding end. Prior knowledge still gives the original date. The vacancy source and instruction tables yield zero. A genuine former worker and an attempted committee reassignment receive the LO Coordinator message. The original powers, membership, Policy and voting-Off assertions remain. The same journey now starts with a real future-effective END row on a Secretary assignment. The stand-down links to it in sequence, supersedes its date and keeps its historical identity. It yields exactly one causal office END. Replaying the final answer preserves the whole office chain. Neither ending is a vacancy source or instruction.",
+      "current_source": "tests/test_committees.py:1097"
+    },
+    {
+      "obligation": "C1-108-R",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_committees.CommitteeTests.test_members_restore_the_same_board_on_its_new_elected_terms",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "C1_108_TAR_v1_0_P4b.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "C1-108-R"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "C1_108_P4b": {
+          "candidate_method_file_lf_sha256": "955dd9408e4b4ec8fa2382537d88e7b2d3605516e0c5664cb6c99f30f8628b14",
+          "run": "C1_108_P4b_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "A carried restoration decision binds the current stand-down. Three genuine seat awards are required for this constitution. At two the members keep authority. At three the same Circle activates once, naming the enterer, law version, decision and seat-specific dates. Its open Off motion closes, the old mandate remains ended and an old-tenure stand-down cannot be put forward.",
+      "current_source": "tests/test_committees.py:1199"
     }
   ],
   "previous_unit": {
-    "package": "HARD P1b",
-    "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-    "baseline_methods": 253,
-    "candidate_methods": 243,
+    "package": "COMMITTEES P1g2",
+    "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+    "baseline_methods": 243,
+    "candidate_methods": 254,
     "coverage": {
-      "unit_tables": 13,
+      "unit_tables": 18,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 243,
+      "active": 254,
       "folded": 46,
       "retired": 2,
       "DISC4_methods": 6,
-      "ELECT_methods": 8,
-      "HARD_methods_added": 1
+      "ELECT_methods": 13,
+      "HARD_methods_added": 1,
+      "COMMITTEES_methods": 6
     },
-    "earlier": {
-      "package": "ELECT P2",
-      "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-      "baseline_methods": 245,
-      "candidate_methods": 253,
+    "previous_unit": {
+      "package": "HARD P1b",
+      "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+      "baseline_methods": 253,
+      "candidate_methods": 243,
       "coverage": {
         "unit_tables": 13,
         "SR_C2_staging_tables": 1,
         "historical_carryovers": 90,
         "DISC3_methods": 8,
-        "active": 253,
-        "folded": 35,
+        "active": 243,
+        "folded": 46,
         "retired": 2,
         "DISC4_methods": 6,
-        "ELECT_methods": 8
+        "ELECT_methods": 8,
+        "HARD_methods_added": 1
+      },
+      "earlier": {
+        "package": "ELECT P2",
+        "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+        "baseline_methods": 245,
+        "candidate_methods": 253,
+        "coverage": {
+          "unit_tables": 13,
+          "SR_C2_staging_tables": 1,
+          "historical_carryovers": 90,
+          "DISC3_methods": 8,
+          "active": 253,
+          "folded": 35,
+          "retired": 2,
+          "DISC4_methods": 6,
+          "ELECT_methods": 8
+        }
       }
     }
   }
