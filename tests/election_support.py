@@ -6,12 +6,38 @@ from uuid import uuid4
 
 from core import models
 from src.intevia.services import cq, cq_reads, elections
+from src.intevia.services import organism_recovery
+from src.intevia.services import timed_events as te
 from tests import cq_authority_support as board
 from tests import s015_0021_support as support
 from tests import test_law_acts as law
 from tests import test_sr_office_actions as office
 
 ARTICLE = "Article 7"
+
+
+def idle_until_turn_of(lo, person, consumer):
+    """Wake the TIMED EVENTS engine as this member until the named consumer is next in its rotation.
+
+    The engine checks one consumer per wake, in turn. A test that needs a particular
+    consumer's turn first lets the others take theirs. Each of those turns must be idle:
+    if one opens or fails something, the test's own fixture is not what it thinks it is.
+
+    A fixture that reaches an office boundary also owes C2 a coverage notice for it. Unless
+    C2 is the consumer asked for, the landed C2 command makes what C2 owes first, as it
+    does on main at the next office request, so that C2's turn is idle like the others.
+    C2's own steps through the engine are witnessed in C2-06.
+    """
+    if consumer != "C2":
+        organism_recovery.advance("default", lo.pk)
+    wake = te.Wake(str(lo.organism_id), person.pk, person.credential_id, person.access_epoch)
+    for _ in range(16):
+        if te._choose_consumer("default", lo.pk)["consumer"] == consumer:
+            return
+        turn = te.run(wake, alias="default")
+        if turn.result != "IDLE":
+            raise AssertionError(f"Expected an idle turn before {consumer}; {turn.consumer} gave {turn.result}")
+    raise AssertionError(f"{consumer} never came to its turn")
 
 
 def provision(owner, lo, rules, *, vacancies=None, recognitions=None, resignations=None, board_minimum=None):

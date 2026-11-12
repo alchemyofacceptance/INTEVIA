@@ -9,10 +9,11 @@ import re
 from datetime import datetime
 from uuid import UUID, uuid5
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 
 from src.intevia.services import cq_reads
 from src.intevia.services import discussion as disc
+from src.intevia.services import timed_events_handoff as handoff
 
 CLARITY_STAGE = {
     "label": "Clarity stage before the vote",
@@ -242,7 +243,8 @@ def _json_reference(value):
     raise TypeError("A CQ setting must be representable in JSON.")
 
 
-def _execute(actor, owner, board, thread, operation, key, args, received):
+def _encoded(args, operation):
+    """The request arguments as the JSON text storage receives, or the landed input refusal."""
     try:
         encoded = json.dumps(
             args, ensure_ascii=False, allow_nan=False, default=_json_reference
@@ -254,6 +256,11 @@ def _execute(actor, owner, board, thread, operation, key, args, received):
         raise CQRefused(
             "CQ_SETTINGS_INPUT" if operation == "SETTINGS" else "CQ_INPUT"
         ) from exc
+    return encoded
+
+
+def _execute(actor, owner, board, thread, operation, key, args, received):
+    encoded = _encoded(args, operation)
     return disc._rows(
         """SELECT public.cq_execute(%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s) AS act""",
         [
@@ -268,6 +275,36 @@ def _execute(actor, owner, board, thread, operation, key, args, received):
             received,
         ],
     )[0]["act"]
+
+
+# The acts a rule makes on a thread when a deadline has passed, and nothing else.
+RULE_OPERATIONS = ("PREPARATION_DUE", "RESPONSE_DUE", "SETTLE")
+
+
+def record_rule_act(*, alias, actor, organism_uuid, board_uuid, thread_uuid, operation, key, args, received):
+    """Make one act a rule owes on a thread, on the named database connection.
+
+    The public entry for a caller that acts for a rule, not for a member's own command:
+    the TIMED EVENTS engine. It admits only the three operations the catch-up makes. The
+    caller has already found the act due and holds the locks its own route takes. The
+    act is written exactly as the catch-up writes it: the same storage function, the
+    same arguments, the acting member as its recorded actor, and the rule as its
+    authority, which storage decides from the operation.
+
+    Returns the act's id, which is the request key. A request whose key has already made
+    this same act returns that key again, as the landed ``cq_execute`` does; the same key
+    with any other content is refused (CQ_REQUEST). A storage refusal is raised unchanged
+    (IntegrityError) for the caller to handle.
+    """
+    if operation not in RULE_OPERATIONS:
+        raise ValueError(f"not an act a rule makes: {operation!r}")
+    encoded = _encoded(args, operation)
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            "SELECT public.cq_execute(%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)",
+            [organism_uuid, board_uuid, thread_uuid, operation, key, encoded, actor.pk, actor.access_epoch, received],
+        )
+        return cursor.fetchone()[0]
 
 
 def _admit_settings(key, actor, fields, owner):
@@ -612,6 +649,8 @@ def _read_owner(actor, organism_uuid):
     rows = disc._rows(query, params)
     if not rows:
         raise disc.DiscussionUnavailable()
+    # TIMED EVENTS: this person's standing in this LO is established here. A hint only.
+    handoff.mark(organism_uuid, actor)
     return rows[0]["id"]
 
 

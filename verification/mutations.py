@@ -26,6 +26,10 @@ from verification.recording import RecordingRunnerMixin
 
 MUTATION_ENV = "VERIFICATION_MUTATION"
 
+# Format note for authors. The gate (.github/s015_gate.py, registry_by_grammar) derives this registry by a line
+# grammar as well as by parsing it, and the two must agree. Inside the block below, a line that begins with
+# exactly four spaces must be a key line (    "<key>": {) or a closing line (    },). So no continuation line of
+# a multi-line SQL string may begin with exactly four spaces: indent it by any other amount.
 MUTATIONS = {
     "elect-exclusive-term-end": {
         "follow_up": "ELECT-09 recurring control",
@@ -50,6 +54,18 @@ BEGIN
  IF strpos(original,marker)=0 THEN RAISE EXCEPTION 'Missing ELECT person and place discriminator'; END IF;
  changed:=replace(original,marker,'AND true -- deliberate loss of exact person and place');
  EXECUTE changed;
+END $fault$;"""],
+    },
+    "te-receipt-one-per-occurrence": {
+        "follow_up": "TE-02 recurring control",
+        "intended": "Storage accepts a second receipt for one LO, consumer, purpose, source and occurrence.",
+        "targets": ["test_timed_events.TimedEventsTests.test_once_including_rollback"],
+        "sql": ["""DO $fault$
+BEGIN
+ IF NOT EXISTS(SELECT FROM pg_constraint WHERE conname='te_one_receipt'
+ AND conrelid='public.core_tereceipt'::regclass AND contype='u')
+ THEN RAISE EXCEPTION 'Missing receipt uniqueness discriminator'; END IF;
+ ALTER TABLE public.core_tereceipt DROP CONSTRAINT te_one_receipt;
 END $fault$;"""],
     },
     "cq-settings-result-reference": {

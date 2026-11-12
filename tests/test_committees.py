@@ -1,10 +1,11 @@
 """C1-102. A committee exercises only the authority its adopted law gives it."""
 
+import threading
 from datetime import timedelta
 from hashlib import sha256
 from uuid import uuid4
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, connections, transaction
 from django.test import TransactionTestCase
 
 from core import models
@@ -15,6 +16,7 @@ from src.intevia.services import (
     cq,
     cq_reads,
     elections,
+    timed_events as te,
 )
 from src.intevia.services.organism_entitlement_service import entitlement_effective
 from tests import (
@@ -23,6 +25,10 @@ from tests import (
     s015_0021_support as support,
 )
 from tests import test_election_mandates as mandates, test_law_acts as law
+from tests.test_timed_events import WAIT  # the engine tests' one upper bound on an observed condition
+
+NEAR_END_SECONDS = 20  # a fixture date for C-04: far enough ahead to be adopted first, never a product interval
+CHAIR_TERM_SECONDS = 10  # a fixture date for C-09: far enough ahead for two commands, never a product interval
 
 
 class CommitteeTests(TransactionTestCase):
@@ -127,6 +133,45 @@ class CommitteeTests(TransactionTestCase):
         activity = models.ServiceActivity.objects.get(activity_id=activity_id)
         original = models.ServiceActivityAssignment.objects.get(activity=activity)
         self.assertEqual(committees.work_holder(activity, original, "default"), founder.pk)
+
+        with self.subTest(timed_events="refresh claim"):
+            # TIMED EVENTS. Before an effect whose commit refreshes a committee, the engine makes one
+            # claim: every row that refresh could lock or read-lock, tried without waiting. With real
+            # work in custody here, each kind of row is held in turn by another connection. The claim
+            # must answer at once that it is not free, and must be free again when the row is.
+            def refresh_claim():
+                with transaction.atomic():
+                    return disc._rows("SELECT public.te_refresh_claim(%s) AS free", [lo.pk])[0]["free"]
+
+            self.assertTrue(refresh_claim(), "C-01 refresh claim: with nothing held the claim must be free.")
+            for label, lock_sql, key in (
+                ("the bound activity", "SELECT id FROM public.core_serviceactivity WHERE id=%s FOR UPDATE", activity.pk),
+                ("the mandate's law binding",
+                 "SELECT 1 FROM public.core_organismlawbinding WHERE binding_uuid=%s FOR UPDATE", binding),
+                ("an office holder's identity", "SELECT id FROM public.core_identity WHERE id=%s FOR UPDATE", founder.pk),
+            ):
+                holding, release = threading.Event(), threading.Event()
+
+                def hold(lock_sql=lock_sql, key=key, holding=holding, release=release):
+                    try:
+                        with transaction.atomic(), connection.cursor() as cursor:
+                            cursor.execute(lock_sql, [key])
+                            holding.set()
+                            release.wait(WAIT)
+                    finally:
+                        connections.close_all()
+
+                thread = threading.Thread(target=hold)
+                thread.start()
+                try:
+                    self.assertTrue(holding.wait(WAIT), f"C-01 refresh claim: the other connection never took {label}.")
+                    self.assertFalse(refresh_claim(), f"C-01 refresh claim: with {label} held elsewhere the claim must not be free.")
+                    self.assertTrue(thread.is_alive(), f"C-01 refresh claim: the claim must answer while {label} is still held.")
+                finally:
+                    release.set()
+                    thread.join(WAIT)
+                self.assertFalse(thread.is_alive(), f"C-01 refresh claim: the connection holding {label} did not finish.")
+                self.assertTrue(refresh_claim(), f"C-01 refresh claim: with {label} free again the claim must be free.")
         c.decide_instrument(
             self, board, c.step(board, binding, "COMPLETE_TASK", task="review reserves"), voters
         )
@@ -566,6 +611,76 @@ class CommitteeTests(TransactionTestCase):
         )
         self.assertEqual((at_end["live"], at_end["plan"]["code"]), (False, "CMT_ENDED"))
 
+        # TIMED EVENTS, the dated mandate end. A second committee's mandate ends at a real date
+        # a few seconds ahead: a fixture date, chosen only to fall after its own adoption.
+        near = self.committee(general)
+        near_end = support.database_now() + timedelta(seconds=NEAR_END_SECONDS)
+        near_instrument, _ = c.mandate(
+            lo, founder, near, "4", kind="AD_HOC", ends_at=near_end.isoformat(), publisher=c.first_version
+        )
+        c.decide_instrument(self, board, near_instrument, voters)
+        near_binding = near_instrument["spec"]["proposal"]
+        wake = te.Wake(str(lo.organism_id), founder.pk, founder.credential_id, founder.access_epoch)
+
+        def markers():
+            return disc._rows(
+                "SELECT mandate::text AS mandate,effective_at,enterer FROM public.core_cmtmandateend WHERE organism_id=%s",
+                [lo.pk],
+            )
+
+        def mandate_gaps():
+            return disc._rows(
+                """SELECT effective_at FROM public.core_cmtcomposition
+                    WHERE mandate=%s AND requirement='MANDATE' AND unmet""",
+                [near_binding],
+            )
+
+        def receipts():
+            return disc._rows(
+                """SELECT purpose,source_ref,occurrence,outcome,effect_ref,rule_ref,enterer_id,due_at
+                     FROM public.core_tereceipt WHERE organism_id=%s ORDER BY discovered_at""",
+                [lo.pk],
+            )
+
+        with self.subTest(timed_events="before the date"):
+            self.assertLess(support.database_now(), near_end,
+                            "C-04 fixture: the mandate's end date must still be ahead once it is adopted.")
+            fx.idle_until_turn_of(lo, founder, "CMT")
+            early = te.run(wake, alias="default")
+            self.assertEqual((early.result, early.consumer), ("IDLE", "CMT"),
+                             "C-04 before the date: neither mandate's end has come, so nothing is due.")
+            with self.assertRaises(IntegrityError, msg="C-04 before the date: storage must refuse a marker "
+                                   "for an end date that has not come."), transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    """INSERT INTO public.core_cmtmandateend(mandate,organism_id,effective_at,recorded_at,enterer)
+                       VALUES (%s,%s,%s,statement_timestamp(),%s)""",
+                    [near_binding, lo.pk, near_end, founder.pk],
+                )
+            self.assertEqual((markers(), mandate_gaps(), receipts()), ([], [], []),
+                             "C-04 before the date: no marker, no gap and no receipt may exist yet.")
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_sleep_until(%s)", [near_end])
+        with self.subTest(timed_events="at the date"):
+            fx.idle_until_turn_of(lo, founder, "CMT")
+            opened = te.run(wake, alias="default")
+            self.assertEqual((opened.result, opened.purpose, opened.source_ref),
+                             ("OPENED", "MANDATE_END", str(near_binding)),
+                             "C-04 at the date: the engine must mark the mandate whose end date has come.")
+            self.assertEqual(markers(), [{"mandate": str(near_binding), "effective_at": near_end, "enterer": founder.pk}],
+                             "C-04 at the date: exactly one marker, for that mandate, dated at its end date.")
+            self.assertEqual(mandate_gaps(), [{"effective_at": near_end}],
+                             "C-04 at the date: the landed refresh must record the mandate's gap at the end date.")
+            self.assertEqual(
+                receipts(),
+                [{"purpose": "MANDATE_END", "source_ref": str(near_binding), "occurrence": "DATED_END",
+                  "outcome": "OPENED", "effect_ref": str(near_binding), "rule_ref": "CMT:MANDATE_END",
+                  "enterer_id": founder.pk, "due_at": near_end}],
+                "C-04 at the date: one receipt, holding the end date as its due time.")
+            fx.idle_until_turn_of(lo, founder, "CMT")
+            again = te.run(wake, alias="default")
+            self.assertEqual((again.result, again.consumer, len(markers()), len(receipts())), ("IDLE", "CMT", 1, 1),
+                             "C-04 at the date: a further wake finds nothing due and adds nothing.")
+
     def test_reserves_work_returns_once_and_stays_with_the_board_without_a_chair(self):
         """C-05. Seat-linked work returns once to its chair, then is held for the Board (interim C1-113)."""
         from dataclasses import asdict
@@ -930,6 +1045,307 @@ class CommitteeTests(TransactionTestCase):
         self.assertEqual((held_again["office"], held_again["holder"], seat_work()["receipt"]),
                          (None, None, held_again["receipt"]))
         self.assertTrue(all(x["clause"]["binding"] == mandate for x in chain))
+
+    def fixed_term_chair_with_returned_seat_work(self, *, term_seconds=None, handover=None, election_rules=None):
+        """The fixed-term fixture: a Board Chair recognised for a fixed term, holding work that came back to it.
+
+        One activity of the Board's own is bound to a trustee's seat and given to that seat's occupant.
+        The Chair is then recognised for a fixed term. The occupant leaves on notice, so the seat's work
+        comes back to the Chair by an automatic return. The Chair's term ends ``term_seconds`` after its
+        recognition, or at ``handover`` when that instant is given. ``election_rules`` adds election rules to
+        the Article, for a test that elects a successor.
+        """
+        def define_chair_before_voting(owner, issuer, binding, version_id):
+            self.chair_article = {"binding": binding, "version": version_id}
+            self.chair_role = fx.define_office(owner, issuer, "CHAIR", "LO_MEMBERSHIP", "Board chair",
+                                               {"version_id": version_id}, board_members=True)
+
+        charter_fields = {
+            "resignations": {"Trustee notice": {"place": "trustee-2", "effect": "ON_NOTICE"}},
+            "recognitions": {"Board chair": {"type": "OFFICE", "place": "CHAIR",
+                                            "authority": "office:LO_COORDINATOR", "term": "APPOINTMENT_RECORD"}},
+        }
+        if election_rules is not None:
+            charter_fields["elections"] = election_rules
+        lo, general, board, people = c.formation_board(
+            self, offering="COMPLIMENTARY_BETA", after_article=define_chair_before_voting, charter_fields=charter_fields,
+        )
+        founder, worker, other = people
+        article = self.chair_article
+        # The law Board work needs: where work returns when its holder leaves.
+        doc, version = c.first_version(founder, {"committee_work": {"return_to": "CHAIR"}})
+        policy = c.instrument(lo, doc, version)
+        c.decide_instrument(self, board, policy, people)
+
+        # One activity of the Board's own, bound to a trustee's seat and given to that seat's occupant.
+        board_circle = models.Circle.objects.get(circle_uuid=board["circle_uuid"])
+        board_place = models.CircleParticipation.objects.get(circle=board_circle, membership__identity=other)
+        activity_id = c.assigned_activity(founder, board_circle, policy["spec"]["proposal"], worker=other,
+                                          board_place=board_place)
+        work = models.ServiceActivity.objects.get(activity_id=activity_id)
+        seat = {"seat": board_place.seat_id}
+        bound = c.decide_instrument(self, board, committees.attachment(
+            organism_uuid=lo.organism_id, act="BIND_BOARD_WORK", target=seat, activity=str(activity_id),
+        ), people)
+        seated = c.decide_instrument(self, board, committees.attachment(
+            organism_uuid=lo.organism_id, act="REASSIGN_BOARD_WORK", target=seat, activity=str(activity_id),
+            predecessor=str(bound["implementation"]), assignee_target=seat, occupancy=str(board_place.participation_uuid),
+        ), people)
+
+        def seat_work():
+            (row,) = committees.board_work(**general, target=seat)
+            return row
+
+        def custody():
+            return disc._rows(
+                """SELECT receipt,predecessor,place,office,holder,cause,effective_at FROM public.core_cmtcustody
+                    WHERE activity=%s ORDER BY effective_at,recorded_at""", [work.pk])
+
+        self.assertEqual((seat_work()["receipt"], seat_work()["holder"]), (seated["implementation"], other.identity_id))
+
+        # The Chair is recognised for a fixed term.
+        chair = fx.office_proposal(lo, founder, worker, self.chair_role, self_proposed=True)
+        at = support.database_now()
+        chair_end = handover if handover is not None else at + timedelta(seconds=term_seconds)
+        claim = {
+            "type": "OFFICE", "place": "CHAIR", "person": str(worker.identity_id),
+            "provision": "Board chair", "version": article["version"], "binding": str(article["binding"]),
+            "original_body": "Trustees", "original_date": at.date().isoformat(),
+            "decision": "Board chair appointment minute", "evidence": "Signed Board register",
+            "assignment": str(chair.assignment_uuid), "term_start": at.isoformat(), "term_end": chair_end.isoformat(),
+        }
+        confirmed = elections.confirm_recognition(**(general | {"credential": worker.credential}),
+                                                           claim=claim, request_uuid=uuid4())
+        elections.recognise_incumbent(**general, claim=claim, consent_uuid=confirmed["act"], request_uuid=uuid4())
+        # The seat's occupant leaves on notice. The seat's work comes back to the Chair by itself.
+        elections.resign_board_place(
+            **(general | {"credential": other.credential}), participation_uuid=board_place.participation_uuid,
+            binding_uuid=article["binding"], version_id=article["version"], provision="Trustee notice", request_uuid=uuid4(),
+        )
+        seat_end = models.CircleParticipationEnd.objects.get(participation=board_place).effective_at
+        self.assertEqual([(row["office"], row["holder"]) for row in custody()],
+                         [(None, None), (None, other.pk), (chair.pk, worker.pk)],
+                         "Fixed-term fixture: bound with no Chair, given to the seat's occupant, then returned to the Chair.")
+        self.assertLess(support.database_now(), chair_end,
+                        "Fixed-term fixture: the Chair's term must still be running once the work has come back to it.")
+        return {"lo": lo, "general": general, "board": board, "people": people, "article": article, "work": work,
+                "board_place": board_place, "chair": chair, "chair_end": chair_end, "seat_end": seat_end,
+                "seat_work": seat_work, "custody": custody}
+
+    def test_fixed_term_chair_holding_seat_work_ends_by_the_clock(self):
+        """C-09. Work held by a Chair whose own term has a fixed end is held for the Board from that end, by the clock.
+
+        The fixture: a Board Chair recognised for a fixed term, holding work when the term runs out.
+        Nobody acts at that moment. The TIMED EVENTS engine records the term end, dated at the end,
+        and that record's own commit moves the work. While another connection holds the activity, the
+        engine ends at once with nothing; when the activity is free it records exactly one term end,
+        one receipt and one custody move.
+        """
+        # The term's end is a fixture date a few seconds ahead, chosen only to fall after the two
+        # commands that follow the recognition; it is never a product interval.
+        fixture = self.fixed_term_chair_with_returned_seat_work(term_seconds=CHAIR_TERM_SECONDS)
+        lo, general, work, chair = fixture["lo"], fixture["general"], fixture["work"], fixture["chair"]
+        founder, worker, other = fixture["people"]
+        board_place, chair_end = fixture["board_place"], fixture["chair_end"]
+        seat_work, custody = fixture["seat_work"], fixture["custody"]
+        seat_end = models.CircleParticipationEnd.objects.get(participation=board_place).effective_at
+        self.assertEqual([(row["office"], row["holder"]) for row in custody()],
+                         [(None, None), (None, other.pk), (chair.pk, worker.pk)],
+                         "C-09 fixture: bound with no Chair, given to the seat's occupant, then returned to the Chair.")
+        self.assertLess(support.database_now(), chair_end,
+                        "C-09 fixture: the Chair's term must still be running once the work has come back to it.")
+        endings = models.ContextualRoleAssignmentStateEvent.objects.filter(assignment=chair, action="END")
+        wake = te.Wake(str(lo.organism_id), founder.pk, founder.credential_id, founder.access_epoch)
+
+        def state():
+            (receipts,) = disc._rows("SELECT count(*) AS n FROM public.core_tereceipt WHERE organism_id=%s", [lo.pk])
+            return endings.count(), receipts["n"], len(custody())
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_sleep_until(%s)", [chair_end])
+        # The term has run out and nobody has acted. Nothing is recorded yet.
+        self.assertEqual((state(), seat_work()["holder"]), ((0, 0, 3), None),
+                         "C-09 at the end: no END, no receipt and no custody move yet; the projection already reads held.")
+
+        with self.subTest(timed_events="held activity"):
+            # The term end's commit will lock this activity to move its custody. SERVICE locks an activity
+            # without the LO. With it held elsewhere the engine must end at once, not wait at commit.
+            holding, release = threading.Event(), threading.Event()
+
+            def hold():
+                try:
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute("SELECT id FROM public.core_serviceactivity WHERE id=%s FOR UPDATE", [work.pk])
+                        holding.set()
+                        release.wait(WAIT)
+                finally:
+                    connections.close_all()
+
+            fx.idle_until_turn_of(lo, founder, "ELECT")
+            thread = threading.Thread(target=hold)
+            thread.start()
+            try:
+                self.assertTrue(holding.wait(WAIT), "C-09 held activity: the other connection never took the activity.")
+                busy = te.run(wake, alias="default")
+                self.assertTrue(thread.is_alive(), "C-09 held activity: the engine must return while the activity is still held.")
+                self.assertEqual((busy.result, busy.consumer), ("BUSY_INNER", None),
+                                 "C-09 held activity: with the activity held elsewhere the engine must skip at once.")
+                self.assertEqual(state(), (0, 0, 3),
+                                 "C-09 held activity: the busy skip must leave no END, no receipt and no custody move.")
+            finally:
+                release.set()
+                thread.join(WAIT)
+            self.assertFalse(thread.is_alive(), "C-09 held activity: the other connection did not finish.")
+
+        with self.subTest(timed_events="the term end moves the work"):
+            fx.idle_until_turn_of(lo, founder, "ELECT")
+            opened = te.run(wake, alias="default")
+            self.assertEqual((opened.result, opened.purpose, opened.source_ref),
+                             ("OPENED", "TERM_END", str(chair.assignment_uuid)),
+                             "C-09: once the activity is free the engine must record the Chair's term end.")
+            self.assertEqual(state(), (1, 1, 4), "C-09: exactly one END, one receipt and one custody move.")
+            self.assertEqual(endings.get().effective_at, chair_end, "C-09: the END is dated at the term's own end.")
+            chain = custody()
+            unbound, with_seat, with_chair, held = chain
+            self.assertEqual([row["predecessor"] for row in chain],
+                             [None, unbound["receipt"], with_seat["receipt"], with_chair["receipt"]])
+            self.assertEqual((with_chair["effective_at"], with_chair["cause"]),
+                             (seat_end, {"ending_place": board_place.pk, "ending_office": None}),
+                             "C-09: the work came back to the Chair by an automatic return, dated at the seat's end.")
+            self.assertEqual((held["office"], held["holder"], held["effective_at"], held["cause"]),
+                             (None, None, chair_end, {"ending_place": None, "ending_office": chair.pk}),
+                             "C-09: the term end's own commit holds the work for the Board, dated at the term's end.")
+            self.assertEqual((seat_work()["holder"], seat_work()["receipt"]), (None, held["receipt"]))
+            self.assertEqual(elections.catch_up_terms(**general), 0, "C-09: the landed catch-up finds nothing more to record.")
+
+    def test_returned_seat_work_is_not_handed_on_to_a_successor_chair(self):
+        """C-10 (OD-2). Work that came back to a Chair by itself is held when that Chair's term ends, even if a successor takes office at that same moment.
+
+        The Chair's fixed term ends a day ahead, and a successor is elected to the term that begins at
+        that same instant. Nothing waits for the clock: the landed functions that decide where the work
+        goes are asked about that instant directly, as the stored dates allow. The work must be held for
+        the Board. It must not be handed on a second time, unasked, to the successor.
+        """
+        handover = support.database_now() + timedelta(days=1)
+        fixture = self.fixed_term_chair_with_returned_seat_work(handover=handover, election_rules={
+            "Board chair": {"type": "OFFICE", "place": "CHAIR", "body": "LO_MEMBERSHIP",
+                                 "term": {"start": handover.isoformat(), "end": (handover + timedelta(days=1)).isoformat()}},
+        })
+        lo, general, work, chair, article = (fixture[key] for key in ("lo", "general", "work", "chair", "article"))
+        founder, worker, other = fixture["people"]
+        received = fixture["custody"]()[-1]
+        self.assertEqual((received["office"], received["holder"], received["cause"]),
+                         (chair.pk, worker.pk, {"ending_place": fixture["board_place"].pk, "ending_office": None}),
+                         "C-10 fixture: the seat's work came back to the Chair by an automatic return.")
+
+        # A successor is elected to the term that begins where the Chair's ends.
+        citation = {"binding_uuid": article["binding"], "version_id": article["version"]}
+        successor = fx.office_proposal(lo, founder, founder, self.chair_role, self_proposed=True)
+        journey = fx.call(self, general, citation, provision="Board chair", place="CHAIR")
+        fx.nominate(journey, founder, assignment=successor.assignment_uuid)
+        ballot = fx.open_election(journey)
+        for voter in (founder, worker, other):
+            fx.cast(journey, ballot, voter)
+        elected = models.ContextualRoleAssignmentStateEvent.objects.get(assignment=successor, action="ASSIGN")
+        self.assertEqual(elected.effective_at, handover, "C-10 fixture: the successor's term begins at the handover.")
+        (chairs,) = disc._rows(
+            """SELECT public.cmt_board_chair(%s,%s,statement_timestamp()) AS at_handover,
+                      public.cmt_board_chair(%s,%s,statement_timestamp()) AS before""",
+            [lo.pk, handover, lo.pk, handover - timedelta(microseconds=1)])
+        self.assertEqual((chairs["before"], chairs["at_handover"]), (chair.pk, successor.pk),
+                         "C-10 fixture: at the handover the one effective Chair is the successor.")
+
+        # Where the work goes when the Chair's term ends, read from the landed functions at that instant.
+        (onward,) = disc._rows(
+            "SELECT holder,office,ending FROM public.cmt_board_return(%s,%s,statement_timestamp())",
+            [received["receipt"], handover])
+        self.assertEqual((onward["holder"], onward["office"], onward["ending"]), (None, None, handover),
+                         "C-10 (OD-2): work returned automatically to a Chair must be held when that Chair's term "
+                         "ends. It must not be handed on to the successor.")
+        assigned = models.ServiceActivityAssignment.objects.get(activity=work)
+        self.assertEqual(
+            (committees.work_holder(work, assigned, "default", handover - timedelta(microseconds=1)),
+             committees.work_holder(work, assigned, "default", handover)),
+            (worker.pk, None),
+            "C-10 (OD-2): the projection must show the Chair holding the work until the handover, and nobody from it.")
+
+    def test_work_recovered_after_an_early_end_is_not_dated_by_the_nominal_end(self):
+        """C-11. Work the Board recovers after a dated mandate has ended early is held until the recovered officer's own ending, not until the mandate's nominal date (OD-1).
+
+        A committee is formed under a mandate with a stated end date a day ahead, and work is
+        bound to it. The Board then retires the forming Policy, so the mandate stops being live
+        with its date still ahead, and the work is held. The Board recovers it to one of its own
+        officers. Asked about a late observation, after the nominal date, the landed date
+        function must give that officer's own deadline (here none) for the recovered spell, and
+        must still give the nominal date for the spell that began while the mandate was live.
+        The engine's selector must offer no dated-end marker for the mandate at that cut.
+        """
+        lo, general, board, voters = c.formation_board(self, offering="FREE")
+        founder = voters[0]
+        circle = self.committee(general)
+        local = general | {"circle_uuid": circle.circle_uuid}
+        for voter in voters[1:]:
+            c.join(general, circle, voter)
+        nominal_end = support.database_now() + timedelta(days=1)
+        work_law = {"committee_work": {"return_to": "CHAIR"}}
+        forming, _spec = c.mandate(lo, founder, circle, "1", kind="AD_HOC", ends_at=nominal_end.isoformat(),
+                                   terms=work_law, policy_fields=work_law, publisher=c.first_version)
+        c.decide_instrument(self, board, forming, voters)
+        binding = forming["spec"]["proposal"]
+        activity_id = c.assigned_activity(founder, circle, binding)
+        bound = c.decide_instrument(self, local, c.step(local, binding, "BIND_WORK", activity=str(activity_id)), voters)
+        activity = models.ServiceActivity.objects.get(activity_id=activity_id)
+
+        def custody():
+            return disc._rows(
+                """SELECT receipt,predecessor,mandate::text AS mandate,office,holder,cause,effective_at
+                     FROM public.core_cmtcustody WHERE activity=%s ORDER BY effective_at,recorded_at""", [activity.pk])
+
+        # The mandate ends early: the Board retires the Policy that formed it. Its stated date is a day ahead.
+        retire = forming["spec"] | {"operation": "RETIRE", "intent": "RETIRE", "predecessor": binding, "proposal": str(uuid4())}
+        c.decide_instrument(self, board, {"kind": "LAW", "text": forming["text"], "spec": retire}, voters)
+        first, held = custody()
+        self.assertEqual((first["receipt"], held["predecessor"], held["office"], held["holder"], held["cause"]),
+                         (bound["implementation"], first["receipt"], None, None, {"ending_office": first["office"]}),
+                         "C-11 fixture: when the mandate ends early its bound work must be held, once.")
+        # The Board recovers the work to one of its own officers.
+        receiving = models.ContextualRoleAssignment.objects.get(
+            circle__circle_uuid=board["circle_uuid"], membership__identity=voters[1], role_definition__code="COORDINATOR")
+        recovered = c.decide_instrument(self, board, c.step(
+            board, binding, "REASSIGN_WORK", activity=str(activity_id),
+            predecessor=str(held["receipt"]), office=str(receiving.assignment_uuid)), voters)
+        spell = custody()[-1]
+        self.assertEqual((len(custody()), spell["receipt"], spell["predecessor"], spell["mandate"], spell["office"], spell["holder"]),
+                         (3, recovered["implementation"], held["receipt"], str(binding), receiving.pk, voters[1].pk),
+                         "C-11 fixture: the recovery must be the recorded successor of the held row, under the same mandate.")
+        self.assertTrue(held["effective_at"] <= spell["effective_at"] < nominal_end,
+                        "C-11 fixture: the mandate must have ended, and the work been recovered, before its nominal date.")
+
+        # A late observation: a cut after the nominal date. The function reads only what is recorded,
+        # so the question can be put now, without waiting a day for the clock.
+        late = nominal_end + timedelta(hours=1)
+        (asked,) = disc._rows(
+            """SELECT public.cmt_live(%s,%s,%s) AS live_when_recovered,
+                      public.cmt_assignment_deadline(%s,%s) AS officer_deadline,
+                      public.cmt_custody_due(%s,%s,%s,%s,%s) AS recovered_spell_due,
+                      public.cmt_live(%s,%s,%s) AS live_when_bound,
+                      public.cmt_custody_due(%s,%s,%s,%s,%s) AS first_spell_due,
+                      (SELECT count(*) FROM public.te_cmt_end_due(%s,%s) d WHERE d.source_ref=%s) AS markers_offered""",
+            [binding, spell["effective_at"], late, receiving.pk, late,
+             receiving.pk, binding, spell["effective_at"], late, late,
+             binding, first["effective_at"], late,
+             first["office"], binding, first["effective_at"], late, late,
+             lo.pk, late, str(binding)])
+        self.assertEqual((asked["live_when_recovered"], asked["officer_deadline"], asked["recovered_spell_due"]),
+                         (False, None, None),
+                         "C-11: a spell that began after the mandate ended falls due at the recovered officer's own "
+                         "ending and at no other date; the ended mandate's nominal date is not its end.")
+        self.assertEqual((asked["live_when_bound"], asked["first_spell_due"]), (True, nominal_end),
+                         "C-11: a spell that began while the mandate was live still counts the mandate's stated end.")
+        self.assertEqual(asked["markers_offered"], 0,
+                         "C-11: a mandate that ended early has only a nominal date left, and is offered no dated-end marker.")
+        self.assertEqual([row["receipt"] for row in custody()], [first["receipt"], held["receipt"], spell["receipt"]],
+                         "C-11: asking changes no record.")
 
     def test_task_completion_ends_delegation_and_preserves_history(self):
         """C-06. Board task completion ends delegated authority during a qualifying vote."""

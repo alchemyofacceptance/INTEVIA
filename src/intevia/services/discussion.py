@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from django.db import IntegrityError, connections, transaction
 
+from src.intevia.services import timed_events_handoff as handoff
 from src.intevia.services.law_records import _records
 from src.intevia.services.organism_command_support import (
     _lock_actor,
@@ -236,6 +237,8 @@ def _audience(actor, organism_uuid, circle_uuid, category_uuid=_NO_CATEGORY):
     rows = _rows(query, params)
     if not rows:
         raise DiscussionUnavailable()
+    # TIMED EVENTS: this person's standing in this LO is established here. A hint only.
+    handoff.mark(organism_uuid, actor)
     return rows[0]
 
 

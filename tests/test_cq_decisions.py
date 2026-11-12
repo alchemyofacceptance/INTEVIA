@@ -1024,6 +1024,12 @@ class CQDecisionTests(TransactionTestCase):
             makeup = import_module("core.migrations.0088_constitutional_board_makeup")
             restoration = import_module("core.migrations.0089_members_restore_board")
             supersession = import_module("core.migrations.0090_stand_down_supersession")
+            # TIMED EVENTS: 0094 replaces cmt_changed(), which 0084's reverse checks. It unwinds first.
+            dated_end = import_module("core.migrations.0094_te_committee")
+            # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
+            c2_join = import_module("core.migrations.0095_te_c2_join")
+            c2_join.uninstall(None, editor)
+            dated_end.uninstall(None, editor)
             supersession.uninstall(None, editor)
             restoration.uninstall(None, editor)
             makeup.uninstall(None, editor)
@@ -1056,6 +1062,8 @@ class CQDecisionTests(TransactionTestCase):
             makeup.install(None, editor)
             restoration.install(None, editor)
             supersession.install(None, editor)
+            dated_end.install(None, editor)
+            c2_join.install(None, editor)
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True

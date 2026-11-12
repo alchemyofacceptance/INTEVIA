@@ -5850,6 +5850,7 @@ class GovernedRule(_S015AppendOnly):
                         "U3_MEMBERSHIP_END_ENDS_CIRCLE_PARTICIPATION",
                         "BETA_COMPLIMENTARY_ACCESS",
                         "FREE_TIER",
+                        "TIMED_EVENTS_LIMITS",
                     )
                 ),
                 name="sbg_governedrule_code_vocab_ck",

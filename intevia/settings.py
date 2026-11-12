@@ -53,6 +53,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'core.session.IdentityAccessMiddleware',
+    'core.timed_events.TimedEventsWakeMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -169,6 +170,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # F0 presentation settings. The catalogue is off unless a local/CI setting opts in.
 INTEVIA_DESIGN_CATALOGUE = False
+# TIMED EVENTS host switch. Off until the host rehearsal has passed on that host.
+INTEVIA_TIMED_EVENTS_WAKE = False
 INTEVIA_ORBIT_MAX_MEMBERS = 9
 INTEVIA_OFF_DOMAIN_STYLE = "greyed"
 

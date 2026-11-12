@@ -1,16 +1,25 @@
 """ELECT election, result binding and term continuity through the governed writers."""
 
+import threading
+import time
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, connection, connections, transaction
 from django.test import TransactionTestCase
 
 from core import models
-from src.intevia.services import circle_commands, cq, cq_reads, elections
+from src.intevia.services import (
+    circle_commands,
+    cq,
+    cq_reads,
+    elections,
+    timed_events_elect,
+)
 from src.intevia.services import discussion as disc
 from src.intevia.services import discussion_posts as posts
+from src.intevia.services import timed_events as te
 from tests import cq_authority_support as board
 from tests import election_support as fx
 from tests import s015_0021_support as support
@@ -18,11 +27,28 @@ from tests import test_cq_clarity as clarity
 from tests import test_law_acts as law
 
 
+def _wake(lo, person):
+    """What a confirmed request by this member in this LO leaves for the TIMED EVENTS engine."""
+    return te.Wake(str(lo.organism_id), person.pk, person.credential_id, person.access_epoch)
+
+
+def _receipts(lo):
+    """Every TIMED EVENTS receipt of this LO, oldest first."""
+    with connection.cursor() as cursor:
+        cursor.execute("""SELECT purpose, source_ref, occurrence, outcome, effect_ref, rule_ref, enterer_id,
+            due_at, effect_at FROM public.core_tereceipt WHERE organism_id=%s ORDER BY discovered_at""", [lo.pk])
+        return cursor.fetchall()
+
+
 class ElectionTests(TransactionTestCase):
     topic = clarity.CQClarityTests.topic
 
     def test_member_election_seats_trustee_before_activation(self):
-        """ELECT-01. A cited member vote fills an elected seat while the Board is dormant. Uncited and unsupported calls refuse."""
+        """ELECT-01. A cited member vote fills an elected seat while the Board is dormant. Uncited and unsupported calls refuse.
+
+        TIMED EVENTS: an election whose preparation deadline passes after a valid nomination is
+        opened by the engine at that deadline, with one receipt, and a replay adds nothing.
+        """
         term_end = support.database_now() + timedelta(days=90)
         rules = {
             fx.ARTICLE: fx.seat(term={"end": term_end.isoformat()}),
@@ -58,6 +84,53 @@ class ElectionTests(TransactionTestCase):
         self.assertEqual(ending.composing_rule_reference, "elect-term:" + str(result["post_uuid"]))
         circle.refresh_from_db()
         self.assertIn(circle.state, ("DORMANT", "ELIGIBLE"))
+        with self.subTest(timed_events="the preparation deadline, after a nomination"):
+            # A second LO. Its election's preparation has a deadline a few real seconds ahead, a member
+            # puts their name forward before it, and then the database clock passes it. The nomination
+            # sets no phase, so the preparation head is still the head the deadline's rule act answers.
+            lo2, founder2, scope2, _circle2, citation2 = fx.owner()
+            candidate = law.add_member(lo2)
+            with clarity.due_shortly(4):
+                due = fx.call(self, scope2, citation2)
+            head = cq.phase(**due)
+            nomination = fx.nominate(due, candidate)
+
+            def acts(operation):
+                with connection.cursor() as cursor:
+                    cursor.execute("""SELECT a.act_uuid, a.recorded_at, a.ordinal FROM public.core_cqact a
+                        WHERE a.thread_uuid=%s AND a.operation=%s ORDER BY a.ordinal""", [due["thread_uuid"], operation])
+                    return cursor.fetchall()
+
+            (called_act, _called_at, called_ordinal), = acts("INITIATE")
+            (nominated_act, nominated_at, nominated_ordinal), = acts("ELECT_NOMINATE")
+            self.assertEqual((head["phase"], nominated_act, called_ordinal < nominated_ordinal, nominated_at < head["deadline"]),
+                             ("PREPARATION", nomination, True, True),
+                             "ELECT-01 preparation: the nomination must fall between the head and its deadline.")
+            waited = time.monotonic()
+            while support.database_now() < head["deadline"]:
+                self.assertLess(time.monotonic() - waited, 30, "ELECT-01 preparation: the deadline never came.")
+                time.sleep(0.1)
+            fx.idle_until_turn_of(lo2, founder2, "CQ")
+            opened = te.run(_wake(lo2, founder2), alias="default")
+            self.assertEqual((opened.result, opened.consumer, opened.purpose, opened.source_ref),
+                             ("OPENED", "CQ", "PREPARATION_DUE", str(due["thread_uuid"])),
+                             "ELECT-01 preparation: a lawful nomination must not stop the deadline's act or its receipt.")
+            (advanced_act, advanced_at, advanced_ordinal), = acts("PREPARATION_DUE")
+            self.assertNotEqual(cq.phase(**due)["phase"], "PREPARATION", "ELECT-01 preparation: the advance must be committed.")
+            self.assertTrue(nominated_ordinal < advanced_ordinal and head["deadline"] <= advanced_at)
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT r.consumer, r.purpose, r.source_ref, r.occurrence, r.outcome, r.effect_ref, r.rule_ref,
+                        r.enterer_id, r.due_at FROM public.core_tereceipt r WHERE r.organism_id=%s""", [lo2.pk])
+                receipts = cursor.fetchall()
+            self.assertEqual(receipts, [("CQ", "PREPARATION_DUE", str(due["thread_uuid"]), str(called_act), "OPENED",
+                                         str(advanced_act), "HG:DISC2:G1:D4", founder2.pk, head["deadline"])],
+                             "ELECT-01 preparation: one receipt, for the head the election was called with, at its own deadline.")
+            fx.idle_until_turn_of(lo2, founder2, "CQ")
+            again = te.run(_wake(lo2, founder2), alias="default")
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT count(*) FROM public.core_tereceipt WHERE organism_id=%s", [lo2.pk])
+                self.assertEqual((again.result, again.consumer, len(acts("PREPARATION_DUE")), cursor.fetchone()[0]),
+                                 ("IDLE", "CQ", 1, 1), "ELECT-01 preparation: a replay must add no act and no receipt.")
 
     def test_office_election_follows_constitutional_body_and_consent(self):
         """ELECT-02. Direct-member and Board elections use their own electorate and exact consenting office proposal."""
@@ -275,7 +348,11 @@ class ElectionTests(TransactionTestCase):
                         circle=circle, membership=pending.membership).exists())
 
     def test_term_boundaries_and_adjacent_succession(self):
-        """ELECT-09. Exact term boundaries govern a handover, independently of once-only late recording."""
+        """ELECT-09. Exact term boundaries govern a handover, independently of once-only late recording.
+
+        TIMED EVENTS case "engine second": after the landed catch-up has recorded the
+        term end, a wake of the engine finds nothing due and adds no event and no receipt.
+        """
         from src.intevia.services import organism_role_definition_service as definitions
         from src.intevia.services import organism_role_service as roles
         from tests import test_sr_office_actions as office
@@ -350,6 +427,13 @@ class ElectionTests(TransactionTestCase):
                                                             evidence_reference="office:" + str(ended.event_uuid))
         self.assertEqual(assessment.effective_at, office_end)
         self.assertEqual(elections.vacancies(**scope, ending_uuid=ended.event_uuid), [])
+        with self.subTest(timed_events="engine second"):
+            woken = te.run(_wake(lo, founder), alias="default")
+            self.assertEqual((woken.result, woken.consumer), ("IDLE", "ELECT"),
+                             "ELECT-09 engine second: the engine must look, and find this recorded term end not due.")
+            self.assertEqual((events.filter(action="END").count(), _receipts(lo), finish()), (1, [], 0),
+                             "ELECT-09 engine second: a term end the landed route recorded gains no second event "
+                             "and no receipt, and the landed catch-up still records nothing.")
         fx.enable_voting(scope)
 
         # Only the named Treasurer can fill this real Secretary vacancy. The same
@@ -534,6 +618,10 @@ class ElectionTests(TransactionTestCase):
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
         with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
+            # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
+            import_module("core.migrations.0095_te_c2_join").uninstall(None, editor)
+            # TIMED EVENTS: 0094 replaces cmt_changed(), which 0084's reverse checks. It unwinds first.
+            import_module("core.migrations.0094_te_committee").uninstall(None, editor)
             import_module("core.migrations.0090_stand_down_supersession").uninstall(None, editor)
             import_module("core.migrations.0089_members_restore_board").uninstall(None, editor)
             import_module("core.migrations.0088_constitutional_board_makeup").uninstall(None, editor)
@@ -553,7 +641,12 @@ class ElectionTests(TransactionTestCase):
         self.assertEqual(str(unknown.exception), "This discussion is unavailable to you.")
 
     def test_holder_notice_seat_dependent_offices_and_vacancies(self):
-        """ELECT-11. Hold a notice without a date, then end the actual seat and only dependent offices."""
+        """ELECT-11. Hold a notice without a date, then end the actual seat and only dependent offices.
+
+        TIMED EVENTS case "vacancy replay": the vacancy writer's false return is never read
+        as done. A vacancy the landed trigger made is found done by its own row. An ending
+        that owes no vacancy is answered as not due, and the engine writes nothing for either.
+        """
         from src.intevia.services import library_laws
         from src.intevia.services.organism_role_service import (
             OrganismRoleService,
@@ -676,6 +769,24 @@ class ElectionTests(TransactionTestCase):
         chair_route, = elections.vacancies(**scope, ending_uuid=chair_end.event_uuid)
         self.assertEqual(seat_route["instruction"]["assessment"], str(assessment.event_uuid))
         self.assertEqual(chair_route["instruction"]["route"], "BY_ELECTION")
+        with self.subTest(timed_events="vacancy replay"):
+            # The Secretary's office ended while voting was off, so that ending owes no vacancy.
+            secretary_end = events.get(assignment=assignments["Secretary"], action="END")
+            self.assertEqual(elections.vacancies(**scope, ending_uuid=secretary_end.event_uuid), [])
+            woken = te.run(_wake(lo, founder), alias="default")
+            self.assertEqual((woken.result, woken.consumer, _receipts(lo)), ("IDLE", "ELECT", []),
+                             "ELECT-11 vacancy replay: with every owed vacancy already open, the engine selects nothing.")
+            with transaction.atomic():
+                made, owed_none = (timed_events_elect.vacancy(
+                    alias="default", organism_id=lo.pk, enterer_id=founder.pk, purpose="VACANCY",
+                    source_ref=str(ending_), occurrence="VACANCY", due_at=None, known=None)
+                    for ending_ in (chair_end.event_uuid, secretary_end.event_uuid))
+            self.assertEqual((made.outcome, made.effect_ref), (te.FOUND_DONE, str(chair_end.event_uuid)),
+                             "ELECT-11 vacancy replay: a vacancy the landed trigger made is found done by its own row.")
+            self.assertEqual((owed_none.outcome, owed_none.effect_ref), (te.NOT_DUE, None),
+                             "ELECT-11 vacancy replay: a false return with no vacancy row is never read as done.")
+            self.assertEqual(elections.vacancies(**scope, ending_uuid=secretary_end.event_uuid), [])
+            self.assertEqual(elections.vacancies(**scope, ending_uuid=chair_end.event_uuid), [chair_route])
         self.assertTrue(any(row["binding"] == citation["binding_uuid"] for row in library_laws.our_laws(**own)["laws"]))
         self.topic(own, title="First discussion after resignation")
         disabled = configure(self, scope, {"enabled": False}, enabled)
@@ -778,7 +889,22 @@ class ElectionTests(TransactionTestCase):
             effective_at=seat_end).exists())
 
     def test_advance_cites_dated_resignation_assessment_before_term_catch_up(self):
-        """ELECT-13. First vacancy writer binds the exact assessment across a future date."""
+        """ELECT-13. First vacancy writer binds the exact assessment across a future date.
+
+        TIMED EVENTS case "engine first": in a second LO with the same dated notice, the
+        engine records the resignation's assessment and then opens the vacancy, one per
+        wake. The vacancy cites that one assessment, which keeps the notice's own
+        authority, and the landed catch-ups then record nothing more. Before the vacancy
+        opens, an attempt that finds an office assignment of the LO held elsewhere ends at
+        once with nothing: a vacancy can hand work to an office, and the custody row would
+        wait for that assignment.
+        """
+        # The second LO is the engine's. It is born before the dates are fixed, so it does not delay them.
+        engine_lo, engine_founder = law.ordinary_birth(board_seats=2)
+        engine_scope = {"credential": engine_founder.credential, "organism_uuid": engine_lo.organism_id}
+        engine_seat = models.CircleParticipation.objects.get(circle__parent_organism=engine_lo,
+                                                             membership__identity=engine_founder)
+        fx.enable_voting(engine_scope)
         lo, founder = law.ordinary_birth(board_seats=2)
         scope = {"credential": founder.credential, "organism_uuid": lo.organism_id}
         seat = models.CircleParticipation.objects.get(circle__parent_organism=lo, membership__identity=founder)
@@ -791,6 +917,8 @@ class ElectionTests(TransactionTestCase):
         clauses = {key: {"place": seat.seat_id, "effect": "DATED", "effective_at": value.isoformat()}
                    for key, value in dates.items()}
         citation = fx.provision(founder, lo, {}, resignations=clauses)
+        engine_clauses = {key: clause | {"place": engine_seat.seat_id} for key, clause in clauses.items() if key != "Past"}
+        engine_citation = fx.provision(engine_founder, engine_lo, {}, resignations=engine_clauses)
         request = scope | citation | {"participation_uuid": seat.participation_uuid}
         assessments = models.CoverageAssessment.objects.filter(case__living_organism=lo)
         with self.subTest(refusal="date outside seat term"):
@@ -807,11 +935,109 @@ class ElectionTests(TransactionTestCase):
         recorded_end = models.CircleParticipationEnd.objects.get(participation=seat)
         self.assertEqual((recorded_end.effective_at, recorded_end.composed_from_event_uuid), (due, end["act"]))
         self.assertLess(recorded_end.received_at, due)
+        # The same dated notice in the engine's LO, also given before the date.
+        engine_end = elections.resign_board_place(
+            **(engine_scope | engine_citation), participation_uuid=engine_seat.participation_uuid,
+            provision=clause, request_uuid=uuid4())
+        engine_recorded = models.CircleParticipationEnd.objects.get(participation=engine_seat)
+        self.assertEqual((engine_recorded.effective_at, engine_end["effect"]), (due, "DATED"))
+        self.assertLess(engine_recorded.received_at, due, "Fixture: the engine LO's notice must precede its date.")
+        engine_reference = "elect-resignation:" + str(engine_end["act"])
+        engine_assessments = models.CoverageAssessment.objects.filter(case__living_organism=engine_lo)
+        self.assertEqual((engine_assessments.filter(evidence_reference=engine_reference).count(),
+                          elections.vacancies(**engine_scope, ending_uuid=engine_seat.participation_uuid),
+                          _receipts(engine_lo)), (0, [], []))
         reference = "elect-resignation:" + str(end["act"])
         self.assertFalse(assessments.filter(evidence_reference=reference).exists())
         self.assertEqual(elections.vacancies(**scope, ending_uuid=seat.participation_uuid), [])
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_sleep_until(%s)", [due])
+        with self.subTest(timed_events="engine first"):
+            # First wake: the resignation's assessment. Second wake: the vacancy, citing it.
+            first = te.run(_wake(engine_lo, engine_founder), alias="default")
+            self.assertEqual((first.result, first.purpose, first.source_ref),
+                             ("OPENED", "RESIGNATION", str(engine_end["act"])),
+                             "ELECT-13 engine first: the first wake records the due resignation's assessment.")
+            engine_assessment = engine_assessments.get(evidence_reference=engine_reference)
+            self.assertEqual(elections.vacancies(**engine_scope, ending_uuid=engine_seat.participation_uuid), [],
+                             "ELECT-13 engine first: one wake opens one item; the vacancy waits for the next.")
+            fx.idle_until_turn_of(engine_lo, engine_founder, "ELECT")  # one consumer per wake: the others take their turn
+
+            # The vacancy is a source of the committee refresh. A custody row the refresh writes names
+            # its receiving office by a foreign key to the assignment row. Another connection holds an
+            # office assignment of this LO FOR UPDATE and nothing else, as the landed platform-law check
+            # holds a nomination (0067) without the LO. The refresh claim tries every assignment of the
+            # LO first, so the attempt ends at once: no vacancy, no receipt, no custody row, no charge.
+            office = law.query_one("""SELECT a.id FROM public.core_contextualroleassignment a
+                JOIN public.core_organismroledefinition d ON d.id=a.role_definition_id
+                WHERE d.living_organism_id=%s ORDER BY a.id LIMIT 1""", [engine_lo.pk])
+
+            def untouched():
+                return (elections.vacancies(**engine_scope, ending_uuid=engine_seat.participation_uuid),
+                        len(_receipts(engine_lo)),
+                        law.query_one("SELECT count(*) FROM public.core_cmtcustody"),
+                        law.query_one("SELECT (probes, opened, failed)::text FROM public.core_tepace "
+                                      "WHERE organism_id=%s AND consumer='ELECT'", [engine_lo.pk]))
+
+            before, held, let_go = untouched(), threading.Event(), threading.Event()
+
+            def hold_office():
+                try:
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute("SELECT id FROM public.core_contextualroleassignment WHERE id=%s FOR UPDATE", [office])
+                        held.set()
+                        let_go.wait(30)
+                finally:
+                    connections.close_all()
+
+            holder_thread = threading.Thread(target=hold_office)
+            holder_thread.start()
+            try:
+                self.assertTrue(held.wait(30), "ELECT-13 held office: the other connection never took the assignment.")
+                skipped = te.run(_wake(engine_lo, engine_founder), alias="default")
+                self.assertTrue(holder_thread.is_alive(),
+                                "ELECT-13 held office: the engine must return while the assignment is still held.")
+                self.assertEqual((skipped.result, skipped.consumer), ("BUSY_INNER", None),
+                                 "ELECT-13 held office: with an office assignment of the LO held elsewhere the vacancy's "
+                                 "attempt must skip at once.")
+                self.assertEqual(untouched(), before,
+                                 "ELECT-13 held office: the skip must leave no vacancy, no receipt and no custody row, "
+                                 "and charge no consumer.")
+            finally:
+                let_go.set()
+                holder_thread.join(30)
+            self.assertFalse(holder_thread.is_alive(), "ELECT-13 held office: the other connection did not finish.")
+
+            second = te.run(_wake(engine_lo, engine_founder), alias="default")
+            self.assertEqual((second.result, second.purpose, second.source_ref),
+                             ("OPENED", "VACANCY", str(engine_seat.participation_uuid)),
+                             "ELECT-13 engine first: the second wake opens the seat's vacancy.")
+            engine_vacancy, = elections.vacancies(**engine_scope, ending_uuid=engine_seat.participation_uuid)
+            self.assertEqual((engine_vacancy["instruction"]["assessment"], engine_assessment.effective_at),
+                             (str(engine_assessment.event_uuid), due),
+                             "ELECT-13 engine first: the vacancy cites the one assessment, dated at the notice's date.")
+            authority = law.query_one(
+                "SELECT public.disc_decision(a.authority_source,a.fingerprint) FROM public.core_cqact a WHERE a.act_uuid=%s",
+                [engine_end["act"]])
+            self.assertEqual(engine_assessment.authority_decision_reference, authority,
+                             "ELECT-13 engine first: the assessment keeps the notice's own authority.")
+            self.assertEqual(
+                _receipts(engine_lo),
+                [("RESIGNATION", str(engine_end["act"]), "COVERAGE", "OPENED", str(engine_assessment.event_uuid),
+                  "ELECT:RESIGNATION_COVERAGE", engine_founder.pk, due, engine_assessment.recorded_at),
+                 ("VACANCY", str(engine_seat.participation_uuid), "VACANCY", "OPENED",
+                  str(engine_seat.participation_uuid), "ELECT:VACANCY", engine_founder.pk, due,
+                  law.query_one("SELECT recorded_at FROM public.core_electvacancy WHERE ending=%s",
+                                [engine_seat.participation_uuid]))],
+                "ELECT-13 engine first: one receipt per opening, each citing its effect, its rule, the waking "
+                "member, the notice's date as due and the effect's own recorded time.")
+            third = te.run(_wake(engine_lo, engine_founder), alias="default")
+            cq.catch_up(credential=engine_founder.credential)
+            self.assertEqual((third.result, elections.catch_up_terms(**engine_scope),
+                              engine_assessments.filter(evidence_reference=engine_reference).count(),
+                              elections.vacancies(**engine_scope, ending_uuid=engine_seat.participation_uuid),
+                              len(_receipts(engine_lo))), ("IDLE", 0, 1, [engine_vacancy], 2),
+                             "ELECT-13 engine first: a further wake and the landed catch-ups add nothing.")
         cq.catch_up(credential=founder.credential)
         vacancy, = elections.vacancies(**scope, ending_uuid=seat.participation_uuid)
         self.assertIsNotNone(vacancy["instruction"]["assessment"], "First seat vacancy must cite the resignation coverage")
@@ -821,3 +1047,4 @@ class ElectionTests(TransactionTestCase):
         self.assertEqual(elections.catch_up_terms(**scope), 0)
         self.assertEqual(elections.vacancies(**scope, ending_uuid=seat.participation_uuid), [vacancy])
         self.assertEqual(assessments.filter(evidence_reference=reference).count(), 1)
+        self.assertEqual(_receipts(lo), [], "ELECT-13: the landed route's own openings gain no engine receipt.")

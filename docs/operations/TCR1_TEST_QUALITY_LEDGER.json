@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "C1-108 P4c2",
-  "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
-  "baseline_methods": 254,
-  "candidate_methods": 257,
+  "package": "TIMED EVENTS T1a-R9",
+  "baseline_commit": "1f7d5563aca82e103354ef75c81d5641f8403385",
+  "baseline_methods": 257,
+  "candidate_methods": 267,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -346,6 +346,18 @@
     "C1_108_P4c2_PENDING": {
       "source": "VC PostgreSQL pre-run, timing and whole job pending",
       "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1A_P10_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1A_R4A_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1A_R4C_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
     }
   },
   "source_index": {
@@ -512,21 +524,26 @@
     "C1_108_TAR_v1_0_P4c2.md": {
       "sha256": "3ca6bff1bb96702056486e2ae69b9a4a4c8c1317b26edab2804bd89a1e16d4a7",
       "source": "C1-108 P4c2 carrier"
+    },
+    "TIMED_EVENTS_T1A_TAR_TABLE.md": {
+      "sha256": "4396124a760d48335fa1ebc15241f4a7a6391aff0409372d4adaafd00ce4a679",
+      "source": "TIMED EVENTS T1a-R4c return"
     }
   },
   "coverage": {
-    "unit_tables": 25,
+    "unit_tables": 26,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 257,
+    "active": 267,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
     "ELECT_methods": 13,
     "HARD_methods_added": 1,
     "COMMITTEES_methods": 6,
-    "C1_108_methods": 3
+    "C1_108_methods": 3,
+    "TIMED_EVENTS_methods": 10
   },
   "tests": [
     {
@@ -1776,13 +1793,19 @@
       "baseline_label": "test_c2_recovery.TimedWorkerTests.test_worker_replays_both_boundaries_once",
       "status": "active",
       "current_label": "test_c2_recovery.TimedWorkerTests.test_worker_replays_both_boundaries_once",
-      "claim": "A late timed worker commits both elapsed recovery windows exactly once and repeating appends nothing",
+      "claim": "A late timed worker commits both elapsed recovery windows exactly once and repeating appends nothing. TIMED EVENTS T1a-9b: the same notice and two phase steps, taken one per attempt by the engine in a second LO, leave the records the landed command leaves in a first, enterers included; each receipt names its effect's own enterer and never the carrier; a replay of either route adds nothing. T1a-R4b: with the LO's restricted-continuity case held elsewhere, the next attempt is a prompt busy skip with nothing made, and the retry is the one success.",
       "unit_TAR": [
         {
           "source": "C2_TAR_TABLE_v1_5.md",
           "lines": [
             20
           ],
+          "unit_ids": [
+            "C2-06"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
           "unit_ids": [
             "C2-06"
           ]
@@ -1815,7 +1838,7 @@
         "baseline_recurring_faults": []
       },
       "history": [],
-      "current_source": "tests/test_c2_recovery.py:241"
+      "current_source": "tests/test_c2_recovery.py:309"
     },
     {
       "obligation": "base:test_c3_lifecycle.LifecycleTests.test_ended_basis_preserves_prior_decision",
@@ -3438,7 +3461,7 @@
       "baseline_label": "test_cq_clarity.CQClarityTests.test_timed_preparation_and_idempotent_rule_catch_up",
       "status": "active",
       "current_label": "test_cq_clarity.CQClarityTests.test_timed_preparation_and_idempotent_rule_catch_up",
-      "claim": "DISC2-03: inactivity, unprepared progression, original rule source and exactly-once catch-up",
+      "claim": "DISC2-03: inactivity, unprepared progression, original rule source and exactly-once catch-up TIMED EVENTS case 'engine second': after the landed catch-up has made the rule act, the engine checks each consumer in turn, finds nothing due and adds no act and no receipt.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -3456,6 +3479,15 @@
           ],
           "unit_ids": [
             "DISC4-P1-SETUP"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            13
+          ],
+          "unit_ids": [
+            "DISC2-03"
           ]
         }
       ],
@@ -3485,6 +3517,14 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1A_P5": {
+          "candidate_method_file_lf_sha256": "b9bd99411f1eea5598a13f724f042b4a3d088eeee9c6bd0ddcbc7b217b2b73b3",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -3495,9 +3535,15 @@
           "previous_source": "tests/test_cq_clarity.py:361",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "package": "TIMED EVENTS T1a-5",
+          "previous_claim": "DISC2-03: inactivity, unprepared progression, original rule source and exactly-once catch-up",
+          "prior_source": "tests/test_cq_clarity.py:364",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / DISC2-03"
         }
       ],
-      "current_source": "tests/test_cq_clarity.py:364"
+      "current_source": "tests/test_cq_clarity.py:365"
     },
     {
       "obligation": "base:test_cq_clarity.CQClarityTests.test_wording_revisions_confirmations_and_early_lock",
@@ -4572,7 +4618,7 @@
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
-      "claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result.",
+      "claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -4717,6 +4763,15 @@
           "unit_ids": [
             "base:test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            17
+          ],
+          "unit_ids": [
+            "DISC2-19"
+          ]
         }
       ],
       "review": {
@@ -4778,6 +4833,14 @@
         "C1_108_P4c": {
           "candidate_method_file_lf_sha256": "b04e3fb384c535bce0a68c30e2c5e086a45fa716a113c04aaee61e4efd32bae9",
           "run": "C1_108_P4c_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1A_R2": {
+          "candidate_method_file_lf_sha256": "ee83e119afe86f3a2224c021594dce8f86579ea49d140b8b683e4a863bac4045",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -4942,6 +5005,12 @@
           "package": "C1-108 P4c",
           "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations.",
           "prior_source": "tests/test_cq_decisions.py:946"
+        },
+        {
+          "package": "TIMED EVENTS T1a-R2",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result.",
+          "prior_source": "tests/test_cq_decisions.py:946",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / DISC2-19"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -14503,7 +14572,7 @@
       "baseline_label": null,
       "status": "active",
       "current_label": "test_elections.ElectionTests.test_member_election_seats_trustee_before_activation",
-      "claim": "ELECT-01. A cited member vote fills an elected seat while the Board is dormant. Uncited and unsupported calls refuse.",
+      "claim": "ELECT-01. A cited member vote fills an elected seat while the Board is dormant. Uncited and unsupported calls refuse. T1a-R4b: an election whose preparation deadline passes after a valid nomination is opened by the engine at that deadline, with one receipt citing the head it was called with, and a replay adds nothing.",
       "unit_TAR": [
         {
           "source": "ELECT_TAR_v1_0_P1b.md",
@@ -14519,6 +14588,12 @@
           "lines": [
             31
           ],
+          "unit_ids": [
+            "ELECT-01"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
           "unit_ids": [
             "ELECT-01"
           ]
@@ -15195,7 +15270,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_term_boundaries_and_adjacent_succession",
       "status": "active",
-      "claim": "A Treasury appointment supplies power inside its own interval. At the exact end, before an END row exists, the named equality assertion must be false. At the same known cut the prior instant is true. An independent connection waits, commits and sees zero work. Three actual voters elect adjacent trustees. The successor cannot exercise the place before handover. Includes exact personal and caller refusals.",
+      "claim": "A Treasury appointment supplies power inside its own interval. At the exact end, before an END row exists, the named equality assertion must be false. At the same known cut the prior instant is true. An independent connection waits, commits and sees zero work. Three actual voters elect adjacent trustees. The successor cannot exercise the place before handover. Includes exact personal and caller refusals. TIMED EVENTS case 'engine second': after the landed catch-up has recorded the term end, a wake of the engine finds nothing due and adds no event and no receipt.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P1.md",
@@ -15219,6 +15294,15 @@
           "source": "ELECT_P3_TAR_v1_0_P2b.md",
           "lines": [
             9
+          ],
+          "unit_ids": [
+            "ELECT-09"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            8
           ],
           "unit_ids": [
             "ELECT-09"
@@ -15254,16 +15338,30 @@
             "candidate_restored": null,
             "candidate_method_file_lf_sha256": "7a5b76bbe39213fe08732063b11446a0c048f5810642ce364828f0888012a0db"
           }
+        },
+        {
+          "package": "TIMED EVENTS T1a-3b",
+          "previous_claim": "A Treasury appointment supplies power inside its own interval. At the exact end, before an END row exists, the named equality assertion must be false. At the same known cut the prior instant is true. An independent connection waits, commits and sees zero work. Three actual voters elect adjacent trustees. The successor cannot exercise the place before handover. Includes exact personal and caller refusals.",
+          "prior_source": "tests/test_elections.py:277",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-09"
         }
       ],
-      "current_source": "tests/test_elections.py:277",
+      "current_source": "tests/test_elections.py:297",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
         "candidate_run": "ELECT_P3_P2B_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc"
+        "candidate_method_file_lf_sha256": "758e81a156f3f52af09214f709120e13ab6abf56c6c95b11b7734da51d9423dc",
+        "TIMED_EVENTS_T1A_P3B": {
+          "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -15271,7 +15369,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_recognised_incumbents_require_constitution_consent_and_remaining_term",
       "status": "active",
-      "claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard. Unwind 0090 on the original fixture so the populated 0083 reversal still refuses at the historical guard.",
+      "claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard. Unwind 0090 on the original fixture so the populated 0083 reversal still refuses at the historical guard. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2.md",
@@ -15376,6 +15474,15 @@
           "source": "C1_108_TAR_v1_0_P4c.md",
           "lines": [
             9
+          ],
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            16
           ],
           "unit_ids": [
             "ELECT-10"
@@ -15489,9 +15596,15 @@
           "package": "C1-108 P4c",
           "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard.",
           "prior_source": "tests/test_elections.py:421"
+        },
+        {
+          "package": "TIMED EVENTS T1a-R2",
+          "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard. Unwind 0090 on the original fixture so the populated 0083 reversal still refuses at the historical guard.",
+          "prior_source": "tests/test_elections.py:421",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-10"
         }
       ],
-      "current_source": "tests/test_elections.py:421",
+      "current_source": "tests/test_elections.py:452",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -15544,6 +15657,14 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1A_R2": {
+          "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       }
     },
@@ -15552,7 +15673,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_holder_notice_seat_dependent_offices_and_vacancies",
       "status": "active",
-      "claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election. A genuine dated resignation retains its own marker and decision. Its seat and dependent office remain filling sources. Preserve all previous refusal and succession claims.",
+      "claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election. A genuine dated resignation retains its own marker and decision. Its seat and dependent office remain filling sources. Preserve all previous refusal and succession claims. TIMED EVENTS case 'vacancy replay': the vacancy writer's false return is never read as done. A vacancy the landed trigger made is found done by its own row; an ending that owes no vacancy is answered as not due; the engine writes nothing for either.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2.md",
@@ -15583,6 +15704,15 @@
         },
         {
           "source": "C1_108_TAR_v1_0_P2.md",
+          "lines": [
+            9
+          ],
+          "unit_ids": [
+            "ELECT-11"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
           "lines": [
             9
           ],
@@ -15624,9 +15754,15 @@
           "previous_claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election.",
           "prior_source": "tests/test_elections.py:547",
           "change": "C1_108_TAR_v1_0_P2.md / ELECT-11"
+        },
+        {
+          "package": "TIMED EVENTS T1a-3b",
+          "previous_claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election. A genuine dated resignation retains its own marker and decision. Its seat and dependent office remain filling sources. Preserve all previous refusal and succession claims.",
+          "prior_source": "tests/test_elections.py:551",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-11"
         }
       ],
-      "current_source": "tests/test_elections.py:551",
+      "current_source": "tests/test_elections.py:588",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
@@ -15639,6 +15775,14 @@
           "predecessor_run": "C1_108_P1_VC",
           "predecessor_seconds": 9.547,
           "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1A_P3B": {
+          "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -15706,7 +15850,7 @@
       "baseline_label": null,
       "current_label": "test_elections.ElectionTests.test_advance_cites_dated_resignation_assessment_before_term_catch_up",
       "status": "active",
-      "claim": "An advance at or after the constitutional date cannot open an unassessed resignation vacancy.",
+      "claim": "An advance at or after the constitutional date cannot open an unassessed resignation vacancy. TIMED EVENTS case 'engine first': in a second LO with the same dated notice, the engine records the resignation's assessment and then opens the vacancy, one per wake; the vacancy cites that one assessment, which keeps the notice's own authority; the landed catch-ups then record nothing more.",
       "unit_TAR": [
         {
           "source": "ELECT_P3_TAR_v1_0_P2e.md",
@@ -15716,20 +15860,44 @@
           "unit_ids": [
             "ELECT-13"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            10
+          ],
+          "unit_ids": [
+            "ELECT-13"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "history": [],
-      "current_source": "tests/test_elections.py:761",
+      "history": [
+        {
+          "package": "TIMED EVENTS T1a-3b",
+          "previous_claim": "An advance at or after the constitutional date cannot open an unassessed resignation vacancy.",
+          "prior_source": "tests/test_elections.py:761",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-13"
+        }
+      ],
+      "current_source": "tests/test_elections.py:836",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
         "candidate_run": "ELECT_P3_P2E_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5"
+        "candidate_method_file_lf_sha256": "458013cd9e324479392a0d66176ce313b3a46463718dffee5b45a4a39a422cd5",
+        "TIMED_EVENTS_T1A_P3B": {
+          "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -15737,7 +15905,7 @@
       "baseline_label": null,
       "current_label": "test_committees.CommitteeTests.test_paired_designation_on_the_free_route",
       "status": "active",
-      "claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder. Same C-01 activity creation and assignment extracted unchanged to the shared fixture. Existing positive and negative assertions retained.",
+      "claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder. Same C-01 activity creation and assignment extracted unchanged to the shared fixture. Existing positive and negative assertions retained. TIMED EVENTS case 'refresh claim': with real work in custody, the claim the engine makes before an effect that refreshes a committee is free when nothing is held, answers at once that it is not free while another connection holds the bound activity, the mandate's law binding or an office holder's identity (each in turn), and is free again when the row is.",
       "unit_TAR": [
         {
           "source": "COMMITTEES_TAR_v1_0_P1.md",
@@ -15797,6 +15965,15 @@
           "source": "C1_108_TAR_v1_0_P3.md",
           "lines": [
             7
+          ],
+          "unit_ids": [
+            "C-01"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            15
           ],
           "unit_ids": [
             "C-01"
@@ -15895,9 +16072,15 @@
           "package": "C1-108 P3",
           "previous_claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder.",
           "previous_source": "tests/test_committees.py:60"
+        },
+        {
+          "package": "TIMED EVENTS T1a-R2",
+          "previous_claim": "The free Board creates one designation only by applying the paired instruments. The incomplete pair leaves neither binding, the tier refusal is exact, and the level-1 three-officer finding remains on the result. Both binding-event UUIDs must agree with this ballot’s linked SETTLE and IMPLEMENT. P1g: The free Board forms the paired level-one mandate. Its committee binds an assigned CSA. Board task completion records the unheld office and holder against the original receipt. The ended committee gets CMT_ENDED on reassignment. The Board applies that very proposal, the next receipt cites the hold and SERVICE resolves the Board’s selected officeholder. Same C-01 activity creation and assignment extracted unchanged to the shared fixture. Existing positive and negative assertions retained.",
+          "prior_source": "tests/test_committees.py:60",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / C-01"
         }
       ],
-      "current_source": "tests/test_committees.py:60",
+      "current_source": "tests/test_committees.py:66",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -15908,6 +16091,14 @@
         "C1_108_P3": {
           "candidate_file_lf_sha256": "fc2cd11b03daa87d8d7eabc8e1f369176201cefe5c45926e117d837d3ea507f2",
           "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1A_R2": {
+          "candidate_method_file_lf_sha256": "7571589d3d0d734b5d0ab1b8cc6885309bd794d71547c3c225b8aef8c0b93032",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -16074,7 +16265,7 @@
           "change": "U11 witness corrected"
         }
       ],
-      "current_source": "tests/test_committees.py:220",
+      "current_source": "tests/test_committees.py:202",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -16235,7 +16426,7 @@
           "change": "Method bytes match P1g; same module as C-02."
         }
       ],
-      "current_source": "tests/test_committees.py:332",
+      "current_source": "tests/test_committees.py:314",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -16250,7 +16441,7 @@
       "baseline_label": null,
       "current_label": "test_committees.CommitteeTests.test_end_boundary_and_stale_decision_preserve_history",
       "status": "active",
-      "claim": "A dated level-four mandate permits investigation immediately before its exclusive end and gives CMT_ENDED at the boundary. REPORT is refused with CMT_LEVEL_4.",
+      "claim": "A dated level-four mandate permits investigation immediately before its exclusive end and gives CMT_ENDED at the boundary. REPORT is refused with CMT_LEVEL_4. TIMED EVENTS case 'the dated end': for a second committee whose mandate ends at a real date a few seconds ahead, before the date the engine finds nothing due and storage refuses a marker; at the date the engine marks the mandate once, dated at its end date, the landed refresh records the mandate's gap at that date, one receipt holds the end date as its due time, and a further wake adds nothing.",
       "unit_TAR": [
         {
           "source": "COMMITTEES_TAR_v1_0_P1.md",
@@ -16303,6 +16494,15 @@
             7,
             16,
             17
+          ],
+          "unit_ids": [
+            "C-04"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            18
           ],
           "unit_ids": [
             "C-04"
@@ -16396,16 +16596,30 @@
             "candidate_method_file_lf_sha256": "a16339b7c360f88ce1a03939384e8bc8400070ed323eb7c7862df01b63486b8d"
           },
           "change": "Method bytes match P1g; same module as C-02."
+        },
+        {
+          "package": "TIMED EVENTS T1a-6b",
+          "previous_claim": "A dated level-four mandate permits investigation immediately before its exclusive end and gives CMT_ENDED at the boundary. REPORT is refused with CMT_LEVEL_4.",
+          "prior_source": "tests/test_committees.py:570",
+          "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / C-04"
         }
       ],
-      "current_source": "tests/test_committees.py:570",
+      "current_source": "tests/test_committees.py:552",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
         "candidate_run": "COMMITTEES_P1g2_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4"
+        "candidate_method_file_lf_sha256": "5e8cb1a081625256653b6e2a9e825d955d7ff58679b99c94d77dc9644c499da4",
+        "TIMED_EVENTS_T1A_P6B": {
+          "candidate_method_file_lf_sha256": "7571589d3d0d734b5d0ab1b8cc6885309bd794d71547c3c225b8aef8c0b93032",
+          "predecessor_run": null,
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       }
     },
     {
@@ -16466,7 +16680,7 @@
           "change": "Method bytes match P1g; same module as C-02."
         }
       ],
-      "current_source": "tests/test_committees.py:997",
+      "current_source": "tests/test_committees.py:1350",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -16618,7 +16832,7 @@
           "change": "Method bytes match P1g; same module as C-02."
         }
       ],
-      "current_source": "tests/test_committees.py:632",
+      "current_source": "tests/test_committees.py:684",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -16735,7 +16949,7 @@
         }
       ],
       "claim": "One carried members’ CQ ends the lit Board, its three places and its office; holders stay members. The forming Policy survives, mandate ends, transfer returns to members, custody moves to LO Coordinators. Catch-up opens no vacancy for the exact endings. Members retire that Policy and can vote Off. Dropping an effect breaks its own record or state assertion. One dated notice survives the earlier effective stand-down. The record names the superseded end, the exact vote cause and effective date. Replaying the final answer gives exactly one superseding end. Prior knowledge still gives the original date. The vacancy source and instruction tables yield zero. A genuine former worker and an attempted committee reassignment receive the LO Coordinator message. The original powers, membership, Policy and voting-Off assertions remain. The same journey now starts with a real future-effective END row on a Secretary assignment. The stand-down links to it in sequence, supersedes its date and keeps its historical identity. It yields exactly one causal office END. Replaying the final answer preserves the whole office chain. Neither ending is a vacancy source or instruction.",
-      "current_source": "tests/test_committees.py:1097"
+      "current_source": "tests/test_committees.py:1513"
     },
     {
       "obligation": "C1-108-R",
@@ -16767,59 +16981,395 @@
         }
       },
       "claim": "A carried restoration decision binds the current stand-down. Three genuine seat awards are required for this constitution. At two the members keep authority. At three the same Circle activates once, naming the enterer, law version, decision and seat-specific dates. Its open Off motion closes, the old mandate remains ended and an old-tenure stand-down cannot be put forward.",
-      "current_source": "tests/test_committees.py:1199"
+      "current_source": "tests/test_committees.py:1726"
+    },
+    {
+      "obligation": "TE-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_once_including_rollback",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [
+        "MUT-te-receipt-one-per-occurrence"
+      ],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            7
+          ],
+          "unit_ids": [
+            "TE-02"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P3": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "For one due occurrence, failing and competing attempts leave exactly one effect and one receipt, holding the original due time and the later actual opening. Cases: a failure between effect and receipt leaves neither; a competing attempt that finds the LO busy gets nothing and is counted against no consumer; the completing attempt records one linked effect and receipt; a replay and the landed catch-up add nothing; storage refuses a second receipt for the same occurrence. Text from an unknown refusal is kept in no record and no return. A late claim to have opened the effect is refused by storage. Added in T1a-R2: an attempt that finds a row of its claim held by another connection (an office holder's identity) ends at once with a busy skip, no effect and no receipt, charged to no consumer.",
+      "current_source": "tests/test_timed_events.py:189"
+    },
+    {
+      "obligation": "TE-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_activity_boundary",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            11
+          ],
+          "unit_ids": [
+            "TE-01"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P4": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "A successful, confirmed, signed-in request opens at most one due item in its own LO after its response closes, and nothing else does. Cases, each through the real middleware and a real response close: the host switch off; a refusal the view handled; a marked request the view did not confirm; a later confirmed request that touches no LO; a session the landed gate turns away; the opening, with nothing opened inside the request and exactly one after its close; the same with Django's own connection cleanup running first; an attempt that finds its connection inside a transaction.",
+      "current_source": "tests/test_timed_events.py:349"
+    },
+    {
+      "obligation": "TE-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_backlog_progress",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            12
+          ],
+          "unit_ids": [
+            "TE-03"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P5": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Each wake checks one consumer and opens at most one item, every consumer makes progress, and a failing item does not hold back the rest or lose its due time. Cases: a consumer whose selection fails is recorded and passed, so the next consumer runs; a CQ act refused at commit by the landed deferred completeness check leaves no act and no receipt; its valid sibling then opens; the refused occurrence opens later with its original due time; a late repair of an old failure does not disturb newer progress. Added in T1a-5b: a third thread past its Clarity response deadline opens on the consumer's next turn, so one consumer opens two purposes in due order; of two items due at the same instant, one that fails does not hold back the other; the CQ service's public entry for rule acts refuses any other operation and uses the connection it is named.",
+      "current_source": "tests/test_timed_events.py:432"
+    },
+    {
+      "obligation": "C-09",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_committees.CommitteeTests.test_fixed_term_chair_holding_seat_work_ends_by_the_clock",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            19
+          ],
+          "unit_ids": [
+            "C-09"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P6C": {
+          "candidate_method_file_lf_sha256": "7571589d3d0d734b5d0ab1b8cc6885309bd794d71547c3c225b8aef8c0b93032",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Work held by a Board Chair whose own term has a fixed end is held for the Board from that end, by the clock: nobody acts at that moment, the engine records the term end dated at the end, and that record's own commit moves the work. Cases: while another connection holds the activity the engine ends at once with nothing; once it is free the engine records exactly one term end, one receipt and one custody move, dated at the term's end; the landed catch-up then finds nothing more.",
+      "current_source": "tests/test_committees.py:1135"
+    },
+    {
+      "obligation": "C-10",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_committees.CommitteeTests.test_returned_seat_work_is_not_handed_on_to_a_successor_chair",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            20
+          ],
+          "unit_ids": [
+            "C-10"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P6C": {
+          "candidate_method_file_lf_sha256": "7571589d3d0d734b5d0ab1b8cc6885309bd794d71547c3c225b8aef8c0b93032",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "OD-2. Work that came back to a Chair by an automatic return is held when that Chair's term ends, even if a successor takes office at that same moment: asked about that instant, the landed function gives no holder and no office, and the projection shows the Chair holding the work until the handover and nobody from it.",
+      "current_source": "tests/test_committees.py:1221"
+    },
+    {
+      "obligation": "C-11",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_committees.CommitteeTests.test_work_recovered_after_an_early_end_is_not_dated_by_the_nominal_end",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "unit_ids": [
+            "C-11"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_R4C": {
+          "candidate_method_file_lf_sha256": "272cbfde35107f7bddeaabaaa6e7ff569dc8c84f49afddf65cded829ca2de97f",
+          "run": "TIMED_EVENTS_T1A_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Work the Board recovers after a dated mandate has ended early is held until the recovered officer's own ending, not until the mandate's nominal date (OD-1). The recorded custody shows the work held at the early end and recovered as its successor before the nominal date; asked at a late cut, the landed date function gives the officer's own deadline for the recovered spell and the nominal date for the spell that began while the mandate was live; the engine's selector offers no dated-end marker for the ended mandate.",
+      "current_source": "tests/test_committees.py:1272"
+    },
+    {
+      "obligation": "TE-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_measures_are_read_by_the_technology_circle_and_nobody_else",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            21
+          ],
+          "unit_ids": [
+            "TE-04"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P9": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "The engine's measures are read across LOs by a current member of INTEVIA's Technology Circle, and by nobody else. Cases: the root's founder, holding a place in the Technology Circle the root's own birth batch names, reads counts for an ordinary LO's opening; nothing returned names an LO, a source or an effect; a member of the root with no place in that Circle, and a member of an ordinary LO, each get the one unavailable answer. T1a-R4b: an inactive credential, a restricted identity and a credential with no identity each get the same one unavailable answer.",
+      "current_source": "tests/test_timed_events.py:704"
+    },
+    {
+      "obligation": "TE-05",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_limits_are_one_fixed_version",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            22
+          ],
+          "unit_ids": [
+            "TE-05"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P9": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "The engine runs under one fixed version of its limits, and storage accepts no other. Cases: the version in force is exactly the ruled one and is the one the runner supports; a second version, a changed limit, and a version under another rule id are each refused by storage by name; the version in force is unchanged.",
+      "current_source": "tests/test_timed_events.py:790"
+    },
+    {
+      "obligation": "TE-06",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_an_attempt_that_may_not_act_or_is_refused_by_name_leaves_nothing",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "lines": [
+            23
+          ],
+          "unit_ids": [
+            "TE-06"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_P10": {
+          "candidate_method_file_lf_sha256": "d6b934b350f9e8ea7f0688fc2c31788f6755e73ffc726a391b1edff0afe50b49",
+          "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "An attempt whose carrier is no longer the person who made the request, or whose act the writer refuses by name, leaves no effect and no receipt, and is recorded by its class. Cases: a wake carrying an access epoch that is no longer the person's ends as not eligible, before any consumer is probed, and is counted as a skip against the LO; a refusal the writer is known to give is reported and kept as that domain refusal, by its code, with the probe; the occurrence is then opened by the next clean attempt. T1a-9b: an occurrence the landed route completed after it was selected is found done through a whole attempt, with one receipt citing the landed effect and its earlier time, counted as found done.",
+      "current_source": "tests/test_timed_events.py:826"
+    },
+    {
+      "obligation": "TE-07",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_timed_events.TimedEventsTests.test_made_here_is_the_writing_transaction_and_no_other",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1A_TAR_TABLE.md",
+          "unit_ids": [
+            "TE-07"
+          ]
+        }
+      ],
+      "history": [],
+      "evidence": {
+        "TIMED_EVENTS_T1A_R4A": {
+          "candidate_method_file_lf_sha256": "8274b2ea2eb243bb69f3469fc48b9e56c297c9cabec9920f88459dee10c4bee1",
+          "run": "TIMED_EVENTS_T1A_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "An effect is \"made here\" only for the top-level transaction that wrote it, whichever savepoint of it wrote it, and for no other transaction, earlier, later or concurrent. Cases: a rolled-back savepoint leaves no effect and no origin; a top-level write is made here and is history after commit; a write in a released savepoint is made here and its commit passes the landed recovery guard; another session's write is unseen while uncommitted and not made here once committed; a full transaction id equal in its low 32 bits only is another transaction; an origin cannot be written directly, changed or removed.",
+      "current_source": "tests/test_timed_events.py:596"
     }
   ],
   "previous_unit": {
-    "package": "COMMITTEES P1g2",
-    "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-    "baseline_methods": 243,
-    "candidate_methods": 254,
+    "package": "C1-108 P4c2",
+    "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+    "baseline_methods": 254,
+    "candidate_methods": 257,
     "coverage": {
-      "unit_tables": 18,
+      "unit_tables": 25,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 254,
+      "active": 257,
       "folded": 46,
       "retired": 2,
       "DISC4_methods": 6,
       "ELECT_methods": 13,
       "HARD_methods_added": 1,
-      "COMMITTEES_methods": 6
+      "COMMITTEES_methods": 6,
+      "C1_108_methods": 3
     },
     "previous_unit": {
-      "package": "HARD P1b",
-      "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-      "baseline_methods": 253,
-      "candidate_methods": 243,
+      "package": "COMMITTEES P1g2",
+      "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+      "baseline_methods": 243,
+      "candidate_methods": 254,
       "coverage": {
-        "unit_tables": 13,
+        "unit_tables": 18,
         "SR_C2_staging_tables": 1,
         "historical_carryovers": 90,
         "DISC3_methods": 8,
-        "active": 243,
+        "active": 254,
         "folded": 46,
         "retired": 2,
         "DISC4_methods": 6,
-        "ELECT_methods": 8,
-        "HARD_methods_added": 1
+        "ELECT_methods": 13,
+        "HARD_methods_added": 1,
+        "COMMITTEES_methods": 6
       },
-      "earlier": {
-        "package": "ELECT P2",
-        "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-        "baseline_methods": 245,
-        "candidate_methods": 253,
+      "previous_unit": {
+        "package": "HARD P1b",
+        "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+        "baseline_methods": 253,
+        "candidate_methods": 243,
         "coverage": {
           "unit_tables": 13,
           "SR_C2_staging_tables": 1,
           "historical_carryovers": 90,
           "DISC3_methods": 8,
-          "active": 253,
-          "folded": 35,
+          "active": 243,
+          "folded": 46,
           "retired": 2,
           "DISC4_methods": 6,
-          "ELECT_methods": 8
+          "ELECT_methods": 8,
+          "HARD_methods_added": 1
+        },
+        "earlier": {
+          "package": "ELECT P2",
+          "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+          "baseline_methods": 245,
+          "candidate_methods": 253,
+          "coverage": {
+            "unit_tables": 13,
+            "SR_C2_staging_tables": 1,
+            "historical_carryovers": 90,
+            "DISC3_methods": 8,
+            "active": 253,
+            "folded": 35,
+            "retired": 2,
+            "DISC4_methods": 6,
+            "ELECT_methods": 8
+          }
         }
       }
     }

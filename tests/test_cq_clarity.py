@@ -22,6 +22,7 @@ from src.intevia.services import (
 )
 from src.intevia.services import discussion as disc
 from src.intevia.services import discussion_posts as posts
+from src.intevia.services import timed_events as te
 from src.intevia.services.organism_application_authority import (
     ProductionApplicationAuthorityProvider,
 )
@@ -45,6 +46,25 @@ def due_at_phase_start():
         original = cur.fetchone()[0]
         cur.execute("""CREATE OR REPLACE FUNCTION public.cq_deadline(p_start timestamptz,p_days integer)
             RETURNS timestamptz LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT p_start $$""")
+        try:
+            yield
+        finally:
+            cur.execute(original, params=None)
+
+
+@contextmanager
+def due_shortly(seconds):
+    """As ``due_at_phase_start``, but the computed deadline falls this many seconds after the phase starts.
+
+    An act can then be made, at its real time, between a head and its deadline. Nothing is
+    made to look elapsed: the test waits for the database clock to pass the deadline.
+    """
+    signature = "public.cq_deadline(timestamptz,integer)"
+    with transaction.atomic(), connection.cursor() as cur:
+        cur.execute("SELECT pg_get_functiondef(%s::regprocedure)", [signature])
+        original = cur.fetchone()[0]
+        cur.execute("""CREATE OR REPLACE FUNCTION public.cq_deadline(p_start timestamptz,p_days integer)
+            RETURNS timestamptz LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT p_start+make_interval(secs => %d) $$""" % int(seconds))
         try:
             yield
         finally:
@@ -362,7 +382,11 @@ class CQClarityTests(TransactionTestCase):
     )
 
     def test_timed_preparation_and_idempotent_rule_catch_up(self):
-        """DISC2-03. Inactivity, unprepared progression, original source and exactly-once processing."""
+        """DISC2-03. Inactivity, unprepared progression, original source and exactly-once processing.
+
+        TIMED EVENTS case "engine second": after the landed catch-up has made the rule act,
+        the engine checks each consumer in turn, finds nothing due and adds no act and no receipt.
+        """
         lo, owner, scope = self.owner()
         enabled = self.configure(scope, {"enabled": True})
         journey, _, topic = self.topic(scope)
@@ -399,6 +423,19 @@ class CQClarityTests(TransactionTestCase):
         )
         new = cq.phase(**other)
         self.assertEqual(new["deadline"] - new["effective_at"], timedelta(days=7))
+        with self.subTest(timed_events="engine second"):
+            consumers = {row["consumer"] for row in disc._rows("SELECT DISTINCT consumer FROM public.te_consumers()")}
+            woken = [te.run(te.Wake(str(lo.organism_id), caller.pk, caller.credential_id, caller.access_epoch),
+                            alias="default") for _ in consumers]
+            self.assertEqual(({step.result for step in woken}, {step.consumer for step in woken}),
+                             ({"IDLE"}, consumers | {"CQ"}),
+                             "DISC2-03 engine second: the engine must look at each consumer and find nothing due.")
+            self.assertEqual(
+                (query_one("SELECT count(*) FROM public.core_cqact WHERE thread_uuid=%s AND operation='PREPARATION_DUE'",
+                           [other["thread_uuid"]]),
+                 query_one("SELECT count(*) FROM public.core_tereceipt WHERE organism_id=%s", [lo.pk]),
+                 cq.catch_up(credential=owner.credential)), (1, 0, "Nothing is due."),
+                "DISC2-03 engine second: a rule act the landed route made gains no second act and no receipt.")
         prepared = cq.mark_prepared(**journey, request_uuid=uuid4())
         self.assertEqual(self.facts(prepared)["authority_source"]["kind"], "OFFICE")
         self.assertTrue(cq.phase(**journey)["prepared"])

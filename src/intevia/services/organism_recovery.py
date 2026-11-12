@@ -103,6 +103,31 @@ def start(alias, lo, cause):
                       cause.command.effective_at + duration(lo, 1, cause.command.effective_at))
 
 
+def phase_step(alias, lo, now):
+    """Take the one phase step that is due at ``now``, if any. The caller holds the LO lock.
+
+    Returns the head it stepped from, or None when no step is due. ``advance`` repeats
+    it; the TIMED EVENTS engine takes it once per attempt. Both run these lines.
+    """
+    head = head_at(alias, lo, now, now)
+    if (lo.platform_root or not head or head.action not in {"WITHOUT_COORDINATOR", "K2_DEACTIVATE"}
+            or head.deadline is None or head.deadline > now):
+        return None
+    key = f"k2:{head.event_uuid}"
+    # Composed event: identify the human origin of the rule application, never a worker account.
+    actor = Identity.objects.using(alias).get(pk=head.enterer_identity_id)
+    command = SimpleNamespace(effective_at=head.deadline, occurred_at=head.deadline,
+                              request_reference=key, idempotency_key=key)
+    cause = Cause(actor, head.authority_basis_id, head.authority_decision_reference, key, command,
+                  authority_target_fingerprint({"origin": str(head.event_uuid), "boundary": head.deadline}), now)
+    if head.action == "WITHOUT_COORDINATOR":
+        transition(alias, lo, cause, "K2_DEACTIVATE", "DORMANT",
+                   head.deadline + duration(lo, 2, head.deadline))
+    else:
+        transition(alias, lo, cause, "K2_DISSOLVE", "CLOSED")
+    return head
+
+
 def advance(alias, organism_pk):
     """Replay all due boundaries from their original instants under one LO lock."""
     with transaction.atomic(using=alias):
@@ -119,25 +144,10 @@ def advance(alias, organism_pk):
                 cursor.execute("SELECT public.c2_notice_input(%s,%s)", [lo.pk, source])
         now = database_now(alias)
         count = 0
-        while True:
-            head = head_at(alias, lo, now, now)
-            if (lo.platform_root or not head or head.action not in {"WITHOUT_COORDINATOR", "K2_DEACTIVATE"}
-                    or head.deadline is None or head.deadline > now):
-                return count
-            key = f"k2:{head.event_uuid}"
-            # Composed event: identify the human origin of the rule application, never a worker account.
-            actor = Identity.objects.using(alias).get(pk=head.enterer_identity_id)
-            command = SimpleNamespace(effective_at=head.deadline, occurred_at=head.deadline,
-                                      request_reference=key, idempotency_key=key)
-            cause = Cause(actor, head.authority_basis_id, head.authority_decision_reference, key, command,
-                          authority_target_fingerprint({"origin": str(head.event_uuid), "boundary": head.deadline}), now)
-            if head.action == "WITHOUT_COORDINATOR":
-                transition(alias, lo, cause, "K2_DEACTIVATE", "DORMANT",
-                           head.deadline + duration(lo, 2, head.deadline))
-            else:
-                transition(alias, lo, cause, "K2_DISSOLVE", "CLOSED")
+        while phase_step(alias, lo, now):
             count += 1
             now = database_now(alias)
+        return count
 
 
 def restore(alias, lo, cause, assessment_uuid):

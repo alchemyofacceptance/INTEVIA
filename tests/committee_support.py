@@ -170,8 +170,12 @@ def decide_instrument(case, scope, attachment, voters):
     return receipts[0]
 
 
-def assigned_activity(founder, circle, binding, *, worker=None, with_service=False):
-    """Create the real published Service and the chair’s assigned activity."""
+def assigned_activity(founder, circle, binding, *, worker=None, with_service=False, board_place=None):
+    """Create the real published Service and the chair’s assigned activity.
+
+    With ``board_place``, the activity is the Board's own, attached to that Circle as its Board and
+    assigned on the basis of that Board place, as Board work is.
+    """
     from dataclasses import asdict
     from src.intevia.services import service_activity_service as activities
     from src.intevia.services.service_service import GovernedService
@@ -225,7 +229,7 @@ def assigned_activity(founder, circle, binding, *, worker=None, with_service=Fal
             **command(),
             service_version_pk=catalog.current_version_id,
             initiating_domain=activities.InitiatingDomain.SERVICE,
-            initiating_domain_reference="committee:" + str(circle.circle_uuid),
+            initiating_domain_reference=("committee:" if board_place is None else "board:") + str(circle.circle_uuid),
             activity_basis_reference=binding,
         )
     )
@@ -234,7 +238,8 @@ def assigned_activity(founder, circle, binding, *, worker=None, with_service=Fal
             **command(),
             assignee_identity_id=(worker or founder).identity_id,
             assignment_reference="reserve-review",
-            assignment_basis_reference="fixture:committee-chair",
+            assignment_basis_reference=("fixture:committee-chair" if board_place is None
+                                        else str(board_place.participation_uuid)),
         )
     )
     return (activity_id, service) if with_service else activity_id

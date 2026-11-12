@@ -1,4 +1,6 @@
 """C2 services on the owned clone. No mail, scheduler sleep or network."""
+import re
+import threading
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -8,10 +10,77 @@ from django.test import TransactionTestCase
 
 from core import models
 from src.intevia.services import organism_coverage as coverage, organism_recovery as recovery
+from src.intevia.services import timed_events as te
 from src.intevia.services.organism_authority import S015AuthorityRefusalCode
 from tests import s015_0021_support as fixtures
+from tests import election_support
 from tests import test_c1b_departure as departures
+from tests import test_law_acts as law
 from tests.test_c1_rejoin import _attempt
+
+
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_STEPS = ("WITHOUT_COORDINATOR", "K2_DEACTIVATE", "K2_DISSOLVE")
+
+
+def _owing(start, expiry):
+    """The C2-06 fixture with one more member: an LO that owes one notice and two phase steps."""
+    with transaction.atomic(), connection.cursor() as cursor:
+        ids = fixtures.found_nonroot(cursor, uuid4().hex, fixture_at=start,
+                                     founding_assignment_overrides={"effective_until_state": "FIXED", "effective_until": expiry})
+    lo = models.LivingOrganism.objects.get(pk=ids["lo"])
+    return lo, ids["identity"], law.add_member(lo)
+
+
+def _graph(lo, founder, fixture_began):
+    """Every LO event and coverage assessment of one LO, in order, in a form two histories can share.
+
+    Generated ids are replaced by where the record sits in its own history. The enterer,
+    actor and authority are given as "the founding's own, or not". Recording and receipt
+    times are left out: two equivalent histories may differ in them. A time at or after
+    ``fixture_began`` belongs to the fixture's own setup (the further member joins "now")
+    and is compared only as that; every time C2 dates a record at is earlier, and is
+    compared exactly. The keys a record cites are compared for the records C2 itself makes.
+    """
+    def rows(sql):
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [lo.pk])
+            names = [column[0] for column in cursor.description]
+            return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+    shared = """x.sequence,x.predecessor_sequence,x.action,x.prior_state,x.effective_at,x.occurred_at,x.effective_until,
+        x.effective_until_state,x.entry_mode,x.composing_rule_state,x.composing_rule_reference,x.actor_state,
+        x.actor_capacity,x.evidence_reference,x.request_reference,x.idempotency_key,x.event_uuid,
+        x.enterer_identity_id,x.actor_id,x.authority_basis_id,x.authority_decision_reference"""
+    events = rows("SELECT x.resulting_state AS outcome," + shared + """ FROM public.core_livingorganismevent x
+        WHERE x.living_organism_id=%s ORDER BY x.sequence""")
+    assessments = rows("SELECT x.result AS outcome,x.roster_version," + shared + """ FROM public.core_coverageassessment x
+        JOIN public.core_essentialcoveragecase c ON c.id=x.case_id WHERE c.living_organism_id=%s ORDER BY x.sequence""")
+    offices = rows("""SELECT e.event_uuid FROM public.core_contextualroleassignmentstateevent e
+        JOIN public.core_contextualroleassignment a ON a.id=e.assignment_id
+        JOIN public.core_organismmembership m ON m.id=a.membership_id WHERE m.living_organism_id=%s ORDER BY e.id""")
+    own = {str(lo.organism_id): "lo"}
+    own |= {str(row["event_uuid"]): f"lo-event-{row['sequence']}" for row in events}
+    own |= {str(row["event_uuid"]): f"assessment-{row['sequence']}" for row in assessments}
+    own |= {str(row["event_uuid"]): f"office-event-{index}" for index, row in enumerate(offices)}
+    founding = events[0]
+
+    def shape(row):
+        made_by_c2 = (row["evidence_reference"] or "").startswith(("c2-boundary:", "k2:"))
+        keys = tuple(_UUID.sub(lambda found: own.get(found.group(0), found.group(0)), row[name] or "")
+                     for name in ("evidence_reference", "request_reference", "idempotency_key")) if made_by_c2 else None
+        return ({name: ("DURING THE FIXTURE" if name in ("effective_at", "occurred_at", "effective_until")
+                        and value is not None and value >= fixture_began else value)
+                 for name, value in row.items() if name not in (
+            "evidence_reference", "request_reference", "idempotency_key", "event_uuid", "enterer_identity_id",
+            "actor_id", "authority_basis_id", "authority_decision_reference")}
+            | {"keys": keys, "enterer_is_founder": row["enterer_identity_id"] == founder,
+               "actor_is_founder": row["actor_id"] == founder,
+               "founding_authority": (row["authority_basis_id"] == founding["authority_basis_id"],
+                                      row["authority_decision_reference"] == founding["authority_decision_reference"])})
+
+    lo.refresh_from_db()
+    return {"state": lo.state, "events": [shape(row) for row in events], "assessments": [shape(row) for row in assessments]}
 
 
 class RecoveryTests(TransactionTestCase):
@@ -258,3 +327,87 @@ class TimedWorkerTests(TransactionTestCase):
                          "A missed run must use the expiry and two snapshotted deadlines, even when both windows elapsed.")
         self.assertEqual((count, recovery.advance("default", lo.pk)), (2, 0),
                          "Repeating the timed worker must append neither a second deactivation nor a second dissolution.")
+
+        # TIMED EVENTS (P0a-4 A): the same three steps, taken one per attempt by the engine,
+        # leave the records the landed command leaves. Two more LOs owe what the one above owed.
+        # Each has one further member, who is not the founder: that member carries the wakes.
+        began = start + timedelta(days=75)
+        commanded, founder_c, _member_c = _owing(start, expiry)
+        woken, founder_w, carrier = _owing(start, expiry)
+        def both():
+            return _graph(commanded, founder_c, began), _graph(woken, founder_w, began)
+
+        before = both()
+        self.assertEqual(before[0], before[1], "C2-06 witness: the two LOs must start from equivalent histories.")
+        self.assertEqual(recovery.advance("default", commanded.pk), 2, "C2-06 witness: the command takes both phase steps.")
+        wake = te.Wake(str(woken.organism_id), carrier.pk, carrier.credential_id, carrier.access_epoch)
+        made = models.LivingOrganismEvent.objects.filter(living_organism=woken, action__in=_STEPS).order_by("sequence")
+        for step, purpose in enumerate(("NOTICE", "PHASE", "PHASE"), start=1):
+            election_support.idle_until_turn_of(woken, carrier, "C2")
+            if step == 2:
+                # The notice left this LO a restricted-continuity case. A coverage publication appends
+                # to that case, so the coverage claim tries it. Held elsewhere, it must give a prompt
+                # skip with nothing made; the retry below is then the one success.
+                held, let_go = threading.Event(), threading.Event()
+
+                def hold_case():
+                    try:
+                        with transaction.atomic(), connection.cursor() as cursor:
+                            cursor.execute("""SELECT id FROM public.core_restrictedcontinuitycase
+                                WHERE living_organism_id=%s FOR UPDATE""", [woken.pk])
+                            if cursor.fetchone() is not None:
+                                held.set()
+                            let_go.wait(30)
+                    finally:
+                        connection.close()
+
+                holder = threading.Thread(target=hold_case)
+                holder.start()
+                try:
+                    self.assertTrue(held.wait(30), "C2-06 held case: the notice must have left a restricted-continuity case to hold.")
+                    skipped = te.run(wake, alias="default")
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute("""SELECT public.te_coverage_claim(%s), public.te_c2_claim(%s,'NOTICE','','','UNDER_LO'),
+                            public.te_elect_claim(%s,'RESIGNATION','','COVERAGE','UNDER_LO'),
+                            (SELECT count(*) FROM public.core_tereceipt WHERE organism_id=%s),
+                            (SELECT busy_inner FROM public.core_temeter WHERE organism_id=%s)""", [woken.pk] * 5)
+                        tried = cursor.fetchone()
+                    self.assertTrue(holder.is_alive(), "C2-06 held case: the engine and the claims must return while the row is held.")
+                    self.assertEqual(((skipped.result, skipped.consumer), list(made.values_list("action", flat=True)), tried),
+                                     (("BUSY_INNER", None), list(_STEPS[:1]), (False, False, False, 1, 1)),
+                                     "C2-06 held case: a held restricted-continuity case must give a prompt busy skip, by "
+                                     "C2's claim and ELECT's alike, with no step made and no receipt added.")
+                finally:
+                    let_go.set()
+                    holder.join(30)
+                self.assertFalse(holder.is_alive(), "C2-06 held case: the other connection did not finish.")
+            turn = te.run(wake, alias="default")
+            self.assertEqual((turn.result, turn.consumer, turn.purpose), ("OPENED", "C2", purpose),
+                             f"C2-06 witness: wake {step} must open one C2 step.")
+            self.assertEqual(list(made.values_list("action", flat=True)), list(_STEPS[:step]),
+                             f"C2-06 witness: wake {step} must take one step and no more.")
+        after = both()
+        self.assertEqual(after[1], after[0],
+                         "C2-06 witness: three wakes must leave the records the command leaves, the enterers included.")
+        self.assertEqual((after[0]["state"], len(after[0]["events"]) - len(before[0]["events"]),
+                          len(after[0]["assessments"]) - len(before[0]["assessments"])), ("CLOSED", 3, 1),
+                         "C2-06 witness: one notice (an assessment and the vacancy event) and two phase steps.")
+        with connection.cursor() as cursor:
+            cursor.execute("""SELECT r.purpose,r.outcome,r.rule_ref,r.enterer_id,r.due_at,
+                    (SELECT x.enterer_identity_id FROM public.core_coverageassessment x WHERE x.event_uuid::text=r.effect_ref
+                     UNION ALL SELECT x.enterer_identity_id FROM public.core_livingorganismevent x WHERE x.event_uuid::text=r.effect_ref)
+                FROM public.core_tereceipt r WHERE r.organism_id=%s ORDER BY r.due_at""", [woken.pk])
+            receipts = cursor.fetchall()
+        self.assertNotEqual(carrier.pk, founder_w, "C2-06 witness: the carrier must not be the founder.")
+        self.assertEqual(receipts, [
+            ("NOTICE", "OPENED", "C0:G2:C2", founder_w, expiry, founder_w),
+            ("PHASE", "OPENED", "HG:RC-1:K-2/H-4", founder_w, expiry+timedelta(days=30), founder_w),
+            ("PHASE", "OPENED", "HG:RC-1:K-2/H-4", founder_w, expiry+timedelta(days=60), founder_w)],
+            "C2-06 witness: each receipt names its effect's own enterer, as landed, and never the carrier.")
+        # A replay of either route adds nothing to either history.
+        election_support.idle_until_turn_of(woken, carrier, "C2")
+        again = te.run(wake, alias="default")
+        self.assertEqual((recovery.advance("default", commanded.pk), again.result, again.consumer), (0, "IDLE", "C2"),
+                         "C2-06 witness: a replay must find nothing owed.")
+        self.assertEqual(both(), after,
+                         "C2-06 witness: a replay must leave both histories as they were.")

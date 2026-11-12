@@ -30,7 +30,10 @@ S015_TRUNCATE_GUARDIANS = {
     "cmt_refresh_batch": "cmt_batch_no_truncate",
     "core_cmtcomposition": "s015_cmt_no_truncate",
     "core_c108restoration": "c108_restore_no_truncate",
+    "core_tereceipt": "s015_tereceipt_no_truncate",
+    "core_teorigin": "s015_teorigin_no_truncate",
     "core_cmtcustody": "s015_cmt_no_truncate",
+    "core_cmtmandateend": "s015_cmt_no_truncate",
     "core_electvacancy": "s015_elect_vacancy_no_truncate",
     "core_electvacancyfill": "s015_elect_fill_no_truncate",
     "core_electchoice": "s015_elect_choice_no_truncate",
@@ -115,10 +118,15 @@ S015_TRUNCATE_GUARDIANS = {
 # Django's flush lists only model tables; these must be reset with them.
 # 0021: s015_transaction_register. 0022: part, content, resolution and severance ledger.
 S015_UNMODELLED_RESET_TABLES = (
+    "core_tereceipt",
+    "core_teorigin",
+    "core_tepace",
+    "core_temeter",
     "cmt_refresh_batch",
     "core_cmtcomposition",
     "core_c108restoration",
     "core_cmtcustody",
+    "core_cmtmandateend",
     "core_electvacancy",
     "core_electvacancyfill",
     "core_electchoice",
@@ -165,6 +173,7 @@ S015_MIGRATION_SEEDS = (
     ("core.migrations.0045_sbg_governance_formation", "restore_platform_rules"),
     ("core.migrations.0046_se_entitlement_foundation", "restore_entitlement_rules"),
     ("core.migrations.0074_cq_clarity", "restore_reporting_default"),
+    ("core.migrations.0091_te_engine_storage", "restore_limits"),
 )
 
 _TRUNCATE_TRIGGER_BIT = 32  # pg_trigger.tgtype TRUNCATE event bit
