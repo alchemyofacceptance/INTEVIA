@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "TIMED EVENTS T1a-R9",
-  "baseline_commit": "1f7d5563aca82e103354ef75c81d5641f8403385",
-  "baseline_methods": 257,
-  "candidate_methods": 267,
+  "package": "TIMED EVENTS T1b CK-1 R4c",
+  "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
+  "baseline_methods": 267,
+  "candidate_methods": 276,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -358,6 +358,54 @@
     "TIMED_EVENTS_T1A_R4C_PENDING": {
       "source": "VC PostgreSQL run pending",
       "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1A_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1B_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1B_R2B_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3B_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3C_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3D_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3E_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3F_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R3G_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R4A_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R4B_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK1_R4C_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
     }
   },
   "source_index": {
@@ -528,6 +576,10 @@
     "TIMED_EVENTS_T1A_TAR_TABLE.md": {
       "sha256": "4396124a760d48335fa1ebc15241f4a7a6391aff0409372d4adaafd00ce4a679",
       "source": "TIMED EVENTS T1a-R4c return"
+    },
+    "TIMED_EVENTS_T1B_TAR_TABLE.md": {
+      "sha256": "fcc55c77ca533fad4fc01a24993f17bcd9462754a7085b4a97c7a8ac4b00bba3",
+      "source": "TIMED EVENTS T1b CK-1 R4c return"
     }
   },
   "coverage": {
@@ -535,7 +587,7 @@
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 267,
+    "active": 276,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
@@ -543,7 +595,9 @@
     "HARD_methods_added": 1,
     "COMMITTEES_methods": 6,
     "C1_108_methods": 3,
-    "TIMED_EVENTS_methods": 10
+    "TIMED_EVENTS_methods": 10,
+    "INTEVIA_CLOCK_methods": 7,
+    "MIGRATION_REVERSIBILITY_methods": 2
   },
   "tests": [
     {
@@ -17298,6 +17352,1238 @@
       },
       "claim": "An effect is \"made here\" only for the top-level transaction that wrote it, whichever savepoint of it wrote it, and for no other transaction, earlier, later or concurrent. Cases: a rolled-back savepoint leaves no effect and no origin; a top-level write is made here and is history after commit; a write in a released savepoint is made here and its commit passes the landed recovery guard; another session's write is unseen while uncommitted and not made here once committed; a full transaction id equal in its low 32 bits only is another transaction; an origin cannot be written directly, changed or removed.",
       "current_source": "tests/test_timed_events.py:596"
+    },
+    {
+      "obligation": "CLK-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-01"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1b",
+          "event": "claim widened to the owned route; CK-1a evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1b R2b",
+          "event": "the \"no reverse\" case replaced by the reverse's permissions and the kept counter's check (correction F1); CK-1b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "claim reworded as the separation of the owned clock's lifecycle from production; production cases rebuilt for the Advisor's A1 (every new physical connection checked, nothing remembered, any failed check closes the connection) and A2 (each serving entry discriminated on its own); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "owned-route cases rebuilt for the Advisor's B1 (no half-configured run; a verification run never treated as a rehearsal; the rehearsal bound by the oid the test runner recorded; the reverse bound like the move); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3d (CLK-07 changed, CLK-09 added); R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3e (CLK-06 changed); R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method changed at R4a (correction R4, Gemini's G-O1): each serving entry's check is shown to leave no open connection, and each clean entry case has a block of its own",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-D3's stated-fact cases, G-I5's finding text on a real test database, G-I1's new mark",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1A": {
+          "candidate_method_file_lf_sha256": "034b8237fcc4021769dae8da0cbeaf8f9eae1a953e59f966fd0e446fc1c35de6",
+          "run": "TIMED_EVENTS_T1B_CK1A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B": {
+          "candidate_method_file_lf_sha256": "9425a6de9f1898a96d7a690c402e839c16944c32d7e0d31839d0776fa4a26a5f",
+          "run": "TIMED_EVENTS_T1B_CK1B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "The owned test clock's lifecycle is kept apart from production: production, at each real serving entry and on every new physical connection, refuses a database that bears any mark of the INTEVIA Clock's moving part, and installing, moving and reversing the moving part are permitted only on the owned route's own databases. Production's side: a real test database is refused at a first connection and at every later use, each physical connection closed; a connection accepted once is followed by a new physical connection under the same alias and name that is checked afresh, refused and closed; an evidence read that raises a database error raises it, closes the connection, and the retry is checked afresh and refused; with the connection already open the WSGI entry and the ASGI entry are each refused by their own check, each in its own subtest; the same database in the shape production's migrations alone build is accepted on one statement's evidence and each serving entry starts on it; each of seven marks refuses, names just outside the test route's prefix do not, and a database with no ledger table, or not yet migrated, is read and not refused. The owned route's side: installing is allowed on a bootstrap database and a clone, moving and reversing on a clone only, and each is bound to the run by the database's oid in one of two ways only: a verification run's receipts record creating it, or, on a rehearsal with no receipts and no verification variable, the run's own test runner recorded creating or selecting it. A receipt file without a nonce or a nonce without a file, a verification variable without receipts, a record of this name with another oid, and neither receipts nor a record are each refused for all three, naming the condition, as stated facts and on the real clone; moving and reversing are refused on a connection the lifecycle backend does not qualify. A production-shaped name, a look-alike, other settings, a database that is not the configured one and a role that does not own it are each refused. The kept counter's check names its type, start, increment, minimum, maximum, cache, cycle and ownership and the value read by intevia_test_clock_offset(); a counter that differs in any one, or a clock stated not to be at zero, is refused for reversing and for installing, and the migration's own reverse and forward refuse a counter that is not as migrated. R4a (Gemini's G-O1): after each serving entry's own check, whether it refused or passed, that alias has no open connection. R4b (Gemini's G-D3, G-I1, G-I5): the receipts branch of the binding refuses a receipt whose oids are not integers; on a real test database the refusal names the move as a procedure; a form of a face's name that takes arguments is named as that, and the face beside it is not blamed.",
+      "current_source": "tests/test_intevia_clock.py:98"
+    },
+    {
+      "obligation": "CLK-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-04"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1b",
+          "event": "claim widened to the owned route; CK-1a evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1b R2b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R2b (CLK-01 changed, CLK-08 added); CK-1b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3b (CLK-01 changed); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3c (CLK-01 changed); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3d (CLK-07 changed, CLK-09 added); R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3e (CLK-06 changed); R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-O5's meanings that cannot be looked up",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1A": {
+          "candidate_method_file_lf_sha256": "034b8237fcc4021769dae8da0cbeaf8f9eae1a953e59f966fd0e446fc1c35de6",
+          "run": "TIMED_EVENTS_T1B_CK1A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B": {
+          "candidate_method_file_lf_sha256": "9425a6de9f1898a96d7a690c402e839c16944c32d7e0d31839d0776fa4a26a5f",
+          "run": "TIMED_EVENTS_T1B_CK1B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Offset zero. With no offset, each face of the INTEVIA Clock, in storage and through the Python door, returns what the built-in it stands for returns at the same cut: the transaction's start, the statement's start (fresh and through a saved plan), and an instant that advances inside one statement; as production writes the faces and as the owned route writes them. The mail helper reads through the same door and keeps its PostgreSQL-only refusal. The shifted clock is witnessed after the complete conversion. R4b (Gemini's G-O5): the Python door refuses, in its own words, a meaning that cannot even be looked up.",
+      "current_source": "tests/test_intevia_clock.py:537"
+    },
+    {
+      "obligation": "CLK-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-02"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1b R2b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R2b (CLK-01 changed, CLK-08 added); CK-1b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3b (CLK-01 changed); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3c (CLK-01 changed); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3d (CLK-07 changed, CLK-09 added); R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3e (CLK-06 changed); R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-D4's durations and the time whose zone gives no offset",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1B": {
+          "candidate_method_file_lf_sha256": "9425a6de9f1898a96d7a690c402e839c16944c32d7e0d31839d0776fa4a26a5f",
+          "run": "TIMED_EVENTS_T1B_CK1B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Refusals. A move of nothing, a move backwards, a move to a time already past, a move with no amount or with two, and a move past the clock's range are each refused, and the offset stays where it was. The positive cases are witnessed after the complete conversion. R4b (Gemini's G-D4): a duration the clock could not hold is refused by the helper in INTEVIA's words with storage not called, and a time that Django does not judge aware is refused as the wrong kind of argument.",
+      "current_source": "tests/test_intevia_clock.py:638"
+    },
+    {
+      "obligation": "CLK-06",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-06"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1b R2b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R2b (CLK-01 changed, CLK-08 added); CK-1b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3b (CLK-01 changed); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3c (CLK-01 changed); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3d (CLK-07 changed, CLK-09 added); R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "rebuilt for the Advisor's B2 and the Human Governor's ruling of D8 in the reader form: the move is a procedure that can only stand alone; cases added for a raw transaction that has read the clock, two statements in one message, a read rolled back to a savepoint, and another role's session as a stated-fact decision in storage; every move asked for is a move of nothing; R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method changed at R3g (the Advisor's confirmation finding 1): the move's real observation of a peer is witnessed, with a peer whose activity reporting is off; the decision's fact-not-read case expects its own words",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method unchanged at R4b (six other methods changed in the two files); R4a evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1B": {
+          "candidate_method_file_lf_sha256": "9425a6de9f1898a96d7a690c402e839c16944c32d7e0d31839d0776fa4a26a5f",
+          "run": "TIMED_EVENTS_T1B_CK1B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Refusals. A move of the INTEVIA Clock is refused while any other transaction is open, as the move can see it, and while any transaction that has read the clock is open; a move can only stand alone; and no transaction is admitted to the clock while a move holds it. The offset stays where it was. On this connection an outer transaction, a savepoint and a manual transaction are refused by the helper; a move asked for inside any transaction block (a raw transaction that has read the clock, a transaction opened in the same message, a message whose first statement is not the move) is refused by PostgreSQL itself at the move's COMMIT, and through the helper in INTEVIA's words. On another connection an idle transaction, a transaction that has read the clock, and a transaction whose read was rolled back to a savepoint each refuse the move. Storage's decision over stated facts refuses another role's session whether or not a transaction is seen on it. A transaction that starts while a move holds the clock cannot read it until it is released. R3g, through the activity view itself: a peer the view shows idle does not stop a move; a peer with its activity reporting off is refused as a status that could not be read, inside a transaction that read the clock under a savepoint it rolled back, with reporting turned back on inside that transaction, and with no transaction at all; seen idle again, it no longer stops a move. The decision answers a fact not read in its own words.",
+      "current_source": "tests/test_intevia_clock.py:709"
+    },
+    {
+      "obligation": "CLK-07",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-07"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1b R2b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R2b (CLK-01 changed, CLK-08 added); CK-1b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3b (CLK-01 changed); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3c (CLK-01 changed); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "claim extended for the Advisor's B3: the reset takes no argument and its exempt set is fixed in storage; cases added for calls that pass a list and for an occupied business table inside the real reset; R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3e (CLK-06 changed); R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method changed at R4a (correction R4, Gemini's G-D1): the reset's refusal for whatever would refuse a move is witnessed through the real database reset and the real activity view, at offset zero",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method unchanged at R4b (six other methods changed in the two files); R4a evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method changed at R4c (the Advisor's finding on R4): the resetting transaction itself; one fixture of the business-table case no longer reads a face inside the reset's transaction",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1B": {
+          "candidate_method_file_lf_sha256": "9425a6de9f1898a96d7a690c402e839c16944c32d7e0d31839d0776fa4a26a5f",
+          "run": "TIMED_EVENTS_T1B_CK1B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Order and failure. The database reset returns the INTEVIA Clock to zero inside its own transaction, after the tables are empty and before any seed is restored; a reset that fails puts the clock back with the rows; and storage alone decides what the reset's emptiness check leaves out. The clock's reset refuses while a row remains; it exists in one form that takes no argument, its stored body holds the fixed exempt set (the migration ledger alone, equal to the lifecycle backend's), and a call that passes any list finds no such function and changes nothing; inside the real reset a row in a business table makes the reset fail naming that table, and the whole reset is undone; with the last seed restorer made to fail, the first seed restorer sees empty tables, offset zero, an open transaction and a counter already reset, and afterwards the row and the original counter are back; a reset that succeeds shows the same order and keeps the counter it reset. R4a (Gemini's G-D1; D8 covers the reset): through the real database reset and the real activity view, at offset zero, the reset is refused in words that say the clock is not reset, with the row, the counter and the offset as they were, by a peer inside a transaction whose read of the clock was rolled back to a savepoint, by a peer with its activity reporting off (inside a transaction or not), and by a peer that opened its transaction after the reset's own transaction first read the activity view; a peer seen idle is no obstacle. R4c (the Advisor's finding on R4): the transaction that makes the reset cannot itself read two offsets. At offset zero, a connection that read a face in a transaction it manages by hand is refused the database reset before any table changes; storage refuses a reset asked for inside a transaction that has itself read the clock; and the database reset's own transaction must read no face before its clock step.",
+      "current_source": "tests/test_intevia_clock.py:974"
+    },
+    {
+      "obligation": "CLK-08",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-08"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3b",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3b (CLK-01 changed); R2b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3c",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3c (CLK-01 changed); R3b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3d",
+          "event": "one call changed to follow the isolation instrument's new signature (the counter's presence is stated as required); claim unchanged; R3c evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "two lines changed to count the moving part's eight routines (the move's procedure and seven functions); claim unchanged; R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method changed in two lines at R4a: the moving part is nine routines (the shared observation function); claim unchanged",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-O4, its restore marks itself done before it migrates; and its list of marks that must be gone names the procedure; claim unchanged",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1B_R2B": {
+          "candidate_method_file_lf_sha256": "7b0acd2a615cc69b190f2a0a79c7108737ac1c777405ca815707e8db7464e244",
+          "run": "TIMED_EVENTS_T1B_CK1B_R2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3B": {
+          "candidate_method_file_lf_sha256": "ff2a270fc7ecd9309dfe6cc83caadb832633d60a62c4e77aa088233d32f7f1eb",
+          "run": "TIMED_EVENTS_T1B_CK1_R3B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3C": {
+          "candidate_method_file_lf_sha256": "accf9f5dfc58d44b3201bda71b2ebdfb9d7779bc6890c60ae57fa67ec4280a40",
+          "run": "TIMED_EVENTS_T1B_CK1_R3C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and at every point in between production's startup refuses it. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter.",
+      "current_source": "tests/test_intevia_clock.py:1304"
+    },
+    {
+      "obligation": "CLK-09",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-09"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3e",
+          "event": "method unchanged; the test file's digest and this method's line changed at R3e (CLK-06 changed); R3d evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3f",
+          "event": "method and test file unchanged at R3f (REV-01 added in its own file); R3e evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method unchanged at R3g (CLK-06 changed in the same file; REV-01 changed and REV-02 added in the other); R3f evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method unchanged at R4b (six other methods changed in the two files); R4a evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1_R3D": {
+          "candidate_method_file_lf_sha256": "067d0bf65f6eb5fd030fb115b1d50c1e99c89ab2a661413caf90ab94463d7078",
+          "run": "TIMED_EVENTS_T1B_CK1_R3D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3E": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "409e6757c5f6c3592174a04b9c7fbc0b7adac94e3288e73f2601d420eec1445a",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "3b1b6e01a04b67cbec16254f6182325ba63b4028d8a472fe98c0a059afcbd64d",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "08d521d291cfe0da45133a38757dcd88a8168736375c04d4e1288249703b6015",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "925044fed2b0738b1568629bd7cc4b69357bc5f8fbcae6c76c5894e9c2f425b2",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "At the isolation instrument's first checkpoint, a database whose migration ledger records the INTEVIA Clock's test-only app must hold the clock's counter; a database whose ledger does not may hold none. Over this clone's real full and light captures and copies of them with stated facts: app applied and counter missing is reported once by the requirements check and once by the light check, naming the app; production's shape (no app, no counter) and a counter kept at zero below the clock are no violation; against a baseline that held the counter, a lost counter is reported by the full and the light comparison.",
+      "current_source": "tests/test_intevia_clock.py:1254"
+    },
+    {
+      "obligation": "REV-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "REV-01"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R3g",
+          "event": "method changed at R3g (the Advisor's confirmation finding 2): the descent and the re-apply are the module's descend and reapply, which attribute from the executor's own reports",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-D5a, the restore's failure is made by restore_failure",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1_R3F": {
+          "candidate_method_file_lf_sha256": "7df2d3dcd957bf07fbd73a02c569e3ff96422aaa9ff4ad491e92697c55881b78",
+          "run": "TIMED_EVENTS_T1B_CK1_R3F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "5e84b63fa42803c74b9196164444d06d827c628ec7499cdb8a25f6c226b72e85",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "5e84b63fa42803c74b9196164444d06d827c628ec7499cdb8a25f6c226b72e85",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "e18d7a650c4ca7869cfd2517949497060463e8afbd716b90b8e69ffc01355edd",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "e18d7a650c4ca7869cfd2517949497060463e8afbd716b90b8e69ffc01355edd",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "The standing reversibility check. Every migration after the declared base (main b85df0db: core 0095_te_c2_join and each other app's leaf there) can be unapplied and applied again through Django's migration executor on an owned clone, which returns to the state it had, at offset zero, and which production's startup refuses throughout. Every operation after the base declares a reverse; each migration is undone one at a time and a reverse that fails is reported naming the migration; at the lowest point the ledger has lost the undone migrations and no other and the clock's counter is kept at zero; once every received leaf is applied again the isolation instrument's full capture equals the one taken at head, with the same ledger, counter and routine comments. An exemption is named with its reason and its ruling, and a stale, unruled or needless entry fails. R3g: the migration blamed for a failed reverse, the exemption considered and what is counted as undone are taken from the executor's own reports of the migration it began and finished, and a failed re-apply names the migration being applied. R4b (Gemini's G-D5a): where the restore fails after a descent that could not undo a migration, the failure names both.",
+      "current_source": "tests/test_migration_reversibility.py:191"
+    },
+    {
+      "obligation": "REV-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_migration_reversibility.MigrationReversibilityTests.test_the_descent_names_the_migration_the_executor_was_reversing",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "REV-02"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4a",
+          "event": "method unchanged at R4a (CLK-07 and CLK-01 changed, and CLK-08 in two lines, in the clock's file; the reversibility file unchanged); R3g evidence entry retained",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_the_descent_names_the_migration_the_executor_was_reversing",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4b",
+          "event": "method changed at R4b (correction R4, Gemini's smaller findings): G-D5a, a reverse that fails and then a re-apply that fails",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_the_descent_names_the_migration_the_executor_was_reversing",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-1 R4c",
+          "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_the_descent_names_the_migration_the_executor_was_reversing",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK1_R3G": {
+          "candidate_method_file_lf_sha256": "5e84b63fa42803c74b9196164444d06d827c628ec7499cdb8a25f6c226b72e85",
+          "run": "TIMED_EVENTS_T1B_CK1_R3G_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4A": {
+          "candidate_method_file_lf_sha256": "5e84b63fa42803c74b9196164444d06d827c628ec7499cdb8a25f6c226b72e85",
+          "run": "TIMED_EVENTS_T1B_CK1_R4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4B": {
+          "candidate_method_file_lf_sha256": "e18d7a650c4ca7869cfd2517949497060463e8afbd716b90b8e69ffc01355edd",
+          "run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK1_R4C": {
+          "candidate_method_file_lf_sha256": "e18d7a650c4ca7869cfd2517949497060463e8afbd716b90b8e69ffc01355edd",
+          "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Where the migration graph branches, one step of the descent reverses more than one migration; the failure is laid on the migration the executor had begun to reverse, an exemption is decided on that same migration, what is counted as undone is what the executor finished, and a failed re-apply names the migration being applied. Run through Django's own executor, unchanged, over a graph of four migrations of an app that exists nowhere (a root, two siblings on it, their merge), held in memory with a ledger held in memory; each migration is one Python operation that touches nothing. R4b (Gemini's G-D5a): a reverse that fails and then a re-apply that fails are both named in the one failure REV-01 would report.",
+      "current_source": "tests/test_migration_reversibility.py:287"
     }
   ],
   "previous_unit": {

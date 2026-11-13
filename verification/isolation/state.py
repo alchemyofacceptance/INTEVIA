@@ -144,6 +144,7 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0092_te_elect_joins": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0093_te_cq_joins": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0094_te_committee": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0096_intevia_clock": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},  # The INTEVIA Clock adds three functions: no table, no seed row.
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
     "0084_committee_mandates": {
@@ -225,6 +226,7 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0093_te_cq_joins": 720,  # One origin trigger, on the CQ acts.
                           "0094_te_committee": 725,  # The dated-end marker: input guard, immutability, truncate guard, refresh source, origin.
                           "0095_te_c2_join": 726,  # One origin trigger, on the LO's own events.
+                          "0096_intevia_clock": 726,  # The INTEVIA Clock's three faces: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.
                           "0084_committee_mandates": 699}  # 681 at 0083 + 8 sources, 3 batch, 1 custody effect, 6 record guards
 # Non-core contributions, keyed by exact (app_label, migration_name).
@@ -235,7 +237,15 @@ NON_CORE_TRIGGER_DELTAS = {
     ("email_foundation", "0001_initial"): 2,
 }
 EXPECTED_HEAD_ENV = "VERIFICATION_EXPECTED_CORE_HEAD"
-OBSERVATION_KEYS = ("sequence_discipline",)
+OBSERVATION_KEYS = ("sequence_discipline", "intevia_clock_counter")
+# The INTEVIA Clock's counter (intevia_test_clock, migration 0001) is a sequence that no table
+# column owns, so sequence discipline does not see it. It is observed on its own: at every
+# checkpoint it must be at zero and configured as the migration wrote it.
+CLOCK_COUNTER = "intevia_test_clock_offset_us"
+# The test-only app whose migration installs the counter. A database whose ledger records it must hold the counter.
+CLOCK_APP = "intevia_test_clock"
+CLOCK_COUNTER_CONFIGURATION = {"increment": 1, "minimum": 0, "maximum": 9007199254740991, "start": 0,
+                               "cycle": False, "cache": 1, "owned_by_a_column": False}
 
 
 def _rows(sql, params=None, conn=None):
@@ -243,6 +253,53 @@ def _rows(sql, params=None, conn=None):
     with active_connection.cursor() as cursor:
         cursor.execute(sql, params)
         return [tuple(r) for r in cursor.fetchall()]
+
+
+def clock_counter_observation(conn=None):
+    """Observe the INTEVIA Clock's counter without advancing it. None where the database has no counter."""
+    rows = _rows(
+        """SELECT sequence.seqincrement, sequence.seqmin, sequence.seqmax, sequence.seqstart,
+                  sequence.seqcycle, sequence.seqcache,
+                  EXISTS (SELECT 1 FROM pg_depend dependency
+                           WHERE dependency.objid = relation.oid AND dependency.classid = 'pg_class'::regclass
+                             AND dependency.deptype IN ('a', 'i'))
+           FROM pg_class relation
+           JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+           JOIN pg_sequence sequence ON sequence.seqrelid = relation.oid
+           WHERE namespace.nspname = current_schema() AND relation.relname = %s""",
+        [CLOCK_COUNTER], conn=conn)
+    if not rows:
+        return None
+    increment, minimum, maximum, start, cycle, cache, owned = rows[0]
+    last_value, is_called = _rows('SELECT last_value, is_called FROM "%s"' % CLOCK_COUNTER, conn=conn)[0]
+    return {"offset_microseconds": last_value, "is_called": is_called,
+            "configuration": {"increment": increment, "minimum": minimum, "maximum": maximum, "start": start,
+                              "cycle": cycle, "cache": cache, "owned_by_a_column": owned}}
+
+
+def clock_app_applied(migrations):
+    """Whether a captured migration ledger records the INTEVIA Clock's test-only app."""
+    return any(row[0] == CLOCK_APP for row in migrations)
+
+
+def clock_counter_violations(observation, required):
+    """The counter must be at zero and as migrated, and it must be present wherever it is required.
+
+    required is a stated fact, given by every caller. At the first checkpoint it is whether the captured migration
+    ledger records the clock's test-only app: such a database must hold the counter, and a production-shaped
+    database without the app may hold none. Against a baseline it is whether the baseline held a counter.
+    """
+    if observation is None:
+        if required is not False:
+            return ["the INTEVIA Clock's counter is missing from a database that must hold it "
+                    "(its migration ledger records %s, or its baseline held the counter)" % CLOCK_APP]
+        return []
+    violations = []
+    if observation["offset_microseconds"] != 0:
+        violations.append("the INTEVIA Clock's counter is at %s microseconds, not zero" % observation["offset_microseconds"])
+    if observation["configuration"] != CLOCK_COUNTER_CONFIGURATION:
+        violations.append("the INTEVIA Clock's counter is not configured as migrated: %s" % sorted(observation["configuration"].items()))
+    return violations
 
 
 def _sequence_discipline_observations(row_counts, conn=None):
@@ -476,6 +533,7 @@ def capture(conn=None):
             counts[t] = cursor.fetchone()[0]
     s["row_counts"] = counts
     s["sequence_discipline"] = _sequence_discipline_observations(counts, conn=active_connection)
+    s["intevia_clock_counter"] = clock_counter_observation(conn=active_connection)
     s["core_role"] = sorted(
         tuple(sorted({"name": n, "description": d}.items()))
         for n, d in _rows("SELECT name, description FROM core_role", conn=conn))
@@ -569,6 +627,7 @@ def capture_light(light_plan, conn=None):
         "row_counts": row_counts,
         "sequence": sequence_report,
         "content": content,
+        "clock_counter": clock_counter_observation(conn=active_connection),
     }
 
 
@@ -593,6 +652,10 @@ def light_baseline_violations(reference, observed):
         violations.append("CP-0 Q3 sequence check found unsupported or invalid sequences")
     if observed["content"][4] != reference["public_register_insert"]:
         violations.append("CP-0 Q4 register privilege differs from the full capture")
+    if observed.get("clock_counter") != reference.get("intevia_clock_counter"):
+        violations.append("CP-0 Q5 the INTEVIA Clock's counter differs from the full capture")
+    violations.extend("CP-0 Q5 " + text for text in clock_counter_violations(
+        observed.get("clock_counter"), clock_app_applied(reference["migrations"])))
     return violations
 
 
@@ -611,6 +674,10 @@ def compare_light(reference_light, observed):
         violations.append("Q3 sequence check found unsupported or invalid sequences")
     if observed["content"] != reference_light["content"]:
         violations.append("Q4 seed, framework, migration, or privilege content differs")
+    if observed.get("clock_counter") != reference_light.get("clock_counter"):
+        violations.append("Q5 the INTEVIA Clock's counter differs")
+    violations.extend("Q5 " + text for text in clock_counter_violations(
+        observed.get("clock_counter"), reference_light.get("clock_counter") is not None))
     return violations
 
 
@@ -696,6 +763,8 @@ def check_requirements(s, required_guardians):
     core = sorted(name for app, name in s["migrations"] if app == "core")
     if head in REQUIRED_TRIGGER_COUNT and (not core or core[-1] != head):
         v.append("REQ-D4 latest core migration %s, declared head %s" % (core[-1] if core else None, head))
+    v.extend("REQ-CLK " + text for text in clock_counter_violations(
+        s.get("intevia_clock_counter"), clock_app_applied(s["migrations"])))
     return v
 
 
@@ -730,4 +799,8 @@ def compare(reference, s, ignore_tables=()):
             "INDETERMINATE",
         ):
             data.append(_sequence_invariant_violation(observation))
+    if s.get("intevia_clock_counter") != reference.get("intevia_clock_counter"):
+        data.append("the INTEVIA Clock's counter differs from reference: %s, reference %s"
+                    % (s.get("intevia_clock_counter"), reference.get("intevia_clock_counter")))
+    data.extend(clock_counter_violations(s.get("intevia_clock_counter"), clock_app_applied(s["migrations"])))
     return data, prot

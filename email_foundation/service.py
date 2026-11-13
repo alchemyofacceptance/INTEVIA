@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db import connection, transaction
 
 from core.models import Identity
+from src.intevia.services import clock
 
 from .contracts import (
     MailRefused,
@@ -35,9 +36,7 @@ def database_now():
         raise MailRefused(
             "Email work did not start: PostgreSQL is required. No email was queued or captured; use the configured PostgreSQL environment."
         )
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
-        return cursor.fetchone()[0]
+    return clock.database_now(connection.alias)
 
 
 def is_severed(identity):

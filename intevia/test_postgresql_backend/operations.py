@@ -766,9 +766,37 @@ $s015$;
         ]
         return [qualification, *disable, *truncate, *enable, *restoration_check, *revalidate]
 
-    def execute_sql_flush(self, sql_list):
-        """Run the reset and restore migration-seeded data in one transaction.
+    def _clock_to_real_time(self):
+        """Reset the INTEVIA Clock's offset to zero as part of this reset, or refuse.
 
+        The reset is the database's own function (intevia_test_clock, migration 0001). It
+        refuses while any row remains in the reset's scope, takes exclusive admission to the
+        clock, refuses for whatever would refuse a move (another role connected, or another
+        connection of this role with a transaction open or unreadable: no transaction reads
+        two offsets across a reset), refuses when its own transaction has already read the
+        clock, and is transactional: if this reset is rolled back, the offset returns with
+        the rows. Its scope leaves out the migration ledger alone, and that is fixed in
+        storage: this call cannot choose it. A database without the moving part has nothing
+        to reset.
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT pg_catalog.to_regprocedure('public.intevia_test_clock_reset()') IS NOT NULL")
+            row = cursor.fetchone()
+            if not row or row[0] is not True:
+                return None
+            # The reset takes no argument: what its emptiness check leaves out is fixed in storage.
+            cursor.execute("SELECT public.intevia_test_clock_reset()")
+            previous = cursor.fetchone()[0]
+            cursor.execute("SELECT public.intevia_test_clock_offset()")
+            if cursor.fetchone()[0] != 0:
+                raise ImproperlyConfigured("S015 reset: the INTEVIA Clock did not return to zero")
+        return previous
+
+    def execute_sql_flush(self, sql_list):
+        """Run the reset and restore migration-seeded data in one transaction, which this method owns.
+
+        It starts from no open transaction on its connection: a connection inside an atomic block, or one with
+        autocommit off, is refused before any table changes.
         Any failure rolls back the whole reset, including trigger changes, and propagates.
         The backend checks before teardown flushing and after seed restoration, and checks
         the result of the by-name setup reset. The isolation instrument checks at CP-0,
@@ -783,6 +811,15 @@ $s015$;
             if self.connection.in_atomic_block:
                 raise ImproperlyConfigured(
                     "S015 reset must not run inside an open transaction"
+                )
+            if not self.connection.get_autocommit():
+                # Manual transaction management: a transaction can be open that no atomic block knows of. The block
+                # below would then be a savepoint inside it and would not commit, and a transaction that had read
+                # the INTEVIA Clock would read it again after the reset, at another offset. The move's helper
+                # refuses the same two conditions. Asked before any table changes.
+                raise ImproperlyConfigured(
+                    "S015 reset must not run while its connection has autocommit off: a transaction managed by hand "
+                    "may be open on it, and the reset must own its transaction from the start. Nothing changed."
                 )
 
             before = after = None
@@ -799,6 +836,9 @@ $s015$;
                             cursor.execute(sql)
                     if sql_list:
                         self._qualified_database_name()
+                        # The INTEVIA Clock returns to real time here, inside this transaction: after
+                        # the tables are empty and before any seed is restored.
+                        self._clock_to_real_time()
                         schema_editor = self.connection.schema_editor()
                         for module_name, function_name in S015_MIGRATION_SEEDS:
                             seed = getattr(importlib.import_module(module_name), function_name)

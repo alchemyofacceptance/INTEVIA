@@ -1040,6 +1040,7 @@ class SeedRoutingTests(unittest.TestCase):
         connection = SimpleNamespace(
             alias=alias,
             in_atomic_block=False,
+            get_autocommit=lambda: True,
             features=SimpleNamespace(can_rollback_ddl=True),
         )
         editor = SimpleNamespace(connection=connection)

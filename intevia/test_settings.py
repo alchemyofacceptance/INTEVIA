@@ -31,3 +31,5 @@ if (
 	)
 configured_database["ENGINE"] = "intevia.test_postgresql_backend"
 configured_database["S015_TEST_ROUTE"] = requested_s015_route
+# The INTEVIA Clock's moving part lives only in databases built under these settings.
+INSTALLED_APPS = [*INSTALLED_APPS, "intevia_test_clock"]  # noqa: F405
