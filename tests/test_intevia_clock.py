@@ -281,7 +281,9 @@ class InteviaClockTests(TransactionTestCase):
                                  "CLK-01 no ledger: the one statement must read a database that has no ledger table.")
                 with connection.cursor() as cursor:
                     for name in written:
-                        cursor.execute("DROP FUNCTION public.%s()" % name)
+                        # A database not yet migrated has no table either. Since core migration 0103 ten column
+                        # defaults read a face and so depend on it: they go with it, inside this undone block.
+                        cursor.execute("DROP FUNCTION public.%s() CASCADE" % name)
                 self.assertEqual(outcome(), startup.NOT_YET_MIGRATED,
                                  "CLK-01 not yet migrated: a database with no face, no ledger and no mark is not refused, "
                                  "so that migrate can install the clock.")

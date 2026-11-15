@@ -206,7 +206,7 @@ class ElectionTests(TransactionTestCase):
                     try:
                         with transaction.atomic(), connection.cursor() as cur:
                             cur.execute(
-                                "SELECT public.elect_check_count(settings || %s::jsonb, %s::jsonb, statement_timestamp()) "
+                                "SELECT public.elect_check_count(settings || %s::jsonb, %s::jsonb, public.intevia_clock_statement()) "
                                 "FROM public.cq_platform_defaults",
                                 [json.dumps(values), json.dumps(values)],
                             )
@@ -290,7 +290,7 @@ class ElectionTests(TransactionTestCase):
                 with connection.cursor() as cur:
                     cur.execute("""INSERT INTO public.core_cqact(act_uuid,organism_id,board_uuid,thread_uuid,operation,actor_id,
                         actor_epoch,received_at,request) SELECT gen_random_uuid(),organism_id,board_uuid,thread_uuid,
-                        'IMPLEMENT',actor_id,actor_epoch,statement_timestamp(),jsonb_build_object('result',act_uuid)
+                        'IMPLEMENT',actor_id,actor_epoch,public.intevia_clock_statement(),jsonb_build_object('result',act_uuid)
                         FROM public.core_cqact WHERE act_uuid=%s""", [result])
             except IntegrityError as exc:
                 cq.translate_refusal(exc)
@@ -618,6 +618,10 @@ class ElectionTests(TransactionTestCase):
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
         with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
+            # INTEVIA Clock: 0102 and 0101 move functions of 0089 to 0095 and of 0083 to 0087 onto the clock, and
+            # those migrations' reverses check the landed text. They unwind first, newest first.
+            import_module("core.migrations.0102_clock_storage_0088_0095").uninstall(None, editor)
+            import_module("core.migrations.0101_clock_storage_0081_0087").uninstall(None, editor)
             # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
             import_module("core.migrations.0095_te_c2_join").uninstall(None, editor)
             # TIMED EVENTS: 0094 replaces cmt_changed(), which 0084's reverse checks. It unwinds first.

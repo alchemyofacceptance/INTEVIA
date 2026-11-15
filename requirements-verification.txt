@@ -1,3 +1,26 @@
-Django==5.2.18
-pyright==1.1.414
+# Every file pip may install from here is pinned by version and by its SHA-256 (pip's hash-checking mode):
+# pip refuses any other file. Each version's published files are all listed, so every platform installs.
+# Verification only: the S015 route and its tests; nothing here is installed in production.
+Django==5.2.18 \
+    --hash=sha256:461c5dd06d2ea16bd5ca37d3f46e4def1d6b0fe7588c6f4e2119517bb0af8b2d \
+    --hash=sha256:92ed81d500be6408ecd704d7bd1366c534f30427bffcc63c5fefb129561aec7c
+asgiref==3.13.0 \
+    --hash=sha256:034cc8cbf72d00553b4be256703ac545120b4e50af13b49dec99da899aeeecb4 \
+    --hash=sha256:f9596a2434512686473d50f96ff6207fbba49ae1a785dfac614df4aeb085674d
+sqlparse==0.6.1 \
+    --hash=sha256:3be5a72d04c873d690d7c6dedd33d6fae2ef82759881ceec02fc2efd0cba564f \
+    --hash=sha256:ca722573f848ff2d30e40ea30f53a104b7dea7635ea9285891263eb2c58fb6e7
+pgparse==1.0.3 \
+    --hash=sha256:1227fccd54cf2d09e889e747fef408a3dff91799dd572a930bea101236e5fa3c \
+    --hash=sha256:4f5e15f14d459d90cf38a4e594079db206f8e8c2dab8153f3700e9333d068af0 \
+    --hash=sha256:b6f009abca3dc9c5a5a0f0fdf1e00c81bd5a2f6c6f51e0c80d944bb93fbef4ba \
+    --hash=sha256:d039a78754bbba535713365744326ff18529ef6742db1d059d451bd6f452265d \
+    --hash=sha256:de8a3584bbc82abcb7b833ed6aa6575bc746cede82b6c8f8294dafb115e8c566 \
+    --hash=sha256:f5d24c7a6192546888b75a879e9b0aad32f6e723fd50c1d5b75811e8f87e75f3
+pyright==1.1.414 \
+    --hash=sha256:2a6b4b3298c9eec174c5ed83bd338de6eee82df2992f3e1930e6199d381be36f \
+    --hash=sha256:523c0a97c60da6333234955c277730c9cf4f5bd6d5399e7b7d2b0fc5d3599524
+nodeenv==1.12.0 \
+    --hash=sha256:4ea7f88339310afebc3253f2c7a91b94bacf97d73a36a5c108962abdfaca501e \
+    --hash=sha256:80644d65c10cc2be12e3e4b54b3367ff288c7ad24ae75c2dcc65454fc7449d4d
 -r requirements-postgresql.txt

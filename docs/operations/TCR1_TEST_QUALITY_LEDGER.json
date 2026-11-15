@@ -3,7 +3,7 @@
   "package": "TIMED EVENTS T1b CK-1 R4c",
   "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
   "baseline_methods": 267,
-  "candidate_methods": 276,
+  "candidate_methods": 279,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -406,6 +406,42 @@
     "TIMED_EVENTS_T1B_CK1_R4C_PENDING": {
       "source": "VC PostgreSQL run pending",
       "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2A2_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2B_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2D_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2E_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2F_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2R1_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2R2_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2R3_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2R4_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
     }
   },
   "source_index": {
@@ -580,6 +616,10 @@
     "TIMED_EVENTS_T1B_TAR_TABLE.md": {
       "sha256": "fcc55c77ca533fad4fc01a24993f17bcd9462754a7085b4a97c7a8ac4b00bba3",
       "source": "TIMED EVENTS T1b CK-1 R4c return"
+    },
+    "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md": {
+      "sha256": "5373fce8fa10a2c7de220e7864f0280b3f42144a5817a13ca0a5b7abe08d1155",
+      "source": "TIMED EVENTS T1b CK-2R2 return"
     }
   },
   "coverage": {
@@ -587,7 +627,7 @@
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 276,
+    "active": 279,
     "folded": 46,
     "retired": 2,
     "DISC4_methods": 6,
@@ -596,8 +636,8 @@
     "COMMITTEES_methods": 6,
     "C1_108_methods": 3,
     "TIMED_EVENTS_methods": 10,
-    "INTEVIA_CLOCK_methods": 7,
-    "MIGRATION_REVERSIBILITY_methods": 2
+    "INTEVIA_CLOCK_methods": 8,
+    "MIGRATION_REVERSIBILITY_methods": 4
   },
   "tests": [
     {
@@ -3989,6 +4029,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -3999,6 +4053,16 @@
           "previous_source": "tests/test_cq_decisions.py:109",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:110"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:110"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:110"
@@ -4073,6 +4137,20 @@
           "break": null,
           "restored": null,
           "run": "C1_108_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4089,6 +4167,16 @@
           "previous_claim": "DISC2-10: one answer per member, own conflict, late member excluded, exact refusals",
           "prior_source": "tests/test_cq_decisions.py:160",
           "change": "C1_108_TAR_v1_0_P1.md / DISC2-10"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:160"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:160"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:160"
@@ -4160,7 +4248,21 @@
           "reference": "DISC4_P1_PENDING"
         },
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
+        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140",
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -4180,6 +4282,16 @@
           "prior_candidate_method_file_lf_sha256": null,
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:280"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:280"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:280"
@@ -4236,6 +4348,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4246,6 +4372,16 @@
           "previous_source": "tests/test_cq_decisions.py:331",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:330"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:330"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:330"
@@ -4302,6 +4438,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4312,6 +4462,16 @@
           "previous_source": "tests/test_cq_decisions.py:459",
           "change": "Prepare the settings ballot outside contention. The last answer and the independent opening contend on the same LO lock; check version, reporting and abstention together.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:458"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:458"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:458"
@@ -4368,6 +4528,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4378,6 +4552,16 @@
           "previous_source": "tests/test_cq_decisions.py:487",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:494"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:494"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:494"
@@ -4434,6 +4618,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4444,6 +4642,16 @@
           "previous_source": "tests/test_cq_decisions.py:607",
           "change": "A fifth member joins after the original opening to meet the old floor on the settings vote. The first ballot and retry keep their original eligibility rule and count.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:614"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:614"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:614"
@@ -4511,7 +4719,21 @@
           "reference": "DISC4_P1_PENDING"
         },
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140"
+        "candidate_method_file_lf_sha256": "420628fd9e8ce5f9e1c64b8e509bd2b7f34df846c8a3c9a3a7ea19c301e7e140",
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -4531,6 +4753,16 @@
           "prior_candidate_method_file_lf_sha256": null,
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:699"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:699"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:699"
@@ -4587,6 +4819,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4597,6 +4843,16 @@
           "previous_source": "tests/test_cq_decisions.py:774",
           "change": "The change back to named reporting was decided in a totals-only ballot. Its public settings history conceals the final enterer and the earlier result remains permanently totals-only.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:784"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:784"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:784"
@@ -4653,6 +4909,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -4663,6 +4933,16 @@
           "previous_source": "tests/test_cq_decisions.py:814",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:828"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:828"
         }
       ],
       "current_source": "tests/test_cq_decisions.py:828"
@@ -4672,7 +4952,7 @@
       "baseline_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
       "status": "active",
       "current_label": "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
-      "claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged.",
+      "claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged. CK-2d: after the reversal and reinstall the database is back at the head with the INTEVIA Clock conversion of migration 0101 in place. CK-2e: the same holds with migration 0102 in place.",
       "unit_TAR": [
         {
           "source": "DISC2_TAR_v1_0_P2d.md",
@@ -4826,6 +5106,18 @@
           "unit_ids": [
             "DISC2-19"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "DISC2-19"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "DISC2-19"
+          ]
         }
       ],
       "review": {
@@ -4895,6 +5187,20 @@
           "candidate_method_file_lf_sha256": "ee83e119afe86f3a2224c021594dce8f86579ea49d140b8b683e4a863bac4045",
           "predecessor_run": null,
           "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -5065,6 +5371,18 @@
           "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result.",
           "prior_source": "tests/test_cq_decisions.py:946",
           "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / DISC2-19"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "reversal chain changed at CK-2d: migration 0101's reverse is called first and 0101 is applied again last, which requires each of its functions to hold its landed text; one fixture time read moved to public.intevia_clock_statement() (D1 A)",
+          "previous_source": "tests/test_cq_decisions.py:946",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "reversal chain changed at CK-2e: migration 0102's reverse is called first, then 0101's; both are applied again last, 0101 then 0102",
+          "previous_source": "tests/test_cq_decisions.py:946",
+          "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged. CK-2d: after the reversal and reinstall the database is back at the head with the INTEVIA Clock conversion of migration 0101 in place."
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -5132,6 +5450,20 @@
           "break": null,
           "restored": null,
           "reference": "DISC4_P1_PENDING"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "cce1a3830cddaa284d00f78d1012785464b2e8a7a223477734887758389ed923",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "f1eef044889f8b1d4f67bd05d20cfcec0fdf2d347e68f026fb6cbb958c78b8c3",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -5142,9 +5474,19 @@
           "previous_source": "tests/test_cq_decisions.py:1004",
           "change": "Shared fixture uses the real allowed authority for its setup; the original assertion and registered targets stand.",
           "evidence": "DISC4_P1_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain and one time read in DISC2-19)",
+          "previous_source": "tests/test_cq_decisions.py:1042"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in DISC2-19); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_cq_decisions.py:1076"
         }
       ],
-      "current_source": "tests/test_cq_decisions.py:1042",
+      "current_source": "tests/test_cq_decisions.py:1080",
       "baseline_claim": "DISC2-20: an LO member without a seat can follow a GOVERNANCE result and its rule"
     },
     {
@@ -13236,6 +13578,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13249,9 +13612,24 @@
           "previous_source": "tests/test_sr_office_guards.py:501",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:520"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:528"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:528"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:520"
+      "current_source": "tests/test_sr_office_guards.py:528"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_02_non_coordinator_assign_without_consent_refused_by_consent_guard",
@@ -13307,6 +13685,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13320,16 +13719,31 @@
           "previous_source": "tests/test_sr_office_guards.py:519",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:538"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:546"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:546"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:538"
+      "current_source": "tests/test_sr_office_guards.py:546"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
       "baseline_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
       "status": "active",
       "current_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim",
-      "claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim Installed office attribution must equal the exact 0087 body; historical and consent expectations retained.",
+      "claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim Installed office attribution must equal the exact 0087 body; historical and consent expectations retained. CK-2d: the installed attribution safeguard is its 0087 body with its time calls on the INTEVIA Clock, as migration 0101 installs it; the text 0101 replaces is exactly the 0087 body.",
       "unit_TAR": [
         {
           "source": "TEST_QUALITY_LEDGER_SR_C2_STAGING_v0_2.md",
@@ -13375,6 +13789,12 @@
           "unit_ids": [
             "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_03_lawful_non_coordinator_chain_commits_and_coordinator_conditions_verbatim"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "SR-C2-03"
+          ]
         }
       ],
       "review": {
@@ -13399,6 +13819,27 @@
         "C1_108_P3": {
           "candidate_file_lf_sha256": "f296c59853f88b71d0bf77728d73ddd908817319164146f800ed2de03314124e",
           "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -13473,9 +13914,25 @@
           "package": "C1-108 P3",
           "previous_claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim",
           "previous_source": "tests/test_sr_office_guards.py:574"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:579"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:582"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "pin changed at CK-2d: migration 0101 moves s2b_guard_office_attribution onto the INTEVIA Clock, so the installed text is 0101's clock text, and the text 0101 replaces is asserted equal to the 0087 body",
+          "previous_source": "tests/test_sr_office_guards.py:582",
+          "previous_claim": "The lawful chain commits (positive control) and the guard body keeps the COORDINATOR conditions verbatim Installed office attribution must equal the exact 0087 body; historical and consent expectations retained."
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:579"
+      "current_source": "tests/test_sr_office_guards.py:582"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_04_founder_held_non_coordinator_office_not_caught_by_founder_protection",
@@ -13529,6 +13986,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13542,9 +14020,24 @@
           "previous_source": "tests/test_sr_office_guards.py:604",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:623"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:631"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:631"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:623"
+      "current_source": "tests/test_sr_office_guards.py:634"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_05_second_assign_while_office_held_refused",
@@ -13600,6 +14093,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13613,9 +14127,24 @@
           "previous_source": "tests/test_sr_office_guards.py:654",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:673"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:681"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:681"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:673"
+      "current_source": "tests/test_sr_office_guards.py:684"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_06_propose_refused_without_custom_entitlement_and_on_superseded_version",
@@ -13671,6 +14200,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13684,9 +14234,24 @@
           "previous_source": "tests/test_sr_office_guards.py:708",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:727"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:735"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:735"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:727"
+      "current_source": "tests/test_sr_office_guards.py:738"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_07_reserved_root_office_act_refused_at_the_guard",
@@ -13740,6 +14305,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13753,9 +14339,24 @@
           "previous_source": "tests/test_sr_office_guards.py:745",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:764"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:772"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:772"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:764"
+      "current_source": "tests/test_sr_office_guards.py:775"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_08_circle_scope_unguarded_and_other_holdings_do_not_count_as_held",
@@ -13778,6 +14379,12 @@
           "lines": [
             20
           ],
+          "unit_ids": [
+            "SR-C2-08"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
           "unit_ids": [
             "SR-C2-08"
           ]
@@ -13818,6 +14425,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -13831,16 +14459,31 @@
           "previous_source": "tests/test_sr_office_guards.py:787",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "two fixture INSERTs inside the method read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A); no assertion changed",
+          "previous_source": "tests/test_sr_office_guards.py:806"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:814"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:814"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:806"
+      "current_source": "tests/test_sr_office_guards.py:817"
     },
     {
       "obligation": "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
       "baseline_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
       "status": "active",
       "current_label": "test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused",
-      "claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained.",
+      "claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained. CK-2a2: the installed definition-update safeguard is its 0053 body with its time calls on the INTEVIA Clock, as migration 0098 installs it; the text 0098 replaces is exactly the 0053 body. CK-2b: the installed definition-insert safeguard is its 0062 body with its time call on the INTEVIA Clock, as migration 0099 installs it; the text 0099 replaces is exactly the 0062 body. CK-2d: the installed attribution safeguard is its 0087 body with its time calls on the INTEVIA Clock, as migration 0101 installs it.",
       "unit_TAR": [
         {
           "source": "C1B_TAR_TABLE_v1_4.md",
@@ -13940,6 +14583,24 @@
           "unit_ids": [
             "base:test_sr_office_guards.SROfficeGuardTests.test_sr_c2_09_migration_0052_forward_reverse_clean_and_populated_reverse_refused"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "SR-C2-09"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "SR-C2-09"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "SR-C2-09"
+          ]
         }
       ],
       "review": {
@@ -13964,6 +14625,27 @@
         "C1_108_P3": {
           "candidate_file_lf_sha256": "f296c59853f88b71d0bf77728d73ddd908817319164146f800ed2de03314124e",
           "run": "C1_108_P3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -14038,9 +14720,27 @@
           "package": "C1-108 P3",
           "previous_claim": "The installed office guards and populated 0052 veto survive at the received head.",
           "previous_source": "tests/test_sr_office_guards.py:881"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "pin changed at CK-2a2: migration 0098 moves sr_definition_update_guard onto the INTEVIA Clock, so the installed text is 0098's clock text, and the text 0098 replaces is asserted equal to 0053's body",
+          "previous_source": "tests/test_sr_office_guards.py:886",
+          "previous_claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "pin changed at CK-2b: migration 0099 moves sr_definition_insert_guard onto the INTEVIA Clock, so the installed text is 0099's clock text, and the text 0099 replaces is asserted equal to 0062's body",
+          "previous_source": "tests/test_sr_office_guards.py:889",
+          "previous_claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained. CK-2a2: the installed definition-update safeguard is its 0053 body with its time calls on the INTEVIA Clock, as migration 0098 installs it; the text 0098 replaces is exactly the 0053 body."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "pin changed at CK-2d: the attribution safeguard's pin, as SR-C2-03's",
+          "previous_source": "tests/test_sr_office_guards.py:889",
+          "previous_claim": "The installed office guards and populated 0052 veto survive at the received head. Installed office attribution must equal the exact 0087 body; historical and consent expectations retained. CK-2a2: the installed definition-update safeguard is its 0053 body with its time calls on the INTEVIA Clock, as migration 0098 installs it; the text 0098 replaces is exactly the 0053 body. CK-2b: the installed definition-insert safeguard is its 0062 body with its time call on the INTEVIA Clock, as migration 0099 installs it; the text 0099 replaces is exactly the 0062 body."
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:886",
+      "current_source": "tests/test_sr_office_guards.py:892",
       "baseline_claim": "Installed bodies at head equal the expected ones; SR migrations reverse to 0051 and reapply cleanly; with an occupied office both 0053 and 0052 reverse refuse and change nothing"
     },
     {
@@ -14095,6 +14795,27 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c525a6b99f7f913ee427b1883f12bd4fa1465a11699c64857312d06d3a477de5"
+        },
+        "TIMED_EVENTS_T1B_CK2A2": {
+          "candidate_file_lf_sha256": "7eb0ef097f7d82238a3ad25daf60d36c66e63eab0e5b55ac84ba98055a50ca2c",
+          "run": "TIMED_EVENTS_T1B_CK2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2B": {
+          "candidate_file_lf_sha256": "16f8888609ce28fd857421b25ca37d710fd736563592dc1bf570c0e9c92c248c",
+          "run": "TIMED_EVENTS_T1B_CK2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "6efaf1b04e82982a950f1f388d91bddf75a365b57e0ec1257ba7c39d5454928d",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -14108,9 +14829,24 @@
           "previous_source": "tests/test_sr_office_guards.py:893",
           "scope": "E1–E3 correction; source reference refreshed",
           "previous_candidate_file_lf_sha256": "096b0539aeeaa00188cf2fa0b6323e396cf13032dd66b93eb152c016dd3fe48d"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2a2",
+          "event": "method unchanged at CK-2a2; the module's three shared fixtures read the creation time through the INTEVIA Clock's transaction face instead of now() (D1 A: the file is changed by this part); source reference refreshed",
+          "previous_source": "tests/test_sr_office_guards.py:911"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2b",
+          "event": "method unchanged at CK-2b; the test file's digest changed (SR-C2-09's second pin); CK-2a2 evidence entry retained",
+          "previous_source": "tests/test_sr_office_guards.py:921"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the attribution safeguard's pins in SR-C2-03 and SR-C2-09); earlier evidence entries retained",
+          "previous_source": "tests/test_sr_office_guards.py:923"
         }
       ],
-      "current_source": "tests/test_sr_office_guards.py:911"
+      "current_source": "tests/test_sr_office_guards.py:928"
     },
     {
       "obligation": "base:test_sr_provider.SRProviderPureTests.test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context",
@@ -14656,7 +15392,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:24",
+      "current_source": "tests/test_elections.py:46",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -14668,6 +15404,20 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -14692,6 +15442,16 @@
           "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:24"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:46"
         }
       ]
     },
@@ -14724,7 +15484,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:62",
+      "current_source": "tests/test_elections.py:135",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -14736,6 +15496,20 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -14760,6 +15534,16 @@
           "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:62"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:135"
         }
       ]
     },
@@ -14787,12 +15571,18 @@
           "unit_ids": [
             "ELECT-03"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "ELECT-03"
+          ]
         }
       ],
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:102",
+      "current_source": "tests/test_elections.py:175",
       "evidence": {
         "source_commit": null,
         "candidate_base": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
@@ -14804,6 +15594,20 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -14828,6 +15632,16 @@
           "prior_candidate_method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba",
           "prior_break": null,
           "prior_restored": null
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "one SQL time read inside the method moved to public.intevia_clock_statement() at CK-2d (D1 A); no assertion changed",
+          "previous_source": "tests/test_elections.py:102"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:175"
         }
       ]
     },
@@ -14851,7 +15665,7 @@
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
-      "current_source": "tests/test_elections.py:144",
+      "current_source": "tests/test_elections.py:217",
       "evidence": {
         "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
         "candidate_base": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
@@ -14863,6 +15677,20 @@
           "reference": "ELECT_LANDING_1050F2F5",
           "source_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
           "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "history": [
@@ -14877,6 +15705,16 @@
           "run": "ELECT_P1B_VC",
           "previous_source": "tests/test_elections.py:136",
           "previous_candidate_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:144"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:217"
         }
       ]
     },
@@ -14904,6 +15742,12 @@
           "unit_ids": [
             "ELECT-05"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "ELECT-05"
+          ]
         }
       ],
       "review": null,
@@ -14911,14 +15755,28 @@
       "recurring_controls": [
         "MUT-elect-result-person-seat"
       ],
-      "current_source": "tests/test_elections.py:186",
+      "current_source": "tests/test_elections.py:259",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
         "candidate_run": "ELECT_P3_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "bebd395c98a87a07d6aad23558ecdc27afc9a0cc152911afc5a908326b786279"
+        "candidate_method_file_lf_sha256": "bebd395c98a87a07d6aad23558ecdc27afc9a0cc152911afc5a908326b786279",
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
       "history": [
         {
@@ -14949,6 +15807,16 @@
               "method_file_lf_sha256": "c23d652eb9f82c2a64f5c2839c2199b22e1fdad6110d7921c1ac3f45008d62ba"
             }
           }
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "one SQL time read inside the method moved to public.intevia_clock_statement() at CK-2d (D1 A); no assertion changed",
+          "previous_source": "tests/test_elections.py:186"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:259"
         }
       ]
     },
@@ -15314,10 +16182,35 @@
         "candidate_run": "HARD_P1_PENDING",
         "candidate_break": null,
         "candidate_restored": null,
-        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af"
+        "candidate_method_file_lf_sha256": "08bec5980adf408f409bb1cde72d19e6a6344c76b2f7e8c8f7f13d2b5ecec8af",
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
-      "current_source": "tests/test_elections.py:226"
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:226"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:299"
+        }
+      ],
+      "current_source": "tests/test_elections.py:299"
     },
     {
       "obligation": "ELECT-09",
@@ -15398,9 +16291,19 @@
           "previous_claim": "A Treasury appointment supplies power inside its own interval. At the exact end, before an END row exists, the named equality assertion must be false. At the same known cut the prior instant is true. An independent connection waits, commits and sees zero work. Three actual voters elect adjacent trustees. The successor cannot exercise the place before handover. Includes exact personal and caller refusals.",
           "prior_source": "tests/test_elections.py:277",
           "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-09"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:297"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:350"
         }
       ],
-      "current_source": "tests/test_elections.py:297",
+      "current_source": "tests/test_elections.py:350",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
@@ -15412,6 +16315,20 @@
           "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
           "predecessor_run": null,
           "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -15541,6 +16458,18 @@
           "unit_ids": [
             "ELECT-10"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "ELECT-10"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "ELECT-10"
+          ]
         }
       ],
       "review": null,
@@ -15656,9 +16585,19 @@
           "previous_claim": "Recognition retains its constitutional basis and the populated 0083 reversal refusal. The rollback crosses 0085 first. Traverse 0086 before the unchanged populated ELECT refusal and keep the original recognised incumbent. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated incumbent still stops reversal at its original ELECT guard. Unwind the new head before older migrations. The existing activation still proceeds against a real fixture Article after the failed reversal rolls back. The existing recognised incumbency still refuses at its original ELECT populated-history safeguard. Unwind 0090 on the original fixture so the populated 0083 reversal still refuses at the historical guard.",
           "prior_source": "tests/test_elections.py:421",
           "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-10"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "reversal chain changed at CK-2d: migration 0101's reverse is called first, because the reverses of 0083 to 0087 check the landed text that 0101 replaces; no assertion changed",
+          "previous_source": "tests/test_elections.py:452"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "reversal chain changed at CK-2e: migration 0102's reverse is called first, then 0101's, because the reverses of 0089 to 0095 check the landed text that 0102 replaces; no assertion changed",
+          "previous_source": "tests/test_elections.py:505"
         }
       ],
-      "current_source": "tests/test_elections.py:452",
+      "current_source": "tests/test_elections.py:505",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -15716,6 +16655,20 @@
           "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
           "predecessor_run": null,
           "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -15814,9 +16767,19 @@
           "previous_claim": "Only the holder may resign. A notice without an established date is recorded. A dated ending releases the Board place and its dependent offices. The notice ends the seat-dependent Deputy reservation and releases the adjacent term for a fresh election. A genuine dated resignation retains its own marker and decision. Its seat and dependent office remain filling sources. Preserve all previous refusal and succession claims.",
           "prior_source": "tests/test_elections.py:551",
           "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-11"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:588"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:646"
         }
       ],
-      "current_source": "tests/test_elections.py:588",
+      "current_source": "tests/test_elections.py:647",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
@@ -15837,6 +16800,20 @@
           "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
           "predecessor_run": null,
           "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -15878,9 +16855,19 @@
           "previous_claim": "A dependent successor tracks the original Board seat and its earliest known ending.",
           "prior_source": "tests/test_elections.py:711",
           "change": "C1_108_TAR_v1_0_P2.md / ELECT-12"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:719"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:837"
         }
       ],
-      "current_source": "tests/test_elections.py:719",
+      "current_source": "tests/test_elections.py:838",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
@@ -15893,6 +16880,20 @@
           "predecessor_run": "C1_108_P1_VC",
           "predecessor_seconds": 5.689,
           "run": "C1_108_P2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -15934,9 +16935,19 @@
           "previous_claim": "An advance at or after the constitutional date cannot open an unassessed resignation vacancy.",
           "prior_source": "tests/test_elections.py:761",
           "change": "TIMED_EVENTS_T1A_TAR_TABLE.md / ELECT-13"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2d",
+          "event": "method unchanged at CK-2d; the test file's digest changed (the reversal chain in ELECT-10 and two time reads moved to the statement face)",
+          "previous_source": "tests/test_elections.py:836"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2e",
+          "event": "method unchanged at CK-2e; the test file's digest changed (the reversal chain in ELECT-10); the CK-2d evidence entry retained",
+          "previous_source": "tests/test_elections.py:894"
         }
       ],
-      "current_source": "tests/test_elections.py:836",
+      "current_source": "tests/test_elections.py:895",
       "evidence": {
         "source_commit": null,
         "candidate_base": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
@@ -15948,6 +16959,20 @@
           "candidate_method_file_lf_sha256": "f082038dce158122533d7287f89210e5655768fbb3bfce22bdc6b6580f74d981",
           "predecessor_run": null,
           "run": "TIMED_EVENTS_T1A_P10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2D": {
+          "candidate_file_lf_sha256": "4fe6f2a7108904cff8425230f95a454a0cda0eefe2e98b56e9af5904a0699556",
+          "run": "TIMED_EVENTS_T1B_CK2D_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2E": {
+          "candidate_file_lf_sha256": "5e033472145ba652dcf659f549f826088e35d482d62e0e344cc0da77106a4dc0",
+          "run": "TIMED_EVENTS_T1B_CK2E_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -17367,6 +18392,12 @@
           "unit_ids": [
             "CLK-01"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-01"
+          ]
         }
       ],
       "history": [
@@ -17435,6 +18466,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_production_refuses_a_database_that_ever_held_the_moving_part",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "one line changed at CK-2f: in the not-yet-migrated sub-case the three faces are dropped with CASCADE, because since core migration 0103 ten column defaults depend on two of them; no assertion changed",
+          "previous_source": "tests/test_intevia_clock.py:98"
         }
       ],
       "evidence": {
@@ -17518,6 +18554,13 @@
         "TIMED_EVENTS_T1B_CK1_R4C": {
           "candidate_method_file_lf_sha256": "f73d1609dd9f4fb50a5f44eb132139eafae9208f980222baecf2fc142a277458",
           "run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
           "normal": null,
           "break": null,
           "restored": null
@@ -17608,6 +18651,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:537"
         }
       ],
       "evidence": {
@@ -17694,10 +18742,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Offset zero. With no offset, each face of the INTEVIA Clock, in storage and through the Python door, returns what the built-in it stands for returns at the same cut: the transaction's start, the statement's start (fresh and through a saved plan), and an instant that advances inside one statement; as production writes the faces and as the owned route writes them. The mail helper reads through the same door and keeps its PostgreSQL-only refusal. The shifted clock is witnessed after the complete conversion. R4b (Gemini's G-O5): the Python door refuses, in its own words, a meaning that cannot even be looked up.",
-      "current_source": "tests/test_intevia_clock.py:537"
+      "current_source": "tests/test_intevia_clock.py:539"
     },
     {
       "obligation": "CLK-02",
@@ -17775,6 +18830,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_the_clock_refuses_every_move_that_is_not_forward",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:638"
         }
       ],
       "evidence": {
@@ -17854,10 +18914,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Refusals. A move of nothing, a move backwards, a move to a time already past, a move with no amount or with two, and a move past the clock's range are each refused, and the offset stays where it was. The positive cases are witnessed after the complete conversion. R4b (Gemini's G-D4): a duration the clock could not hold is refused by the helper in INTEVIA's words with storage not called, and a time that Django does not judge aware is refused as the wrong kind of argument.",
-      "current_source": "tests/test_intevia_clock.py:638"
+      "current_source": "tests/test_intevia_clock.py:640"
     },
     {
       "obligation": "CLK-06",
@@ -17935,6 +19002,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_no_transaction_can_straddle_a_move",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:709"
         }
       ],
       "evidence": {
@@ -18014,10 +19086,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Refusals. A move of the INTEVIA Clock is refused while any other transaction is open, as the move can see it, and while any transaction that has read the clock is open; a move can only stand alone; and no transaction is admitted to the clock while a move holds it. The offset stays where it was. On this connection an outer transaction, a savepoint and a manual transaction are refused by the helper; a move asked for inside any transaction block (a raw transaction that has read the clock, a transaction opened in the same message, a message whose first statement is not the move) is refused by PostgreSQL itself at the move's COMMIT, and through the helper in INTEVIA's words. On another connection an idle transaction, a transaction that has read the clock, and a transaction whose read was rolled back to a savepoint each refuse the move. Storage's decision over stated facts refuses another role's session whether or not a transaction is seen on it. A transaction that starts while a move holds the clock cannot read it until it is released. R3g, through the activity view itself: a peer the view shows idle does not stop a move; a peer with its activity reporting off is refused as a status that could not be read, inside a transaction that read the clock under a savepoint it rolled back, with reporting turned back on inside that transaction, and with no transaction at all; seen idle again, it no longer stops a move. The decision answers a fact not read in its own words.",
-      "current_source": "tests/test_intevia_clock.py:709"
+      "current_source": "tests/test_intevia_clock.py:711"
     },
     {
       "obligation": "CLK-07",
@@ -18095,6 +19174,11 @@
           "event": "method changed at R4c (the Advisor's finding on R4): the resetting transaction itself; one fixture of the business-table case no longer reads a face inside the reset's transaction",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_the_clock_inside_the_database_reset",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:974"
         }
       ],
       "evidence": {
@@ -18174,10 +19258,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Order and failure. The database reset returns the INTEVIA Clock to zero inside its own transaction, after the tables are empty and before any seed is restored; a reset that fails puts the clock back with the rows; and storage alone decides what the reset's emptiness check leaves out. The clock's reset refuses while a row remains; it exists in one form that takes no argument, its stored body holds the fixed exempt set (the migration ledger alone, equal to the lifecycle backend's), and a call that passes any list finds no such function and changes nothing; inside the real reset a row in a business table makes the reset fail naming that table, and the whole reset is undone; with the last seed restorer made to fail, the first seed restorer sees empty tables, offset zero, an open transaction and a counter already reset, and afterwards the row and the original counter are back; a reset that succeeds shows the same order and keeps the counter it reset. R4a (Gemini's G-D1; D8 covers the reset): through the real database reset and the real activity view, at offset zero, the reset is refused in words that say the clock is not reset, with the row, the counter and the offset as they were, by a peer inside a transaction whose read of the clock was rolled back to a savepoint, by a peer with its activity reporting off (inside a transaction or not), and by a peer that opened its transaction after the reset's own transaction first read the activity view; a peer seen idle is no obstacle. R4c (the Advisor's finding on R4): the transaction that makes the reset cannot itself read two offsets. At offset zero, a connection that read a face in a transaction it manages by hand is refused the database reset before any table changes; storage refuses a reset asked for inside a transaction that has itself read the clock; and the database reset's own transaction must read no face before its clock step.",
-      "current_source": "tests/test_intevia_clock.py:974"
+      "current_source": "tests/test_intevia_clock.py:976"
     },
     {
       "obligation": "CLK-08",
@@ -18249,6 +19340,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:1304"
         }
       ],
       "evidence": {
@@ -18321,10 +19417,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and at every point in between production's startup refuses it. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter.",
-      "current_source": "tests/test_intevia_clock.py:1304"
+      "current_source": "tests/test_intevia_clock.py:1306"
     },
     {
       "obligation": "CLK-09",
@@ -18378,6 +19481,11 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_intevia_clock.InteviaClockTests.test_a_database_with_the_clock_app_must_hold_the_counter",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:1254"
         }
       ],
       "evidence": {
@@ -18429,10 +19537,241 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "b912f10f084cadf91c1718bdc4ade42c092488557fc339329baf2f8a1247e056",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "At the isolation instrument's first checkpoint, a database whose migration ledger records the INTEVIA Clock's test-only app must hold the clock's counter; a database whose ledger does not may hold none. Over this clone's real full and light captures and copies of them with stated facts: app applied and counter missing is reported once by the requirements check and once by the light check, naming the app; production's shape (no app, no counter) and a counter kept at zero below the clock are no violation; against a baseline that held the counter, a lost counter is reported by the full and the light comparison.",
-      "current_source": "tests/test_intevia_clock.py:1254"
+      "current_source": "tests/test_intevia_clock.py:1256"
+    },
+    {
+      "obligation": "CLK-05",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_only_one.OnlyOneClockTests.test_the_catalogue_reads_the_time_only_through_the_faces",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R3_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R4_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R5_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R6_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R7_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R8_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R9_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        },
+        {
+          "source": "VC_BUILD_TIMED_EVENTS_T1B_CK2R10_v1_0.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2f",
+          "event": "new at CK-2f: the catalogue half of CLK-05 (the code half is a later part's)"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R1",
+          "event": "widened at CK-2R1 (the Advisor's A1 and A2): a routine's argument defaults are read with its body; dollar-quoted text and quoted identifiers are left whole by the comment stripper; a time function written as a quoted identifier is recognised; the reading's own check is a table of 29 texts",
+          "previous_source": "tests/test_intevia_clock_only_one.py:125",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema holds one of PostgreSQL's own time readings (the landed census tool's list) outside comments, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. The check must itself see each face read the time and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R2",
+          "event": "widened at CK-2R2 (the Advisor's two further cases and the VC's variant): each text of an object is read on its own; one lexical pass replaces the two of CK-2R1; a quoted time name is put back only where it stands as an identifier; the reading's own check is 353 texts and five lines of texts read one by one",
+          "previous_source": "tests/test_intevia_clock_only_one.py:202",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema holds one of PostgreSQL's own time readings (the landed census tool's list) outside comments, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. The check must itself see each face read the time and must see at least one object of each kind. CK-2R1: a routine's argument defaults are read with its body, and a time function is recognised when written as a quoted identifier or after comment marks inside dollar-quoted text."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R3",
+          "event": "rebuilt at CK-2R3 (the Advisor's CK-2R2 cases; the Human Governor's decision A, 14 Nov 2026): every text is read with PostgreSQL's own parser (libpg_query for PostgreSQL 17, through the verification-only dependency pgparse 1.0.3) instead of a reader imitating its lexer; a time read is a call, a time keyword or a special-input cast in the parse tree, or a census pattern inside a string constant's value; a text the parser cannot read is reported; the reading's own check is 356 texts and five routines",
+          "previous_source": "tests/test_intevia_clock_only_one.py:282",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema holds one of PostgreSQL's own time readings (the landed census tool's list) outside comments, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. The check must itself see each face read the time and must see at least one object of each kind. CK-2R1: a routine's argument defaults are read with its body, and a time function is recognised when written as a quoted identifier or after comment marks inside dollar-quoted text. CK-2R2: each text of an object (a routine's body, its SQL-standard body, its argument defaults) is read on its own, and a time call is recognised whatever quoted text or comment stands before or after it."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R4",
+          "event": "corrected at CK-2R4 (the Advisor's four CK-2R3 findings): the rule the catalogue is held to is one function, tried on seven constructed catalogues; an unreadable text fails the check for every object, the faces' and the moving part's included, and each face must be seen to read its own built-in; a special input converted to a time through a function-style cast or other casts is a read, a cast to a type that is not PostgreSQL's own is not, and a special input given no type is reported unless it is the whole value of a PL/pgSQL variable of a known non-time type; a PL/pgSQL assignment's operator is found by reading both sides, and the row-type retry tries each place until libpg_query reads further; the verification install is hash-locked",
+          "previous_source": "tests/test_intevia_clock_only_one.py:395",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, a cast of 'now', 'today', 'tomorrow' or 'yesterday' to a date or time type, or a match of the landed census tool's patterns inside a string constant's value. A text the parser cannot read is reported as a failure. The check must itself see each face read the time and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R5",
+          "event": "corrected at CK-2R5 (the Advisor's two open CK-2R4 findings): a typed literal excuses only itself and the rest of the value is read (a time keyword in a WHERE clause is a read); a special input cast to a type that is not a time is a read when a destination that may be a time converts it (an assignment, an initial value, a RETURN); an assignment's operator must stand in code (a probe name read after the text before it shows the place is not in a comment); the row-type retry reads as record only a type the catalogue holds as a row type, and each try starts from the text as it stood, so a scalar stays unreadable and the executable text is preserved",
+          "previous_source": "tests/test_intevia_clock_only_one.py:560",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, the special input 'now', 'today', 'tomorrow' or 'yesterday' converted to one of PostgreSQL's own date or time types (a cast, through other casts, or the type's name called as a function) or given no type (unless it is the whole value of a PL/pgSQL variable of a known non-time type), or a match of the landed census tool's patterns inside a string constant's value. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R6",
+          "event": "corrected at CK-2R6 (the Advisor's two open CK-2R5 findings): RETURN NEXT carries a SETOF routine's element type as its destination; declared types are resolved by the catalogue (to_regtype under the routine's own search path, followed through domains) instead of by their spelling, so a domain named like a built-in is not taken for it, and only a declared type that is itself a composite type is read as a record; the catalogue's own type-identity cases run inside the check",
+          "previous_source": "tests/test_intevia_clock_only_one.py:668",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, the special input 'now', 'today', 'tomorrow' or 'yesterday' converted to one of PostgreSQL's own date or time types (a cast, through other casts, or the type's name called as a function) or given no type (unless it is the whole value of a PL/pgSQL variable of a known non-time type: that literal alone is excused, and the rest of the value is read), a special input cast to a type that is not a time as the whole value of a PL/pgSQL assignment, initial value or RETURN whose declared type may be a time, or a match of the landed census tool's patterns inside a string constant's value. A PL/pgSQL assignment's operator must stand in code; a row-type variable's field is read as PostgreSQL reads it only where the declared type is a row type the catalogue holds. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R7",
+          "event": "corrected at CK-2R7 (the Advisor's four CK-2R6 findings): a routine's return type is the one the catalogue bound at creation (prorettype, proretset), not its printed name resolved again; a cast's type is resolved by the catalogue, so a cast to a domain over a time type is a time read; x%ROWTYPE is the row type of the relation the catalogue finds as x (an index has none); names are resolved along the search path one schema at a time, so the session's and a transaction's search path are never changed; the Advisor's cases run inside the check as installed routines",
+          "previous_source": "tests/test_intevia_clock_only_one.py:769",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, the special input 'now', 'today', 'tomorrow' or 'yesterday' converted to one of PostgreSQL's own date or time types (a cast, through other casts, or the type's name called as a function) or given no type (unless it is the whole value of a PL/pgSQL variable of a known non-time type: that literal alone is excused, and the rest of the value is read), a special input cast to a type that is not a time as the whole value of a PL/pgSQL assignment, initial value, RETURN or RETURN NEXT whose declared type may be a time, or a match of the landed census tool's patterns inside a string constant's value. A PL/pgSQL assignment's operator must stand in code; a declared type is the one the catalogue resolves for that name under the routine's own search path, followed through domains; only a type so resolved to PostgreSQL's own non-time type is known not to hold a time, and a row-type variable's field is read as PostgreSQL reads it only where the declared type is itself a composite type. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R8",
+          "event": "corrected at CK-2R8 (the Advisor's three CK-2R7 findings, under the Human Governor's convergence rule): a cast in its function-style form is resolved by the catalogue as any cast is; a statement whose result rows are assigned to variables (SELECT or RETURNING ... INTO, FOR ... IN a query, a cursor's query) carries each variable's type as the destination of its column, unknown where no variable is known; a SECURITY DEFINER routine's $user is its owner; the Advisor's cases run inside the check",
+          "previous_source": "tests/test_intevia_clock_only_one.py:910",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, the special input 'now', 'today', 'tomorrow' or 'yesterday' converted to one of PostgreSQL's own date or time types (a cast, through other casts, or the type's name called as a function) or given no type (unless it is the whole value of a PL/pgSQL variable of a known non-time type: that literal alone is excused, and the rest of the value is read), a special input cast to a type that is not a time as the whole value of a PL/pgSQL assignment, initial value, RETURN or RETURN NEXT whose declared type may be a time, or a match of the landed census tool's patterns inside a string constant's value. A PL/pgSQL assignment's operator must stand in code; a declared type and a cast's type are the ones the catalogue resolves for that name under the routine's own search path (pg_catalog first unless the path names it), followed through domains; only a type so resolved to PostgreSQL's own non-time type is known not to hold a time, and only one so resolved to a date or time type is a time; a routine's return type is the one the catalogue bound at creation; a row-type variable's field is read as PostgreSQL reads it only where the declared type is itself a composite type (for x%ROWTYPE, where the relation the catalogue finds as x has a row type). Resolving a name never changes the reading session's search path. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R9",
+          "event": "rewritten at CK-2R9 to the acceptance rule v2.0 agreed before the build (practice item 222; the Human Governor's decision of 14 Nov, option 1): CLK-05 reports what is written with no exemption (a clock word in any string, one-argument age, any use of timetz), reads five more places (domain defaults, policies, rules, aggregate initial values, publication row filters) and the types of columns and routines, and clears a finding only by an exact allow-list entry the Human Governor approves; the destination tracking of CK-2R5 to CK-2R8 is removed; the Advisor's 34 rule-review cases join the check's table",
+          "previous_source": "tests/test_intevia_clock_only_one.py:1034",
+          "previous_claim": "There is only one clock, catalogue half: no installed function, column default, view, constraint, trigger or index in a non-system schema reads the time, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part. Each text is read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17): a routine's SQL or PL/pgSQL body (every SQL text inside a PL/pgSQL routine), its SQL-standard body and its argument defaults; a column default; a view; a constraint; a trigger; an index. A time read is a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog), an SQL time keyword, the special input 'now', 'today', 'tomorrow' or 'yesterday' converted to one of PostgreSQL's own date or time types (a cast, through other casts, or the type's name called as a function) or given no type (unless it is the whole value of a PL/pgSQL variable of a known non-time type: that literal alone is excused, and the rest of the value is read), a special input cast to a type that is not a time (in either form of cast, or passed through a one-argument function) as the whole value of a PL/pgSQL assignment, initial value, RETURN or RETURN NEXT whose declared type may be a time, or as a whole result column of a statement whose rows are assigned to variables (SELECT or RETURNING ... INTO, FOR ... IN a query, a cursor's query) where the variable it reaches may be a time or is not known, or a match of the landed census tool's patterns inside a string constant's value. A PL/pgSQL assignment's operator must stand in code; a declared type and a cast's type, in either form of cast, are the ones the catalogue resolves for that name under the routine's own search path (pg_catalog first unless the path names it; a SECURITY DEFINER routine's $user is its owner), followed through domains; only a type so resolved to PostgreSQL's own non-time type is known not to hold a time, and only one so resolved to a date or time type is a time; a routine's return type is the one the catalogue bound at creation; a row-type variable's field is read as PostgreSQL reads it only where the declared type is itself a composite type (for x%ROWTYPE, where the relation the catalogue finds as x has a row type). Resolving a name never changes the reading session's search path. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in and must see at least one object of each kind."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2R10",
+          "event": "corrected at CK-2R10 (the Advisor's CK-2R9 final check, five findings; the Human Governor's decision of 14 Nov 2026): a face is excused only for its own built-in and the moving part only for clock reads; every string constant is read from the text as PostgreSQL's lexer reads it, the parser's constants agreeing; clock words and their boundaries are ASCII; %TYPE is resolved through the catalogue; an extension's members are excluded from every place; two S015 error messages allow-listed (option A)",
+          "previous_source": "tests/test_intevia_clock_only_one.py:1103",
+          "previous_claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds reads the time as written, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part, and except the exact findings on the allow-list the Human Governor approves. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no letter beside it, in any quoting and any letter case; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing."
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2F": {
+          "candidate_file_lf_sha256": "1487caee338b2be343f0d33b55b1a51b63ac648db1260fd6bafcfec87d96acf4",
+          "run": "TIMED_EVENTS_T1B_CK2F_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R1": {
+          "candidate_file_lf_sha256": "074a50db3e40acc628c9b6ae0916dc3a619acbe734c8d9eb2c4c2c9a708c0edf",
+          "run": "TIMED_EVENTS_T1B_CK2R1_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R2": {
+          "candidate_file_lf_sha256": "24481ebd47818353b059db7649b6b3761bceb8fdd945dd305378886ce9bcea05",
+          "run": "TIMED_EVENTS_T1B_CK2R2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R3": {
+          "candidate_file_lf_sha256": "d17bd6930bc29347580aa34c5e7bc598c7568125a5d0610e006a177b54189f38",
+          "run": "TIMED_EVENTS_T1B_CK2R3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R4": {
+          "candidate_file_lf_sha256": "3280497bc45448cb13ceb7f7f0183f3b012590c77bb13c1909b0a3d87e12d626",
+          "run": "TIMED_EVENTS_T1B_CK2R4_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R5": {
+          "candidate_file_lf_sha256": "048c01a3999bf2d54bddeef27a767bda957694d660929f4c9d8a9d33d734cf3f",
+          "run": "TIMED_EVENTS_T1B_CK2R5_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R6": {
+          "candidate_file_lf_sha256": "5ce5f697631eda9cbb1c26db7cf1688c91135a56b8300236b8f9988e488214de",
+          "run": "TIMED_EVENTS_T1B_CK2R6_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R7": {
+          "candidate_file_lf_sha256": "76d5199363beba37e7c8aea42b8628f8fb152e10c979aadf98da8e87eef8e88b",
+          "run": "TIMED_EVENTS_T1B_CK2R7_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R8": {
+          "candidate_file_lf_sha256": "1f394f89f58b036f620cae55cf37b29dd11db94aac6a8e0a2209c7f35cab8b60",
+          "run": "TIMED_EVENTS_T1B_CK2R8_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R9": {
+          "candidate_file_lf_sha256": "dcb647ab876f64edfa73a78a4822a5bcde985e1730c6d0f3266a0a7117c4735d",
+          "run": "TIMED_EVENTS_T1B_CK2R9_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2R10": {
+          "candidate_file_lf_sha256": "0e5cabaa2d4503a31afd082c68ddd0e85880629dd4f9bcb8a5ad0de4edec7f4e",
+          "run": "TIMED_EVENTS_T1B_CK2R10_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds outside an extension reads the time as written, except each of the INTEVIA Clock's three faces reading its own built-in and, in an owned test database, the nine named routines of the test clock's moving part reading the clock (a clock function or a time keyword), and except the exact findings on the allow-list the Human Governor approves; any other finding on a face or the moving part is reported as anywhere. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, an extension's members excluded from every one, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no ASCII letter beside it, in any ASCII letter case and any quoting; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable declared with it or through %TYPE, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. Every string constant written in a text is read, wherever the grammar keeps it (a RAISE message, a NOTIFY payload, a comment's text, an option, an enum label): the text's literals are read as PostgreSQL's lexer reads them, and each constant the parser holds must agree with that reading. A text the parser cannot read, or whose constants disagree with the reading, or whose %TYPE the catalogue cannot resolve, fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing.",
+      "current_source": "tests/test_intevia_clock_only_one.py:1631"
     },
     {
       "obligation": "REV-01",
@@ -18584,6 +19923,74 @@
       },
       "claim": "Where the migration graph branches, one step of the descent reverses more than one migration; the failure is laid on the migration the executor had begun to reverse, an exemption is decided on that same migration, what is counted as undone is what the executor finished, and a failed re-apply names the migration being applied. Run through Django's own executor, unchanged, over a graph of four migrations of an app that exists nowhere (a root, two siblings on it, their merge), held in memory with a ledger held in memory; each migration is one Python operation that touches nothing. R4b (Gemini's G-D5a): a reverse that fails and then a re-apply that fails are both named in the one failure REV-01 would report.",
       "current_source": "tests/test_migration_reversibility.py:287"
+    },
+    {
+      "obligation": "REV-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_clock_conversion_refusals.ClockConversionRefusalTests.test_the_conversion_step_refuses_what_it_does_not_expect_and_changes_nothing",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "REV-03"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2R1",
+          "event": "new at CK-2R1: the conversion step's refusal witness (owed row C1-128), folded into the storage correction by the Human Governor's decision of 14 Nov 2026"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2R1": {
+          "candidate_file_lf_sha256": "c1f985e990847436167635c80ad7c56051c9d8de19ea3bcda22481aa3ba95149",
+          "run": "TIMED_EVENTS_T1B_CK2R1_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "The INTEVIA Clock's shared conversion step (core/migrations/_clock_conversion.py), forward and backward: makes its replacement on the text it expects; and stops, with its message, at a function that is not installed, that already holds the replacement, that holds neither text, whose definition does not end in a quoted text, whose text is not found once and whole at the end of its definition, that after the replacement does not hold the intended text or is another object, or whose catalogue row changed in anything but its text. Before the replacement nothing has changed; after it, the rollback of the step's transaction leaves the function as it was.",
+      "current_source": "tests/test_clock_conversion_refusals.py:99"
+    },
+    {
+      "obligation": "REV-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_clock_column_default_refusals.ClockColumnDefaultRefusalTests.test_the_column_defaults_step_refuses_what_it_does_not_expect_and_changes_nothing",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md",
+          "unit_ids": [
+            "REV-04"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2R2",
+          "event": "new at CK-2R2: the refusal witness of migration 0103's own step, folded into the second storage correction by the Human Governor's rule of 14 Nov 2026"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2R2": {
+          "candidate_file_lf_sha256": "85153c4283343edb47b131fb2e75ec4554a1d3cd724d45886a99848f703ad42a",
+          "run": "TIMED_EVENTS_T1B_CK2R2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "Migration 0103's own step (core/migrations/0103_clock_storage_column_defaults.py), forward and backward: sets the default it is asked to set and leaves the table's storage, other defaults and rows alone; and stops, with its message, outside a transaction, at a column that is not there, that has no default, that already has the default it would set, or that has another default; and after its change, at a default that is not the intended one, or a change that altered the column, the table's storage or another default. Before the change nothing has changed; after it, the rollback of the step's transaction leaves everything as it was.",
+      "current_source": "tests/test_clock_column_default_refusals.py:140"
     }
   ],
   "previous_unit": {

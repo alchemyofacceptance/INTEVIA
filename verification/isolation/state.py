@@ -145,6 +145,14 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0093_te_cq_joins": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0094_te_committee": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0096_intevia_clock": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},  # The INTEVIA Clock adds three functions: no table, no seed row.
+    # The INTEVIA Clock's storage conversions replace function text only: no table, no seed row.
+    "0097_clock_storage_0021_0049": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0098_clock_storage_0050_0058": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0099_clock_storage_0059_0072": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0100_clock_storage_0073_0080": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0101_clock_storage_0081_0087": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0102_clock_storage_0088_0095": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0103_clock_storage_column_defaults": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
     "0084_committee_mandates": {
@@ -227,6 +235,13 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0094_te_committee": 725,  # The dated-end marker: input guard, immutability, truncate guard, refresh source, origin.
                           "0095_te_c2_join": 726,  # One origin trigger, on the LO's own events.
                           "0096_intevia_clock": 726,  # The INTEVIA Clock's three faces: no trigger added or removed.
+                          "0097_clock_storage_0021_0049": 726,  # Function text only: no trigger added or removed.
+                          "0098_clock_storage_0050_0058": 726,  # Function text only: no trigger added or removed.
+                          "0099_clock_storage_0059_0072": 726,  # Function text only: no trigger added or removed.
+                          "0100_clock_storage_0073_0080": 726,  # Function text only: no trigger added or removed.
+                          "0101_clock_storage_0081_0087": 726,  # Function text only: no trigger added or removed.
+                          "0102_clock_storage_0088_0095": 726,  # Function text only: no trigger added or removed.
+                          "0103_clock_storage_column_defaults": 726,  # Column defaults only: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.
                           "0084_committee_mandates": 699}  # 681 at 0083 + 8 sources, 3 batch, 1 custody effect, 6 record guards
 # Non-core contributions, keyed by exact (app_label, migration_name).

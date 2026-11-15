@@ -983,7 +983,7 @@ class CQDecisionTests(TransactionTestCase):
             cursor.execute(
                 """INSERT INTO public.core_cqact(act_uuid,organism_id,board_uuid,thread_uuid,operation,
                   actor_id,actor_epoch,received_at,request,facts) SELECT %s,organism_id,board_uuid,thread_uuid,
-                  operation,actor_id,actor_epoch,statement_timestamp(),request,facts FROM public.core_cqact WHERE act_uuid=%s""",
+                  operation,actor_id,actor_epoch,public.intevia_clock_statement(),request,facts FROM public.core_cqact WHERE act_uuid=%s""",
                 [uuid4(), result],
             )
         self.assertEqual(forged.exception.__cause__.diag.message_primary, "CQ_COMPLETE")
@@ -1028,6 +1028,13 @@ class CQDecisionTests(TransactionTestCase):
             dated_end = import_module("core.migrations.0094_te_committee")
             # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
             c2_join = import_module("core.migrations.0095_te_c2_join")
+            # INTEVIA Clock: 0102 and 0101 move functions of 0089 to 0095 and of 0083 to 0087 onto the clock, and
+            # those migrations' reverses check the landed text. They unwind first, newest first, and are applied
+            # again last, which itself requires the landed text.
+            clock_0081_0087 = import_module("core.migrations.0101_clock_storage_0081_0087")
+            clock_0088_0095 = import_module("core.migrations.0102_clock_storage_0088_0095")
+            clock_0088_0095.uninstall(None, editor)
+            clock_0081_0087.uninstall(None, editor)
             c2_join.uninstall(None, editor)
             dated_end.uninstall(None, editor)
             supersession.uninstall(None, editor)
@@ -1064,6 +1071,8 @@ class CQDecisionTests(TransactionTestCase):
             supersession.install(None, editor)
             dated_end.install(None, editor)
             c2_join.install(None, editor)
+            clock_0081_0087.install(None, editor)
+            clock_0088_0095.install(None, editor)
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True

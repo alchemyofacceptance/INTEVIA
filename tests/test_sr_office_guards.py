@@ -171,7 +171,7 @@ def _add_member(cur, ids, tag, at):
     cur.execute(
         "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
         "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
-        "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
+        "VALUES (%s, 'ACTIVE', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id",
         (m_uuid, at, at, empty_fp(cur, "core_organismmembership", m_uuid), member_identity, ids["lo"]),
     )
     membership_id = cur.fetchone()[0]
@@ -195,7 +195,7 @@ def _add_definition(cur, ids, code, *, kind=None, scope="LIVING_ORGANISM", versi
     with sr_definition_guard_suspended(cur):
         cur.execute(
             "INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, "
-            "living_organism_id, kind) VALUES (%s, %s, %s, %s, %s, now(), %s, %s) RETURNING id",
+            "living_organism_id, kind) VALUES (%s, %s, %s, %s, %s, public.intevia_clock_transaction(), %s, %s) RETURNING id",
             (r_uuid, code, scope, version, active, ids["lo"], kind),
         )
         definition_id = cur.fetchone()[0]
@@ -207,7 +207,7 @@ def _anchor(cur, membership_id, definition_id, at, *, state="PROPOSED", circle_i
     cur.execute(
         "INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, "
         "state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id, circle_id) "
-        "VALUES (%s, %s, now(), %s, %s, %s, %s, %s, %s) RETURNING id",
+        "VALUES (%s, %s, public.intevia_clock_transaction(), %s, %s, %s, %s, %s, %s) RETURNING id",
         (a_uuid, state, at, at, empty_fp(cur, "core_contextualroleassignment", a_uuid), membership_id, definition_id, circle_id),
     )
     return cur.fetchone()[0], uuid.UUID(a_uuid)
@@ -613,8 +613,11 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
 
         body = self._installed_body("s2b_guard_office_attribution")
         root = import_module("core.migrations.0062_root_genesis")
-        self.assertEqual(body, self._election_guard_bodies()["s2b_guard_office_attribution"],
-                         msg="The installed attribution safeguard must match its 0087 body.")
+        clock_board = import_module("core.migrations.0101_clock_storage_0081_0087")
+        self.assertEqual(clock_board.S2B_GUARD_OFFICE_ATTRIBUTION_LANDED, self._election_guard_bodies()["s2b_guard_office_attribution"],
+                         msg="The text the INTEVIA Clock's storage migration 0101 replaces must be the attribution safeguard's 0087 body.")
+        self.assertEqual(body, clock_board.S2B_GUARD_OFFICE_ATTRIBUTION_CLOCK,
+                         msg="The installed attribution safeguard must be its 0087 body with its time calls on the INTEVIA Clock, as migration 0101 installs it.")
         self.assertIn(root.OFFICE_BRANCH, body, msg="The complete 0062 GENESIS office exception must survive.")
         self.assertEqual(body.count("           AND v_role_code = 'COORDINATOR'\n"), 1, msg="The founding self-appointment branch should retain exactly one Coordinator condition; that condition is missing or repeated.")
         self.assertIn(
@@ -824,7 +827,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
             cur.execute(
                 "INSERT INTO core_circle (circle_uuid, state, created_at, current_state_effective_at, state_known_at, "
                 "state_source_event_set_fingerprint, founding_reference, parent_organism_id) "
-                "VALUES (%s, 'DORMANT', now(), %s, %s, %s, %s, %s) RETURNING id",
+                "VALUES (%s, 'DORMANT', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id",
                 (c_uuid, at, at, empty_fp(cur, "core_circle", c_uuid), f"sr-c2:circle:{self.tag}", self.ids["lo"]),
             )
             circle_id = cur.fetchone()[0]
@@ -846,7 +849,7 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
             cur.execute(
                 "INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, "
                 "state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
-                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id",
+                "VALUES (%s, 'ACTIVE', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id",
                 (other_membership_uuid, at, at, empty_fp(cur, "core_organismmembership", other_membership_uuid),
                  self.member_identity, other["lo"]),
             )
@@ -893,14 +896,20 @@ class SROfficeGuardTests(SROfficeFixture, TransactionTestCase):
         guards = self._election_guard_bodies()
         safeguard = import_module("core.migrations.0053_sr_office_safeguards")
         root = import_module("core.migrations.0062_root_genesis")
+        clock_storage = import_module("core.migrations.0098_clock_storage_0050_0058")
+        clock_root = import_module("core.migrations.0099_clock_storage_0059_0072")
+        clock_board = import_module("core.migrations.0101_clock_storage_0081_0087")
         installed = {signature: revised for signature, prior, revised in root.bodies()}
         at_head = self._migration_facts()
         self.assertEqual(at_head["head"], current_core_leaf(connection)[0][1], msg="The applied core head must match the migration graph.")
-        self.assertEqual(at_head["definition_insert"], installed["public.sr_definition_insert_guard()"], msg="The installed definition-insert safeguard must match its 0062 body.")
-        self.assertEqual(at_head["definition_update"], safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The installed definition-update safeguard must retain its 0053 body.")
+        self.assertEqual(clock_root.SR_DEFINITION_INSERT_GUARD_LANDED, installed["public.sr_definition_insert_guard()"], msg="The text the INTEVIA Clock's storage migration 0099 replaces must be the definition-insert safeguard's 0062 body.")
+        self.assertEqual(at_head["definition_insert"], clock_root.SR_DEFINITION_INSERT_GUARD_CLOCK, msg="The installed definition-insert safeguard must be its 0062 body with its time call on the INTEVIA Clock, as migration 0099 installs it.")
+        self.assertEqual(clock_storage.SR_DEFINITION_UPDATE_GUARD_LANDED, safeguard.NEW_SR_DEFINITION_UPDATE_GUARD_BODY, msg="The text the INTEVIA Clock's storage migration 0098 replaces must be the definition-update safeguard's 0053 body.")
+        self.assertEqual(at_head["definition_update"], clock_storage.SR_DEFINITION_UPDATE_GUARD_CLOCK, msg="The installed definition-update safeguard must be its 0053 body with its time calls on the INTEVIA Clock, as migration 0098 installs it.")
         applied = MigrationRecorder(connection).applied_migrations()
         self.assertIn(("core", HEAD_0052), applied, msg="The migration history should retain 0052 beneath 0053; its record is missing.")
-        self.assertEqual(at_head["attribution"], guards["s2b_guard_office_attribution"], msg="The installed attribution safeguard must match its 0087 body.")
+        self.assertEqual(clock_board.S2B_GUARD_OFFICE_ATTRIBUTION_LANDED, guards["s2b_guard_office_attribution"], msg="The text the INTEVIA Clock's storage migration 0101 replaces must be the attribution safeguard's 0087 body.")
+        self.assertEqual(at_head["attribution"], clock_board.S2B_GUARD_OFFICE_ATTRIBUTION_CLOCK, msg="The installed attribution safeguard must be its 0087 body with its time calls on the INTEVIA Clock, as migration 0101 installs it.")
         self.assertEqual(at_head["consent"], guards["s2b_guard_assign_consent"], msg="The installed consent safeguard must match its 0083 body.")
         expected = REQUIRED_TRIGGER_COUNT[at_head["head"]] + sum(
             delta for key, delta in NON_CORE_TRIGGER_DELTAS.items() if key in applied
