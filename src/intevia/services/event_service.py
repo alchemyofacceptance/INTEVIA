@@ -8,7 +8,6 @@ from uuid import uuid4
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
 
 from core.models import (
     Event,
@@ -17,6 +16,7 @@ from core.models import (
     EventTransition,
     Identity,
 )
+from src.intevia.services.clock import database_now
 from src.intevia.services.contribution_authority import ContributionAuthority
 
 
@@ -51,14 +51,14 @@ class EventService:
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
-        """Use the supplied time, or timezone.now() when the value is falsy.
+        """Use the supplied time, or the INTEVIA Clock's instant (database_now()) when the value is falsy.
 
         Require tzinfo and a non-None UTC offset, else raise Django's
         ValidationError. No explicit datetime type check is made; attribute
         or time-zone errors propagate. Return the value without converting
         to UTC or comparing it with earlier Event times.
         """
-        value = value or timezone.now()
+        value = value or database_now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("timestamp must be timezone-aware")
         return value

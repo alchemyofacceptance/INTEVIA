@@ -43,9 +43,9 @@ def _call_vacancy(scope, version_uuid, proposal, vacancy_uuid):
         AND v.instruction->>'route' IN ('BY_ELECTION','BOARD_CQ','COOPTION')
         AND NOT EXISTS(SELECT FROM public.core_cqact replay WHERE replay.act_uuid=%s AND replay.organism_id=v.organism_id
           AND replay.thread_uuid=%s AND replay.actor_id=%s AND replay.operation='INITIATE')
-        AND public.disc_member_state(v.organism_id,%s,statement_timestamp())='ACTIVE'
-        AND public.elect_admin_office(v.organism_id,b.board_uuid,%s::jsonb,%s,statement_timestamp()) IS NOT NULL
-        AND (public.cq_settings_values_at(v.organism_id,statement_timestamp(),statement_timestamp())->>'enabled')::boolean IS FALSE""",
+        AND public.disc_member_state(v.organism_id,%s,public.intevia_clock_statement())='ACTIVE'
+        AND public.elect_admin_office(v.organism_id,b.board_uuid,%s::jsonb,%s,public.intevia_clock_statement()) IS NOT NULL
+        AND (public.cq_settings_values_at(v.organism_id,public.intevia_clock_statement(),public.intevia_clock_statement())->>'enabled')::boolean IS FALSE""",
         [admission["board_uuid"], vacancy_uuid, spec["place"], str(spec["binding"]), str(spec["version"]), spec["provision"], scope["request_uuid"],
          scope["thread_uuid"], actor.pk, actor.pk, json.dumps(proposal), actor.pk]):
         raise cq.CQRefused("ELECT_VACANCY_VOTING")
@@ -73,8 +73,8 @@ def slate(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
     if not admission["thread_audience"]:
         raise disc.DiscussionUnavailable()
     rows = disc._rows("""SELECT coalesce(o.facts->'slate',prep.facts->'prepared_slate',
-          public.elect_slate(i.thread_uuid,public.elect_plan(i.organism_id,i.board_uuid,i.request->'attachment',statement_timestamp()),
-             statement_timestamp())) AS candidates
+          public.elect_slate(i.thread_uuid,public.elect_plan(i.organism_id,i.board_uuid,i.request->'attachment',public.intevia_clock_statement()),
+             public.intevia_clock_statement())) AS candidates
        FROM public.core_cqact i LEFT JOIN LATERAL (SELECT a.facts FROM public.core_cqact a WHERE a.thread_uuid=i.thread_uuid
          AND a.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE') ORDER BY a.ordinal DESC LIMIT 1) o ON true
        LEFT JOIN LATERAL (SELECT a.facts FROM public.core_cqact a WHERE a.thread_uuid=i.thread_uuid
@@ -105,7 +105,7 @@ def power_history(*, credential, organism_uuid, scope):
         t.transfer->'policy_version' AS policy_version,t.recorded_at,t.effective_at,e.event_uuid AS ilc_event
         FROM public.elect_transfers t JOIN public.core_livingorganismevent e ON e.event_uuid=t.act_uuid
         WHERE t.organism_id=%s AND t.transfer->'scope'=%s::jsonb
-        AND public.cq3_result_visible(t.decision::uuid,t.organism_id,%s,statement_timestamp()) ORDER BY t.ordinal""",
+        AND public.cq3_result_visible(t.decision::uuid,t.organism_id,%s,public.intevia_clock_statement()) ORDER BY t.ordinal""",
         [owner, json.dumps(scope, default=cq._json_reference), actor.pk])
 
 
@@ -128,20 +128,20 @@ def authorising_result(*, credential, organism_uuid, event_uuid):
           (support.effective_at<=award.effective_at OR NOT EXISTS(
           SELECT FROM public.core_organismmembership m WHERE m.id=(i.facts->'domain_plan'->'winner'->>'member')::bigint
           AND NOT EXISTS(SELECT FROM public.core_organismmembershiptransition t WHERE t.membership_id=m.id
-              AND t.resulting_state='ENDED' AND t.recorded_at<=statement_timestamp()
+              AND t.resulting_state='ENDED' AND t.recorded_at<=public.intevia_clock_statement()
               AND public.elect_pending_successor(i.act_uuid,m.id,i.facts->'domain_plan'->>'type',t.effective_at,t.received_at))
           AND public.s015_fold_effective_state('core_organismmembership',m.id,
-              (i.facts->'domain_plan'->>'start')::timestamptz,statement_timestamp())='ACTIVE'
+              (i.facts->'domain_plan'->>'start')::timestamptz,public.intevia_clock_statement())='ACTIVE'
           AND (coalesce((i.facts->'domain_plan'->>'participation_required')::boolean,false)=false
             OR public.circle_place_at((i.facts->'domain_plan'->>'circle')::bigint,m.id,
-                (i.facts->'domain_plan'->>'start')::timestamptz,statement_timestamp()))))
+                (i.facts->'domain_plan'->>'start')::timestamptz,public.intevia_clock_statement()))))
         THEN 'ELECT_SUCCESSOR_LOST' END AS eligibility_reason
         FROM public.core_cqact i JOIN public.core_cqact o ON o.act_uuid=(i.facts->'domain_plan'->>'ballot')::uuid
         LEFT JOIN public.core_contextualroleassignmentstateevent award ON award.event_uuid=i.act_uuid AND award.action='ASSIGN'
-        LEFT JOIN LATERAL public.elect_office_support_ending(award.id,statement_timestamp()) support
+        LEFT JOIN LATERAL public.elect_office_support_ending(award.id,public.intevia_clock_statement()) support
           ON award.effective_until IS NULL OR support.effective_at<=award.effective_until
         WHERE i.organism_id=%s AND i.act_uuid=%s AND i.operation='IMPLEMENT' AND i.facts->'domain_plan'->>'domain'='ELECTION'
-        AND public.cq3_result_visible((i.request->>'result')::uuid,i.organism_id,%s,statement_timestamp())""",
+        AND public.cq3_result_visible((i.request->>'result')::uuid,i.organism_id,%s,public.intevia_clock_statement())""",
         [owner, event_uuid, actor.pk])
     if not rows:
         raise disc.DiscussionUnavailable()
@@ -156,11 +156,11 @@ def catch_up_vacancies(*, credential):
         actor = disc._actor(credential)
         pending = disc._rows("""SELECT s.ending,s.organism_id FROM public.elect_vacancy_sources s
             JOIN public.core_organismmembership m ON m.living_organism_id=s.organism_id AND m.identity_id=%s
-            WHERE greatest(s.recorded_at,s.effective_at)<=statement_timestamp()
-            AND NOT public.elect_already_replaced(s,statement_timestamp()) AND NOT EXISTS(
+            WHERE greatest(s.recorded_at,s.effective_at)<=public.intevia_clock_statement()
+            AND NOT public.elect_already_replaced(s,public.intevia_clock_statement()) AND NOT EXISTS(
                 SELECT FROM public.core_electvacancy v WHERE v.ending=s.ending)
             AND (public.cq_settings_at(s.organism_id,greatest(s.recorded_at,s.effective_at))->>'enabled')::boolean
-            AND public.disc_member_state(s.organism_id,%s,statement_timestamp())='ACTIVE' ORDER BY s.organism_id,s.ending""",
+            AND public.disc_member_state(s.organism_id,%s,public.intevia_clock_statement())='ACTIVE' ORDER BY s.organism_id,s.ending""",
             [actor.pk, actor.pk])
     started = False
     for source in pending:
@@ -168,7 +168,7 @@ def catch_up_vacancies(*, credential):
             actor = disc._actor(credential)
             disc._rows("SELECT id FROM public.core_livingorganism WHERE id=%s FOR UPDATE", [source["organism_id"]])
             rows = disc._rows("""SELECT public.elect_start_vacancy(%s,%s,%s) AS started
-                WHERE public.disc_member_state(%s,%s,statement_timestamp())='ACTIVE'""",
+                WHERE public.disc_member_state(%s,%s,public.intevia_clock_statement())='ACTIVE'""",
                 [source["organism_id"], source["ending"], actor.pk, source["organism_id"], actor.pk])
             started = started or bool(rows and rows[0]["started"])
     return started
@@ -182,17 +182,17 @@ def vacancies(*, credential, organism_uuid, ending_uuid=None):
     if ending_uuid is not None:
         disc._read_uuid(ending_uuid)
     return disc._rows("""SELECT v.ending,v.route_act,v.kind,v.place,v.effective_at,v.recorded_at,v.instruction,
-      CASE WHEN public.cq3_result_visible(f.result,v.organism_id,%s,statement_timestamp()) THEN f.result END AS result,
-      CASE WHEN f.result IS NULL OR public.cq3_result_visible(f.result,v.organism_id,%s,statement_timestamp()) THEN f.event_uuid END AS filled_by,
-      CASE WHEN f.result IS NULL OR public.cq3_result_visible(f.result,v.organism_id,%s,statement_timestamp()) THEN f.decision_reference END AS fill_authority,
+      CASE WHEN public.cq3_result_visible(f.result,v.organism_id,%s,public.intevia_clock_statement()) THEN f.result END AS result,
+      CASE WHEN f.result IS NULL OR public.cq3_result_visible(f.result,v.organism_id,%s,public.intevia_clock_statement()) THEN f.event_uuid END AS filled_by,
+      CASE WHEN f.result IS NULL OR public.cq3_result_visible(f.result,v.organism_id,%s,public.intevia_clock_statement()) THEN f.decision_reference END AS fill_authority,
       CASE WHEN allowed.visible THEN i.act_uuid END AS call,CASE WHEN allowed.visible THEN i.thread_uuid END AS thread
       FROM public.core_electvacancy v LEFT JOIN public.core_electvacancyfill f ON f.ending=v.ending
       LEFT JOIN public.core_cqact i ON i.organism_id=v.organism_id AND i.operation='INITIATE'
        AND i.request->'attachment'->'spec'->>'vacancy'=v.ending::text
-      LEFT JOIN LATERAL (SELECT (public.disc_audience(v.organism_id,b.circle_id,%s,c.access_level,statement_timestamp())
+      LEFT JOIN LATERAL (SELECT (public.disc_audience(v.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())
           AND ((NOT first.coordinator_hidden AND (NOT first.author_hidden OR EXISTS(SELECT FROM public.core_cqact o WHERE
               o.thread_uuid=i.thread_uuid AND o.operation IN ('PROCEED','OPEN_VOTE','CLOSE','NO_BALLOT'))))
-          OR public.disc_office(v.organism_id,b.circle_id,%s,statement_timestamp()) IS NOT NULL)) AS visible
+          OR public.disc_office(v.organism_id,b.circle_id,%s,public.intevia_clock_statement()) IS NOT NULL)) AS visible
         FROM public.core_discboard b JOIN public.core_discthread t ON t.thread_uuid=i.thread_uuid
         JOIN public.disc_categories c ON c.category_uuid=t.category_uuid
         JOIN public.discp_posts first ON first.thread_uuid=i.thread_uuid AND first.post_number=1
@@ -208,13 +208,13 @@ def _holder_term_refusal(owner, actor, role, instruction, effective):
             or not authority.startswith("office:") or authority == "office:LO_COORDINATOR"):
         return "ELECT_VACANCY_APPOINTER"
     rows = disc._rows("""
-        SELECT e.effective_at AS starts,public.elect_office_deadline(e.id,statement_timestamp()) AS ends,
-               statement_timestamp() AS known
+        SELECT e.effective_at AS starts,public.elect_office_deadline(e.id,public.intevia_clock_statement()) AS ends,
+               public.intevia_clock_statement() AS known
         FROM public.core_organismroledefinition d JOIN public.core_contextualroleassignment a ON a.role_definition_id=d.id
         JOIN public.core_organismmembership m ON m.id=a.membership_id
         JOIN public.core_contextualroleassignmentstateevent e ON e.assignment_id=a.id AND e.action='ASSIGN'
         WHERE d.living_organism_id=%s AND d.scope='LIVING_ORGANISM' AND d.kind='BOARD_OFFICE'
-        AND d.code=%s AND m.identity_id=%s AND greatest(e.recorded_at,e.received_at)<=statement_timestamp()
+        AND d.code=%s AND m.identity_id=%s AND greatest(e.recorded_at,e.received_at)<=public.intevia_clock_statement()
         ORDER BY e.effective_at DESC,e.id DESC""", [owner, authority.removeprefix("office:"), actor.pk])
     if rows and effective is not None:
         for row in rows:
@@ -251,7 +251,7 @@ def appoint_to_vacancy(*, credential, organism_uuid, ending_uuid, command):
             if command.action != "ASSIGN" or record["kind"] != "OFFICE" or record["place"] != assignment.role_definition.code:
                 raise cq.CQRefused("ELECT_VACANCY_ROUTE")
             if record["filled_by"] is None:
-                admitted = disc._rows("""SELECT public.elect_named_appointment(%s,%s,%s,%s,statement_timestamp()) AS ending""",
+                admitted = disc._rows("""SELECT public.elect_named_appointment(%s,%s,%s,%s,public.intevia_clock_statement()) AS ending""",
                                        [owner, assignment.role_definition_id, actor.pk, command.effective_at])
                 if admitted[0]["ending"] != ending_uuid:
                     raise cq.CQRefused(_holder_term_refusal(owner, actor, assignment.role_definition,
@@ -270,14 +270,14 @@ def catch_up_terms(*, credential, organism_uuid):
             actor = disc._actor(credential)
             owner = cq._read_owner(actor, organism_uuid)
             disc._rows("SELECT id FROM public.core_livingorganism WHERE id=%s FOR UPDATE", [owner])
-            state = disc._rows("SELECT public.disc_member_state(%s,%s,statement_timestamp()) AS state",
+            state = disc._rows("SELECT public.disc_member_state(%s,%s,public.intevia_clock_statement()) AS state",
                                [owner, actor.pk])
             if state[0]["state"] != "ACTIVE":
                 raise disc.DiscussionUnavailable()
             offices = disc._rows("""
                 SELECT a.id FROM public.core_contextualroleassignment a
                 JOIN public.core_organismroledefinition d ON d.id=a.role_definition_id
-                CROSS JOIN LATERAL public.elect_due_office(a.id,statement_timestamp()) q
+                CROSS JOIN LATERAL public.elect_due_office(a.id,public.intevia_clock_statement()) q
                 WHERE d.living_organism_id=%s ORDER BY q.due,a.id""", [owner])
             recorded = 0
             for office in offices:
@@ -285,7 +285,7 @@ def catch_up_terms(*, credential, organism_uuid):
                                   [owner, office["id"], actor.pk])
                 recorded += int(rows[0]["changed"])
             notices = disc._rows("""SELECT a.act_uuid FROM public.core_cqact a
-                WHERE a.organism_id=%s AND a.operation='BOARD_RESIGN' AND (a.facts->>'end')::timestamptz<=statement_timestamp()
+                WHERE a.organism_id=%s AND a.operation='BOARD_RESIGN' AND (a.facts->>'end')::timestamptz<=public.intevia_clock_statement()
                 AND NOT EXISTS(SELECT FROM public.core_coverageassessment x JOIN public.core_essentialcoveragecase c ON c.id=x.case_id
                   WHERE c.living_organism_id=a.organism_id AND x.evidence_reference='elect-resignation:'||a.act_uuid)
                 ORDER BY a.ordinal""", [owner])
@@ -298,9 +298,9 @@ def catch_up_terms(*, credential, organism_uuid):
             seats = disc._rows("""
                 SELECT s.ending FROM public.elect_vacancy_sources s
                 WHERE s.organism_id=%s AND s.kind='SEAT'
-                AND greatest(s.effective_at,s.recorded_at)<=statement_timestamp()
+                AND greatest(s.effective_at,s.recorded_at)<=public.intevia_clock_statement()
                 AND NOT EXISTS(SELECT FROM public.core_electvacancy v WHERE v.ending=s.ending)
-                AND NOT public.elect_already_replaced(s,statement_timestamp())
+                AND NOT public.elect_already_replaced(s,public.intevia_clock_statement())
                 ORDER BY s.effective_at,s.ending""", [owner])
             for seat in seats:
                 rows = disc._rows("SELECT public.elect_start_vacancy(%s,%s,%s) AS changed",
@@ -336,7 +336,7 @@ def _continuity_command(operation, fields, *, credential, organism_uuid, request
             actor = disc._actor(credential)
             key, owner = cq._id(request_uuid), cq._id(organism_uuid)
             received = cq._lock(key, owner)
-            disc._rows("""SELECT public.cq_source(lo.id,NULL,NULL,%s,%s,statement_timestamp())
+            disc._rows("""SELECT public.cq_source(lo.id,NULL,NULL,%s,%s,public.intevia_clock_statement())
                          FROM public.core_livingorganism lo WHERE lo.organism_id=%s""", [operation, actor.pk, owner])
             act = cq._execute(actor, owner, None, None, operation, key, fields, received)
             row = disc._rows("SELECT facts->>'effect' AS effect FROM public.core_cqact WHERE act_uuid=%s", [act])[0]
@@ -362,5 +362,5 @@ def board_continuity(*, credential, organism_uuid, act_uuid=None):
           AND h.operation='RECOGNITION_CONSENT'
         WHERE a.organism_id=%s AND a.operation IN ('RECOGNISE','BOARD_RESIGN')
         AND (%s::uuid IS NULL OR a.act_uuid=%s) AND (a.authority_source->>'kind'<>'CQ_RESULT'
-          OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,statement_timestamp()))
+          OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,public.intevia_clock_statement()))
         ORDER BY a.ordinal""", [owner, act_uuid, act_uuid, actor.pk])

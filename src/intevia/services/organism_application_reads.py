@@ -161,7 +161,7 @@ class OrganismApplicationReader:
     audience.
 
     Each read finds the application by UUID, takes the database's
-    present time (clock_timestamp()) and authorises the reader at that
+    present time (public.intevia_clock_instant()) and authorises the reader at that
     time (_authorise_read) before reading anything further. Reads use
     the database alias given at construction and write nothing.
     """
@@ -339,13 +339,13 @@ class OrganismApplicationReader:
         return application
 
     def _database_time(self) -> datetime:
-        """Read and return clock_timestamp() from this reader's database alias.
+        """Read and return public.intevia_clock_instant() from this reader's database alias.
 
         Executes a new clock query on each call. Does not use the injected
         clock or enforce increasing values between calls. Writes nothing.
         """
         with connections[self._alias].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             return cursor.fetchone()[0]
 
     def _actor_ref(self, identity_id: int | None) -> ActorRef:

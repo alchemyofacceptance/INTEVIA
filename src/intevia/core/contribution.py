@@ -191,6 +191,14 @@ class TransitionRecord:
             "reason",
             _optional_reason(self.reason),
         )
+def _clock_now() -> datetime:
+    """The present instant on the INTEVIA Clock, through the Python door.
+
+    The door is imported here, when a time is first needed, so that this
+    domain module still imports without Django or a database.
+    """
+    from src.intevia.services.clock import database_now
+    return database_now()
 @dataclass(frozen=True, slots=True)
 class HumanDecision:
     """An explicit Human-attributed decision concerning a Contribution.
@@ -203,7 +211,7 @@ class HumanDecision:
     outcome: DecisionOutcome
     reason: str | None = None
     decided_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=_clock_now
     )
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -255,7 +263,7 @@ class Contribution:
     contributor_ref: str
     content: str
     created_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=_clock_now
     )
     state: ContributionState = field(
         default=ContributionState.DRAFT,
@@ -350,7 +358,7 @@ class Contribution:
                 f"cannot submit Contribution from {self.state.value}"
             )
         if submitted_at is None:
-            submitted_at = datetime.now(timezone.utc)
+            submitted_at = _clock_now()
         effective_time = self._require_non_regressing_time(
             submitted_at,
             field_name="submitted_at",
@@ -381,7 +389,7 @@ class Contribution:
                 f"cannot begin review from {self.state.value}"
             )
         if reviewed_at is None:
-            reviewed_at = datetime.now(timezone.utc)
+            reviewed_at = _clock_now()
         effective_time = self._require_non_regressing_time(
             reviewed_at,
             field_name="reviewed_at",

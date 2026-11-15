@@ -4,15 +4,15 @@ After the storage conversion (core migrations 0097 to 0103) nothing the database
 the time except through the INTEVIA Clock's three faces. This is the standing check: a later
 unit that installs SQL that reads the time fails here and is sent to a face.
 
-CLK-05 reports what is written, with no exemption (the CK-2R9 acceptance rule v2.0, the Human
+CLK-05 reports what is written, with no exemption (the CK-2R9 acceptance rule v2.1, the Human
 Governor's decision of 14 Nov 2026). The texts are read with PostgreSQL's own parser (libpg_query,
 PostgreSQL 17, through the verification-only dependency ``pgparse``), and a read is what the parse
 tree holds, wherever its value goes: (F1) a call of one of the five time functions by name
 (unqualified or in ``pg_catalog``); (F2) an SQL time keyword; (F3) inside a string constant's value,
 a match of the landed census tool's patterns (``verification.clock.clock_census_v1_2.DB_CLOCKS``);
-(F4) a string constant holding a clock word (``now``, ``today``, ``tomorrow`` or ``yesterday``, any
-letter case, with no letter directly before or after it), in any quoting, with no server or setting
-consulted; (F5) ``age`` called with one argument; (F6) any use of the type timetz, or of a domain
+(F4) a string constant holding a clock word (``now``, ``today``, ``tomorrow`` or ``yesterday``, in
+any ASCII letter case, with no ASCII letter directly before or after it), in any quoting, with no
+server or setting consulted; (F5) ``age`` called with one argument; (F6) any use of the type timetz, or of a domain
 over it: a cast in either form, a type named in a statement, a PL/pgSQL variable, a column, a
 routine's argument or return, a type built on it; and (F7) a text the parser cannot read, whatever
 object holds it, a face's included. A type name is the one the catalogue resolves under the
@@ -21,7 +21,25 @@ its ``$user`` is the owner), and resolving a name never changes the reading sess
 CLK-05 reads routines, column defaults, views, constraints, trigger conditions, indexes, domain
 defaults, row-security policies, rewrite rules, aggregate initial values and publication row
 filters. A finding is cleared only by an exact entry on the allow-list (``ALLOWED``), each added
-with the Human Governor's approval. Not followed, as the rule states: text computed from pieces,
+with the Human Governor's approval.
+
+CK-2R10 added four guarantees, each named here with the function that holds it. (a) An object that
+is a member of an extension is not read, in each of the places listed above (``_not_extension``).
+(b) F6 follows a PL/pgSQL ``%TYPE`` declaration to the variable or column it names, and an anchor
+the catalogue cannot resolve is reported unreadable (``_declared_timetz``). (c) The string constants
+F3 and F4 read are taken from the text itself, as PostgreSQL's lexer reads it (``_string_literals``),
+and a text is reported unreadable where a constant the parse tree holds, or a RAISE message,
+disagrees with that reading (``_literals_agree``, ``written_strings``). (d) A face is excused only
+for its own built-in, and a routine of the moving part only for a clock read by function or keyword
+(F1, F2); a finding of another kind on either is reported as it is elsewhere (``_excused``).
+
+CK-2j1a corrected three readings of that lexer and of ``%TYPE`` (owed ledger C1-130, item 9): a
+``--`` comment ends at a carriage return as at a newline; a ``%TYPE`` anchor of three or more names
+is a column's and nothing else, and one of two names is a variable's only under a label the routine
+itself holds; and ``UESCAPE`` after a ``U&''`` string is the whole keyword, never the start of a
+longer name.
+
+Not followed, as the rule states: text computed from pieces,
 values arriving as data, a time fixed when an object is installed. The code half of CLK-05 (Python
 and the tests' own SQL) is a later part's.
 """
@@ -79,7 +97,7 @@ CATALOGUE = (
                pg_catalog.pg_get_function_sqlbody(p.oid),
                pg_catalog.pg_get_expr(p.proargdefaults, 0),
                CASE WHEN l.lanname = 'plpgsql' THEN pg_catalog.pg_get_functiondef(p.oid) END,
-               p.prorettype::oid, p.proretset, p.proconfig, p.prosecdef, pg_catalog.pg_get_userbyid(p.proowner)::text
+               p.proconfig, p.prosecdef, pg_catalog.pg_get_userbyid(p.proowner)::text
           FROM pg_catalog.pg_proc p
           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
           JOIN pg_catalog.pg_language l ON l.oid = p.prolang
@@ -119,7 +137,7 @@ CATALOGUE = (
           JOIN pg_catalog.pg_class x ON x.oid = i.indexrelid
           JOIN pg_catalog.pg_namespace n ON n.oid = x.relnamespace
          WHERE """ + SYSTEM_SCHEMAS + " AND " + _not_extension("pg_class", "i.indrelid") + " AND " + _not_extension("pg_class", "i.indexrelid")),
-    # The places CK-2R9 adds (acceptance rule v2.0, section 2). INTEVIA holds none of them today; each may be empty.
+    # The places CK-2R9 adds (acceptance rule v2.1, section 2). INTEVIA holds none of them today; each may be empty.
     ("domain default", """
         SELECT n.nspname || '.' || t.typname, pg_catalog.pg_get_expr(t.typdefaultbin, 0)
           FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
@@ -179,7 +197,7 @@ CATALOGUE = (
 TYPE_USES = ("timetz use",)
 REQUIRED_KINDS = ("function", "column default", "view", "constraint", "trigger", "index")
 
-# What counts as a time read in a parse tree (the CK-2R9 acceptance rule v2.0, section 1).
+# What counts as a time read in a parse tree (the CK-2R9 acceptance rule v2.1, section 1).
 CALLED_BY_NAME = ("clock_timestamp", "timeofday", "statement_timestamp", "transaction_timestamp", "now")
 KEYWORDS = {
     "SVFOP_CURRENT_DATE": "current_date",
@@ -278,7 +296,12 @@ class CatalogueTypes:
     unqualified, in each schema of the search path in turn (the routine's own ``SET search_path``, with ``pg_temp`` and
     ``pg_catalog`` first unless it names them; without one, the reading session's effective path). The session's
     search path is never changed. A type is followed through any domains to its base type; a name that cannot be
-    resolved is not known. ``x%ROWTYPE`` names a relation, which has a row type only if the catalogue gives it one."""
+    resolved is not known. ``x%ROWTYPE`` names a relation, which has a row type only if the catalogue gives it one.
+
+    A limit, stated (owed ledger C1-130, item 11): ``CHAIN`` follows a domain to its base type and does not follow an
+    array type to its element. The array type of a domain over timetz (``moment[]``) is therefore not resolved to
+    timetz here, in a cast or through ``%TYPE``. The catalogue's "timetz use" place does follow ``typelem``, so a
+    column, routine argument or return, or type built on such an array is still reported there."""
 
     CHAIN = """
         WITH RECURSIVE chain AS (
@@ -422,7 +445,7 @@ def reads_in_tree(tree, types=None):
     catalogue, the type the catalogue resolves, through its domains)."""
     found = set()
     types = types or TableTypes()
-    declared = _declarations(tree)
+    declared, labels = _declarations(tree), _labels(tree)
 
     def walk(node):
         if isinstance(node, dict):
@@ -440,7 +463,7 @@ def reads_in_tree(tree, types=None):
                     found.add(KEYWORDS[value["op"]])
                 elif key == "typeName" and isinstance(value, dict) and types.is_timetz(_names(value.get("names", []))):
                     found.add("timetz")   # a cast, a column or an argument of type timetz
-                elif key == "PLpgSQL_type" and _declared_timetz(value.get("typname"), declared, types, found):
+                elif key == "PLpgSQL_type" and _declared_timetz(value.get("typname"), declared, labels, types, found):
                     found.add("timetz")   # a PL/pgSQL variable declared with it, by name or through %TYPE
                 elif key == "A_Const" and "sval" in value:
                     found.update(string_readings(value["sval"]["sval"]))
@@ -464,6 +487,10 @@ _SPACE = " \t\n\r\f\v"
 _IDENT_START = re.compile(r"[A-Za-z_\u0080-\U0010ffff]")
 _IDENT_REST = re.compile(r"[A-Za-z0-9_$\u0080-\U0010ffff]*")
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\u0080-\U0010ffff][A-Za-z0-9_\u0080-\U0010ffff]*)?\$")
+
+
+# UESCAPE after a U&'' string is the keyword alone: a longer name that starts with it (uescape_alias) is a name.
+_UESCAPE = re.compile(r"uescape(?![A-Za-z0-9_$\u0080-\U0010ffff])", re.IGNORECASE)
 
 
 class LexerRefused(ValueError):
@@ -523,6 +550,16 @@ def _decode_unicode_string(raw, escape):
     return _surrogates(codes)
 
 
+_LINE_END = re.compile(r"[\n\r]")
+
+
+def _comment_end(text, i):
+    """Where the "--" comment that starts at i ends: at the first newline or carriage return after it, as PostgreSQL
+    ends it (scan.l: comment is "--" then non_newline*, and non_newline is [^\\n\\r]); -1 where the text ends first."""
+    end = _LINE_END.search(text, i)
+    return end.start() if end else -1
+
+
 def _skip_space_and_comments(text, i, comments_end_line_only=False):
     """Skip whitespace and comments from i; return (new i, whether a newline was crossed)."""
     newline = False
@@ -530,7 +567,7 @@ def _skip_space_and_comments(text, i, comments_end_line_only=False):
         if text[i] in _SPACE:
             newline |= text[i] in "\n\r"; i += 1
         elif text.startswith("--", i):
-            end = text.find("\n", i)
+            end = _comment_end(text, i)
             if end < 0:
                 return len(text), newline
             i = end
@@ -556,7 +593,7 @@ def _continuation(text, i):
     comments). None when no newline follows."""
     while i < len(text) and (text[i] in " \t\f" or text.startswith("--", i)):
         if text.startswith("--", i):
-            end = text.find("\n", i)
+            end = _comment_end(text, i)
             if end < 0:
                 return None
             i = end
@@ -568,7 +605,7 @@ def _continuation(text, i):
         if text[i] in _SPACE:
             i += 1
         elif text.startswith("--", i):
-            end = text.find("\n", i)
+            end = _comment_end(text, i)
             if end < 0:
                 return None
             i = end
@@ -665,7 +702,7 @@ def _string_literals(text):
         elif kind == "unicode":
             escape = "\\"
             j, _ = _skip_space_and_comments(text, i)
-            word = re.compile(r"(?i)uescape").match(text, j)
+            word = _UESCAPE.match(text, j)
             if word:
                 k, _ = _skip_space_and_comments(text, word.end())
                 if text[k:k + 1] != "'" or text[k + 2:k + 3] != "'":
@@ -731,6 +768,26 @@ def _declarations(tree):
     return declared
 
 
+def _labels(tree):
+    """The block and loop labels a PL/pgSQL routine's statements carry (``<<label>>``); empty for any other tree. The
+    routine's own name, which PL/pgSQL also accepts as the label of its parameters, is not in the tree and is not
+    given here: an anchor written ``routine.parameter%TYPE`` is reported unreadable (fail closed)."""
+    found = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key.startswith("PLpgSQL_stmt_") and isinstance(value, dict) and isinstance(value.get("label"), str):
+                    found.add(value["label"])
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(tree)
+    return found
+
+
 def _anchor_names(written):
     """The parsed names of a %TYPE anchor (``a.b.c`` of ``a.b.c%TYPE``), else None."""
     try:
@@ -745,24 +802,27 @@ def _anchor_names(written):
     return names if names and all(names) else None
 
 
-def _declared_timetz(written, declared, types, found, depth=0):
+def _declared_timetz(written, declared, labels, types, found, depth=0):
     """Say whether a PL/pgSQL variable's written type is timetz: a type name resolved as any type name is, or an
     ``x%TYPE`` anchor followed to what it names as PL/pgSQL does (PostgreSQL 17.11, VC run): a variable or parameter
     (``v``, ``$1``, ``label.v``) or a column (``table.column``, ``schema.table.column``) (rule v2.1 section 1, F6: a
-    variable declared with it). With the catalogue, an anchor it cannot resolve is reported unreadable."""
+    variable declared with it). PL/pgSQL reads ``label.v`` only where the anchor has exactly two names (pl_comp.c,
+    plpgsql_parse_cwordtype); with three or more it names a column and nothing else. So a variable is followed only
+    for one name, or for two where the first is a label the routine holds (``_labels``). With the catalogue, an
+    anchor it cannot resolve is reported unreadable, and never read as a variable that shares its last name."""
     written = (written or "").strip()
     anchor = re.match(r"(.*)%type$", written, flags=re.I)
     if not anchor:
         return types.is_timetz(_type_names(written, arrays=True))
     names = _anchor_names(anchor.group(1))
     if names and len(names) == 1 and names[0] in declared and depth < 10:
-        return _declared_timetz(declared[names[0]], declared, types, found, depth + 1)
+        return _declared_timetz(declared[names[0]], declared, labels, types, found, depth + 1)
     if names and len(names) >= 2:
         column = types.column_is_timetz(names)
         if column is not None:
             return column
-        if names[-1] in declared and depth < 10:      # a block label's variable
-            return _declared_timetz(declared[names[-1]], declared, types, found, depth + 1)
+        if len(names) == 2 and names[0] in labels and names[1] in declared and depth < 10:   # a label's variable
+            return _declared_timetz(declared[names[1]], declared, labels, types, found, depth + 1)
     if not isinstance(types, TableTypes):
         found.add("unreadable: %%TYPE anchor not resolved: %s" % written)
     return False
@@ -957,15 +1017,15 @@ def routine_texts(language, source, sql_body, defaults, definition):
 
 def function_readings(row, types):
     """Read one function from the catalogue: its texts, with its names resolved under its own search path. ``row``:
-    name, language, body, SQL-standard body, argument defaults, definition, return type, whether it returns a set,
-    settings, whether it is SECURITY DEFINER, its owner (as ``CATALOGUE`` gives them). A SECURITY DEFINER routine
+    name, language, body, SQL-standard body, argument defaults, definition, settings, whether it is SECURITY
+    DEFINER, its owner (as ``CATALOGUE`` gives them). A SECURITY DEFINER routine
     runs as its owner, so ``$user`` in its path (its own, or else the reading session's, which it inherits) names the
     owner; any other routine's ``$user`` is the reading role's."""
     routine = types
     if isinstance(types, CatalogueTypes):
-        path = _search_path_of(row[8])
-        if row[9]:
-            path = [row[10] if schema == "$user" else schema for schema in (path if path is not None else types.session_path())]
+        path = _search_path_of(row[6])
+        if row[7]:
+            path = [row[8] if schema == "$user" else schema for schema in (path if path is not None else types.session_path())]
         routine = RoutineTypes(types, path, bound=True)
     found = set()
     for form, text in routine_texts(*row[1:6]):
@@ -1127,7 +1187,7 @@ END"""), ["clock word in a string: 'now'", "clock_timestamp()", "current_date", 
      ["current_timestamp"]),
     ("plpgsql", plpgsql("DECLARE t text;\nBEGIN\n  t := 'kept' WHERE public.intevia_clock_transaction() IS NOT NULL;\n  RETURN;\nEND\n"),
      []),
-    # A clock word is reported whatever its destination: a time, text, a field or a return (v2.0 pairs 4 and 9).
+    # A clock word is reported whatever its destination: a time, text, a field or a return (v2.1 section 4, rows 4 and 9).
     ("plpgsql", plpgsql("DECLARE t timestamp; BEGIN t := 'now'::text; RETURN; END"), ["clock word in a string: 'now'"]),
     ("plpgsql", plpgsql("DECLARE t text; BEGIN t := 'now'::text; RETURN; END"), ["clock word in a string: 'now'"]),
     ("plpgsql", plpgsql("DECLARE t timestamptz := 'today'::varchar; BEGIN RETURN; END"),
@@ -1225,7 +1285,7 @@ FIELDS = (
 
 
 # The Advisor's CK-2R9 rule-review cases (her M, K, C, P and S cases), each with its verdict under the acceptance rule
-# v2.0 (section 4). Every one was run on PostgreSQL 17.11 by the VC first. Each line: the form, the text, the reads.
+# v2.1 (section 4). Every one was run on PostgreSQL 17.11 by the VC first. Each line: the form, the text, the reads.
 ADVISOR_CK2R9 = (
     # M1: letters, not digits or "_", end a clock word. M2, M3, M4, M8: the written word is reported wherever it goes.
     ("sql", "SELECT 'tomorrow10:00'::timestamp", ["clock word in a string: 'tomorrow10:00'"]),
@@ -1270,7 +1330,7 @@ ADVISOR_CK2R9 = (
     # A plain string is read one fixed way, with standard_conforming_strings on: its backslash is a character, so
     # 'to\x64ay' holds no clock word (the server agrees under the default setting; an E'' string decodes the escape).
     ("sql", "SELECT 'to\\x64ay'", []),
-    # M7 and M11: a word made by computing on text is a stated limit (v2.0 section 5); a word written is reported.
+    # M7 and M11: a word made by computing on text is a stated limit (v2.1 section 5); a word written is reported.
     ("sql", "SELECT split_part('due:today', ':', 2)::date", ["clock word in a string: 'due:today'"]),
     ("sql", "SELECT ('today [local]'::varchar(5))::date", ["clock word in a string: 'today [local]'"]),
     ("sql", "SELECT (('to'::text || 'day')::date)", []),
@@ -1341,6 +1401,19 @@ ADVISOR_CK2R9 = (
     ("sql", "SELECT $q$today$q$, E'to\\x64ay', U&'to\\0064ay', 'to'\n'day', ' NoW '",
      ["clock word in a string: ' NoW '", "clock word in a string: 'today'"]),
     ("sql", "SELECT 'epoch'::timestamp, 'infinity'::date, 'allballs'::time, 'known', 'nowhere'", []),
+)
+
+# Gemini's CK-2R10 step 2 defects D1 and D3 (owed ledger C1-130, item 9), corrected at CK-2j1a. PostgreSQL 17.11's own
+# reading of each text is the VC's (claim check of 14 Nov 2026): after the comment that a lone carriage return ends,
+# it reads the string 'today'; and it returns 'hello' under the column name uescape_alias. Each line: the form, the
+# text, the reads.
+GEMINI_CK2R10 = (
+    # D1: a "--" comment ends at a carriage return, so the string after it is written in code and is read.
+    ("sql", "NOTIFY r9, -- comment\r'today'", ["clock word in a string: 'today'"]),
+    ("sql", "SELECT 1 -- c\r, 'today'", ["clock word in a string: 'today'"]),
+    # D3: a name that only starts with UESCAPE is a name. The string before it is decoded with the default escape.
+    ("sql", "SELECT U&'hello' uescape_alias", []),
+    ("sql", "SELECT U&'to\\0064ay' uescape_alias", ["clock word in a string: 'today'"]),
 )
 
 # The Advisor's CK-2R9 final-check cases and their families (CK-2R10), each with its verdict under rule v2.1. Every
@@ -1450,6 +1523,18 @@ ROUTINE_IDENTITY = (
     ("anchored_missing", _ROUTINE % ("anchored_missing", "text", "",
                                      "DECLARE a clk05_types.nothing.t%TYPE; BEGIN RETURN NULL; END"),
      ["unreadable: %TYPE anchor not resolved: clk05_types.nothing.t%TYPE"]),
+    # Gemini's CK-2R10 step 2 defect D2 (CK-2j1a): an anchor that is not resolved is not read as a variable sharing
+    # its last name, whether that is PL/pgSQL's own FOUND, a declared variable, or a variable under a label the
+    # routine does not hold. PostgreSQL 17.11 refuses each of these at CREATE with function checks on.
+    ("anchored_missing_found", _ROUTINE % ("anchored_missing_found", "text", "",
+                                           "DECLARE a clk05_types.nothing.found%TYPE; BEGIN RETURN NULL; END"),
+     ["unreadable: %TYPE anchor not resolved: clk05_types.nothing.found%TYPE"]),
+    ("anchored_missing_t", _ROUTINE % ("anchored_missing_t", "text", "",
+                                       "DECLARE t integer; a clk05_types.nothing.t%TYPE; BEGIN RETURN NULL; END"),
+     ["unreadable: %TYPE anchor not resolved: clk05_types.nothing.t%TYPE"]),
+    ("anchored_no_label", _ROUTINE % ("anchored_no_label", "text", "",
+                                      "DECLARE b integer; a nothing.b%TYPE; BEGIN RETURN NULL; END"),
+     ["unreadable: %TYPE anchor not resolved: nothing.b%TYPE"]),
     ("row_index_first", _ROUTINE % ("row_index_first", "void", _INDEX_FIRST,
                                     "DECLARE v item%ROWTYPE; BEGIN v.x := 1; END"), _FIELD_UNREADABLE),
     ("row_qualified", _ROUTINE % ("row_qualified", "void", _INDEX_FIRST,
@@ -1462,7 +1547,7 @@ ROUTINE_IDENTITY = (
         "BEGIN PERFORM NULL::activity_tz; RETURN NULL; END"), ["timetz"]),
 )
 ROUTINE_ROW = dict(CATALOGUE)["function"] + " AND p.oid = {oid}"
-# The places CK-2R9 adds, each witnessed by an object of its own (v2.0 section 2), and what each reads.
+# The places CK-2R9 adds, each witnessed by an object of its own (v2.1 section 2), and what each reads.
 PLACES_SETUP = (
     "CREATE SCHEMA clk05_places",
     "CREATE DOMAIN clk05_places.day AS date DEFAULT ('today'::text)::date",
@@ -1522,7 +1607,7 @@ PLACES = {
     ("timetz use", "type clk05_places._wall"): ["timetz"],
 }
 
-# The allow-list (v2.0 section 3): the only way a finding is cleared. Each entry: the object's kind and name, the
+# The allow-list (v2.1 section 3): the only way a finding is cleared. Each entry: the object's kind and name, the
 # exact finding, and the reason. An entry is added only with the Human Governor's approval; an entry that matches
 # nothing fails the check.
 _S015_DIAGNOSTIC = ("clock word in a string: 'S015 cache coordinate diagnostic: anchor=%s id=%s state_at=%s known_at=%s "
@@ -1632,7 +1717,7 @@ class OnlyOneClockTests(TransactionTestCase):
         """CLK-05, catalogue half. No SQL the database holds reads the time as written (a clock function, a time
         keyword, a clock word in a string, one-argument age, any use of timetz) but the three faces, in an owned test
         database the routines that move them, and the entries the Human Governor allows."""
-        for form, text, expected in SPELLINGS + BESIDE_A_CALL + ADVISOR_CK2R9 + ADVISOR_CK2R10:
+        for form, text, expected in SPELLINGS + BESIDE_A_CALL + ADVISOR_CK2R9 + ADVISOR_CK2R10 + GEMINI_CK2R10:
             self.assertEqual(time_readings(form, text, TableTypes(TABLE_ROW_TYPES)), expected,
                              "CLK-05: PostgreSQL's parser must find every time read written in a text and nothing else; "
                              "this text, read as %s, was read wrongly: %r" % (form, text))
@@ -1685,7 +1770,7 @@ class OnlyOneClockTests(TransactionTestCase):
                         self.assertEqual(function_readings(row, CatalogueTypes(cursor)), [],
                                          "CLK-05: with the reading role as its owner, this routine's $user names no "
                                          "schema holding the domain: %s" % created)
-                        row = row[:10] + ("clk05_owner",) + row[11:]
+                        row = row[:8] + ("clk05_owner",) + row[9:]
                     self.assertEqual(function_readings(row, CatalogueTypes(cursor)), expected,
                                      "CLK-05: a routine's names resolve under its own search path, a definer's $user is "
                                      "its owner, and x%%ROWTYPE is the row of the relation x. This routine was read "

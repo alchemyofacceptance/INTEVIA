@@ -55,7 +55,7 @@ def _registration_missing_at_signin(identity: Identity) -> bool:
 	}:
 		return False
 	with connection.cursor() as cursor:
-		cursor.execute("SELECT clock_timestamp()")
+		cursor.execute("SELECT public.intevia_clock_instant()")
 		known_at = cursor.fetchone()[0]
 	if ProductionGovernedRegistrationFactSource().reference_at(
 		identity.identity_id,

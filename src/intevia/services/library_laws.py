@@ -45,7 +45,7 @@ def our_laws(
                     WHERE lo.organism_id=%s AND m.identity_id=%s
                       AND public.s015_fold_effective_state(
                           'core_organismmembership',m.id,
-                          statement_timestamp(),statement_timestamp()
+                          public.intevia_clock_statement(),public.intevia_clock_statement()
                       )=ANY(%s::text[])
                 )
                 """,
@@ -61,7 +61,7 @@ def our_laws(
             cursor.execute(
                 """
                 WITH audience AS (
-                    SELECT statement_timestamp() AS evaluated_at
+                    SELECT public.intevia_clock_statement() AS evaluated_at
                       FROM public.core_livingorganism lo
                      WHERE lo.organism_id=%s
                        AND EXISTS (
@@ -69,7 +69,7 @@ def our_laws(
                             WHERE m.living_organism_id=lo.id AND m.identity_id=%s
                               AND public.s015_fold_effective_state(
                                   'core_organismmembership',m.id,
-                                  statement_timestamp(),statement_timestamp()
+                                  public.intevia_clock_statement(),public.intevia_clock_statement()
                               )=ANY(%s::text[])
                        )
                 )

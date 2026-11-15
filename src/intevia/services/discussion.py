@@ -103,7 +103,7 @@ def _execute(actor, *, organism_uuid, circle_uuid, operation, request_uuid, **fi
     board = _board_id(organism_uuid, circle_uuid)
     payload = {"organism": _uuid(organism_uuid), "circle": _uuid(circle_uuid) if circle_uuid is not None else None,
                "board": str(board), "operation": operation, "request": _uuid(request_uuid), **fields}
-    stamp = _rows("SELECT statement_timestamp() AS stamp")[0]["stamp"]
+    stamp = _rows("SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
     result = _rows("SELECT public.disc_execute(%s::jsonb,%s,%s,%s) AS result",
                    [json.dumps(payload), actor.pk, actor.access_epoch, stamp])[0]["result"]
     return {key: UUID(value) if key in {"board", "act"} else value for key, value in result.items()}
@@ -123,8 +123,8 @@ def _ensure_board(actor, *, organism_uuid, circle_uuid, request_uuid):
                       operation="PROVISION", request_uuid=request_uuid)
     # Circle Welcome is never a provisioning side effect (HG P2c R1).
     if circle_uuid is None:
-        facts = _rows("""SELECT public.disc_probation_open(b.organism_id,statement_timestamp()) AS allowed,
-            public.disc_office(b.organism_id,NULL,%s,statement_timestamp()) IS NOT NULL AS coordinator,
+        facts = _rows("""SELECT public.disc_probation_open(b.organism_id,public.intevia_clock_statement()) AS allowed,
+            public.disc_office(b.organism_id,NULL,%s,public.intevia_clock_statement()) IS NOT NULL AS coordinator,
             EXISTS(SELECT FROM public.core_disccategory c WHERE c.board_uuid=b.board_uuid
                 AND c.functional_code='WELCOME') AS welcomed
             FROM public.core_discboard b WHERE b.board_uuid=%s""", [actor.pk, result["board"]])[0]
@@ -222,13 +222,13 @@ def _audience(actor, organism_uuid, circle_uuid, category_uuid=_NO_CATEGORY):
     _read_owner(organism_uuid, circle_uuid)
     if category_uuid is not _NO_CATEGORY:
         _read_uuid(category_uuid)
-    query = """SELECT b.*,public.disc_member_state(b.organism_id,%s,statement_timestamp()) AS member_state,
-        public.disc_office(b.organism_id,b.circle_id,%s,statement_timestamp()) AS office
+    query = """SELECT b.*,public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement()) AS member_state,
+        public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) AS office
         FROM public.core_discboard b JOIN public.core_livingorganism lo ON lo.id=b.organism_id
         LEFT JOIN public.core_circle c ON c.id=b.circle_id
         WHERE lo.organism_id=%s AND c.circle_uuid IS NOT DISTINCT FROM %s::uuid
-          AND (public.disc_audience(b.organism_id,b.circle_id,%s,'MEMBERS',statement_timestamp())
-            OR public.disc_audience(b.organism_id,b.circle_id,%s,'PROBATIONARY',statement_timestamp()))"""
+          AND (public.disc_audience(b.organism_id,b.circle_id,%s,'MEMBERS',public.intevia_clock_statement())
+            OR public.disc_audience(b.organism_id,b.circle_id,%s,'PROBATIONARY',public.intevia_clock_statement()))"""
     params = [actor.pk, actor.pk, organism_uuid, circle_uuid, actor.pk, actor.pk]
     rows = _rows(query, params)
     if not rows:
@@ -247,11 +247,11 @@ def board_categories(*, credential, organism_uuid, circle_uuid=None):
     with transaction.atomic():
         actor = _actor(credential)
         board = _audience(actor, organism_uuid, circle_uuid)
-        rows = _rows("""SELECT c.*,public.disc_member_state(b.organism_id,%s,statement_timestamp())='ACTIVE'
-              OR public.disc_member_state(b.organism_id,%s,statement_timestamp())='PROBATIONARY' AS posting_state,
-            public.disc_office(b.organism_id,b.circle_id,%s,statement_timestamp()) IS NOT NULL AS coordinator
+        rows = _rows("""SELECT c.*,public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='ACTIVE'
+              OR public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='PROBATIONARY' AS posting_state,
+            public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) IS NOT NULL AS coordinator
             FROM public.disc_categories c JOIN public.core_discboard b ON b.board_uuid=c.board_uuid
-            WHERE b.board_uuid=%s AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,statement_timestamp())
+            WHERE b.board_uuid=%s AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())
             ORDER BY c.sort_order,c.name,c.category_uuid""", [actor.pk, actor.pk, actor.pk, board["board_uuid"], actor.pk])
         for row in rows:
             allowed = row.pop("posting_state") and not row["retired"]
@@ -273,7 +273,7 @@ def category_history(*, credential, organism_uuid, category_uuid, circle_uuid=No
             JOIN public.core_discact a ON a.act_uuid=v.act_uuid
             JOIN public.core_livingorganismevent e ON e.event_uuid=a.act_uuid
             WHERE current.category_uuid=%s AND current.board_uuid=%s
-              AND public.disc_audience(b.organism_id,b.circle_id,%s,current.access_level,statement_timestamp())
+              AND public.disc_audience(b.organism_id,b.circle_id,%s,current.access_level,public.intevia_clock_statement())
             ORDER BY v.version_number""", [category_uuid, board["board_uuid"], actor.pk])
         if not rows:
             raise DiscussionUnavailable()

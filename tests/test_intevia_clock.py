@@ -17,7 +17,6 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import DatabaseError, OperationalError, connection, connections, transaction
 from django.db.backends.postgresql.operations import DatabaseOperations as PlainOperations
-from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 
@@ -60,6 +59,10 @@ def undone():
 TEST_CLOCK = import_module("intevia_test_clock.migrations.0001_moving_part")
 PRODUCTION = import_module("core.migrations.0096_intevia_clock")
 MICROSECOND = timedelta(microseconds=1)
+# How far the positive witnesses move the clock. Test data only: neither is a period INTEVIA knows. The first is not
+# a whole number of seconds, so that a face which dropped the microseconds would be seen.
+MOVED = timedelta(days=3, microseconds=7)
+AHEAD = timedelta(days=30)
 COUNTER_FILE = "SELECT pg_catalog.pg_relation_filenode('public.intevia_test_clock_offset_us'::regclass)"
 
 
@@ -540,8 +543,21 @@ class InteviaClockTests(TransactionTestCase):
         """CLK-04, offset zero. With no offset, each face of the INTEVIA Clock, in storage and through the Python
         door, returns what the built-in it stands for returns at the same cut: as production writes the faces,
         and as the owned route writes them."""
-        offset = timedelta(0)
         self.assertEqual(owned_route.offset(), 0, "CLK-04: this witness reads the clock at zero offset.")
+        self.each_face_keeps_its_meaning(timedelta(0))
+
+    def test_each_face_keeps_its_built_in_meaning_after_a_move(self):
+        """CLK-04, after a move. With the clock moved forward, each face of the INTEVIA Clock, as the owned route
+        writes it and through the Python door and the mail helper, returns what the built-in it stands for returns at
+        the same cut, later by exactly the offset."""
+        self.assertEqual(owned_route.offset(), 0, "CLK-04 after a move: the clock must start this witness at zero.")
+        moved = owned_route.advance(MOVED)
+        self.assertEqual(moved, MOVED // MICROSECOND, "CLK-04 after a move: the clock must stand at the offset this witness asked for.")
+        self.each_face_keeps_its_meaning(MOVED)
+
+    def each_face_keeps_its_meaning(self, offset):
+        """CLK-04's comparison at one offset: each face against the built-in it stands for, at the same cut, the face
+        later by the offset. Production's faces carry no offset, so they are compared at zero only."""
 
         def observe(cursor):
             before = oracle.wall(cursor)
@@ -558,9 +574,10 @@ class InteviaClockTests(TransactionTestCase):
             return before, first, second, spread, saved_first, saved_second, oracle.wall(cursor)
 
         observed = {}
-        with undone(), connection.cursor() as cursor:
-            production_faces(cursor)
-            observed["as production writes them"] = observe(cursor)
+        if not offset:
+            with undone(), connection.cursor() as cursor:
+                production_faces(cursor)
+                observed["as production writes them"] = observe(cursor)
         with connection.cursor() as cursor:
             observed["as the owned route writes them"] = observe(cursor)
         for faces, (before, first, second, spread, saved_first, saved_second, after) in observed.items():
@@ -636,6 +653,89 @@ class InteviaClockTests(TransactionTestCase):
                 mail.database_now()
             self.assertIn("PostgreSQL is required", str(refused.exception),
                           "CLK-04 mail: the refusal must keep its landed wording.")
+
+    def test_the_clock_moves_forward_by_what_is_asked(self):
+        """CLK-02, positive. A move by a duration moves the clock by exactly that duration, and a second adds to the
+        first; a move to a time moves the clock so that it shows that time or later, and no further than was asked.
+        The offset the move returns is the offset the clock then holds."""
+        self.assertEqual(owned_route.offset(), 0, "CLK-02 positive: the clock must start this witness at zero.")
+        asked = MOVED // MICROSECOND
+        with connection.cursor() as cursor:
+            before = oracle.wall(cursor)
+        first = owned_route.advance(MOVED)
+        self.assertEqual((first, owned_route.offset()), (asked, asked),
+                         "CLK-02 positive: a move by a duration must move the clock by exactly that duration, and return the offset it holds.")
+        shown = clock.database_now()
+        with connection.cursor() as cursor:
+            after = oracle.wall(cursor)
+        self.assertTrue(before + MOVED <= shown <= after + MOVED,
+                        "CLK-02 positive: after the move the clock must show real time later by the move: %s is not between %s "
+                        "and %s." % (shown, before + MOVED, after + MOVED))
+        second = owned_route.advance(MICROSECOND)
+        self.assertEqual((second, owned_route.offset()), (asked + 1, asked + 1),
+                         "CLK-02 positive: a second move must add to the first.")
+        target = clock.database_now() + AHEAD
+        third = owned_route.advance_to(target)
+        self.assertEqual(third, owned_route.offset(), "CLK-02 positive: a move to a time must return the offset the clock then holds.")
+        self.assertGreater(third, second, "CLK-02 positive: a move to a later time must move the clock forward.")
+        self.assertLessEqual(third - second, AHEAD // MICROSECOND,
+                             "CLK-02 positive: a move to a time must move the clock no further than was asked; the time that "
+                             "passed since the target was chosen can only shorten it.")
+        self.assertGreaterEqual(clock.database_now(), target, "CLK-02 positive: after a move to a time the clock must show that time or later.")
+
+    def test_a_move_stands_alone_and_a_later_transaction_reads_one_offset(self):
+        """CLK-06, positive. With no transaction open and the run's other connection idle, a move is made; and a
+        transaction that begins after it, on the connection that moved and on the other, reads the clock at the new
+        offset in each of its statements."""
+        self.assertEqual(owned_route.offset(), 0, "CLK-06 positive: the clock must start this witness at zero.")
+        other = self.peer()
+        with other.cursor() as cursor:
+            cursor.execute("SELECT 1")   # connected, and idle from here on
+        try:
+            answered = ("moved", owned_route.advance(MOVED))
+        except owned_route.ClockRouteRefused as stopped:
+            answered = ("the owned route refused", str(stopped))
+        self.assertEqual(answered, ("moved", MOVED // MICROSECOND),
+                         "CLK-06 positive: with every other connection idle and no transaction open, the move must be made.")
+        for label, session in (("the connection that moved", connection), ("another connection", other)):
+            session.set_autocommit(False)
+            try:
+                with session.cursor() as cursor:
+                    first = oracle.cuts(cursor)
+                    second = oracle.cuts(cursor)
+            finally:
+                session.rollback()
+                session.set_autocommit(True)   # a test that manages its own transaction ends it before its teardown
+            with self.subTest(session=label):
+                self.assertLess(first.native_statement, second.native_statement,
+                                "CLK-06 positive, %s: two statements must have two starts, or this witness shows nothing." % label)
+                self.assertEqual(second.native_transaction, first.native_transaction,
+                                 "CLK-06 positive, %s: both statements must belong to one transaction." % label)
+                for cut_label, cut in (("first statement", first), ("second statement", second)):
+                    self.assertEqual((cut.face_transaction, cut.face_statement),
+                                     (cut.native_transaction + MOVED, cut.native_statement + MOVED),
+                                     "CLK-06 positive, %s, %s: a transaction begun after the move must read the clock at the "
+                                     "new offset, and at no other." % (label, cut_label))
+
+    def test_the_reset_returns_a_moved_clock_to_real_time(self):
+        """CLK-07, positive. After a move, the database reset empties the tables and returns the clock to zero, and
+        the Python door then reads real time again."""
+        self.assertEqual(owned_route.offset(), 0, "CLK-07 positive: the clock must start this witness at zero.")
+        self.assertEqual(owned_route.advance(MOVED), MOVED // MICROSECOND, "CLK-07 positive: the clock must first be moved.")
+        Session.objects.create(session_key="clk07", session_data="held", expire_date=clock.database_now())
+        # The reset is entered as Django enters it, through the flush command, outside any transaction (the flush's own
+        # precondition). This witness adds no direct entry to the clock's reset.
+        call_command("flush", verbosity=0, interactive=False, database="default", reset_sequences=False,
+                     allow_cascade=False, inhibit_post_migrate=False)
+        self.assertEqual((owned_route.offset(), Session.objects.filter(session_key="clk07").count()), (0, 0),
+                         "CLK-07 positive: the reset must return the clock to zero with the rows gone.")
+        with connection.cursor() as cursor:
+            before = oracle.wall(cursor)
+        shown = clock.database_now()
+        with connection.cursor() as cursor:
+            after = oracle.wall(cursor)
+        self.assertTrue(before <= shown <= after,
+                        "CLK-07 positive: after the reset the clock must show real time: %s is not between %s and %s." % (shown, before, after))
 
     def test_the_clock_refuses_every_move_that_is_not_forward(self):
         """CLK-02, refusals. A move of nothing, a move backwards, a move to a time already past, a move with no
@@ -1303,88 +1403,5 @@ class InteviaClockTests(TransactionTestCase):
                              "CLK-09 baseline: where the baseline held no counter, none is required by the light comparison.")
         self.assertEqual(owned_route.offset(), 0, "CLK-09: nothing in this witness may move the clock.")
 
-    def test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark(self):
-        """CLK-08. An owned clone reversed below the clock's migration and restored returns to exactly the state it
-        had, at offset zero, and at every point in between production's startup refuses it."""
-        counter_found = "the test route's relation public.intevia_test_clock_offset_us is present"
-        other_marks = ("the test route's function", "the test route's procedure", "the migration ledger records", "the face public.")
-
-        def faces():
-            with connection.cursor() as cursor:
-                return {name: PRODUCTION.installed(cursor, name) for name, *_rest in PRODUCTION.FACES}
-
-        def ledger():
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT app, name FROM public.django_migrations ORDER BY app, name")
-                return cursor.fetchall()
-
-        def moving_part():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """SELECT p.proname::text FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-                        WHERE n.nspname = 'public' AND pg_catalog.starts_with(p.proname::text, %s) ORDER BY 1""",
-                    [startup.TEST_CLOCK_PREFIX])
-                return [row[0] for row in cursor.fetchall()]
-
-        def production_startup(label):
-            with override_settings(**PRODUCTION_SETTINGS):
-                with self.assertRaises(startup.ClockStartupRefused,
-                                       msg="CLK-08 %s: production's startup must refuse this database." % label) as refused:
-                    startup.refuse_unless_production_clock("default")
-            return str(refused.exception)
-
-        received = tuple(MigrationExecutor(connection).loader.graph.leaf_nodes())
-        restored = []
-
-        def restore():
-            # Marked done before it migrates, as REV-01's is: a restore that fails is not run a second time at clean-up.
-            if not restored:
-                restored.append(True)
-                MigrationExecutor(connection).migrate(list(received))
-
-        self.assertIn((startup.TEST_CLOCK_APP, "0001_moving_part"), ledger(), "CLK-08: this clone must begin with the moving part applied.")
-        self.assertIn(("core", "0096_intevia_clock"), ledger(), "CLK-08: this clone must begin with the clock's migration applied.")
-        before, faces_before, ledger_before, parts_before = instrument.capture(), faces(), ledger(), moving_part()
-        self.assertEqual(instrument.clock_counter_violations(before["intevia_clock_counter"], True), [],
-                         "CLK-08: the clone must begin with its counter present, at offset zero.")
-        counter_before = before["intevia_clock_counter"]
-        self.assertEqual(len(parts_before), 9, "CLK-08: the clone must begin with the nine routines of the moving part.")
-        self.assertIn(counter_found, production_startup("at head"))
-
-        self.addCleanup(restore)
-        # Down one step: the moving part reversed, the clock's own migration still applied.
-        MigrationExecutor(connection).migrate([(startup.TEST_CLOCK_APP, None)])
-        written = {name: PRODUCTION.expected(stored, builtin, meaning) for name, _w, stored, builtin, meaning in PRODUCTION.FACES}
-        self.assertEqual(faces(), written, "CLK-08 reversed: the faces must be the production faces, exactly as 0096 writes them.")
-        self.assertEqual(moving_part(), [], "CLK-08 reversed: no function of the moving part may remain.")
-        self.assertNotIn(startup.TEST_CLOCK_APP, [app for app, _name in ledger()], "CLK-08 reversed: the ledger must hold no row for the test route's app.")
-        self.assertEqual(instrument.clock_counter_observation(), counter_before,
-                         "CLK-08 reversed: the counter must be kept, at zero and exactly as it was.")
-        text = production_startup("reversed")
-        self.assertIn(counter_found, text, "CLK-08 reversed: the refusal must name the counter.")
-        self.assertEqual([mark for mark in other_marks if mark in text], [],
-                         "CLK-08 reversed: with the production faces back, the counter must be the only mark found.")
-
-        # Down below the clock: no face at all.
-        MigrationExecutor(connection).migrate([("core", "0095_te_c2_join")])
-        self.assertEqual(faces(), {name: None for name in written}, "CLK-08 below the clock: no face may remain.")
-        self.assertEqual(moving_part(), [], "CLK-08 below the clock: no function of the moving part may remain.")
-        self.assertEqual([row for row in ledger() if row in ((startup.TEST_CLOCK_APP, "0001_moving_part"), ("core", "0096_intevia_clock"))],
-                         [], "CLK-08 below the clock: the ledger must hold neither migration.")
-        self.assertEqual(instrument.clock_counter_observation(), counter_before,
-                         "CLK-08 below the clock: the counter must be kept, at zero and exactly as it was.")
-        text = production_startup("below the clock")
-        self.assertIn(counter_found, text, "CLK-08 below the clock: the refusal must name the counter.")
-        for part in REFUSAL_PARTS:
-            self.assertIn(part, text, "CLK-08 below the clock: the refusal must keep its five parts.")
-
-        # Up again: every received leaf, through the executor.
-        restore()
-        after = instrument.capture()
-        self.assertEqual(instrument.compare(before, after), ([], []), "CLK-08 restored: the full capture must equal the one taken at head.")
-        self.assertEqual(after["intevia_clock_counter"], counter_before, "CLK-08 restored: the counter must be the one kept, at zero.")
-        self.assertEqual(faces(), faces_before, "CLK-08 restored: the faces and their comments must be as they were.")
-        self.assertEqual(moving_part(), parts_before, "CLK-08 restored: the nine routines must be back.")
-        self.assertEqual(ledger(), ledger_before, "CLK-08 restored: the ledger must be as it was received.")
-        self.assertEqual(owned_route.offset(), 0, "CLK-08 restored: the clock must be at zero.")
-        self.assertIn(counter_found, production_startup("restored"), "CLK-08 restored: production's startup must still refuse.")
+    # CLK-08 (a reversal below the clock returns whole and keeps the mark) is witnessed in
+    # tests/test_migration_reversibility.py, at two stops of REV-01's one descent (the ruled fold, CK-2j1a).

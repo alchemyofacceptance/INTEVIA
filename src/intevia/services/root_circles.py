@@ -27,7 +27,7 @@ INVENTORY=(
 
 def now(alias='default'):
     with connections[alias].cursor() as cursor:
-        cursor.execute('SELECT statement_timestamp()')
+        cursor.execute('SELECT public.intevia_clock_statement()')
         return cursor.fetchone()[0]
 
 

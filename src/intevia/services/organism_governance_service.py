@@ -3712,7 +3712,7 @@ class OrganismGovernanceService:
                   evidence, request_reference, fingerprint, event_uuid, idempotency_key])
             event_id = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_circle", circle.pk, effective_at],
             )
             cursor.fetchone()
@@ -3839,7 +3839,7 @@ class OrganismGovernanceService:
             )
             event_id = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_livingorganism", organism.pk, effective_at],
             )
             cursor.fetchone()

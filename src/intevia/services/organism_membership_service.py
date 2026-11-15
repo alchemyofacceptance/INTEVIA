@@ -334,7 +334,7 @@ class OrganismMembershipReader:
 
         If clock is given it must be callable (TypeError otherwise) and supplies
         the reading time; without it, the reading time is the database's
-        clock_timestamp(). database_alias must be a non-empty str (ValueError
+        public.intevia_clock_instant(). database_alias must be a non-empty str (ValueError
         otherwise); it defaults to "default".
         """
         if clock is not None and not callable(clock):
@@ -407,12 +407,12 @@ class OrganismMembershipReader:
         """Return the reading time.
 
         The configured clock's value, validated by _validate_timestamp, or else
-        the database's clock_timestamp() on this reader's alias.
+        the database's public.intevia_clock_instant() on this reader's alias.
         """
         if self._clock is not None:
             return _validate_timestamp(self._clock(), "clock")
         with connections[self._alias].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             return cursor.fetchone()[0]
 
     def _view(self, membership: OrganismMembership, now: datetime) -> OwnMembershipView:
@@ -974,7 +974,7 @@ class OrganismMembershipService(_OrganismCommandService):
            decision's references, and a lineage_reference hashed from the
            constructed lineage payload.
         8. Re-reads the membership, refreshes the governed cache at
-           effective_at with the database's clock_timestamp(), then
+           effective_at with the database's public.intevia_clock_instant(), then
            re-reads the membership and fetches and refreshes the transition.
         9. Builds the result and returns it through _finalise.
 
@@ -1186,7 +1186,7 @@ class OrganismMembershipService(_OrganismCommandService):
 
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_organismmembership", membership.pk, effective_at],
             )
         membership.refresh_from_db(using=self._alias)
@@ -1747,7 +1747,7 @@ class OrganismMembershipService(_OrganismCommandService):
 
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_organismmembership", membership.pk, effective_at],
             )
         membership.refresh_from_db()

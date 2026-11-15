@@ -27,7 +27,7 @@ NO_BALLOT_LABELS = {
 def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
     """The existing thread and GOVERNANCE-result audience at the current cut."""
     query = """SELECT b.board_uuid,b.organism_id,
-        public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,statement_timestamp()) AS thread_audience
+        public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()) AS thread_audience
         FROM public.core_discboard b
         JOIN public.core_livingorganism lo ON lo.id=b.organism_id
         LEFT JOIN public.core_circle circle ON circle.id=b.circle_id
@@ -35,13 +35,13 @@ def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
         JOIN public.core_discthread t USING(category_uuid)
         JOIN public.discp_posts first ON first.thread_uuid=t.thread_uuid AND first.post_number=1
         WHERE lo.organism_id=%s AND circle.circle_uuid IS NOT DISTINCT FROM %s::uuid AND t.thread_uuid=%s
-        AND (public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,statement_timestamp())
+        AND (public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement())
           OR (circle.kind='GOVERNANCE' AND cat.access_level<>'COORDINATORS'
             AND EXISTS(SELECT FROM public.core_cqact o WHERE o.thread_uuid=t.thread_uuid AND o.operation IN ('PROCEED','OPEN_VOTE','CLOSE','NO_BALLOT'))
-            AND public.disc_audience(b.organism_id,NULL,%s,'MEMBERS',statement_timestamp())))
+            AND public.disc_audience(b.organism_id,NULL,%s,'MEMBERS',public.intevia_clock_statement())))
         AND ((NOT first.coordinator_hidden AND (NOT first.author_hidden OR EXISTS(
              SELECT FROM public.core_cqact o WHERE o.thread_uuid=t.thread_uuid AND o.operation IN ('PROCEED','OPEN_VOTE','CLOSE','NO_BALLOT'))))
-             OR public.disc_office(b.organism_id,b.circle_id,%s,statement_timestamp()) IS NOT NULL)"""
+             OR public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) IS NOT NULL)"""
     args = [
         actor.pk,
         organism_uuid,
@@ -283,7 +283,7 @@ def vote_status(
     if ballot_uuid is not None:
         disc._read_uuid(ballot_uuid)
     rows = disc._rows(
-        """SELECT statement_timestamp() AS read_at,o.act_uuid AS ballot,o.facts->>'event_kind' AS event_kind,
+        """SELECT public.intevia_clock_statement() AS read_at,o.act_uuid AS ballot,o.facts->>'event_kind' AS event_kind,
          o.effective_at AS opened_at,(o.facts->>'deadline')::timestamptz AS deadline,
          o.facts->'reporting_rule' AS reporting_rule,o.facts->'attempt' AS attempt,
          (o.facts->>'version')::uuid AS wording_version,r.act_uuid AS result_uuid
@@ -375,7 +375,7 @@ def _project_authorities(records, actor, organism_uuid, database_alias="default"
             JOIN public.core_discboard b ON b.board_uuid=r.board_uuid LEFT JOIN public.core_circle c ON c.id=b.circle_id
             LEFT JOIN public.core_cqact o ON o.act_uuid=(r.facts->>'ballot')::uuid
             WHERE r.act_uuid=ANY(%s::uuid[]) AND lo.organism_id=%s
-              AND public.cq3_result_visible(r.act_uuid,lo.id,%s,statement_timestamp())
+              AND public.cq3_result_visible(r.act_uuid,lo.id,%s,public.intevia_clock_statement())
             """,
             [sorted({item[3] for item in linked}), organism_uuid, actor.pk],
         )
@@ -474,7 +474,7 @@ def implementation_record(
             """SELECT a.act_uuid AS award FROM public.core_cqact a
                WHERE a.act_uuid=ANY(%s::uuid[]) AND (
                  (a.operation='RECOGNISE' AND a.request->>'result' IS NULL)
-                 OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,statement_timestamp()))""",
+                 OR public.cq3_result_visible((a.request->>'result')::uuid,a.organism_id,%s,public.intevia_clock_statement()))""",
             [[seat["award"] for seat in seats], actor.pk],
         )}
         for seat in seats:

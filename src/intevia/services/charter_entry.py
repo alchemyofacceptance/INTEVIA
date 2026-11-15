@@ -75,7 +75,7 @@ def _prepare_publications(credential, library):
         actor = models.Identity.objects.select_for_update().get(credential=credential)
         root = models.LivingOrganism.objects.select_for_update().get(platform_root=True)
         with connection.cursor() as cursor:
-            cursor.execute("SELECT public.r_founder_office(%s,%s,statement_timestamp(),statement_timestamp())",
+            cursor.execute("SELECT public.r_founder_office(%s,%s,public.intevia_clock_statement(),public.intevia_clock_statement())",
                            [root.pk, actor.pk])
             office = cursor.fetchone()[0]
         if actor.pk != root.founder_identity_id or office is None:

@@ -1,0 +1,18 @@
+# INTEVIA Clock: operations notes
+
+Non-controlling notes for whoever operates or extends INTEVIA. The rulings and the tests named here govern.
+
+1. **The seven storage migrations are one set.** Core migrations 0097 to 0103 (the INTEVIA Clock's storage conversion) are safe only as a set once the clock can move: apply or reverse all seven together, never some of them, and CLK-05's catalogue half (`tests/test_intevia_clock_only_one.py`) fails a database in which one is missing.
+2. **A new migration and CLK-05's code half.** `tests/test_intevia_clock_only_one_code.py` holds the landed migrations by path and git blob (`FROZEN_MIGRATIONS`). A new migration is not on that list, so its Python is read as product code: it must read the time only through the INTEVIA Clock, and it joins the list, by the tool that builds it, only once it has landed. A listed migration that is changed or missing fails the check.
+
+## How a test moves the clock safely
+
+A deadline no longer has to be waited out. A test reaches it by moving the INTEVIA Clock, in milliseconds. The first deadline test is CLK-03, `tests/test_intevia_clock_deadlines.py`: a Board member's dated resignation, accepted for a date one hour ahead, is refused once the clock has been moved past that date, with the same code and the same words as a date that is really past. Copy its shape.
+
+1. **Move through the owned route only.** `from intevia.test_postgresql_backend import clock as owned_route`, then `owned_route.advance(timedelta(...))` or `owned_route.advance_to(aware_datetime)`. The clock moves forward only. Assert `owned_route.offset() == 0` first, as CLK-03 does, so a test never starts on a clock another test left moved.
+2. **A move stands alone.** It is refused while any connection of the run has a transaction open. Move at the top level of a `TransactionTestCase`, never inside `transaction.atomic()`. If the test opens its own transaction, end it and turn autocommit back on before the move and before the test ends. CLK-03 shows the act accepted inside a transaction it rolls back, and moves only after that block has ended.
+3. **Read the time only through the Clock.** In a test: `tests.s015_0021_support.database_now()`, or `src.intevia.services.clock.database_now()`. Never `datetime.now()`, `timezone.now()`, `time.time()`, and never `now()`, `CURRENT_TIMESTAMP` or `clock_timestamp()` in the test's own SQL: after a move the host and PostgreSQL's built-ins still show real time, and the product shows the moved time. To compare a face with its built-in, use `verification/clock/oracle.py`, as the clock's own tests do.
+4. **CLK-05's code half reads you from your first move.** `tests/test_intevia_clock_only_one_code.py` selects every test file that moves the clock and reads it whole, with each function, method and class it reaches in the product and under `tests/`. One host read anywhere on that path fails the check, and the failure names the chain. A helper in a frozen interim test file (`FROZEN_INTERIM_TESTS`) that reads the host clock cannot be reached from a moving test; build the fixture afresh instead.
+5. **Do not put the clock back yourself.** The database reset that ends every `TransactionTestCase` returns the clock to zero (CLK-07). Add no direct call to the clock's reset.
+6. **Compare with what the landed witness records.** Take the expected refusal code and words from the landed test that reached the deadline in real time, not from the product's message table, so that the two witnesses hold each other.
+7. **Amounts are test data.** The distance a test moves the clock is not a period INTEVIA knows. Say so beside it, as CLK-03 does, and never change a product duration to make a test quicker.

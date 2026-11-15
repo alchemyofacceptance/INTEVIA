@@ -49,8 +49,8 @@ def laws_in_force(organism_uuid, *, at=None, known_at=None, database_alias="defa
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             """SELECT l.*, r.resource_id AS library_reference
-                 FROM public.l_laws_at(%s, coalesce(%s, statement_timestamp()),
-                                     coalesce(%s, statement_timestamp())) l
+                 FROM public.l_laws_at(%s, coalesce(%s, public.intevia_clock_statement()),
+                                     coalesce(%s, public.intevia_clock_statement())) l
                  JOIN public.core_libraryresource r ON r.id=l.resource
                 ORDER BY r.resource_id,l.scope""",
             [organism_uuid, at, known_at],
@@ -72,7 +72,7 @@ def law_history(
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
             """
-            WITH coordinate AS (SELECT coalesce(%s,statement_timestamp()) AS known)
+            WITH coordinate AS (SELECT coalesce(%s,public.intevia_clock_statement()) AS known)
             SELECT b.binding_uuid,b.scope_key,b.law_class,b.consequence_class,b.version_id,
                    v.version_number,b.predecessor_id,b.owner_kind,b.owner_circle_id,b.proposing_circle_id,
                    b.terms_binding_id,b.area,b.in_force_from,b.decision_route,
@@ -152,7 +152,7 @@ _CITATION_HISTORY = """
     ), cuts AS (
         SELECT 'at_act' AS view, coalesce(%s,c.effective_at) AS cut,
                coalesce(%s,c.recorded_at) AS known FROM citation c
-        UNION ALL SELECT 'now', statement_timestamp(), statement_timestamp()
+        UNION ALL SELECT 'current', public.intevia_clock_statement(), public.intevia_clock_statement()
     )
     SELECT c.provision_uuid, c.provision_reference, c.provision_version, c.relationship,
            c.role_uuid, c.cited_version, c.cited_number, c.resource_reference, c.locator,
@@ -235,7 +235,8 @@ def resolve_citation(organism_uuid, provision_uuid, *, at=None, known_at=None, d
         rows = _records(cursor)
     if not rows:
         return None
-    views = {name: [r for r in rows if r["view"] == name] for name in ("at_act", "now")}
+    # The SQL labels its present-time view 'current'; the result keeps its key "now" (the Human Governor, 15 Nov 2026).
+    views = {name: [r for r in rows if r["view"] == label] for name, label in (("at_act", "at_act"), ("now", "current"))}
     origin = views["now"][0]
     cited = {key: origin[key] for key in (
         "provision_uuid", "role_uuid", "relationship", "provision_reference", "provision_version",

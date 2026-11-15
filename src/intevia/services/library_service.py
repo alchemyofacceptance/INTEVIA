@@ -9,7 +9,6 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import QuerySet
-from django.utils import timezone
 
 from core.models import (
     LibraryResource,
@@ -18,6 +17,7 @@ from core.models import (
     LibraryResourceVersion,
     Identity,
 )
+from src.intevia.services.clock import database_now
 from src.intevia.services.contribution_authority import ContributionAuthority
 
 
@@ -54,7 +54,7 @@ class LibraryService:
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
-        value = value or timezone.now()
+        value = value or database_now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("timestamp must be timezone-aware")
         return value

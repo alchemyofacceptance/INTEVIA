@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import time
-
 from django.contrib.auth import logout
 from django.shortcuts import redirect
 from django.urls import reverse
 
 from core.models import Identity
+from src.intevia.services.clock import database_now
 
 
 SESSION_IDENTITY_KEY = "intevia_identity_id"
@@ -17,10 +16,15 @@ SESSION_STARTED_AT_KEY = "intevia_session_started_at"
 SESSION_ABSOLUTE_AGE_SECONDS = 8 * 60 * 60
 
 
+def _clock_epoch() -> int:
+    """Whole seconds since the epoch on the INTEVIA Clock (its instant face, through the Python door)."""
+    return int(database_now().timestamp())
+
+
 def bind_identity_session(request, identity: Identity) -> None:
     request.session[SESSION_IDENTITY_KEY] = str(identity.identity_id)
     request.session[SESSION_ACCESS_EPOCH_KEY] = identity.access_epoch
-    request.session[SESSION_STARTED_AT_KEY] = int(time.time())
+    request.session[SESSION_STARTED_AT_KEY] = _clock_epoch()
     request.session.set_expiry(0)
 
 
@@ -68,7 +72,7 @@ class IdentityAccessMiddleware:
         started_at = request.session.get(SESSION_STARTED_AT_KEY)
         if not isinstance(started_at, int):
             return None
-        if int(time.time()) - started_at >= SESSION_ABSOLUTE_AGE_SECONDS:
+        if _clock_epoch() - started_at >= SESSION_ABSOLUTE_AGE_SECONDS:
             return None
         return identity
 

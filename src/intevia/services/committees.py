@@ -35,7 +35,7 @@ def history(*, credential, organism_uuid, circle_uuid):
         SELECT m.binding,m.act_uuid AS implementation,a.request->>'result' AS decision,m.effective_at,m.recorded_at,
           m.mandate->>'kind' AS kind,m.mandate->'terms_effect'->'binding_uuid' AS terms_binding,
           m.mandate->'chair_basis' AS composition_basis,m.mandate->'officer_finding' AS officer_finding,
-          public.cmt_live(m.binding,statement_timestamp(),statement_timestamp()) AS in_force,
+          public.cmt_live(m.binding,public.intevia_clock_statement(),public.intevia_clock_statement()) AS in_force,
           coalesce((SELECT jsonb_agg(to_jsonb(g) ORDER BY g.effective_at,g.recorded_at,g.requirement)
             FROM public.core_cmtcomposition g WHERE g.mandate=m.binding),'[]') AS composition
         FROM public.cmt_mandates m JOIN public.core_cqact a USING(act_uuid)
@@ -51,7 +51,7 @@ def work_refusal(activity, assignment, alias, person):
     with connections[alias].cursor() as cursor:
         cursor.execute(
             """SELECT EXISTS(
-                SELECT FROM public.cmt_worker(%s,statement_timestamp(),statement_timestamp()) worker
+                SELECT FROM public.cmt_worker(%s,public.intevia_clock_statement(),public.intevia_clock_statement()) worker
                 JOIN public.core_cmtcustody held ON held.receipt=worker.receipt
                 WHERE held.cause ? 'stand_down' AND held.cause->>'custodian'='LO_COORDINATORS'
                 AND (%s OR EXISTS(SELECT FROM public.core_cmtcustody prior
@@ -70,7 +70,7 @@ def work_holder(activity, assignment, alias, at=None, *, person=None):
         return assignment.assignee_id
     with connections[alias].cursor() as cursor:
         cursor.execute(
-            """SELECT holder FROM public.cmt_worker(%s,coalesce(%s,statement_timestamp()),statement_timestamp())""",
+            """SELECT holder FROM public.cmt_worker(%s,coalesce(%s,public.intevia_clock_statement()),public.intevia_clock_statement())""",
             [activity.pk, at],
         )
         rows = cursor.fetchall()
@@ -91,7 +91,7 @@ def board_work(*, credential, organism_uuid, target):
     owner = cq._read_owner(actor, organism_uuid)
     boards = disc._rows(
         """SELECT c.id FROM public.core_circle c WHERE c.parent_organism_id=%s AND c.kind='GOVERNANCE'
-            AND public.disc_audience(c.parent_organism_id,c.id,%s,'MEMBERS',statement_timestamp())""",
+            AND public.disc_audience(c.parent_organism_id,c.id,%s,'MEMBERS',public.intevia_clock_statement())""",
         [owner, actor.pk],
     )
     if not boards:
@@ -99,7 +99,7 @@ def board_work(*, credential, organism_uuid, target):
     return disc._rows(
         """SELECT a.activity_id,w.receipt,i.identity_id AS holder
            FROM public.core_cmtcustody anchor JOIN public.core_serviceactivity a ON a.id=anchor.activity
-           CROSS JOIN LATERAL public.cmt_worker(a.id,statement_timestamp(),statement_timestamp()) w
+           CROSS JOIN LATERAL public.cmt_worker(a.id,public.intevia_clock_statement(),public.intevia_clock_statement()) w
            LEFT JOIN public.core_identity i ON i.id=w.holder
            WHERE anchor.board_circle=%s AND anchor.board_target=%s::jsonb AND anchor.predecessor IS NULL
            ORDER BY a.activity_id""",

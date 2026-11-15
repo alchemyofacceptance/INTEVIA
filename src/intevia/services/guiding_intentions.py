@@ -87,7 +87,7 @@ def _write(*, credential, organism_uuid, gi_uuid, request_uuid, operation,
         raise GIRefused("Write a title and text for this GI version.", code="GI_TEXT")
     try:
         with transaction.atomic():
-            received = _rows("SELECT statement_timestamp() AS stamp")[0]["stamp"]
+            received = _rows("SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
             actor = _lock_actor(database_alias="default", credential=credential, unavailable=GIRefused)
             lo = models.LivingOrganism.objects.filter(organism_id=organism_uuid).first()
             # Match absent and unauthorised organisations before taking the

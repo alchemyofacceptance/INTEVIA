@@ -51,7 +51,7 @@ class GenesisCommand:
 
 def _now():
     with connection.cursor() as cursor:
-        cursor.execute('SELECT statement_timestamp()')
+        cursor.execute('SELECT public.intevia_clock_statement()')
         return cursor.fetchone()[0]
 
 
@@ -85,7 +85,7 @@ def _append(anchor, actor, basis, decision, fp, key, at, action, outcome, eviden
 
 def _refresh(anchor, at):
     with connection.cursor() as cursor:
-        cursor.execute('SELECT public.s015_refresh_governed_cache(%s,%s,%s,statement_timestamp())',
+        cursor.execute('SELECT public.s015_refresh_governed_cache(%s,%s,%s,public.intevia_clock_statement())',
                        [anchor._meta.db_table,anchor.pk,at])
     anchor.refresh_from_db()
 

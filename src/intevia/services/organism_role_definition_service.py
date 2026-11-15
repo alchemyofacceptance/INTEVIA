@@ -568,7 +568,7 @@ def _has_unended_assignment(alias, organism, code, *, at=None):
     """
     with connections[alias].cursor() as cursor:
         if at is None:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             at = cursor.fetchone()[0]  # psycopg: aware datetime, one sample, matching sr_10
         cursor.execute("""SELECT EXISTS (
             SELECT 1 FROM core_contextualroleassignment a
@@ -649,7 +649,7 @@ def board_office_vacancies(organism_uuid, database_alias="default"):
     except LivingOrganism.DoesNotExist as exc:
         raise S015RoleDefinitionNotFound(ORGANISM_NOT_FOUND_MESSAGE, cause="living organism not found") from exc
     with connections[database_alias].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
+        cursor.execute("SELECT public.intevia_clock_instant()")
         at = cursor.fetchone()[0]  # psycopg: aware datetime, shared by every office fold
     rows = OrganismRoleDefinition.objects.using(database_alias).filter(
         living_organism=organism, scope="LIVING_ORGANISM", kind="BOARD_OFFICE", active=True,

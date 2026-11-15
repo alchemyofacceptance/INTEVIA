@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -17,6 +17,7 @@ from core.models import (
     EventRegistrationTransition,
     Identity,
 )
+from src.intevia.services.clock import database_now
 
 if TYPE_CHECKING:
     from src.intevia.services.event_resource_relationship_read_service import (
@@ -354,7 +355,7 @@ class EventReadService:
         resources = resource_reader.present(
             viewer=identity,
             event=event,
-            evaluated_at=evaluated_at or datetime.now(timezone.utc),
+            evaluated_at=evaluated_at or database_now(),
         )
         return EventDetailPresentation(
             event_id=presented.event_id,

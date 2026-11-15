@@ -107,7 +107,7 @@ class Departure:
             )
             with connections[self.roles._alias].cursor() as cursor:
                 cursor.execute(
-                    "SELECT public.s015_refresh_governed_cache(%s,%s,%s,clock_timestamp())",
+                    "SELECT public.s015_refresh_governed_cache(%s,%s,%s,public.intevia_clock_instant())",
                     [
                         "core_contextualroleassignment",
                         assignment.pk,
@@ -176,7 +176,7 @@ def prepare_departure(
             "A future departure cannot yet be executed. Confirm a fresh request when it is due."
         )
     with connections[alias].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
+        cursor.execute("SELECT public.intevia_clock_instant()")
         (known,) = cursor.fetchone()
     if lo.state not in {"ACTIVE", "DORMANT", "RESTRICTED_CONTINUITY"} or lo.platform_root:
         refuse(

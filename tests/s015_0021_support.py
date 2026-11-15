@@ -35,7 +35,7 @@ from src.intevia.services.identity_service import (
 def database_now():
     """Read the authoritative test timestamp once from PostgreSQL."""
     with connections["default"].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
+        cursor.execute("SELECT public.intevia_clock_instant()")
         return cursor.fetchone()[0]
 
 
@@ -239,7 +239,7 @@ def refresh(cur, token, anchor_id, state_at=T0):
     call_site = f"{caller.f_code.co_filename}:{caller.f_lineno} in {caller.f_code.co_name}"
     try:
         cur.execute(
-            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
             (token, anchor_id, state_at),
         )
         return cur.fetchone()[0]
@@ -248,7 +248,7 @@ def refresh(cur, token, anchor_id, state_at=T0):
             raise
         raise RuntimeError(
             "S015 refresh clock refusal: "
-            f"state_at={state_at!r}, known_at=statement clock_timestamp(), "
+            f"state_at={state_at!r}, known_at=statement public.intevia_clock_instant(), "
             f"call_site={call_site}, original_error={exc!r}"
         ) from exc
 
@@ -323,10 +323,10 @@ def seed_identity(cur, tag):
         display_name = f"U21g {tag}"
         canonical_username = canonical_username_v1(username)
         cur.execute("INSERT INTO auth_user (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) "
-                    "VALUES ('!unusable', false, %s, '', '', '', false, true, now()) RETURNING id", (username,))
+                    "VALUES ('!unusable', false, %s, '', '', '', false, true, public.intevia_clock_transaction()) RETURNING id", (username,))
         user_id = cur.fetchone()[0]
         cur.execute("INSERT INTO core_identity (display_name, created_at, credential_id, identity_id, canonical_username, access_state, access_epoch, updated_at) "
-                    "VALUES (%s, now(), %s, %s, %s, 'active', 0, now()) RETURNING id", (display_name, user_id, u(f"identity:{tag}"), canonical_username))
+                    "VALUES (%s, public.intevia_clock_transaction(), %s, %s, %s, 'active', 0, public.intevia_clock_transaction()) RETURNING id", (display_name, user_id, u(f"identity:{tag}"), canonical_username))
         identity_id = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO core_identityresolution "
@@ -430,7 +430,7 @@ def _registration_refusal_with_receipt_details(error):
 def register_with_current_terms(**registration_kwargs):
     if registration_kwargs.get("terms_version_uuid") is None:
         with connections["default"].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             selection_time = cursor.fetchone()[0]
         current_terms = registration_terms_version_in_force(
             effective_at=selection_time,
@@ -471,7 +471,7 @@ def register_test_learner(
                 effective_from=now - dt.timedelta(days=1),
             )
         with connections["default"].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             now = cursor.fetchone()[0]
         terms_version = registration_terms_version_in_force(
             effective_at=now,
@@ -502,10 +502,10 @@ def register_test_learner(
 
 def seed_authority(cur, tag, issuer_id, *, scope_fingerprint=None):
     cur.execute("INSERT INTO core_authorityprincipal (principal_uuid, canonical_governed_source_id, governed_source_namespace, display_label, recorded_at) "
-                "VALUES (%s, %s, 'U21G_THROWAWAY', %s, now()) RETURNING id", (u(f"principal:{tag}"), f"urn:intevia:governed-source:u21g:{tag}", f"U21g principal {tag}"))
+                "VALUES (%s, %s, 'U21G_THROWAWAY', %s, public.intevia_clock_transaction()) RETURNING id", (u(f"principal:{tag}"), f"urn:intevia:governed-source:u21g:{tag}", f"U21g principal {tag}"))
     principal_id = cur.fetchone()[0]
     cur.execute("INSERT INTO core_authoritybasis (basis_uuid, authority_class, scope_fingerprint, instrument_reference, evidence_reference, issued_at, effective_at, received_at, recorded_at, issuer_id, authority_principal_id, derivation_root_principal_id) "
-                "VALUES (%s, 'U21G_THROWAWAY', %s, %s, %s, now(), now(), now(), now(), %s, %s, %s) RETURNING id",
+                "VALUES (%s, 'U21G_THROWAWAY', %s, %s, %s, public.intevia_clock_transaction(), public.intevia_clock_transaction(), public.intevia_clock_transaction(), public.intevia_clock_transaction(), %s, %s, %s) RETURNING id",
                 (u(f"basis:{tag}"), scope_fingerprint or hx(f"scope:{tag}"), f"u21g:instrument:{tag}", f"u21g:evidence:{tag}", issuer_id, principal_id, principal_id))
     return principal_id, cur.fetchone()[0]
 
@@ -517,7 +517,7 @@ def seed_fixture_substitute_authority(cur, tag):
     cur.execute(
         "INSERT INTO public.core_authorityprincipal "
         "(principal_uuid, canonical_governed_source_id, governed_source_namespace, display_label, recorded_at) "
-        "VALUES (%s, %s, 'INTEVIA_FIXTURE_AUTHORITY_V1', %s, now()) "
+        "VALUES (%s, %s, 'INTEVIA_FIXTURE_AUTHORITY_V1', %s, public.intevia_clock_transaction()) "
         "RETURNING id, principal_uuid",
         (
             u(f"fixture-authority-principal:{tag}"),
@@ -779,7 +779,7 @@ def found_organism(
     ids["principal"], ids["basis"] = seed_authority(cur, tag, ids["identity"])
     lo_uuid = u(f"organism:{tag}")
     cur.execute("INSERT INTO core_livingorganism (organism_id, slug, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, constitutional_spine_reference, platform_root) "
-                "VALUES (%s, %s, 'FOUNDING_PENDING', now(), %s, %s, %s, %s, %s) RETURNING id",
+                "VALUES (%s, %s, 'FOUNDING_PENDING', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id",
                 (lo_uuid, f"u21g-{tag}", fixture_at, fixture_at, empty_fp(cur, "core_livingorganism", lo_uuid), f"u21g:spine:{tag}", root))
     ids["lo"] = lo = cur.fetchone()[0]
     act, basis = ids["identity"], ids["basis"]
@@ -855,7 +855,7 @@ def found_organism(
         ids["founding_event_uuid"], ids["founding_authority_decision_reference"] = cur.fetchone()
     m_uuid = u(f"membership:{tag}")
     cur.execute("INSERT INTO core_organismmembership (membership_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, identity_id, living_organism_id) "
-                "VALUES (%s, 'ACTIVE', now(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, fixture_at, fixture_at, empty_fp(cur, "core_organismmembership", m_uuid), act, lo))
+                "VALUES (%s, 'ACTIVE', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id", (m_uuid, fixture_at, fixture_at, empty_fp(cur, "core_organismmembership", m_uuid), act, lo))
     ids["membership"] = cur.fetchone()[0]
     if "membership_event" not in skip:
         ids["events"]["core_organismmembershiptransition"] = append_event(
@@ -872,7 +872,7 @@ def found_organism(
                 continue
             for version, active in versions:
                 cur.execute("INSERT INTO core_organismroledefinition (role_uuid, code, scope, definition_version, active, created_at, living_organism_id) "
-                            "VALUES (%s, %s, 'LIVING_ORGANISM', %s, %s, now(), %s) RETURNING id", (u(f"role:{tag}:{code}:{version}"), code, version, active, lo))
+                            "VALUES (%s, %s, 'LIVING_ORGANISM', %s, %s, public.intevia_clock_transaction(), %s) RETURNING id", (u(f"role:{tag}:{code}:{version}"), code, version, active, lo))
                 ids["roles"].setdefault(code, cur.fetchone()[0])
     ids["assignments"] = {}
     if assign_founder is None:
@@ -896,7 +896,7 @@ def found_organism(
             assignment_state = assignment_states.get(code, "ACTIVE")
             a_uuid = u(f"assignment:{tag}:{code}")
             cur.execute("INSERT INTO core_contextualroleassignment (assignment_uuid, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, membership_id, role_definition_id) "
-                        "VALUES (%s, %s, now(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, fixture_at, fixture_at, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
+                        "VALUES (%s, %s, public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id", (a_uuid, assignment_state, fixture_at, fixture_at, empty_fp(cur, "core_contextualroleassignment", a_uuid), ids["membership"], ids["roles"][code]))
             ids["assignments"][code] = cur.fetchone()[0]
             if "assignment_event" not in skip:
                 assignment_event_overrides = None
@@ -950,7 +950,7 @@ def add_remaining_aggregates(cur, ids, tag, do_refresh=True):
     lo, act, basis = ids["lo"], ids["identity"], ids["basis"]
     c_uuid = u(f"circle:{tag}")
     cur.execute("INSERT INTO core_circle (circle_uuid, kind, state, created_at, current_state_effective_at, state_known_at, state_source_event_set_fingerprint, founding_reference, parent_organism_id) "
-                "VALUES (%s, 'OPERATIONS', 'DORMANT', now(), %s, %s, %s, %s, %s) RETURNING id", (c_uuid, T0, T0, empty_fp(cur, "core_circle", c_uuid), f"u21g:circle:{tag}", lo))
+                "VALUES (%s, 'OPERATIONS', 'DORMANT', public.intevia_clock_transaction(), %s, %s, %s, %s, %s) RETURNING id", (c_uuid, T0, T0, empty_fp(cur, "core_circle", c_uuid), f"u21g:circle:{tag}", lo))
     ids["circle"] = cur.fetchone()[0]
     ids["events"]["core_circlestateevent"] = append_event(
         cur, "core_circlestateevent", ids["circle"], 1, "CREATE_DORMANT", None, "DORMANT", act, basis, tag
@@ -966,7 +966,7 @@ def add_remaining_aggregates(cur, ids, tag, do_refresh=True):
         extra={"kind": "SUSPENSION"}
     )[0]
     cur.execute("INSERT INTO core_governeddetermination (determination_uuid, determination_type, result, evidence_reference, method_reference, scope_fingerprint, independence_state, occurred_at, effective_at, received_at, recorded_at, determiner_id, relied_upon_authority_principal_id) "
-                "VALUES (%s, 'INDEPENDENCE_DETERMINATION', 'U21G', 'u21g:d', 'u21g:m', %s, 'U21G', now(), now(), now(), now(), %s, %s) RETURNING id", (u(f"det:{tag}"), hx(f"det:{tag}"), act, ids["principal"]))
+                "VALUES (%s, 'INDEPENDENCE_DETERMINATION', 'U21G', 'u21g:d', 'u21g:m', %s, 'U21G', public.intevia_clock_transaction(), public.intevia_clock_transaction(), public.intevia_clock_transaction(), public.intevia_clock_transaction(), %s, %s) RETURNING id", (u(f"det:{tag}"), hx(f"det:{tag}"), act, ids["principal"]))
     ids["determination"] = cur.fetchone()[0]
     cur.execute("INSERT INTO core_determinationcontestcase (case_uuid, determination_id) VALUES (%s, %s) RETURNING id", (u(f"contest:{tag}"), ids["determination"]))
     ids["contest_case"] = cur.fetchone()[0]
@@ -981,7 +981,7 @@ def add_remaining_aggregates(cur, ids, tag, do_refresh=True):
                     "triggering_assessment_id": ids["assessment"], "accountable_actor_id": act}
     )[0]
     cur.execute("INSERT INTO core_governedvisibilitygrant (grant_uuid, subject_type, subject_id, audience_type, audience_id, capacity_binding, fields_permitted, purpose_reference, expiry, lineage_reference, recorded_at, granting_authority_id) "
-                "VALUES (%s, 'ORGANISM', %s, 'IDENTITY', %s, 'u21g:capacity', '[]'::jsonb, 'u21g:purpose', now() + interval '30 days', %s, now(), %s) RETURNING id",
+                "VALUES (%s, 'ORGANISM', %s, 'IDENTITY', %s, 'u21g:capacity', '[]'::jsonb, 'u21g:purpose', public.intevia_clock_transaction() + interval '30 days', %s, public.intevia_clock_transaction(), %s) RETURNING id",
                 (u(f"grant:{tag}"), u(f"organism:{tag}"), u(f"identity:{tag}"), "s015l1:" + hx(f"grantlineage:{tag}"), basis))
     ids["grant"] = cur.fetchone()[0]
     ids["events"]["core_visibilitygrantstateevent"] = append_event(

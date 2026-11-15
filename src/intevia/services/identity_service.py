@@ -13,7 +13,6 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
-from django.utils import timezone
 
 from core.identity import canonical_username_v1
 from core.models import (
@@ -30,6 +29,7 @@ from core.organism_contract import (
     ORIGINATING_MEMBERSHIP_REFERENCES,
     ORIGINATING_MEMBERSHIP_CONTRACT_VERSION,
 )
+from src.intevia.services.clock import database_now
 from src.intevia.services.organism_application_authority import (
     fixture_terms_permitted,
 )
@@ -161,13 +161,13 @@ class IdentityLifecycleService:
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
-        """Return value, or the host clock's now (timezone.now()) if it is
+        """Return value, or the INTEVIA Clock's instant (database_now()) if it is
         None.
 
         Raises ValidationError "occurred_at must be timezone-aware" for a
         naive datetime, whichever time the caller passed.
         """
-        value = value or timezone.now()
+        value = value or database_now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("occurred_at must be timezone-aware")
         return value
@@ -212,7 +212,7 @@ class IdentityLifecycleService:
         one (its registration receipt's database-assigned received_at); for
         every other caller it is a host-clock time, not a receipt time. The
         model's save runs full_clean and refuses an update; the database
-        assigns recorded_at (statement_timestamp()). The row is reloaded so
+        assigns recorded_at (public.intevia_clock_statement()). The row is reloaded so
         recorded_at is set. correlation_id is unique across transitions.
         Callers lock or create the identity in the same transaction.
         """
@@ -241,7 +241,7 @@ class IdentityLifecycleService:
             occurred_at=occurred_at,
             effective_at=occurred_at,
             received_at=(
-                received_at if received_at is not None else timezone.now()
+                received_at if received_at is not None else database_now()
             ),
             previous_transition=previous,
         )
@@ -966,7 +966,7 @@ class LearnerRegistrationService:
         """Write one registration; the caller holds the transaction.
 
         Inserts a registration receipt first: the database assigns its
-        received_at (clock_timestamp()) and transaction id, and effective_at
+        received_at (public.intevia_clock_instant()) and transaction id, and effective_at
         is that received_at. Then refuses, in this order, with
         RegistrationServiceRefused:
         - REG_TERMS_NOT_ACCEPTED unless terms_accepted;

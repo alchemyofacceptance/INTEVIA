@@ -3,7 +3,7 @@
   "package": "TIMED EVENTS T1b CK-1 R4c",
   "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
   "baseline_methods": 267,
-  "candidate_methods": 279,
+  "candidate_methods": 293,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -442,6 +442,14 @@
     "TIMED_EVENTS_T1B_CK2R4_PENDING": {
       "source": "VC PostgreSQL run pending",
       "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2G2_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
+    },
+    "TIMED_EVENTS_T1B_CK2I_PENDING": {
+      "source": "VC PostgreSQL run pending",
+      "candidate_commit": null
     }
   },
   "source_index": {
@@ -620,6 +628,10 @@
     "TIMED_EVENTS_T1B_CK2_TAR_TABLE.md": {
       "sha256": "5373fce8fa10a2c7de220e7864f0280b3f42144a5817a13ca0a5b7abe08d1155",
       "source": "TIMED EVENTS T1b CK-2R2 return"
+    },
+    "TIMED_EVENTS_T1B_CK2_CODE_TAR_TABLE.md": {
+      "sha256": "4ff75f1bf0ba244c4a74b0bb61ab56384e61b7513153a7109d68ab1d295181b3",
+      "source": "TIMED EVENTS T1b CK-2i return"
     }
   },
   "coverage": {
@@ -627,8 +639,8 @@
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 279,
-    "folded": 46,
+    "active": 293,
+    "folded": 47,
     "retired": 2,
     "DISC4_methods": 6,
     "ELECT_methods": 13,
@@ -636,7 +648,7 @@
     "COMMITTEES_methods": 6,
     "C1_108_methods": 3,
     "TIMED_EVENTS_methods": 10,
-    "INTEVIA_CLOCK_methods": 8,
+    "INTEVIA_CLOCK_methods": 10,
     "MIGRATION_REVERSIBILITY_methods": 4
   },
   "tests": [
@@ -14853,8 +14865,15 @@
       "baseline_label": "test_sr_provider.SRProviderPureTests.test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context",
       "status": "active",
       "current_label": "test_sr_provider.SRProviderPureTests.test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context",
-      "claim": "Vacancy observation takes one clock reading for all offices; a missing organisation refuses with the right explanation",
-      "unit_TAR": [],
+      "claim": "Vacancy observation takes one clock reading for all offices; a missing organisation refuses with the right explanation CK-2g2: the one reading asks the INTEVIA Clock's instant face.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_CODE_TAR_TABLE.md",
+          "unit_ids": [
+            "O-09"
+          ]
+        }
+      ],
       "review": {
         "file": "ADVISOR_FULL_SUITE_REVIEW_PER_TEST_v1_0.md",
         "line": 271,
@@ -14873,9 +14892,23 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_provider.SRProviderPureTests.test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "TIMED_EVENTS_T1B_CK2G2": {
+          "candidate_file_lf_sha256": "2b139682706337397fd404d8e43e6984027e48d35cb1b0852436c4be36fef3ef",
+          "run": "TIMED_EVENTS_T1B_CK2G2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2g2",
+          "event": "changed at CK-2g2: the mocked cursor answers and the assertions count the service's converted statement, SELECT public.intevia_clock_instant(); the value it returns is a fixed instant, not the host clock's (D1 A)",
+          "previous_source": "tests/test_sr_provider.py:55",
+          "previous_claim": "Vacancy observation takes one clock reading for all offices; a missing organisation refuses with the right explanation"
+        }
+      ],
       "current_source": "tests/test_sr_provider.py:55"
     },
     {
@@ -14903,10 +14936,23 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_provider.SRProviderTests.test_02_proposals_apply_the_current_definition_rule_and_custom_gate",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "TIMED_EVENTS_T1B_CK2G2": {
+          "candidate_file_lf_sha256": "2b139682706337397fd404d8e43e6984027e48d35cb1b0852436c4be36fef3ef",
+          "run": "TIMED_EVENTS_T1B_CK2G2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
-      "current_source": "tests/test_sr_provider.py:158"
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2g2",
+          "event": "method unchanged at CK-2g2; the test file's digest changed (test_01's mocked statement text and its stand-in instant)",
+          "previous_source": "tests/test_sr_provider.py:158"
+        }
+      ],
+      "current_source": "tests/test_sr_provider.py:159"
     },
     {
       "obligation": "base:test_sr_provider.SRProviderTests.test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal",
@@ -14934,10 +14980,23 @@
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_provider.SRProviderTests.test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal",
         "baseline_recurring_faults": [],
-        "change_record": "TE_TAR_v1_0_P2.md / test_sr_provider.SRProviderTests.test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal"
+        "change_record": "TE_TAR_v1_0_P2.md / test_sr_provider.SRProviderTests.test_05_live_consent_refuses_stale_nomination_but_keeps_withdrawal",
+        "TIMED_EVENTS_T1B_CK2G2": {
+          "candidate_file_lf_sha256": "2b139682706337397fd404d8e43e6984027e48d35cb1b0852436c4be36fef3ef",
+          "run": "TIMED_EVENTS_T1B_CK2G2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
-      "current_source": "tests/test_sr_provider.py:199",
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2g2",
+          "event": "method unchanged at CK-2g2; the test file's digest changed (test_01's mocked statement text and its stand-in instant)",
+          "previous_source": "tests/test_sr_provider.py:199"
+        }
+      ],
+      "current_source": "tests/test_sr_provider.py:200",
       "baseline_claim": "Consent after a definition change refuses SR_SUPERSEDED_DEFINITION (class A), but withdrawal of earlier consent still records"
     },
     {
@@ -15006,10 +15065,23 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_provider.SRProviderTests.test_07_coordinator_qualification_remains",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "TIMED_EVENTS_T1B_CK2G2": {
+          "candidate_file_lf_sha256": "2b139682706337397fd404d8e43e6984027e48d35cb1b0852436c4be36fef3ef",
+          "run": "TIMED_EVENTS_T1B_CK2G2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
-      "current_source": "tests/test_sr_provider.py:236"
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2g2",
+          "event": "method unchanged at CK-2g2; the test file's digest changed (test_01's mocked statement text and its stand-in instant)",
+          "previous_source": "tests/test_sr_provider.py:236"
+        }
+      ],
+      "current_source": "tests/test_sr_provider.py:237"
     },
     {
       "obligation": "base:test_sr_provider.SRProviderTests.test_08_reserved_office_consent_actions_refuse_at_the_live_provider",
@@ -15036,10 +15108,23 @@
         "candidate_restored": null,
         "P1_normal": "P1_RELAY",
         "P1_normal_label": "test_sr_provider.SRProviderTests.test_08_reserved_office_consent_actions_refuse_at_the_live_provider",
-        "baseline_recurring_faults": []
+        "baseline_recurring_faults": [],
+        "TIMED_EVENTS_T1B_CK2G2": {
+          "candidate_file_lf_sha256": "2b139682706337397fd404d8e43e6984027e48d35cb1b0852436c4be36fef3ef",
+          "run": "TIMED_EVENTS_T1B_CK2G2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
       },
-      "history": [],
-      "current_source": "tests/test_sr_provider.py:247"
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2g2",
+          "event": "method unchanged at CK-2g2; the test file's digest changed (test_01's mocked statement text and its stand-in instant)",
+          "previous_source": "tests/test_sr_provider.py:247"
+        }
+      ],
+      "current_source": "tests/test_sr_provider.py:248"
     },
     {
       "obligation": "DISC4-01",
@@ -18398,6 +18483,12 @@
           "unit_ids": [
             "CLK-01"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-01"
+          ]
         }
       ],
       "history": [
@@ -18470,6 +18561,11 @@
         {
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "one line changed at CK-2f: in the not-yet-migrated sub-case the three faces are dropped with CASCADE, because since core migration 0103 ten column defaults depend on two of them; no assertion changed",
+          "previous_source": "tests/test_intevia_clock.py:98"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; the test file's digest and this method's line changed (the positive moves were added); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:98"
         }
       ],
@@ -18564,10 +18660,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "The owned test clock's lifecycle is kept apart from production: production, at each real serving entry and on every new physical connection, refuses a database that bears any mark of the INTEVIA Clock's moving part, and installing, moving and reversing the moving part are permitted only on the owned route's own databases. Production's side: a real test database is refused at a first connection and at every later use, each physical connection closed; a connection accepted once is followed by a new physical connection under the same alias and name that is checked afresh, refused and closed; an evidence read that raises a database error raises it, closes the connection, and the retry is checked afresh and refused; with the connection already open the WSGI entry and the ASGI entry are each refused by their own check, each in its own subtest; the same database in the shape production's migrations alone build is accepted on one statement's evidence and each serving entry starts on it; each of seven marks refuses, names just outside the test route's prefix do not, and a database with no ledger table, or not yet migrated, is read and not refused. The owned route's side: installing is allowed on a bootstrap database and a clone, moving and reversing on a clone only, and each is bound to the run by the database's oid in one of two ways only: a verification run's receipts record creating it, or, on a rehearsal with no receipts and no verification variable, the run's own test runner recorded creating or selecting it. A receipt file without a nonce or a nonce without a file, a verification variable without receipts, a record of this name with another oid, and neither receipts nor a record are each refused for all three, naming the condition, as stated facts and on the real clone; moving and reversing are refused on a connection the lifecycle backend does not qualify. A production-shaped name, a look-alike, other settings, a database that is not the configured one and a role that does not own it are each refused. The kept counter's check names its type, start, increment, minimum, maximum, cache, cycle and ownership and the value read by intevia_test_clock_offset(); a counter that differs in any one, or a clock stated not to be at zero, is refused for reversing and for installing, and the migration's own reverse and forward refuse a counter that is not as migrated. R4a (Gemini's G-O1): after each serving entry's own check, whether it refused or passed, that alias has no open connection. R4b (Gemini's G-D3, G-I1, G-I5): the receipts branch of the binding refuses a receipt whose oids are not integers; on a real test database the refusal names the move as a procedure; a form of a face's name that takes arguments is named as that, and the face beside it is not blamed.",
-      "current_source": "tests/test_intevia_clock.py:98"
+      "current_source": "tests/test_intevia_clock.py:101"
     },
     {
       "obligation": "CLK-04",
@@ -18580,6 +18683,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-04"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-04"
           ]
@@ -18656,6 +18765,11 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:537"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method changed at CK-2j2a: its comparison moved, unchanged, into each_face_keeps_its_meaning(offset), which the new witness after a move calls too; production's faces are compared at zero only; the claim at offset zero is unchanged",
+          "previous_source": "tests/test_intevia_clock.py:539"
         }
       ],
       "evidence": {
@@ -18749,10 +18863,51 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Offset zero. With no offset, each face of the INTEVIA Clock, in storage and through the Python door, returns what the built-in it stands for returns at the same cut: the transaction's start, the statement's start (fresh and through a saved plan), and an instant that advances inside one statement; as production writes the faces and as the owned route writes them. The mail helper reads through the same door and keeps its PostgreSQL-only refusal. The shifted clock is witnessed after the complete conversion. R4b (Gemini's G-O5): the Python door refuses, in its own words, a meaning that cannot even be looked up.",
-      "current_source": "tests/test_intevia_clock.py:539"
+      "current_source": "tests/test_intevia_clock.py:542"
+    },
+    {
+      "obligation": "CLK-04-POSITIVE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_each_face_keeps_its_built_in_meaning_after_a_move",
+      "claim": "CLK-04, after a move: with the clock moved forward, each face of the INTEVIA Clock as the owned route writes it returns what the built-in it stands for returns at the same cut, later by exactly the offset (the transaction face at each statement of one transaction, the statement face at each separately sent statement and through a saved plan, the instant face advancing inside one statement between wall readings later by the offset), and the Python door and the mail helper read between wall readings later by the offset.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-04-POSITIVE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "added at CK-2j2a: the first positive moves, on the fully converted clone (commission section 3, item 5)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock.py:549"
     },
     {
       "obligation": "CLK-02",
@@ -18765,6 +18920,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-02"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-02"
           ]
@@ -18835,6 +18996,11 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:638"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; the test file's digest and this method's line changed (the positive moves were added); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:640"
         }
       ],
       "evidence": {
@@ -18921,10 +19087,187 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Refusals. A move of nothing, a move backwards, a move to a time already past, a move with no amount or with two, and a move past the clock's range are each refused, and the offset stays where it was. The positive cases are witnessed after the complete conversion. R4b (Gemini's G-D4): a duration the clock could not hold is refused by the helper in INTEVIA's words with storage not called, and a time that Django does not judge aware is refused as the wrong kind of argument.",
-      "current_source": "tests/test_intevia_clock.py:640"
+      "current_source": "tests/test_intevia_clock.py:740"
+    },
+    {
+      "obligation": "CLK-02-POSITIVE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_the_clock_moves_forward_by_what_is_asked",
+      "claim": "CLK-02, positive: on an owned clone with every time read converted, a move by a duration moves the clock by exactly that duration and returns the offset the clock then holds; the Python door then shows real time later by the move (between two wall readings taken around it, each later by the move); a second move adds to the first; a move to a time moves the clock forward so that it shows that time or later, and no further than was asked.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-02-POSITIVE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "added at CK-2j2a: the first positive moves, on the fully converted clone (commission section 3, item 5)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock.py:657"
+    },
+    {
+      "obligation": "CLK-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_deadlines.ClockDeadlineTests.test_a_date_the_clock_has_passed_is_refused_as_a_date_really_past",
+      "claim": "CLK-03: a landed dated guard refuses at a date the INTEVIA Clock was moved past exactly as at a date really past. Storage's guard on a Board member's dated resignation (elect_resignation_facts, code ELECT_RESIGN_DATE) refuses a date really past (before the seat began) with the code and words its landed real-time witness records (ELECT-13); it accepts a date one hour ahead, shown inside a transaction that is rolled back; and once the clock has been moved past that date it refuses the same notice with the same code and the same words, recording nothing. The two refusals come from two conditions of the one guard (the date before the seat began; the date before the notice's own time), which share the code and the words.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-03"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2B": {
+          "candidate_file_lf_sha256": "967f704f05646b8eb550950ccc436f61d2409abb3dbd2b3c0eb4cc13f0a53c60",
+          "run": "TIMED_EVENTS_T1B_CK2J2B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2b",
+          "event": "added at CK-2j2b: the first deadline reached by moving the clock (commission section 3, item 5; ruled into CK-2)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_deadlines.py:42"
+    },
+    {
+      "obligation": "CLK-READER-INTAKE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_readers.ClockReaderTests.test_a_request_keeps_its_receipt_time_across_a_rollback_a_move_and_a_retry",
+      "claim": "CLK-READER-INTAKE: A request INTEVIA received before a move of the Clock, whose command wrote its records and rolled back, keeps its one intake record, with the original received_at and the same request fingerprint, when the same request is retried after the move; the retried command acts as of that original received_at; and a new request sent after the move is received at the moved instant (HC-2, R-1, ruling D4).",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-READER-INTAKE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A2": {
+          "candidate_file_lf_sha256": "e06dffa5bf6179d6e90cb18f44ca5a4ca7b96ca06c795f21700a24eb8e6cf193",
+          "run": "TIMED_EVENTS_T1B_CK2J2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a2",
+          "event": "added at CK-2j2a2: a positive witness carried from the reader register v1.7 and the parts plan v1.3 (direction CK-2j, part CK-2j2a; split accepted by the VC)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_readers.py:75"
+    },
+    {
+      "obligation": "CLK-READER-MAIL",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_readers.ClockReaderTests.test_a_lease_ends_for_the_worker_and_for_the_operators_count_at_one_instant",
+      "claim": "CLK-READER-MAIL: The mail worker's lease, the reaper and the operator's count of stuck mail read one clock: just short of the lease's end the count and the reaper both find nothing; with the Clock moved to the lease's end the count is one and the reaper recovers one; and a lease given after the move runs from the moved time.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-READER-MAIL"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A2": {
+          "candidate_file_lf_sha256": "e06dffa5bf6179d6e90cb18f44ca5a4ca7b96ca06c795f21700a24eb8e6cf193",
+          "run": "TIMED_EVENTS_T1B_CK2J2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a2",
+          "event": "added at CK-2j2a2: a positive witness carried from the reader register v1.7 and the parts plan v1.3 (direction CK-2j, part CK-2j2a; split accepted by the VC)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_readers.py:148"
+    },
+    {
+      "obligation": "CLK-READER-SESSION",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_readers.ClockReaderTests.test_a_session_older_than_the_move_is_signed_out_and_wakes_nothing_until_it_signs_in_again",
+      "claim": "CLK-READER-SESSION: After the Clock is moved by the session's whole age limit (core.session), a session started before the move is turned away to sign in and its request does not wake the TIMED EVENTS engine; a fresh sign-in after the move is served and its confirmed request wakes the engine once. Asserts the landed session check only.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-READER-SESSION"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A2": {
+          "candidate_file_lf_sha256": "e06dffa5bf6179d6e90cb18f44ca5a4ca7b96ca06c795f21700a24eb8e6cf193",
+          "run": "TIMED_EVENTS_T1B_CK2J2A2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a2",
+          "event": "added at CK-2j2a2: a positive witness carried from the reader register v1.7 and the parts plan v1.3 (direction CK-2j, part CK-2j2a; split accepted by the VC)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_readers.py:210"
     },
     {
       "obligation": "CLK-06",
@@ -18937,6 +19280,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-06"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-06"
           ]
@@ -19007,6 +19356,11 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:709"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; the test file's digest and this method's line changed (the positive moves were added); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:711"
         }
       ],
       "evidence": {
@@ -19093,10 +19447,51 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Refusals. A move of the INTEVIA Clock is refused while any other transaction is open, as the move can see it, and while any transaction that has read the clock is open; a move can only stand alone; and no transaction is admitted to the clock while a move holds it. The offset stays where it was. On this connection an outer transaction, a savepoint and a manual transaction are refused by the helper; a move asked for inside any transaction block (a raw transaction that has read the clock, a transaction opened in the same message, a message whose first statement is not the move) is refused by PostgreSQL itself at the move's COMMIT, and through the helper in INTEVIA's words. On another connection an idle transaction, a transaction that has read the clock, and a transaction whose read was rolled back to a savepoint each refuse the move. Storage's decision over stated facts refuses another role's session whether or not a transaction is seen on it. A transaction that starts while a move holds the clock cannot read it until it is released. R3g, through the activity view itself: a peer the view shows idle does not stop a move; a peer with its activity reporting off is refused as a status that could not be read, inside a transaction that read the clock under a savepoint it rolled back, with reporting turned back on inside that transaction, and with no transaction at all; seen idle again, it no longer stops a move. The decision answers a fact not read in its own words.",
-      "current_source": "tests/test_intevia_clock.py:711"
+      "current_source": "tests/test_intevia_clock.py:811"
+    },
+    {
+      "obligation": "CLK-06-POSITIVE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_a_move_stands_alone_and_a_later_transaction_reads_one_offset",
+      "claim": "CLK-06, positive: with no transaction open and the run's other connection idle, a move is made; and a transaction begun after it, on the connection that moved and on the other, reads the transaction face and the statement face at the new offset in each of its two statements.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-06-POSITIVE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "added at CK-2j2a: the first positive moves, on the fully converted clone (commission section 3, item 5)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock.py:686"
     },
     {
       "obligation": "CLK-07",
@@ -19109,6 +19504,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-07"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-07"
           ]
@@ -19179,6 +19580,11 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:974"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; the test file's digest and this method's line changed (the positive moves were added); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:976"
         }
       ],
       "evidence": {
@@ -19265,22 +19671,69 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "Order and failure. The database reset returns the INTEVIA Clock to zero inside its own transaction, after the tables are empty and before any seed is restored; a reset that fails puts the clock back with the rows; and storage alone decides what the reset's emptiness check leaves out. The clock's reset refuses while a row remains; it exists in one form that takes no argument, its stored body holds the fixed exempt set (the migration ledger alone, equal to the lifecycle backend's), and a call that passes any list finds no such function and changes nothing; inside the real reset a row in a business table makes the reset fail naming that table, and the whole reset is undone; with the last seed restorer made to fail, the first seed restorer sees empty tables, offset zero, an open transaction and a counter already reset, and afterwards the row and the original counter are back; a reset that succeeds shows the same order and keeps the counter it reset. R4a (Gemini's G-D1; D8 covers the reset): through the real database reset and the real activity view, at offset zero, the reset is refused in words that say the clock is not reset, with the row, the counter and the offset as they were, by a peer inside a transaction whose read of the clock was rolled back to a savepoint, by a peer with its activity reporting off (inside a transaction or not), and by a peer that opened its transaction after the reset's own transaction first read the activity view; a peer seen idle is no obstacle. R4c (the Advisor's finding on R4): the transaction that makes the reset cannot itself read two offsets. At offset zero, a connection that read a face in a transaction it manages by hand is refused the database reset before any table changes; storage refuses a reset asked for inside a transaction that has itself read the clock; and the database reset's own transaction must read no face before its clock step.",
-      "current_source": "tests/test_intevia_clock.py:976"
+      "current_source": "tests/test_intevia_clock.py:1076"
+    },
+    {
+      "obligation": "CLK-07-POSITIVE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock.InteviaClockTests.test_the_reset_returns_a_moved_clock_to_real_time",
+      "claim": "CLK-07, positive: after a move, the database reset, entered through Django's flush outside any transaction, empties the tables and returns the clock to zero, and the Python door then reads between two wall readings taken around it.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-07-POSITIVE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "added at CK-2j2a: the first positive moves, on the fully converted clone (commission section 3, item 5)"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock.py:720"
     },
     {
       "obligation": "CLK-08",
       "baseline_label": null,
-      "status": "active",
-      "current_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+      "status": "folded",
+      "current_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
       "review": null,
       "admission_registry": [],
       "recurring_controls": [],
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-08"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-08"
           ]
@@ -19345,6 +19798,16 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:1304"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1a",
+          "event": "fold",
+          "successor": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "case": "test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "previous_label": "test_intevia_clock.InteviaClockTests.test_a_reversal_below_the_clock_returns_whole_and_keeps_the_mark",
+          "previous_source": "tests/test_intevia_clock.py:1306",
+          "previous_claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and at every point in between production's startup refuses it. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter.",
+          "authority": "the CK-2 commission's ruling on REV-01 and CLK-08 (fold CLK-08's two stops into REV-01's descent, keeping both claims and reporting both times); the Human Governor's decision of 14 Nov 2026 on CK-2i's test cost"
         }
       ],
       "evidence": {
@@ -19424,10 +19887,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J1A": {
+          "candidate_method_file_lf_sha256": "1e1465f0be7098d7fc16a238e7c101a2657725b22d2f1cce544b152038861f87",
+          "run": "TIMED_EVENTS_T1B_CK2J1A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
-      "claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and at every point in between production's startup refuses it. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter.",
-      "current_source": "tests/test_intevia_clock.py:1306"
+      "claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and production's startup refuses it at head, at each of the two stops and when restored. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter. CK-2j1a (the ruled fold): the two stops are two points of REV-01's one descent, the first being the first point at which the moving part is reversed while core 0096 is still applied (the storage conversions above 0096 may already be reversed there), the second the lowest point; the claim is judged in a sub-test of its own within REV-01's method.",
+      "current_source": "tests/test_migration_reversibility.py:333"
     },
     {
       "obligation": "CLK-09",
@@ -19440,6 +19910,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-09"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
           "unit_ids": [
             "CLK-09"
           ]
@@ -19486,6 +19962,11 @@
           "unit": "TIMED EVENTS T1b CK-2f",
           "event": "method unchanged at CK-2f; the test file's digest changed (one line in CLK-01); earlier evidence entries retained",
           "previous_source": "tests/test_intevia_clock.py:1254"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; the test file's digest and this method's line changed (the positive moves were added); earlier evidence entries retained",
+          "previous_source": "tests/test_intevia_clock.py:1256"
         }
       ],
       "evidence": {
@@ -19544,10 +20025,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_method_file_lf_sha256": "a596a22be65a7f80ed4315173cb2118f69f82dd871154d79204b6d5bc9cbd8e7",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "At the isolation instrument's first checkpoint, a database whose migration ledger records the INTEVIA Clock's test-only app must hold the clock's counter; a database whose ledger does not may hold none. Over this clone's real full and light captures and copies of them with stated facts: app applied and counter missing is reported once by the requirements check and once by the light check, naming the app; production's shape (no app, no counter) and a counter kept at zero below the clock are no violation; against a baseline that held the counter, a lost counter is reported by the full and the light comparison.",
-      "current_source": "tests/test_intevia_clock.py:1256"
+      "current_source": "tests/test_intevia_clock.py:1356"
     },
     {
       "obligation": "CLK-05",
@@ -19623,6 +20111,12 @@
           "unit_ids": [
             "CLK-05"
           ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05"
+          ]
         }
       ],
       "history": [
@@ -19689,6 +20183,12 @@
           "event": "corrected at CK-2R10 (the Advisor's CK-2R9 final check, five findings; the Human Governor's decision of 14 Nov 2026): a face is excused only for its own built-in and the moving part only for clock reads; every string constant is read from the text as PostgreSQL's lexer reads it, the parser's constants agreeing; clock words and their boundaries are ASCII; %TYPE is resolved through the catalogue; an extension's members are excluded from every place; two S015 error messages allow-listed (option A)",
           "previous_source": "tests/test_intevia_clock_only_one.py:1103",
           "previous_claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds reads the time as written, except the INTEVIA Clock's three faces and, in an owned test database, the nine named routines of the test clock's moving part, and except the exact findings on the allow-list the Human Governor approves. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no letter beside it, in any quoting and any letter case; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. A text the parser cannot read fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1a",
+          "event": "corrected at CK-2j1a (owed ledger C1-130 items 9 to 11; Gemini's CK-2R10 step 2, D1 to D3): a \"--\" comment ends at a carriage return as at a newline; a %TYPE anchor of three or more names is a column's alone, and one of two names is a variable's only under a label the routine holds, so an unresolved anchor is never read as a variable sharing its last name; UESCAPE is matched as the whole keyword; the unused prorettype and proretset leave the function row; the docstring and comments cite rule v2.1 and state the four CK-2R10 guarantees; seven planted cases join the check (GEMINI_CK2R10, and three installed routines)",
+          "previous_source": "tests/test_intevia_clock_only_one.py:1631",
+          "previous_claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds outside an extension reads the time as written, except each of the INTEVIA Clock's three faces reading its own built-in and, in an owned test database, the nine named routines of the test clock's moving part reading the clock (a clock function or a time keyword), and except the exact findings on the allow-list the Human Governor approves; any other finding on a face or the moving part is reported as anywhere. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, an extension's members excluded from every one, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no ASCII letter beside it, in any ASCII letter case and any quoting; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable declared with it or through %TYPE, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. Every string constant written in a text is read, wherever the grammar keeps it (a RAISE message, a NOTIFY payload, a comment's text, an option, an enum label): the text's literals are read as PostgreSQL's lexer reads them, and each constant the parser holds must agree with that reading. A text the parser cannot read, or whose constants disagree with the reading, or whose %TYPE the catalogue cannot resolve, fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing."
         }
       ],
       "evidence": {
@@ -19768,10 +20268,380 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J1A": {
+          "candidate_file_lf_sha256": "3661a877c5a1f2e96562363aa071ef3c9bb08441552624b77bde7560330e1390",
+          "run": "TIMED_EVENTS_T1B_CK2J1A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
-      "claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds outside an extension reads the time as written, except each of the INTEVIA Clock's three faces reading its own built-in and, in an owned test database, the nine named routines of the test clock's moving part reading the clock (a clock function or a time keyword), and except the exact findings on the allow-list the Human Governor approves; any other finding on a face or the moving part is reported as anywhere. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, an extension's members excluded from every one, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no ASCII letter beside it, in any ASCII letter case and any quoting; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable declared with it or through %TYPE, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. Every string constant written in a text is read, wherever the grammar keeps it (a RAISE message, a NOTIFY payload, a comment's text, an option, an enum label): the text's literals are read as PostgreSQL's lexer reads them, and each constant the parser holds must agree with that reading. A text the parser cannot read, or whose constants disagree with the reading, or whose %TYPE the catalogue cannot resolve, fails the check whatever object holds it, the faces' included. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing.",
-      "current_source": "tests/test_intevia_clock_only_one.py:1631"
+      "claim": "There is only one clock, catalogue half: no SQL that a non-system schema holds outside an extension reads the time as written, except each of the INTEVIA Clock's three faces reading its own built-in and, in an owned test database, the nine named routines of the test clock's moving part reading the clock (a clock function or a time keyword), and except the exact findings on the allow-list the Human Governor approves; any other finding on a face or the moving part is reported as anywhere. The places read are routines (SQL and PL/pgSQL bodies with every SQL text inside, SQL-standard bodies, argument defaults), column defaults, views, constraints, trigger conditions, indexes, domain defaults, row-security policies, rewrite rules, aggregate initial values and publication row filters, an extension's members excluded from every one, each text read on its own with PostgreSQL's own parser (libpg_query, PostgreSQL 17). A time read is what is written, wherever its value goes and with no exemption: a call of clock_timestamp, timeofday, statement_timestamp, transaction_timestamp or now (unqualified or in pg_catalog); an SQL time keyword; a match of the landed census tool's patterns inside a string constant's value; a string constant holding now, today, tomorrow or yesterday with no ASCII letter beside it, in any ASCII letter case and any quoting; age with one argument; and any use of timetz (a cast in either form, a type named in a statement, a PL/pgSQL variable declared with it or through %TYPE, a column, a routine argument or return, a type built on it), type names resolved by the catalogue under the routine's own search path through domains, a SECURITY DEFINER routine's $user being its owner. Every string constant written in a text is read, wherever the grammar keeps it (a RAISE message, a NOTIFY payload, a comment's text, an option, an enum label): the text's literals are read as PostgreSQL's lexer reads them, and each constant the parser holds must agree with that reading. A text the parser cannot read, or whose constants disagree with the reading, or whose %TYPE the catalogue cannot resolve, fails the check whatever object holds it, the faces' included. CK-2j1a: a \"--\" comment ends at a carriage return as at a newline; a %TYPE anchor of three or more names is read as a column and as nothing else, and one of two names as a variable only under a label the routine itself holds (the routine's own name is not taken as a label, which fails closed); UESCAPE after a U&'' string is the whole keyword. The check must itself see each face read its own built-in, must see at least one function, column default, view, constraint, trigger and index, and fails on an allow-list entry that matches nothing.",
+      "current_source": "tests/test_intevia_clock_only_one.py:1716"
+    },
+    {
+      "obligation": "CLK-05-CODE-READER",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_only_one_code.OnlyOneClockCodeTests.test_the_reading_of_python_judges_the_agreed_cases",
+      "claim": "CLK-05, code half, the reader's own table: read from a scratch inventory by the check's own functions, with no database, each of the Advisor's cases Q1 to Q16 and Q25 to Q28 (acceptance rule v0.2, section 7) and the rows of section 4 this part reads gets the verdict the rule gives it, line by line: the host-clock references and converters (P1), Django's database clock (P2), SQL written in Python strings, bytes and f-strings (P3), a reference by constant name (P4), an unreadable file failing the check (P5), a frozen migration by blob (not read while it matches; failing when changed or missing; read when not listed), an interim test file read once it changes, and an allow-list entry clearing exactly its count in its enclosure.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1B1_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-READER"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1B2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-READER"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-READER"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-READER"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-READER"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J1B1": {
+          "candidate_file_lf_sha256": "004c524f1176061e92234c6be4d4eb3c2de970f219d534ad13223066868ed746",
+          "run": "TIMED_EVENTS_T1B_CK2J1B1_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J1B2": {
+          "candidate_file_lf_sha256": "199777c1460bc58e44b3ed480de37a3f7719cae91f611d2f4aad98278acd22b4",
+          "run": "TIMED_EVENTS_T1B_CK2J1B2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_file_lf_sha256": "95a542a864d1dda9f916a9befa0f91003510ab5a48f12627d28b123c0c22e062",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4A": {
+          "candidate_file_lf_sha256": "64f6cb6fb2e27760845e140b7a371524f815044e3eadba36b1a9e30e39db5fd9",
+          "run": "TIMED_EVENTS_T1B_CK2J4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4B": {
+          "candidate_file_lf_sha256": "a78e3cff314f079c262e9aadbd874814f80f3f56c0d5ea570ce9040754e665b6",
+          "run": "TIMED_EVENTS_T1B_CK2J4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1b1",
+          "event": "added at CK-2j1b1: CLK-05's code half, the reader and the inventory's groups 1 to 3, built to the acceptance rule v0.2 agreed before the build (practice items 222 and 223) and accepted by the Human Governor on 15 Nov 2026 as a bounded claim"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1b2",
+          "event": "method unchanged at CK-2j1b2; the file changed (the reach was added; a default-argument expression and a decorator now belong to the definition they are written on, and a lambda to the definition it is written in; an unreadable file is recorded by path)",
+          "previous_source": "tests/test_intevia_clock_only_one_code.py:977"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "cases changed at CK-2j2a: formatdate(None) is reported as gmtime(None) is (the VC's reading of rule v0.2 section 2, with the go)",
+          "previous_source": "tests/test_intevia_clock_only_one_code.py:1267"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4a",
+          "event": "changed at CK-2j4a: the fix the Human Governor ordered from review pass 1 (rulings 1 A and 2 A of 15 Nov 2026; rule v0.4): the reader follows the bindings of the whole scope, chained aliases, annotations, inner references and Python's method resolution order; an unchanged interim test that reaches a move is selected; every non-interim test file is held to P1, P2 and P4 in its own text; cases A1 to A11 join the tables"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4b",
+          "event": "changed at CK-2j4b: the fix the Human Governor ordered from review pass 1 (ruling 1 A of 15 Nov 2026; rule v0.4): SQL quoting follows PostgreSQL with E'...' escapes; an unquoted name is case folded, the move-trigger gate included; each literal part of an f-string and a format specification's literal text is read on its own; a Func's function name is matched unqualified or pg_catalog-qualified, case folded; a Django class is known by identity; cases A12 to A18 join the tables"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_only_one_code.py:1549"
+    },
+    {
+      "obligation": "CLK-05-CODE-REACH",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_only_one_code.OnlyOneClockCodeTests.test_a_test_that_moves_the_clock_is_read_with_what_it_reaches",
+      "claim": "CLK-05, code half, the reach: judged by the check's own functions on scratch inventories, with no database, each of the Advisor's cases Q17 to Q24 (acceptance rule v0.2, section 7) gets the rule's verdict, as the files selected and what is held against them: a file is selected by a move trigger it holds (a reference to advance or advance_to, direct, aliased or by constant name; SQL that calls intevia_test_clock_advance, the name as text not being a call) or reaches through a helper; a selected file's host read is reported; a finding is reported through same-file, nested and recursive calls, an inherited unittest lifecycle entry, a call on self within the class hierarchy, and a reached definition's default argument, each with its chain; an unused definition beside a reached one is clear; reaching the approved door is clear; an allow-list entry clears an occurrence at its source on the chain too; a changed interim file is read, its unchanged control stays interim until a selected file reaches it, and a matching interim file is not selected; an edge into tools/ ends there; a test file that cannot be read fails.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1B2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-REACH"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-REACH"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-REACH"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-REACH"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J1B2": {
+          "candidate_file_lf_sha256": "199777c1460bc58e44b3ed480de37a3f7719cae91f611d2f4aad98278acd22b4",
+          "run": "TIMED_EVENTS_T1B_CK2J1B2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_file_lf_sha256": "95a542a864d1dda9f916a9befa0f91003510ab5a48f12627d28b123c0c22e062",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4A": {
+          "candidate_file_lf_sha256": "64f6cb6fb2e27760845e140b7a371524f815044e3eadba36b1a9e30e39db5fd9",
+          "run": "TIMED_EVENTS_T1B_CK2J4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4B": {
+          "candidate_file_lf_sha256": "a78e3cff314f079c262e9aadbd874814f80f3f56c0d5ea570ce9040754e665b6",
+          "run": "TIMED_EVENTS_T1B_CK2J4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1b2",
+          "event": "added at CK-2j1b2: CLK-05's code half, selection by a move of the clock and the static call graph (the acceptance rule v0.2's section 3, groups 4 and 5)"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "a case added at CK-2j2a: a reached definition's decorator is reported against the test that reaches it",
+          "previous_source": "tests/test_intevia_clock_only_one_code.py:1322"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4a",
+          "event": "changed at CK-2j4a: the fix the Human Governor ordered from review pass 1 (rulings 1 A and 2 A of 15 Nov 2026; rule v0.4): the reader follows the bindings of the whole scope, chained aliases, annotations, inner references and Python's method resolution order; an unchanged interim test that reaches a move is selected; every non-interim test file is held to P1, P2 and P4 in its own text; cases A1 to A11 join the tables"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4b",
+          "event": "changed at CK-2j4b: the fix the Human Governor ordered from review pass 1 (ruling 1 A of 15 Nov 2026; rule v0.4): SQL quoting follows PostgreSQL with E'...' escapes; an unquoted name is case folded, the move-trigger gate included; each literal part of an f-string and a format specification's literal text is read on its own; a Func's function name is matched unqualified or pg_catalog-qualified, case folded; a Django class is known by identity; cases A12 to A18 join the tables"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_only_one_code.py:1604"
+    },
+    {
+      "obligation": "CLK-05-CODE-INVENTORY",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_only_one_code.OnlyOneClockCodeTests.test_python_reads_the_time_only_through_the_clock",
+      "claim": "CLK-05, code half, the inventory (bounded claim, the Human Governor's decision of 15 Nov 2026): at the tested commit, read from git's own blobs, no product file (core/, src/, email_foundation/, intevia/, intevia_test_clock/, manage.py, run.py, migrations directories left out), no migration that is not on the frozen list and no interim test file changed since the baseline (tree ecd77698) holds a written form the rule's section 2 lists (P1 to P4), except the exact entries on the allow-list the Human Governor approves, each clearing exactly its count; each such file can be read (P5), and each of the 124 frozen migrations is present with its blob unchanged. Outside this evidence, as the rule's section 5 states: providers not listed, anything decided at run time, data the server converts, and files outside the inventory. CK-2j1b2: nor does a test file that moves the clock (one that is not a matching interim file and holds a move trigger, or reaches one through the static call graph), in its own text or in a definition it reaches (its body, default-argument expressions and decorators; a reached class's body), the finding reported against that file with its chain; an edge into a file outside the product and tests/ ends there.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1B1_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-INVENTORY"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1B2_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-INVENTORY"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J2A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-INVENTORY"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-INVENTORY"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-INVENTORY"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J1B1": {
+          "candidate_file_lf_sha256": "004c524f1176061e92234c6be4d4eb3c2de970f219d534ad13223066868ed746",
+          "run": "TIMED_EVENTS_T1B_CK2J1B1_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J1B2": {
+          "candidate_file_lf_sha256": "199777c1460bc58e44b3ed480de37a3f7719cae91f611d2f4aad98278acd22b4",
+          "run": "TIMED_EVENTS_T1B_CK2J1B2_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J2A": {
+          "candidate_file_lf_sha256": "95a542a864d1dda9f916a9befa0f91003510ab5a48f12627d28b123c0c22e062",
+          "run": "TIMED_EVENTS_T1B_CK2J2A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4A": {
+          "candidate_file_lf_sha256": "64f6cb6fb2e27760845e140b7a371524f815044e3eadba36b1a9e30e39db5fd9",
+          "run": "TIMED_EVENTS_T1B_CK2J4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4B": {
+          "candidate_file_lf_sha256": "a78e3cff314f079c262e9aadbd874814f80f3f56c0d5ea570ce9040754e665b6",
+          "run": "TIMED_EVENTS_T1B_CK2J4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1b1",
+          "event": "added at CK-2j1b1: CLK-05's code half, the reader and the inventory's groups 1 to 3, built to the acceptance rule v0.2 agreed before the build (practice items 222 and 223) and accepted by the Human Governor on 15 Nov 2026 as a bounded claim"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1b2",
+          "event": "widened at CK-2j1b2 to the rule's groups 4 and 5: a test file that holds or reaches a move trigger is read whole, with each definition it reaches",
+          "previous_source": "tests/test_intevia_clock_only_one_code.py:1032",
+          "previous_claim": "CLK-05, code half, the inventory (bounded claim, the Human Governor's decision of 15 Nov 2026): at the tested commit, read from git's own blobs, no product file (core/, src/, email_foundation/, intevia/, intevia_test_clock/, manage.py, run.py, migrations directories left out), no migration that is not on the frozen list and no interim test file changed since the baseline (tree ecd77698) holds a written form the rule's section 2 lists (P1 to P4), except the exact entries on the allow-list the Human Governor approves, each clearing exactly its count; each such file can be read (P5), and each of the 124 frozen migrations is present with its blob unchanged. Outside this evidence, as the rule's section 5 states: providers not listed, anything decided at run time, data the server converts, and files outside the inventory. Which other test files are read (selection by a move of the clock and the static call graph, groups 4 and 5) is CK-2j1b2's."
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j2a",
+          "event": "method unchanged at CK-2j2a; it now holds nothing against the real commit: law_records.py's SQL label 'now' became 'current' (the Human Governor's decision A, 15 Nov 2026); the allow-list is empty",
+          "previous_source": "tests/test_intevia_clock_only_one_code.py:1336"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4a",
+          "event": "changed at CK-2j4a: the fix the Human Governor ordered from review pass 1 (rulings 1 A and 2 A of 15 Nov 2026; rule v0.4): the reader follows the bindings of the whole scope, chained aliases, annotations, inner references and Python's method resolution order; an unchanged interim test that reaches a move is selected; every non-interim test file is held to P1, P2 and P4 in its own text; cases A1 to A11 join the tables"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4b",
+          "event": "changed at CK-2j4b: the fix the Human Governor ordered from review pass 1 (ruling 1 A of 15 Nov 2026; rule v0.4): SQL quoting follows PostgreSQL with E'...' escapes; an unquoted name is case folded, the move-trigger gate included; each literal part of an f-string and a format specification's literal text is read on its own; a Func's function name is matched unqualified or pg_catalog-qualified, case folded; a Django class is known by identity; cases A12 to A18 join the tables"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_only_one_code.py:1671"
+    },
+    {
+      "obligation": "CLK-05-CODE-TREE",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_intevia_clock_only_one_code.OnlyOneClockCodeTests.test_the_inventory_is_read_from_a_plain_directory_without_git",
+      "claim": "CLK-05-CODE-TREE: the code half's inventory is read from the tested tree's files on disk, with no git call (rule v0.3): from a plain directory that holds no .git, it is exactly the *.py files outside __pycache__, each under the git blob id computed from its bytes; a product file's host read is reported and a frozen migration is matched by that blob id; a *.py entry that cannot be read, and a root that is no directory, fail (P5) and are never read as empty.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J3_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-TREE"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4A_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-TREE"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-05-CODE-TREE"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J3": {
+          "candidate_file_lf_sha256": "e7a55b661c04a9506deab0021c118d17cb395c9785c3de880a57a2416d5d3b73",
+          "run": "TIMED_EVENTS_T1B_CK2J3_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4A": {
+          "candidate_file_lf_sha256": "64f6cb6fb2e27760845e140b7a371524f815044e3eadba36b1a9e30e39db5fd9",
+          "run": "TIMED_EVENTS_T1B_CK2J4A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J4B": {
+          "candidate_file_lf_sha256": "a78e3cff314f079c262e9aadbd874814f80f3f56c0d5ea570ce9040754e665b6",
+          "run": "TIMED_EVENTS_T1B_CK2J4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j3",
+          "event": "added at CK-2j3: the VC's whole job ck2code1 ran the inventory test from a snapshot with no .git, where the git read could not run; rule v0.3 reads the files on disk"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4a",
+          "event": "changed at CK-2j4a: the fix the Human Governor ordered from review pass 1 (rulings 1 A and 2 A of 15 Nov 2026; rule v0.4): the reader follows the bindings of the whole scope, chained aliases, annotations, inner references and Python's method resolution order; an unchanged interim test that reaches a move is selected; every non-interim test file is held to P1, P2 and P4 in its own text; cases A1 to A11 join the tables"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4b",
+          "event": "changed at CK-2j4b: the fix the Human Governor ordered from review pass 1 (ruling 1 A of 15 Nov 2026; rule v0.4): SQL quoting follows PostgreSQL with E'...' escapes; an unquoted name is case folded, the move-trigger gate included; each literal part of an f-string and a format specification's literal text is read on its own; a Func's function name is matched unqualified or pg_catalog-qualified, case folded; a Django class is known by identity; cases A12 to A18 join the tables"
+        }
+      ],
+      "current_source": "tests/test_intevia_clock_only_one_code.py:1619"
     },
     {
       "obligation": "REV-01",
@@ -19784,6 +20654,12 @@
       "unit_TAR": [
         {
           "source": "TIMED_EVENTS_T1B_TAR_TABLE.md",
+          "unit_ids": [
+            "REV-01"
+          ]
+        },
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J1A_TAR_TABLE.md",
           "unit_ids": [
             "REV-01"
           ]
@@ -19813,6 +20689,13 @@
           "event": "method unchanged at R4c (CLK-07 changed in the clock's file; the reversibility file unchanged); R4b evidence entry retained",
           "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4B_PENDING"
+        },
+        {
+          "unit": "TIMED EVENTS T1b CK-2j1a",
+          "event": "method changed at CK-2j1a (the ruled fold): CLK-08's two stops are two points of this method's one descent; descend takes an optional observer called after each step that did not fail; CLK-08's observations are taken without asserting and judged in a sub-test of their own once the clone is restored; REV-01's own assertions and claim are unchanged",
+          "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+          "previous_source": "tests/test_migration_reversibility.py:191",
+          "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING"
         }
       ],
       "evidence": {
@@ -19850,10 +20733,17 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "TIMED_EVENTS_T1B_CK2J1A": {
+          "candidate_method_file_lf_sha256": "1e1465f0be7098d7fc16a238e7c101a2657725b22d2f1cce544b152038861f87",
+          "run": "TIMED_EVENTS_T1B_CK2J1A_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
         }
       },
       "claim": "The standing reversibility check. Every migration after the declared base (main b85df0db: core 0095_te_c2_join and each other app's leaf there) can be unapplied and applied again through Django's migration executor on an owned clone, which returns to the state it had, at offset zero, and which production's startup refuses throughout. Every operation after the base declares a reverse; each migration is undone one at a time and a reverse that fails is reported naming the migration; at the lowest point the ledger has lost the undone migrations and no other and the clock's counter is kept at zero; once every received leaf is applied again the isolation instrument's full capture equals the one taken at head, with the same ledger, counter and routine comments. An exemption is named with its reason and its ruling, and a stale, unruled or needless entry fails. R3g: the migration blamed for a failed reverse, the exemption considered and what is counted as undone are taken from the executor's own reports of the migration it began and finished, and a failed re-apply names the migration being applied. R4b (Gemini's G-D5a): where the restore fails after a descent that could not undo a migration, the failure names both.",
-      "current_source": "tests/test_migration_reversibility.py:191"
+      "current_source": "tests/test_migration_reversibility.py:236"
     },
     {
       "obligation": "REV-02",
@@ -19991,6 +20881,108 @@
       },
       "claim": "Migration 0103's own step (core/migrations/0103_clock_storage_column_defaults.py), forward and backward: sets the default it is asked to set and leaves the table's storage, other defaults and rows alone; and stops, with its message, outside a transaction, at a column that is not there, that has no default, that already has the default it would set, or that has another default; and after its change, at a default that is not the intended one, or a change that altered the column, the table's storage or another default. Before the change nothing has changed; after it, the rollback of the step's transaction leaves everything as it was.",
       "current_source": "tests/test_clock_column_default_refusals.py:140"
+    },
+    {
+      "obligation": "CLK-10",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_clock_time_fields.ClockTimeFieldTests.test_automatic_times_are_the_clocks_on_create_save_and_bulk_create",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_CODE_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-10"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2i",
+          "event": "new at CK-2i: the automatic time fields read the INTEVIA Clock (D3 A)"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2I": {
+          "candidate_file_lf_sha256": "65f53060a5a6cd25e5643089e90b85d8ed1243c87471031d5e6a1f6ab7d97334",
+          "run": "TIMED_EVENTS_T1B_CK2I_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "An automatic time field (auto_now_add, auto_now) is filled from the INTEVIA Clock's Python door, not the web server's clock, on the connection written to; after a create, a save or a bulk_create the instance holds the value written; and Django's rules for when it is filled still hold (a creation stamp on the first save only; an update stamp on every save that writes it, with update_fields only when named; not by QuerySet.update). One save of one such field is one statement to the instant face.",
+      "current_source": "tests/test_clock_time_fields.py:47"
+    },
+    {
+      "obligation": "CLK-11",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_clock_time_fields.ClockTimeFieldTests.test_every_automatic_time_field_is_the_clocks_and_reads_the_write_connection",
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2_CODE_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-11"
+          ]
+        }
+      ],
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2i",
+          "event": "new at CK-2i: the automatic time fields read the INTEVIA Clock (D3 A)"
+        }
+      ],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2I": {
+          "candidate_file_lf_sha256": "65f53060a5a6cd25e5643089e90b85d8ed1243c87471031d5e6a1f6ab7d97334",
+          "run": "TIMED_EVENTS_T1B_CK2I_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "claim": "No model in any installed app keeps Django's own automatic fill, and the product's models hold exactly 33 automatic time fields, all core.clock_fields.ClockDateTimeField. The field reads no clock when Django asks for its value, and reads the door on the connection it is then given, by that connection's alias.",
+      "current_source": "tests/test_clock_time_fields.py:108"
+    },
+    {
+      "obligation": "CLK-11-STATE-ONLY",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_clock_time_field_migrations.ClockTimeFieldMigrationTests.test_the_time_field_migrations_run_no_database_operation_in_either_direction",
+      "claim": "CLK-11-STATE-ONLY (G2 row G-4's evidence): core/migrations/0104_clock_automatic_time_fields.py and email_foundation/migrations/0002_clock_automatic_time_fields.py run no database operation, forwards or backwards: the SQL Django collects for each, in each direction, as sqlmigrate does, is empty; and the same question finds SQL in both directions for an in-memory copy of each with one reversible database operation added.",
+      "unit_TAR": [
+        {
+          "source": "TIMED_EVENTS_T1B_CK2J4B_TAR_TABLE.md",
+          "unit_ids": [
+            "CLK-11-STATE-ONLY"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "TIMED_EVENTS_T1B_CK2J4B": {
+          "candidate_file_lf_sha256": "62492155983255290f0e5336b7a1020ccfe4ce564a8dc48da2a70721387d1266",
+          "run": "TIMED_EVENTS_T1B_CK2J4B_PENDING",
+          "normal": null,
+          "break": null,
+          "restored": null
+        }
+      },
+      "history": [
+        {
+          "unit": "TIMED EVENTS T1b CK-2j4b",
+          "event": "added at CK-2j4b: review pass 1 found that G-4's named evidence (makemigrations --check, REV-01) would also pass a reversible database operation; the Human Governor's ruling 1 A of 15 Nov 2026"
+        }
+      ],
+      "current_source": "tests/test_clock_time_field_migrations.py:43"
     }
   ],
   "previous_unit": {

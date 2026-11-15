@@ -56,7 +56,7 @@ def _decoded_authority_source(value):
 
 
 def _now():
-    return _rows('SELECT statement_timestamp() AS stamp')[0]['stamp']
+    return _rows('SELECT public.intevia_clock_statement() AS stamp')[0]['stamp']
 
 
 def _meta(version_id):
@@ -120,7 +120,7 @@ def _version_context(credential, version_id, *, release=False, route=None):
 
 def _source(lo, actor, route, received):
     rows = _rows('SELECT public.lib_policy_source(%s,%s,%s,%s,%s)::text AS original, '
-                 'public.lib_policy_source(%s,%s,%s,statement_timestamp(),statement_timestamp())::text AS current',
+                 'public.lib_policy_source(%s,%s,%s,public.intevia_clock_statement(),public.intevia_clock_statement())::text AS current',
                  [lo.pk, actor.pk, route, received, received, lo.pk, actor.pk, route])
     row = rows[0]
     if row['original'] is None or row['original'] != row['current']:
@@ -242,7 +242,7 @@ def declare_authorship(*, credential, version_id, content_sha256, authors, affir
 def _check_policy_route(lo, version_id, route, received):
     reason = _rows(
         "SELECT coalesce(public.cq3_policy_problem(%s,v.resource_id,%s,%s,%s),"
-        " public.cq3_policy_problem(%s,v.resource_id,%s,statement_timestamp(),statement_timestamp())) AS reason"
+        " public.cq3_policy_problem(%s,v.resource_id,%s,public.intevia_clock_statement(),public.intevia_clock_statement())) AS reason"
         " FROM public.core_libraryresourceversion v WHERE v.id=%s",
         [lo.pk, route, received, received, lo.pk, route, version_id],
     )[0]["reason"]

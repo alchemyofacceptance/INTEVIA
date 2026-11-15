@@ -201,7 +201,7 @@ _SKIP_SQL = """
 WITH k AS (SELECT lo.id, pg_try_advisory_xact_lock(hashtextextended('TE:meter:'||lo.id::text,0)) AS ok
            FROM public.core_livingorganism lo WHERE lo.organism_id=%s::uuid)
 INSERT INTO public.core_temeter (organism_id, {column}, last_skip_class, last_skip_at)
-SELECT k.id, 1, %s, statement_timestamp() FROM k WHERE k.ok
+SELECT k.id, 1, %s, public.intevia_clock_statement() FROM k WHERE k.ok
 ON CONFLICT (organism_id) DO UPDATE SET {column}=public.core_temeter.{column}+1,
     last_skip_class=EXCLUDED.last_skip_class, last_skip_at=EXCLUDED.last_skip_at
 """
@@ -268,13 +268,13 @@ def _count_lost_attempt(alias, organism_uuid, organism_id, chosen, failure_class
                 _rows(alias, """INSERT INTO public.core_tepace (organism_id, consumer, last_probe_at, probes, failed,
                         last_failure_class, last_failure_code, last_failure_at,
                         cursor_due, cursor_purpose, cursor_source, cursor_occurrence)
-                    VALUES (%s,%s,statement_timestamp(),1,1,%s,%s,statement_timestamp(),%s,%s,%s,%s)
+                    VALUES (%s,%s,public.intevia_clock_statement(),1,1,%s,%s,public.intevia_clock_statement(),%s,%s,%s,%s)
                     ON CONFLICT (organism_id, consumer) DO NOTHING""",
                       [organism_id, chosen["consumer"], failure_class, code, *cursor])
             else:
-                _rows(alias, """UPDATE public.core_tepace SET last_probe_at=statement_timestamp(),
+                _rows(alias, """UPDATE public.core_tepace SET last_probe_at=public.intevia_clock_statement(),
                         probes=probes+1, failed=failed+1, last_failure_class=%s, last_failure_code=%s,
-                        last_failure_at=statement_timestamp(),
+                        last_failure_at=public.intevia_clock_statement(),
                         cursor_due=%s, cursor_purpose=%s, cursor_source=%s, cursor_occurrence=%s
                     WHERE organism_id=%s AND consumer=%s AND probes=%s""",
                       [failure_class, code, *cursor, organism_id, chosen["consumer"], seen])
@@ -314,14 +314,14 @@ def _active_member(alias, organism_id, identity_id, cut):
 
     The LO's own state is not asked: an active member of a dormant LO stays eligible.
     """
-    state = _rows(alias, "SELECT public.disc_member_state(%s,%s,COALESCE(%s::timestamptz,statement_timestamp())) AS state",
+    state = _rows(alias, "SELECT public.disc_member_state(%s,%s,COALESCE(%s::timestamptz,public.intevia_clock_statement())) AS state",
                   [organism_id, identity_id, cut])[0]["state"]
     return state == "ACTIVE"
 
 
 def _limits(alias):
     """The limits in force, or None. None also when they are not the limits this runner supports."""
-    body = _rows(alias, "SELECT public.te_limits_at(statement_timestamp()) AS body")[0]["body"]
+    body = _rows(alias, "SELECT public.te_limits_at(public.intevia_clock_statement()) AS body")[0]["body"]
     if isinstance(body, str):
         body = json.loads(body)
     return body if body == SUPPORTED_LIMITS else None
@@ -395,7 +395,7 @@ def _try_organism(alias, organism_id):
 
 def _probe(alias, organism_id, consumer):
     _rows(alias, """INSERT INTO public.core_tepace (organism_id, consumer, last_probe_at, probes)
-        VALUES (%s,%s,statement_timestamp(),1)
+        VALUES (%s,%s,public.intevia_clock_statement(),1)
         ON CONFLICT (organism_id, consumer) DO UPDATE
         SET last_probe_at=EXCLUDED.last_probe_at, probes=public.core_tepace.probes+1""", [organism_id, consumer])
 
@@ -488,14 +488,14 @@ def _record(alias, organism_id, consumer, item, opening, failure_class, code, st
     failed = opening is None
     _rows(alias, """UPDATE public.core_tepace SET
         opened=opened+%s, found_done=found_done+%s, blocked=blocked+%s, failed=failed+%s,
-        last_opened_at=CASE WHEN %s THEN statement_timestamp() ELSE last_opened_at END,
+        last_opened_at=CASE WHEN %s THEN public.intevia_clock_statement() ELSE last_opened_at END,
         cursor_due=%s, cursor_purpose=%s, cursor_source=%s, cursor_occurrence=%s,
         last_blocked_source=CASE WHEN %s THEN %s ELSE last_blocked_source END,
         last_blocked_code=CASE WHEN %s THEN %s ELSE last_blocked_code END,
-        last_blocked_at=CASE WHEN %s THEN statement_timestamp() ELSE last_blocked_at END,
+        last_blocked_at=CASE WHEN %s THEN public.intevia_clock_statement() ELSE last_blocked_at END,
         last_failure_class=CASE WHEN %s THEN %s ELSE last_failure_class END,
         last_failure_code=CASE WHEN %s THEN %s ELSE last_failure_code END,
-        last_failure_at=CASE WHEN %s THEN statement_timestamp() ELSE last_failure_at END,
+        last_failure_at=CASE WHEN %s THEN public.intevia_clock_statement() ELSE last_failure_at END,
         last_ms=%s, max_ms=GREATEST(COALESCE(max_ms,0),%s)
         WHERE organism_id=%s AND consumer=%s""",
           [int(outcome == OPENED), int(outcome == FOUND_DONE), int(blocked), int(failed),
@@ -531,7 +531,7 @@ def _attempt(wake, alias):
                 consumer = chosen["consumer"]
                 registry = _registry(alias, consumer)
                 by_purpose = {row["purpose"]: row for row in registry}
-                known = _rows(alias, "SELECT statement_timestamp() AS stamp")[0]["stamp"]
+                known = _rows(alias, "SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
                 hint = _select(alias, organism_id, registry, known, chosen)
                 if hint is not None and not _claim(
                         alias, organism_id, consumer, by_purpose[hint["purpose"]], hint, "BEFORE_LO"):
@@ -541,7 +541,7 @@ def _attempt(wake, alias):
                 else:
                     # Under the LO lock everything read before it is read again at a new known
                     # time: first the person's membership, then the candidate. Both were hints.
-                    known = _rows(alias, "SELECT statement_timestamp() AS stamp")[0]["stamp"]
+                    known = _rows(alias, "SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
                     member = _active_member(alias, organism_id, wake.identity_id, known)
                     item = _select(alias, organism_id, registry, known, chosen) if member else None
                     same = (item is None and hint is None) or (

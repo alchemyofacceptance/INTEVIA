@@ -859,7 +859,7 @@ def _measure_usage(
                 CROSS JOIN LATERAL (
                     SELECT public.s015_eligible_event_ids(
                         'core_circle', circle.id, %(state_at)s,
-                        COALESCE(%(known_at)s, statement_timestamp())
+                        COALESCE(%(known_at)s, public.intevia_clock_statement())
                     ) AS ids
                 ) AS events
                 WHERE organism.organism_id = %(living_organism_uuid)s
@@ -903,7 +903,7 @@ def _measure_usage(
                 CROSS JOIN LATERAL (
                     SELECT public.s015_eligible_event_ids(
                         'core_organismmembership', membership.id, %(state_at)s,
-                        COALESCE(%(known_at)s, statement_timestamp())
+                        COALESCE(%(known_at)s, public.intevia_clock_statement())
                     ) AS ids
                 ) AS events
                 WHERE organism.organism_id = %(living_organism_uuid)s
@@ -2183,7 +2183,7 @@ class OrganismEntitlementService(_OrganismCommandService):
         fingerprint, generated lineage reference, temporal basis, supplied
         timestamps, predecessor commitment and computed parts commitment.
         Refresh the organism's governed cache using effective_at and a fresh
-        database clock_timestamp() argument, then return the inserted event.
+        database public.intevia_clock_instant() argument, then return the inserted event.
         This helper does not open or commit its own transaction.
         """
         organism = (
@@ -2276,7 +2276,7 @@ class OrganismEntitlementService(_OrganismCommandService):
             )
             event_id = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_livingorganism", organism.pk, effective_at],
             )
         return LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)

@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.db import connections, models
 from django.db.models import Q
 
+from core.clock_fields import ClockDateTimeField
 from core.identity import canonical_username_v1
 
 
@@ -57,8 +58,8 @@ class Identity(models.Model):
         db_index=True,
     )
     access_epoch = models.PositiveBigIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     activated_at = models.DateTimeField(null=True, blank=True)
     restricted_at = models.DateTimeField(null=True, blank=True)
     deactivated_at = models.DateTimeField(null=True, blank=True)
@@ -130,7 +131,7 @@ class Role(models.Model):
     description = models.CharField(max_length=270, blank=True)
 
     # Timestamp for continuity layer.
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
@@ -149,7 +150,7 @@ class ProfileRole(models.Model):
     role = models.ForeignKey(Role, on_delete=models.CASCADE)
 
     # Timestamp for continuity layer.
-    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         # Prevent duplicate assignments.
@@ -443,8 +444,8 @@ class Contribution(models.Model):
         null=True,
         blank=True,
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def clean(self):
@@ -493,7 +494,7 @@ class ContributionVersion(models.Model):
         on_delete=models.PROTECT,
         related_name="created_contribution_versions",
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     restricted_at = models.DateTimeField(null=True, blank=True)
     erased_at = models.DateTimeField(null=True, blank=True)
     legal_hold = models.BooleanField(default=False)
@@ -676,7 +677,7 @@ class EvidenceReference(models.Model):
         on_delete=models.PROTECT,
         related_name="added_evidence_references",
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -732,7 +733,7 @@ class Event(models.Model):
         db_index=True,
     )
     created_at = models.DateTimeField()
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def __str__(self):
@@ -1178,8 +1179,8 @@ class EventAttendance(models.Model):
         blank=True,
     )
     origin = models.CharField(max_length=24, choices=Origin.choices)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
+    updated_at = ClockDateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
@@ -1277,7 +1278,7 @@ class EventAttendanceTransition(models.Model):
     idempotency_key = models.CharField(max_length=120)
     payload_fingerprint = models.CharField(max_length=64)
     recorded_at = models.DateTimeField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -1421,7 +1422,7 @@ class EventAttendanceEligibilityReceipt(models.Model):
     authority_reference = models.CharField(max_length=255)
     event_state_snapshot = models.CharField(max_length=24)
     evaluated_at = models.DateTimeField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
 
     def clean(self):
         if self.record_transition.attendance_id != self.attendance_id:
@@ -1476,7 +1477,7 @@ class LibraryResource(models.Model):
         blank=True,
     )
     created_at = models.DateTimeField()
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def clean(self):
@@ -1977,7 +1978,7 @@ class EventResourceRelationshipEvidence(models.Model):
     request_reference = models.CharField(max_length=128, null=True, blank=True)
     consumer_reference = models.CharField(max_length=128, null=True, blank=True)
     evaluated_at = models.DateTimeField()
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -2034,7 +2035,7 @@ class Service(models.Model):
         related_name="created_services",
     )
     created_at = models.DateTimeField()
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     retired_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def clean(self):
@@ -2520,7 +2521,7 @@ class ServiceActivity(models.Model):
         db_index=False,
     )
     created_at = models.DateTimeField()
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = ClockDateTimeField(auto_now=True)
     head_transition = models.ForeignKey(
         "ServiceActivityTransition",
         on_delete=models.PROTECT,
@@ -4067,7 +4068,7 @@ class AuthorityPrincipal(_S015ImmutableAnchor):
         null=True,
         blank=True,
     )
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -4156,7 +4157,7 @@ class AuthorityPrincipalAliasReview(_S015AppendOnly):
     state = models.CharField(max_length=40, choices=State.choices)
     authority_reference = models.CharField(max_length=255)
     evidence_reference = models.CharField(max_length=255)
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
 
 class AuthorityDerivationEdge(_S015AppendOnly):
@@ -4173,7 +4174,7 @@ class AuthorityDerivationEdge(_S015AppendOnly):
     )
     authority_reference = models.CharField(max_length=255)
     evidence_reference = models.CharField(max_length=255)
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -4228,7 +4229,7 @@ class AuthorityBasis(_S015ImmutableAnchor):
     issued_at = models.DateTimeField()
     effective_at = models.DateTimeField()
     received_at = models.DateTimeField()
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
     superseded_basis = models.ForeignKey(
         "self",
         on_delete=models.PROTECT,
@@ -4305,7 +4306,7 @@ class GovernedDetermination(_S015AppendOnly):
     occurred_at = models.DateTimeField()
     effective_at = models.DateTimeField()
     received_at = models.DateTimeField()
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
 
 class LivingOrganism(_S015ImmutableAnchor):
@@ -4332,7 +4333,7 @@ class LivingOrganism(_S015ImmutableAnchor):
         choices=State.choices,
         default=State.FOUNDING_PENDING,
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
     state_source_event_set_fingerprint = models.CharField(max_length=71)
@@ -4410,7 +4411,7 @@ class Circle(_S015ImmutableAnchor):
         related_name="circles",
     )
     state = models.CharField(max_length=16, choices=State.choices)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
     state_source_event_set_fingerprint = models.CharField(max_length=71)
@@ -4466,7 +4467,7 @@ class OrganismMembership(_S015ImmutableAnchor):
         related_name="memberships",
     )
     state = models.CharField(max_length=19, choices=State.choices)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
     state_source_event_set_fingerprint = models.CharField(max_length=71)
@@ -4542,7 +4543,7 @@ class OrganismRoleDefinition(_S015ImmutableAnchor):
     scope = models.CharField(max_length=20, choices=Scope.choices)
     definition_version = models.PositiveIntegerField()
     active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     kind = models.CharField(max_length=12, choices=Kind.choices, null=True, blank=True)
     appointing_authority = models.CharField(
         max_length=20, choices=AppointingAuthority.choices, null=True, blank=True
@@ -4786,7 +4787,7 @@ class ContextualRoleAssignment(_S015ImmutableAnchor):
         blank=True,
     )
     state = models.CharField(max_length=19, choices=State.choices)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     current_state_effective_at = models.DateTimeField()
     state_known_at = models.DateTimeField()
     state_source_event_set_fingerprint = models.CharField(max_length=71)
@@ -4857,7 +4858,7 @@ class EmergencyAuthorityEnvelope(_S015ImmutableAnchor):
     target_scope_set = models.JSONField()
     proportionality_bounds = models.JSONField()
     hard_expiry = models.DateTimeField()
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
 
 
 class GovernedVisibilityGrant(_S015ImmutableAnchor):
@@ -4890,7 +4891,7 @@ class GovernedVisibilityGrant(_S015ImmutableAnchor):
     )
     expiry = models.DateTimeField()
     lineage_reference = models.CharField(max_length=71, unique=True)
-    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_at = ClockDateTimeField(auto_now_add=True)
     head_state_event = models.OneToOneField(
         "VisibilityGrantStateEvent",
         on_delete=models.PROTECT,
@@ -5011,7 +5012,7 @@ class OrganismCommandReceipt(_S015AppendOnly):
     authority_decision_reference = models.CharField(max_length=71)
     lineage_reference = models.CharField(max_length=71, unique=True)
     result_payload = models.JSONField()
-    completed_at = models.DateTimeField(auto_now_add=True)
+    completed_at = ClockDateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [

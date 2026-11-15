@@ -54,7 +54,8 @@ def nomination_fixture(ids, proposer, row, member, *, consented=False):
 class SRProviderPureTests(SimpleTestCase):
     def test_01_vacancy_observation_uses_one_cut_and_support_explains_missing_context(self):
         """O-09: one vacancy observation uses one clock cut and reports a missing organisation."""
-        at = datetime.now(timezone.utc)
+        # A stand-in for the database's answer: this test has no database, and the value is only handed through.
+        at = datetime(2026, 10, 12, tzinfo=timezone.utc)
         organism = SimpleNamespace(pk=1)
         rows = [SimpleNamespace(role_uuid=uuid4(), code=code, provisions=SimpleNamespace(all=lambda: []))
                 for code in ("TEST_BOARD_A", "TEST_BOARD_B")]
@@ -65,14 +66,14 @@ class SRProviderPureTests(SimpleTestCase):
         cursor = MagicMock()
         # Return the database type for each real query; extra clock reads remain
         # observable as assertion failures rather than exhausting a mock list.
-        cursor.fetchone.side_effect = lambda: ((at,) if cursor.execute.call_args.args[0] == "SELECT clock_timestamp()" else (False,))
+        cursor.fetchone.side_effect = lambda: ((at,) if cursor.execute.call_args.args[0] == "SELECT public.intevia_clock_instant()" else (False,))
         database = MagicMock()
         database.cursor.return_value.__enter__.return_value = cursor
         with patch.object(definitions.LivingOrganism,"objects",lo), patch.object(definitions.OrganismRoleDefinition,"objects",roles), patch.object(definitions,"connections",{"default":database}):
             result = definitions.board_office_vacancies(uuid4())
             self.assertEqual([r.code for r in result],[r.code for r in rows], msg='Reading vacancies for the two board offices should return both offices in their recorded order; the returned list differs.')
-            self.assertEqual(cursor.execute.call_args_list.count(call("SELECT clock_timestamp()")), 1, msg='Reading the two board-office vacancies should ask the database for the current time once; the clock requests differ.')
-            self.assertEqual([c.args[1] for c in cursor.execute.call_args_list if c.args[0] != "SELECT clock_timestamp()"], [[organism.pk, row.code, at, at] for row in rows], 'Reading both board-office vacancies should query their actual assignment folds at the shared observation time; an office or time cut differs.')
+            self.assertEqual(cursor.execute.call_args_list.count(call("SELECT public.intevia_clock_instant()")), 1, msg='Reading the two board-office vacancies should ask the database for the current time once; the clock requests differ.')
+            self.assertEqual([c.args[1] for c in cursor.execute.call_args_list if c.args[0] != "SELECT public.intevia_clock_instant()"], [[organism.pk, row.code, at, at] for row in rows], 'Reading both board-office vacancies should query their actual assignment folds at the shared observation time; an office or time cut differs.')
             self.assertFalse(any(r.filled for r in result), msg='Reading vacancies when neither board office has a holder should show both as vacant; an office was shown as filled.')
             lo.using.return_value.get.side_effect = models.LivingOrganism.DoesNotExist
             with self.assertRaises(definitions.S015RoleDefinitionNotFound, msg='Reading vacancies for an organisation that does not exist should refuse with an organisation-not-found explanation; no such refusal occurred.') as missing:

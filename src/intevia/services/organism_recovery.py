@@ -136,7 +136,7 @@ def advance(alias, organism_pk):
             cursor.execute("SELECT public.s015_register_organism_lock(%s)", [lo.organism_id])
             cursor.execute("""
                 SELECT DISTINCT i.due, i.source FROM public.c2_timed_input i
-                WHERE i.lo_id=%s AND i.due<=clock_timestamp() AND NOT EXISTS (
+                WHERE i.lo_id=%s AND i.due<=public.intevia_clock_instant() AND NOT EXISTS (
                     SELECT FROM core_coverageassessment a JOIN core_essentialcoveragecase c ON c.id=a.case_id
                     WHERE c.living_organism_id=i.lo_id AND a.evidence_reference='c2-boundary:'||i.source
                     AND a.effective_at=i.due) ORDER BY i.due,i.source""", [lo.pk])
@@ -174,9 +174,9 @@ def notice_before_office_intake(alias, member_pk, idempotency_key, *, assignment
         return
     with connections[alias].cursor() as cursor:
         cursor.execute("""
-            SELECT EXISTS (SELECT FROM public.c2_phase_at(%s,statement_timestamp(),statement_timestamp()) h
-                WHERE h.action IN ('WITHOUT_COORDINATOR','K2_DEACTIVATE') AND h.effective_until<=clock_timestamp())
-            OR EXISTS (SELECT FROM public.c2_timed_input i WHERE i.lo_id=%s AND i.due<=clock_timestamp()
+            SELECT EXISTS (SELECT FROM public.c2_phase_at(%s,public.intevia_clock_statement(),public.intevia_clock_statement()) h
+                WHERE h.action IN ('WITHOUT_COORDINATOR','K2_DEACTIVATE') AND h.effective_until<=public.intevia_clock_instant())
+            OR EXISTS (SELECT FROM public.c2_timed_input i WHERE i.lo_id=%s AND i.due<=public.intevia_clock_instant()
                 AND NOT EXISTS (SELECT FROM core_coverageassessment a JOIN core_essentialcoveragecase c ON c.id=a.case_id
                  WHERE c.living_organism_id=i.lo_id AND a.evidence_reference='c2-boundary:'||i.source
                  AND a.effective_at=i.due))""", [lo_id, lo_id])

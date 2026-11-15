@@ -31,7 +31,7 @@ def _command(*, credential, organism_uuid, category_uuid, thread_uuid, request_u
                        "request": disc._uuid(request_uuid), "operation": operation, **fields}
             if operation in {"START", "REPLY", "EDIT"}:
                 payload["body_fingerprint"] = body_fingerprint(markdown)
-            stamp = disc._rows("SELECT statement_timestamp() AS stamp")[0]["stamp"]
+            stamp = disc._rows("SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
             result = disc._rows("SELECT public.discp_execute(%s::jsonb,%s,%s,%s,%s) AS result",
                                [json.dumps(payload), markdown, actor.pk, actor.access_epoch, stamp])[0]["result"]
             receipt = {key: UUID(value) if value is not None else None for key, value in result.items()}
@@ -108,7 +108,7 @@ def visible_boards(*, credential):
           FROM public.core_discboard b JOIN public.core_livingorganism lo ON lo.id=b.organism_id
           LEFT JOIN public.core_circle c ON c.id=b.circle_id
           WHERE EXISTS(SELECT FROM public.disc_categories cat WHERE cat.board_uuid=b.board_uuid
-            AND public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,statement_timestamp()))
+            AND public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()))
           ORDER BY lo.organism_id,c.circle_uuid NULLS FIRST""", [actor.pk])
         if not rows:
             raise disc.DiscussionUnavailable()
@@ -119,7 +119,7 @@ def _category(actor, organism_uuid, circle_uuid, category_uuid):
     board = disc._audience(actor, organism_uuid, circle_uuid, category_uuid)
     rows = disc._rows("""SELECT c.* FROM public.disc_categories c JOIN public.core_discboard b USING(board_uuid)
       WHERE c.category_uuid=%s AND c.board_uuid=%s
-      AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,statement_timestamp())""",
+      AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())""",
                      [category_uuid, board["board_uuid"], actor.pk])
     if not rows:
         raise disc.DiscussionUnavailable()

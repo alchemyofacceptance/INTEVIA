@@ -820,7 +820,7 @@ def assignment_in_effect(
     known = None if known_at is None else _validate_timestamp(known_at, "known_at")
     with connections[database_alias].cursor() as cursor:
         cursor.execute(
-            "SELECT public.elect_office_effective(%s,%s,coalesce(%s,statement_timestamp()))",
+            "SELECT public.elect_office_effective(%s,%s,coalesce(%s,public.intevia_clock_statement()))",
             [assignment.pk, moment, known],
         )
         return cursor.fetchone()[0]
@@ -2006,7 +2006,7 @@ class OrganismRoleService(_OrganismCommandService):
         supplies the knowledge coordinate. Raw result: bool.
         """
         with connections[self._alias].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             known_at = cursor.fetchone()[0]  # aware datetime
             cursor.execute("""SELECT EXISTS (
                 SELECT 1 FROM public.core_contextualroleassignment held
@@ -2039,7 +2039,7 @@ class OrganismRoleService(_OrganismCommandService):
         nominee-membership checks. This helper does not itself qualify authority.
 
         Raises S015AssignmentNotFound if the assignment's sequence-1 PROPOSE
-        event is missing. Reads clock_timestamp() from the database as the
+        event is missing. Reads public.intevia_clock_instant() from the database as the
         knowledge bound for consent records.
 
         For a self-nomination, where the proposal's actor is the nominee, the
@@ -2079,7 +2079,7 @@ class OrganismRoleService(_OrganismCommandService):
         if proposal is None:
             raise S015AssignmentNotFound("office nomination proposal not found")
         with connections[self._alias].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             record_time = cursor.fetchone()[0]
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
@@ -2280,7 +2280,7 @@ class OrganismRoleService(_OrganismCommandService):
         """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 [_ANCHOR_TOKEN, assignment.pk, effective_at],
             )
         assignment.refresh_from_db(using=self._alias)

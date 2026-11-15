@@ -19,8 +19,19 @@ How to keep it:
   descent can reverse more than one migration where the graph branches, so the step asked for is never taken
   as the migration reversed. REV-02 holds that on a small branched graph kept in memory.
 
+CLK-08 is witnessed here too, since CK-2j1a (the ruled fold: the CK-2 commission's ruling on REV-01 and CLK-08,
+and the Human Governor's decision of 14 Nov 2026 on CK-2i's test cost). Its two stops are two points of REV-01's one descent: the first point at which the
+moving part is reversed while the clock's own migration (core 0096) is still applied, and the lowest point, where
+both are reversed. The clone is therefore unwound and restored once for both claims. What CLK-08 looks at is taken
+at each stop without asserting (clock_observation) and judged once the clone is restored, in a sub-test of its
+own, so that each claim reports its own failure. At the first stop the storage conversions above 0096 may already
+be reversed; CLK-08 looks only at the faces, the moving part, the ledger rows of the test route's app, the counter
+and production's refusal, and none of them is written by a conversion.
+
 It takes no time from PostgreSQL's own functions and none from the host, and it never moves the clock.
 """
+
+from importlib import import_module
 
 from django.db import connection
 from django.db.migrations import Migration, RunPython
@@ -32,6 +43,7 @@ from django.test import TransactionTestCase, override_settings
 
 from core import clock_startup as startup
 from intevia.test_postgresql_backend import clock as owned_route
+from tests.test_intevia_clock import REFUSAL_PARTS
 from verification.isolation import state as instrument
 
 # The base: main at b85df0db10ad3430a44b8947177df9829920853f, each app's last migration there.
@@ -49,6 +61,12 @@ BASE = {
 EXEMPT = ()
 PRODUCTION_SETTINGS = {"S015_TEST_ROUTE": None, "INTEVIA_TEST_CONTEXT": False}
 COUNTER_FOUND = "the test route's relation public.intevia_test_clock_offset_us is present"
+# CLK-08's two stops on REV-01's descent: the clock's own migration, the moving part's, and the marks production's
+# refusal must not name once the production faces are back.
+PRODUCTION = import_module("core.migrations.0096_intevia_clock")
+CLOCK = ("core", "0096_intevia_clock")
+MOVING_PART = (startup.TEST_CLOCK_APP, "0001_moving_part")
+OTHER_MARKS = ("the test route's function", "the test route's procedure", "the migration ledger records", "the face public.")
 
 
 def _reported(start, success):
@@ -69,11 +87,12 @@ def _failure(error):
     return "%s: %s" % (type(error).__name__, str(error).split("\n")[0])
 
 
-def descend(new_executor, graph, after_base, exempt):
+def descend(new_executor, graph, after_base, exempt, after_step=None):
     """Unwind the migrations after the base through the executor, a step at a time in its own order.
 
     Returns what was undone, what could not be, the exemptions that were not needed, and the exemption the descent
-    stopped at. Each is taken from the executor's own reports of the migration it began and finished reversing."""
+    stopped at. Each is taken from the executor's own reports of the migration it began and finished reversing.
+    ``after_step``, where given, is called after each step that did not fail, with what has been undone so far."""
     undone, not_undone, needless, stopped_at = [], [], [], None
     for key in after_base:
         if key in undone:
@@ -98,6 +117,8 @@ def descend(new_executor, graph, after_base, exempt):
             else:
                 not_undone.append("%s.%s could not be undone: %s" % (reversing[0], reversing[1], _failure(failed)))
             break
+        if after_step is not None:
+            after_step(tuple(undone))
     return undone, not_undone, needless, stopped_at
 
 
@@ -123,6 +144,30 @@ def restore_failure(not_undone, not_applied):
     before = ("the descent had already stopped (%s); then " % "; ".join(not_undone)) if not_undone else "after the descent "
     return ("REV-01: %sthe received migrations could not be applied again: %s. This clone is left below its head and "
             "must be destroyed." % (before, not_applied))
+
+
+def clock_observation():
+    """What CLK-08 looks at, at one point of the descent: each face as installed (None where there is none), the
+    moving part's routines by name, the migration ledger's rows, the clock's counter, and production's refusal in
+    its own words (None where production's startup did not refuse). It asserts nothing, so that no claim stops the
+    descent part-way: each is judged once the clone is restored."""
+    with connection.cursor() as cursor:
+        faces = {name: PRODUCTION.installed(cursor, name) for name, *_rest in PRODUCTION.FACES}
+        cursor.execute(
+            """SELECT p.proname::text FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND pg_catalog.starts_with(p.proname::text, %s) ORDER BY 1""",
+            [startup.TEST_CLOCK_PREFIX])
+        moving_part = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT app, name FROM public.django_migrations ORDER BY app, name")
+        ledger = cursor.fetchall()
+    refusal = None
+    with override_settings(**PRODUCTION_SETTINGS):
+        try:
+            startup.refuse_unless_production_clock("default")
+        except startup.ClockStartupRefused as refused:
+            refusal = str(refused)
+    return {"faces": faces, "moving_part": moving_part, "ledger": ledger,
+            "counter": instrument.clock_counter_observation(), "refusal": refusal}
 
 
 def real_executor(progress):
@@ -189,9 +234,12 @@ def branched(reverse_fails=(), forward_fails=()):
 
 class MigrationReversibilityTests(TransactionTestCase):
     def test_every_migration_after_the_base_can_be_undone_and_reapplied(self):
-        """REV-01. Every migration after the declared base can be unapplied and applied again through Django's
-        migration executor on an owned clone, which returns to the state it had, at offset zero, and which
-        production's startup refuses throughout."""
+        """REV-01, with CLK-08 at two stops of its descent. REV-01: every migration after the declared base (BASE)
+        can be unapplied and applied again through Django's migration executor on an owned clone, which returns to
+        the state it had, at offset zero, and which production's startup refuses at head, at the lowest point and
+        when restored. CLK-08: reversed below the clock's migration and restored, the clone returns to exactly the
+        state it had, at offset zero, and production's startup refuses it at head, at each of the two stops and
+        when restored."""
         executor = MigrationExecutor(connection)
         graph = executor.loader.graph
         received = tuple(graph.leaf_nodes())
@@ -241,6 +289,22 @@ class MigrationReversibilityTests(TransactionTestCase):
                          "REV-01: the clone must begin with its clock at zero.")
         self.assertIn(COUNTER_FOUND, production_startup("at head"), "REV-01 at head: the refusal must name the counter.")
 
+        # CLK-08 at head, before anything is unwound.
+        clock_at_head = clock_observation()
+        self.assertIn(MOVING_PART, clock_at_head["ledger"], "CLK-08: this clone must begin with the moving part applied.")
+        self.assertIn(CLOCK, clock_at_head["ledger"], "CLK-08: this clone must begin with the clock's migration applied.")
+        self.assertEqual(instrument.clock_counter_violations(counter_before, True), [],
+                         "CLK-08: the clone must begin with its counter present, at offset zero.")
+        self.assertEqual(len(clock_at_head["moving_part"]), 9, "CLK-08: the clone must begin with the nine routines of the moving part.")
+        self.assertIn(COUNTER_FOUND, clock_at_head["refusal"] or "",
+                      "CLK-08 at head: production's startup must refuse this database, and the refusal must name the counter.")
+        clock_stops = {}
+
+        def observe_clock(undone_so_far):
+            # CLK-08's first stop: the moving part reversed, the clock's own migration still applied.
+            if "reversed" not in clock_stops and MOVING_PART in undone_so_far and CLOCK not in undone_so_far:
+                clock_stops["reversed"] = clock_observation()
+
         restored = []
 
         def restore():
@@ -258,12 +322,54 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.addCleanup(restore_at_cleanup)
         # Down, a step at a time in the executor's own order. What is blamed, excused and counted is what the
         # executor reports it began and finished reversing (descend), so that a reverse that fails is named rightly.
-        undone, not_undone, needless, stopped_at = descend(real_executor, graph, after_base, exempt)
+        undone, not_undone, needless, stopped_at = descend(real_executor, graph, after_base, exempt, observe_clock)
         left = [key for key in after_base if key not in undone]
         at_the_base = (ledger(), instrument.clock_counter_observation(), production_startup("at the lowest point")) if not not_undone else None
+        if not not_undone and MOVING_PART in undone and CLOCK in undone:
+            clock_stops["below"] = clock_observation()   # CLK-08's second stop: below the clock, no face at all
         failed_again = restore_failure(not_undone, restore())
+
+        # CLK-08 at its two stops, judged before REV-01's own verdict so that each claim reports its own failure.
+        with self.subTest(claim="CLK-08", point="the two stops"):
+            self.assertEqual(sorted(clock_stops), ["below", "reversed"],
+                             "CLK-08: the descent must pass both of CLK-08's stops: the moving part reversed with the clock's own "
+                             "migration still applied, and then both reversed. A descent that fails, or that an exemption stops "
+                             "above the clock's migration, leaves CLK-08 without its witness.")
+            written = {name: PRODUCTION.expected(stored, builtin, meaning) for name, _w, stored, builtin, meaning in PRODUCTION.FACES}
+            stop = clock_stops["reversed"]
+            self.assertEqual(stop["faces"], written, "CLK-08 reversed: the faces must be the production faces, exactly as 0096 writes them.")
+            self.assertEqual(stop["moving_part"], [], "CLK-08 reversed: no function of the moving part may remain.")
+            self.assertNotIn(startup.TEST_CLOCK_APP, [app for app, _name in stop["ledger"]],
+                             "CLK-08 reversed: the ledger must hold no row for the test route's app.")
+            self.assertIn(CLOCK, stop["ledger"], "CLK-08 reversed: the clock's own migration must still be applied at this stop.")
+            self.assertEqual(stop["counter"], counter_before, "CLK-08 reversed: the counter must be kept, at zero and exactly as it was.")
+            self.assertIn(COUNTER_FOUND, stop["refusal"] or "",
+                          "CLK-08 reversed: production's startup must refuse this database, and the refusal must name the counter.")
+            self.assertEqual([mark for mark in OTHER_MARKS if mark in stop["refusal"]], [],
+                             "CLK-08 reversed: with the production faces back, the counter must be the only mark found.")
+            stop = clock_stops["below"]
+            self.assertEqual(stop["faces"], {name: None for name in written}, "CLK-08 below the clock: no face may remain.")
+            self.assertEqual(stop["moving_part"], [], "CLK-08 below the clock: no function of the moving part may remain.")
+            self.assertEqual([row for row in stop["ledger"] if row in (MOVING_PART, CLOCK)], [],
+                             "CLK-08 below the clock: the ledger must hold neither migration.")
+            self.assertEqual(stop["counter"], counter_before, "CLK-08 below the clock: the counter must be kept, at zero and exactly as it was.")
+            self.assertIn(COUNTER_FOUND, stop["refusal"] or "",
+                          "CLK-08 below the clock: production's startup must refuse this database, and the refusal must name the counter.")
+            for part in REFUSAL_PARTS:
+                self.assertIn(part, stop["refusal"], "CLK-08 below the clock: the refusal must keep its five parts.")
         if failed_again:
             self.fail(failed_again)
+        with self.subTest(claim="CLK-08", point="restored"):
+            clock_restored = clock_observation()
+            restored_capture = instrument.capture()
+            self.assertEqual(instrument.compare(before, restored_capture), ([], []), "CLK-08 restored: the full capture must equal the one taken at head.")
+            self.assertEqual(restored_capture["intevia_clock_counter"], counter_before, "CLK-08 restored: the counter must be the one kept, at zero.")
+            self.assertEqual(clock_restored["faces"], clock_at_head["faces"], "CLK-08 restored: the faces and their comments must be as they were.")
+            self.assertEqual(clock_restored["moving_part"], clock_at_head["moving_part"], "CLK-08 restored: the nine routines must be back.")
+            self.assertEqual(clock_restored["ledger"], clock_at_head["ledger"], "CLK-08 restored: the ledger must be as it was received.")
+            self.assertEqual(owned_route.offset(), 0, "CLK-08 restored: the clock must be at zero.")
+            self.assertIn(COUNTER_FOUND, clock_restored["refusal"] or "", "CLK-08 restored: production's startup must still refuse.")
+
 
         self.assertEqual(not_undone, [], "REV-01: every migration after the base must be undone through the executor. The clone was restored.")
         self.assertEqual(needless, [], "REV-01 exemptions: an entry whose migration was undone is not needed, and is removed.")

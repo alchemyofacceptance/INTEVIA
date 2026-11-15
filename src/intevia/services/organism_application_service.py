@@ -718,7 +718,7 @@ def _engagement_settings_basis(
 ) -> str:
     """Return the settings basis recorded on a Coordinator engagement.
 
-    Reads the database's clock_timestamp() as known_at, then the LO's
+    Reads the database's public.intevia_clock_instant() as known_at, then the LO's
     governance configuration and application settings in effect at
     effective_at as known at that time (_effective_gateway_version).
     Raises S015ApplicationRefused "effective governance configuration
@@ -728,7 +728,7 @@ def _engagement_settings_basis(
     records it on the LO_CSA engagement.
     """
     with connections[database_alias].cursor() as cursor:
-        cursor.execute("SELECT clock_timestamp()")
+        cursor.execute("SELECT public.intevia_clock_instant()")
         known_at = cursor.fetchone()[0]
     configuration = _effective_gateway_version(
         database_alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION,
@@ -1407,7 +1407,7 @@ class OrganismApplicationService:
         received_at, version_kind DRAFT or EFFECT). The draft path
         creates the gateway if there is none; the effect path refuses
         "S3FU gateway closed" without one. gateway_at is the database's
-        clock_timestamp(). If a governance configuration exists and the
+        public.intevia_clock_instant(). If a governance configuration exists and the
         DISCUSSION setting enables voting at that cut, inherited portal settings raise
         not-yet-implemented S3-IL-INHERIT, and a CQ required for this
         change (the question flag for a question, the LO settings flag
@@ -1574,7 +1574,7 @@ class OrganismApplicationService:
         if gateway is None:
             raise S015ApplicationRefused("S3FU gateway closed")
         with connections[self._alias].cursor() as cursor:
-            cursor.execute("SELECT clock_timestamp()")
+            cursor.execute("SELECT public.intevia_clock_instant()")
             gateway_at = cursor.fetchone()[0]
         configuration = _effective_gateway_version(
             self._alias, organism, OrganismAction.EFFECT_GOVERNANCE_CONFIGURATION, gateway_at,
@@ -1880,7 +1880,7 @@ class OrganismApplicationService:
         domain and the canonical JSON of the event UUID, the organism UUID
         and the fingerprint. That event is what _effective_gateway_version
         reads. Refreshes the LO's governed cache at effective_at, known at
-        the database's clock_timestamp().
+        the database's public.intevia_clock_instant().
 
         Writes the command receipt and returns the
         GatewayEffectCommandResult through serve_replay for the actor, as
@@ -1974,7 +1974,7 @@ class OrganismApplicationService:
                     list(event_columns.values()),
                 )
                 event_id = cursor.fetchone()[0]
-                cursor.execute("SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                cursor.execute("SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                                ["core_livingorganism", organism.pk, effective_at])
             event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
             result = GatewayEffectCommandResult(
@@ -2285,7 +2285,7 @@ class OrganismApplicationService:
         head, later-application and old-dependency checks. Without a gateway, "S3FU gateway
         closed".
 
-        gateway_at is the database's clock_timestamp(). The settings and
+        gateway_at is the database's public.intevia_clock_instant(). The settings and
         question in effect at gateway_at must exist, with
         applications_open true, and the LO's folded state at
         effective_at, known at gateway_at, must be ACTIVE, or "S3FU
@@ -2389,7 +2389,7 @@ class OrganismApplicationService:
             if not gateway_exists:
                 raise S015ApplicationRefused("S3FU gateway closed")
             with connections[self._alias].cursor() as cursor:
-                cursor.execute("SELECT clock_timestamp()")
+                cursor.execute("SELECT public.intevia_clock_instant()")
                 gateway_at = cursor.fetchone()[0]
             settings = _effective_gateway_version(
                 self._alias, organism, OrganismAction.EFFECT_APPLICATION_SETTINGS, gateway_at,
@@ -2897,7 +2897,7 @@ class OrganismApplicationService:
         is not effective". The highest-ordinal engagement effective by
         effective_at must be on LO_CSA and name that claim, or "no
         current CSA engagement". For ACCEPT, an LO whose folded state at
-        effective_at, known at the database's clock_timestamp(), is
+        effective_at, known at the database's public.intevia_clock_instant(), is
         RESTRICTED_CONTINUITY raises not-yet-implemented S3-IL-RC.
 
         Creates the ApplicationDecision on route LO_CSA: the LO as
@@ -2943,7 +2943,7 @@ class OrganismApplicationService:
             if outcome == "ACCEPT":
                 with connections[self._alias].cursor() as cursor:
                     cursor.execute(
-                        "SELECT public.s015_fold_effective_state(%s, %s, %s, clock_timestamp())",
+                        "SELECT public.s015_fold_effective_state(%s, %s, %s, public.intevia_clock_instant())",
                         ["core_livingorganism", context.application.living_organism_id, context.effective_at],
                     )
                     if cursor.fetchone()[0] == "RESTRICTED_CONTINUITY":
@@ -3096,12 +3096,12 @@ class OrganismApplicationService:
         """Refresh a membership's governed cache, then reload it.
 
         Calls s015_refresh_governed_cache for the membership at
-        effective_at, known at the database's clock_timestamp(), and
+        effective_at, known at the database's public.intevia_clock_instant(), and
         reloads the instance from the database.
         """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 ["core_organismmembership", membership.pk, effective_at],
             )
         membership.refresh_from_db(using=self._alias)

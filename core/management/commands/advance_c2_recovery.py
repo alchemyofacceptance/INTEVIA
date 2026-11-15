@@ -18,9 +18,9 @@ class Command(BaseCommand):
                 SELECT lo.id FROM public.core_livingorganism lo
                 JOIN public.core_livingorganismevent h ON h.id=lo.head_event_id
                 WHERE NOT lo.platform_root AND h.resulting_state<>'CLOSED'
-                AND (EXISTS (SELECT FROM public.c2_phase_at(lo.id,statement_timestamp(),statement_timestamp()) phase
-                       WHERE phase.action IN ('WITHOUT_COORDINATOR','K2_DEACTIVATE') AND phase.effective_until<=statement_timestamp())
-                  OR EXISTS (SELECT FROM public.c2_timed_input i WHERE i.lo_id=lo.id AND i.due<=statement_timestamp()
+                AND (EXISTS (SELECT FROM public.c2_phase_at(lo.id,public.intevia_clock_statement(),public.intevia_clock_statement()) phase
+                       WHERE phase.action IN ('WITHOUT_COORDINATOR','K2_DEACTIVATE') AND phase.effective_until<=public.intevia_clock_statement())
+                  OR EXISTS (SELECT FROM public.c2_timed_input i WHERE i.lo_id=lo.id AND i.due<=public.intevia_clock_statement()
                     AND NOT EXISTS (SELECT FROM public.core_coverageassessment a
                       JOIN public.core_essentialcoveragecase c ON c.id=a.case_id WHERE c.living_organism_id=lo.id
                       AND a.evidence_reference='c2-boundary:'||i.source AND a.effective_at=i.due)))

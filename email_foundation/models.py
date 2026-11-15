@@ -5,6 +5,8 @@ import uuid
 from django.db import models
 from django.db.models import Q
 
+from core.clock_fields import ClockDateTimeField
+
 
 class AddressRecord(models.Model):
     identity = models.OneToOneField("core.Identity", on_delete=models.PROTECT)
@@ -70,7 +72,7 @@ class Outbox(models.Model):
     state = models.CharField(
         max_length=24, choices=State.choices, default=State.REQUESTED
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     ready_at = models.DateTimeField()
     lease_id = models.UUIDField(null=True)
     lease_until = models.DateTimeField(null=True)
@@ -128,7 +130,7 @@ class DeliveryAttempt(models.Model):
     number = models.PositiveIntegerField()
     lease_id = models.UUIDField(unique=True)
     phase = models.CharField(max_length=12, default="CLAIMED")
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = ClockDateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True)
     code = models.CharField(max_length=48, blank=True)
 
@@ -164,7 +166,7 @@ class LocalCapture(models.Model):
 
     intent = models.OneToOneField(Outbox, primary_key=True, on_delete=models.CASCADE)
     payload_digest = models.CharField(max_length=64)
-    captured_at = models.DateTimeField(auto_now_add=True)
+    captured_at = ClockDateTimeField(auto_now_add=True)
     recipient = models.EmailField(max_length=254)
     sender = models.EmailField(max_length=254)
     subject = models.CharField(max_length=200)

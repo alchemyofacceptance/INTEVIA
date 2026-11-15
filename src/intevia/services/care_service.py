@@ -8,7 +8,6 @@ from datetime import datetime
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
 
 from core.models import (
     CareResponse,
@@ -16,6 +15,7 @@ from core.models import (
     LibraryResourceVersion,
     Identity,
 )
+from src.intevia.services.clock import database_now
 from src.intevia.services.contribution_authority import ContributionAuthority
 
 
@@ -46,7 +46,7 @@ class CareService:
 
     @staticmethod
     def _at(value: datetime | None) -> datetime:
-        value = value or timezone.now()
+        value = value or database_now()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("timestamp must be timezone-aware")
         return value

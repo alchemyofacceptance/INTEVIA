@@ -329,7 +329,7 @@ def end_basis(*, alias, organism_uuid, basis_uuid, credential, mandate_id, verif
                       (basis_uuid,issuer_id,superseded_basis_id,authority_principal_id,derivation_root_principal_id,
                        authority_class,scope_fingerprint,instrument_reference,evidence_reference,
                        issued_at,effective_at,received_at,recorded_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,statement_timestamp())
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,public.intevia_clock_statement())
                 """, [successor.basis_uuid, actor.pk, basis.pk, principal.pk, root.pk, successor.authority_class,
                       successor.scope_fingerprint, successor.instrument_reference, successor.evidence_reference,
                       now, now, now])

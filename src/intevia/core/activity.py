@@ -22,6 +22,14 @@ def _as_utc(value: object, *, field_name: str) -> datetime:
             f"{field_name} must be timezone-aware"
         )
     return value.astimezone(timezone.utc)
+def _clock_now() -> datetime:
+    """The present instant on the INTEVIA Clock, through the Python door.
+
+    The door is imported here, when a time is first needed, so that this
+    domain module still imports without Django or a database.
+    """
+    from src.intevia.services.clock import database_now
+    return database_now()
 @dataclass(frozen=True, slots=True)
 class Activity:
     """A bounded unit of work with observable completion criteria."""
@@ -29,7 +37,7 @@ class Activity:
     title: str
     completion_criteria: str
     created_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=_clock_now
     )
     def __post_init__(self) -> None:
         object.__setattr__(

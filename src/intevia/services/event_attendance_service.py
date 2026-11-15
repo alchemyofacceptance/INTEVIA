@@ -13,7 +13,6 @@ from typing import Protocol
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.utils import timezone
 
 from core.models import (
     Event,
@@ -24,6 +23,7 @@ from core.models import (
     EventRegistration,
     Identity,
 )
+from src.intevia.services.clock import database_now
 
 
 class EventAttendanceError(Exception):
@@ -175,7 +175,7 @@ class EventAttendanceService:
         self,
         *,
         authority: EventAttendanceAuthority,
-        clock: Callable[[], datetime] = timezone.now,
+        clock: Callable[[], datetime] = database_now,
     ) -> None:
         if not isinstance(authority, EventAttendanceAuthority):
             raise TypeError("authority must be EventAttendanceAuthority")

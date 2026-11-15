@@ -177,7 +177,7 @@ def write_event(
             ],
         )
         cur.execute(
-            "SELECT public.s015_refresh_governed_cache(%s,%s,%s,clock_timestamp())",
+            "SELECT public.s015_refresh_governed_cache(%s,%s,%s,public.intevia_clock_instant())",
             [token, anchor.pk, at],
         )
     return event_uuid

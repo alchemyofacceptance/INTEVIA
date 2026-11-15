@@ -221,7 +221,7 @@ def _id(value, *, nullable=False):
 def _lock(request_uuid, owner):
     # Same request-lock namespace/order as DISC1. Execution is a separate
     # statement after both locks, so waiting cannot backdate a governed act.
-    stamp = disc._rows("SELECT statement_timestamp() AS stamp")[0]["stamp"]
+    stamp = disc._rows("SELECT public.intevia_clock_statement() AS stamp")[0]["stamp"]
     disc._rows(
         "SELECT pg_advisory_xact_lock(hashtextextended('DISC1:request:'||%s::text,0))",
         [request_uuid],
@@ -312,7 +312,7 @@ def _admit_settings(key, actor, fields, owner):
     # precedence. That attempt must reach storage to leave its refusal.
     def admit():
         disc._rows(
-            """SELECT public.cq4_direct_admit(lo.id,%s,%s,%s,%s,%s,statement_timestamp())
+            """SELECT public.cq4_direct_admit(lo.id,%s,%s,%s,%s,%s,public.intevia_clock_statement())
                FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
             [key, actor.pk, actor.access_epoch, fields.get("changes") == {"enabled": True},
              _id(fields.get("below_three_result"), nullable=True), owner],
@@ -371,7 +371,7 @@ def _command(
                     raise disc.DiscussionUnavailable()
                 source_key = _id(fields["referral_result"])
                 visible = disc._rows(
-                    "SELECT public.cq3_result_visible(%s,id,%s,statement_timestamp()) AS visible "
+                    "SELECT public.cq3_result_visible(%s,id,%s,public.intevia_clock_statement()) AS visible "
                     "FROM public.core_livingorganism WHERE organism_id=%s",
                     [source_key, actor.pk, owner],
                 )
@@ -380,7 +380,7 @@ def _command(
             # Resolve visibility and role even if the caller supplied malformed
             # operation details. The writer rechecks the source at execution.
             disc._rows(
-                """SELECT public.cq_source(lo.id,%s,%s,%s,%s,statement_timestamp())
+                """SELECT public.cq_source(lo.id,%s,%s,%s,%s,public.intevia_clock_statement())
                 FROM public.core_livingorganism lo WHERE lo.organism_id=%s""",
                 [board, thread, operation, actor.pk, owner],
             )
@@ -388,7 +388,7 @@ def _command(
                 _admit_settings(key, actor, fields, owner)
             if operation == "ANSWER":
                 disc._rows(
-                    "SELECT public.cq_answer_eligible(%s,%s,%s,%s,statement_timestamp())",
+                    "SELECT public.cq_answer_eligible(%s,%s,%s,%s,public.intevia_clock_statement())",
                     [board, thread, _id(fields["ballot"]), actor.pk],
                 )
             for name in (
@@ -577,10 +577,10 @@ def catch_up(*, credential):
                 """SELECT h.thread_uuid,h.board_uuid,h.act_uuid,h.phase,lo.organism_id AS owner
               FROM public.cq_phases h JOIN public.core_livingorganism lo ON lo.id=h.organism_id
               JOIN public.core_organismmembership m ON m.living_organism_id=lo.id AND m.identity_id=%s
-              WHERE ((h.phase='PREPARATION' AND h.deadline<=statement_timestamp())
-                 OR (h.phase='CLARITY' AND h.response_deadline<=statement_timestamp())
-                 OR (h.phase='VOTING' AND public.cq_can_settle(h.act_uuid,statement_timestamp())))
-              AND public.disc_member_state(lo.id,m.identity_id,statement_timestamp())='ACTIVE'
+              WHERE ((h.phase='PREPARATION' AND h.deadline<=public.intevia_clock_statement())
+                 OR (h.phase='CLARITY' AND h.response_deadline<=public.intevia_clock_statement())
+                 OR (h.phase='VOTING' AND public.cq_can_settle(h.act_uuid,public.intevia_clock_statement())))
+              AND public.disc_member_state(lo.id,m.identity_id,public.intevia_clock_statement())='ACTIVE'
               ORDER BY lo.organism_id,h.thread_uuid""",
                 [actor.pk],
             )
@@ -605,10 +605,10 @@ def catch_up(*, credential):
                 received = _lock(key, item["owner"])
                 rows = disc._rows(
                     """SELECT 1 FROM public.cq_phases h WHERE h.thread_uuid=%s
-                    AND h.act_uuid=%s AND ((h.phase='PREPARATION' AND h.deadline<=statement_timestamp())
-                      OR (h.phase='CLARITY' AND h.response_deadline<=statement_timestamp())
-                 OR (h.phase='VOTING' AND public.cq_can_settle(h.act_uuid,statement_timestamp())))
-                    AND public.disc_member_state(h.organism_id,%s,statement_timestamp())='ACTIVE'""",
+                    AND h.act_uuid=%s AND ((h.phase='PREPARATION' AND h.deadline<=public.intevia_clock_statement())
+                      OR (h.phase='CLARITY' AND h.response_deadline<=public.intevia_clock_statement())
+                 OR (h.phase='VOTING' AND public.cq_can_settle(h.act_uuid,public.intevia_clock_statement())))
+                    AND public.disc_member_state(h.organism_id,%s,public.intevia_clock_statement())='ACTIVE'""",
                     [item["thread_uuid"], item["act_uuid"], actor.pk],
                 )
                 if rows:
@@ -641,7 +641,7 @@ def catch_up(*, credential):
 def _read_owner(actor, organism_uuid):
     disc._read_uuid(organism_uuid)
     query = """SELECT lo.id FROM public.core_livingorganism lo WHERE lo.organism_id=%s AND
-      public.disc_member_state(lo.id,%s,statement_timestamp()) IN ('ACTIVE','SUSPENDED','RESTRICTED')"""
+      public.disc_member_state(lo.id,%s,public.intevia_clock_statement()) IN ('ACTIVE','SUSPENDED','RESTRICTED')"""
     params = [organism_uuid, actor.pk]
     if not disc._rows(query, params):
         raise disc.DiscussionUnavailable()
@@ -660,7 +660,7 @@ def _settings_circle(owner, actor, circle_uuid):
     disc._read_uuid(circle_uuid)
     rows = disc._rows(
         """SELECT c.id FROM public.core_circle c WHERE c.parent_organism_id=%s AND c.circle_uuid=%s
-        AND public.disc_audience(c.parent_organism_id,c.id,%s,'MEMBERS',statement_timestamp())""",
+        AND public.disc_audience(c.parent_organism_id,c.id,%s,'MEMBERS',public.intevia_clock_statement())""",
         [owner, circle_uuid, actor.pk],
     )
     if not rows:
@@ -676,7 +676,7 @@ def settings(*, credential, organism_uuid, circle_uuid=None):
         circle = _settings_circle(owner, actor, circle_uuid)
         row = disc._rows(
             """SELECT public.cq_settings(%s) AS settings, p.reporting_version AS platform_version,
-            public.cq4_reporting(%s,%s,NULL,statement_timestamp()) AS reporting_rule,
+            public.cq4_reporting(%s,%s,NULL,public.intevia_clock_statement()) AS reporting_rule,
             (SELECT a.act_uuid FROM public.core_cqact a WHERE a.organism_id=%s AND a.operation='SETTINGS'
              ORDER BY a.ordinal DESC LIMIT 1) AS version FROM public.cq_platform_defaults p""",
             [owner, owner, circle, owner],
@@ -692,7 +692,7 @@ def settings(*, credential, organism_uuid, circle_uuid=None):
             # choose reporting follows its own vote and the governing law.
             row["settings"].pop("reporting_scope")
             row["local_version"] = disc._rows(
-                "SELECT (public.cq4_local_version(%s,%s,statement_timestamp())).act_uuid AS version",
+                "SELECT (public.cq4_local_version(%s,%s,public.intevia_clock_statement())).act_uuid AS version",
                 [owner, circle],
             )[0]["version"]
             row["inherits_reporting"] = row["reporting_origin"] in ("LO", "PLATFORM")
@@ -710,7 +710,7 @@ def settings_history(*, credential, organism_uuid, circle_uuid=None):
         rows = disc._rows(
             """SELECT act_uuid,actor_id,authority_source,received_at,effective_at,recorded_at,
           CASE WHEN facts ? 'below_three_result' AND NOT public.cq3_result_visible(
-            (facts->>'below_three_result')::uuid,organism_id,%s,statement_timestamp())
+            (facts->>'below_three_result')::uuid,organism_id,%s,public.intevia_clock_statement())
             THEN facts-'below_three_result' ELSE facts END AS facts,fingerprint,
           public.cq4_decision(act_uuid,authority_source) AS decision
           FROM public.core_cqact WHERE organism_id=%s AND operation='SETTINGS' ORDER BY ordinal""",
@@ -754,7 +754,7 @@ def phase(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
             links = disc._rows(
                 """SELECT i.request->'attachment' AS attachment,
                 i.facts->>'attachment_fingerprint' AS fingerprint,
-                CASE WHEN public.cq3_result_visible(src.act_uuid,i.organism_id,%s,statement_timestamp())
+                CASE WHEN public.cq3_result_visible(src.act_uuid,i.organism_id,%s,public.intevia_clock_statement())
                   THEN jsonb_build_object('result_uuid',src.act_uuid,'thread_uuid',src.thread_uuid,
                          'circle_uuid',c.circle_uuid,'wording_version',src.facts->'referral'->'wording_version') END AS referred_from
                 FROM public.core_cqact i LEFT JOIN public.core_cqact src ON src.act_uuid=(i.request->>'referral_result')::uuid

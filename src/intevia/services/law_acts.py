@@ -5,10 +5,10 @@ import json
 from uuid import UUID
 
 from django.db import connections
-from django.utils import timezone
 
 from core import models
 from core.organism_contract import OrganismAction
+from src.intevia.services.clock import database_now
 from src.intevia.services.command_intake import IntakeShape, _resolve_actor, admit_request
 from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
 from src.intevia.services.organism_authority import (
@@ -91,7 +91,7 @@ def law_shape(command):
 
 def _assess(cursor, spec, actor_id, cut=None, received=None):
     cursor.execute(
-        """WITH t AS (SELECT COALESCE(%s::timestamptz,statement_timestamp()) AS cut)
+        """WITH t AS (SELECT COALESCE(%s::timestamptz,public.intevia_clock_statement()) AS cut)
            SELECT cut,public.l_assess_request(%s::jsonb,%s,COALESCE(%s::timestamptz,cut),cut)::text FROM t""",
         [cut, json.dumps(spec), actor_id, received],
     )
@@ -140,7 +140,7 @@ def _serve(receipt, actor, alias, cursor):
     if not row or row[0] is None or json.loads(row[0]) != receipt.result_payload:
         raise S015CommandReceiptMalformed()
     result = LawResult(**receipt.result_payload)
-    return serve_replay(result, viewer=ReplayViewer(actor.pk, actor.identity_id, timezone.now()),
+    return serve_replay(result, viewer=ReplayViewer(actor.pk, actor.identity_id, database_now(alias)),
                         result_type=ReplayResultType(LawResult, alias))
 
 

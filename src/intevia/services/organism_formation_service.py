@@ -1483,14 +1483,14 @@ class OrganismFormationService:
 
         Call s015_refresh_governed_cache with the anchor table and id,
         effective_at as the state time and the database's
-        clock_timestamp() as the known time. For founding's LO,
+        public.intevia_clock_instant() as the known time. For founding's LO,
         membership and assignment anchors, the function locks the row
         and sets current_state_effective_at and state_known_at. Its
         returned fingerprint is not used.
         """
         with connections[self._alias].cursor() as cursor:
             cursor.execute(
-                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                 [anchor_token, anchor_id, effective_at],
             )
             cursor.fetchone()
@@ -2320,7 +2320,7 @@ class OrganismPhaseAdvanceService(_OrganismCommandService):
                 )
                 event_id = cursor.fetchone()[0]
                 cursor.execute(
-                    "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                    "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                     ["core_livingorganism", organism.pk, effective_at],
                 )
             event = LivingOrganismEvent.objects.using(self._alias).get(pk=event_id)
@@ -3044,7 +3044,7 @@ class OrganismBirthingService(_OrganismCommandService):
             effective_at; a retrospective temporal basis is supplied
             when it precedes received_at. Leave recorded_at to the
             database. Refresh the cache at effective_at with database
-            clock_timestamp() as its known time.
+            public.intevia_clock_instant() as its known time.
 
             Only within snapshot creation, election preparation,
             event insertion and cache refresh, an IntegrityError whose
@@ -3402,7 +3402,7 @@ class OrganismBirthingService(_OrganismCommandService):
                         )
                         event_id = cursor.fetchone()[0]
                         cursor.execute(
-                            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, clock_timestamp())",
+                            "SELECT public.s015_refresh_governed_cache(%s, %s, %s, public.intevia_clock_instant())",
                             ["core_livingorganism", organism.pk, effective_at],
                         )
                 except IntegrityError as exc:
