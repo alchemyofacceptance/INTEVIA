@@ -53,6 +53,11 @@ MESSAGES = {
     'CMT_CHAIR': 'These terms require a Board member as chair. Choose a current trustee.',
     'CMT_TIER': 'This organisation uses one chair rule for all committees. Use the Board’s recorded rule.',
     'CMT_CHOICE': 'The Board must record its chair rule before forming this committee.',
+    'CMT_PARENT_DORMANT': ("The sub-committee chair could not be filled. "
+                           "This place is reserved while the committee that delegated the work is dormant. "
+                           "The chair is still empty. "
+                           "Ask the Board to check the forming law and arrange for the dormant committee to be reseated first. "
+                           "After reseating, the Board or the body named in the sub-committee's forming law handles the appointment."),
     'CMT_CHAIR_GAP': "The committee chair's place is empty. Ask the Board to fill it under the forming law.",
     'CMT_ENDED': 'This committee’s mandate has ended. Refer new work to the Board.',
     'CMT_END': 'Identify the dated end or the exact task and its completion authority in the terms.',

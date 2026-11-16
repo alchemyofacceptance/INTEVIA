@@ -1718,7 +1718,7 @@ class OrganismMembershipService(_OrganismCommandService):
                                [membership.pk, effective_at, received_at])
                 circle_ids = [row[0] for row in cursor.fetchall()]
             for circle in Circle.objects.using(self._alias).filter(pk__in=circle_ids).order_by("pk"):
-                settle_vacancy(self._alias, circle, actor)
+                settle_vacancy(self._alias, circle, actor, membership_exit=(membership.pk, effective_at))
         departure.end_offices()
 
         transition_id = _insert_membership_transition_row(

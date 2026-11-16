@@ -302,25 +302,45 @@ def _seat_founder_and_activate(alias, lo, actor, credential, circle, opening_uui
              request_uuid=uuid4(), alias=alias)
 
 
-def _vacancy_at(alias, circle, at):
-    """Read one causal episode, its original deadline and any committed dormancy at this cut."""
+def _vacancy_at(alias, circle, at, *, known=None):
+    """Read the episode at its effective cut using the evidence visible at the knowledge cut."""
+    if known is None:
+        known = at
     if circle.kind != "GENERIC":
         return None
     with connections[alias].cursor() as cursor:
         cursor.execute("""SELECT e.cause,e.status,e.deadline,EXISTS (
                 SELECT FROM public.core_circlestateevent d WHERE d.circle_id=%s AND d.action='BECOME_DORMANT'
                 AND d.evidence_reference='vacancy:'||e.cause AND d.effective_at=e.deadline AND d.recorded_at<=%s)
-            FROM public.circle_episode(%s,%s,%s) e""", [circle.pk, at, circle.pk, at, at])
+            FROM public.circle_episode(%s,%s,%s) e""", [circle.pk, known, circle.pk, at, known])
         return cursor.fetchone()
 
 
-def settle_vacancy(alias, circle, actor):
+def settle_vacancy(alias, circle, actor, *, membership_exit=None):
     """Called after authority and replay under the LO lock. The surrounding action owns rollback."""
     if circle.kind != "GENERIC":
         return
-    episode = _vacancy_at(alias, circle, database_now(alias))
+    known = database_now(alias)
+    episode = _vacancy_at(alias, circle, known)
     if episode is None or episode[3]:
         return
+    if membership_exit is not None and episode[1] == "EXPIRED":
+        member_id, exit_at = membership_exit
+        if exit_at < episode[2]:
+            # Project circle_last_ending under the LO lock, before U3 ends this member's places.
+            # Any other unended place leaves settlement at the ordinary execution cut.
+            with connections[alias].cursor() as cursor:
+                cursor.execute("""SELECT CASE WHEN bool_and(p.membership_id=%s OR e.id IS NOT NULL)
+                    THEN greatest(%s, max(e.effective_at)) END
+                    FROM public.core_circleparticipation p
+                    LEFT JOIN public.core_circleparticipationend e ON e.participation_id=p.id
+                        AND e.effective_at<=%s AND e.received_at<=%s AND e.recorded_at<=%s
+                    WHERE p.circle_id=%s""", [member_id, exit_at, known, known, known, circle.pk])
+                final_at = cursor.fetchone()[0]
+            if final_at is not None:
+                episode = _vacancy_at(alias, circle, final_at, known=known)
+                if episode is None or episode[3]:
+                    return
     cause, status, _, _ = episode
     with connections[alias].cursor() as cursor:
         for occurrence in (("OPENED", "DORMANT") if status == "EXPIRED" else ("OPENED",)):
@@ -359,8 +379,11 @@ def _expired_capacity_message(deadline, reserved, parent_available, *, claim):
         start = "You could not claim this work."
         effect = "This attempt left the work assignment unchanged."
         if reserved:
-            return (f"{start} The committee lost its chair and its recovery period ended at {when}. {effect} "
-                    "Refer the vacancy to the Board under the forming law. The Board handles the chair appointment.")
+            return ("You could not claim this work. "
+                    f"The committee lost its chair and its recovery period ended at {when}. "
+                    "This attempt left the work assignment unchanged. "
+                    "The body named in the forming law appoints the chair, and if that body’s own Circle is dormant it must be reseated first. "
+                    "To tell the Board, review and send this notice: [LINK PLACEHOLDER: Send to the Board].")
         if parent_available:
             return (f"{start} The Circle’s recovery period ended at {when} without a Coordinator. {effect} "
                     "Ask an LO Coordinator to reseat the Circle before the claim is tried again. "
@@ -369,9 +392,11 @@ def _expired_capacity_message(deadline, reserved, parent_available, *, claim):
                 f"{effect} Follow the LO’s existing Coordinator recovery process. "
                 "The LO Coordinator who takes office can arrange the Circle’s reseating.")
     if reserved:
-        return (f"This committee’s Circle is dormant. Its recovery period ended at {when} without a chair. "
-                "It cannot currently exercise its mandate. Check the forming law for the chair appointment. "
-                "The Board handles the vacancy under that law.")
+        return ("This committee’s Circle is dormant. "
+                f"Its recovery period ended at {when} without a chair. "
+                "It cannot currently exercise its mandate. "
+                "The body named in the forming law appoints the chair, and if that body’s own Circle is dormant it must be reseated first. "
+                "To tell the Board, review and send this notice: [LINK PLACEHOLDER: Send to the Board].")
     if parent_available:
         return (f"This Circle is dormant. Its recovery period ended at {when} without a Coordinator. "
                 "The Circle’s active powers are unavailable. Ask an LO Coordinator about reseating. "
@@ -382,9 +407,27 @@ def _expired_capacity_message(deadline, reserved, parent_available, *, claim):
 
 
 def _chair_reserved(alias, circle, at):
+    """0109's cmt_empty combines the binding's reservation with actual office vacancy."""
     with connections[alias].cursor() as cur:
         cur.execute("SELECT public.cmt_empty(%s,%s,%s)", [circle.pk, at, at])
         return cur.fetchone()[0]
+
+
+def _reserved_recovery_message(alias, circle, at):
+    # Called after access and the empty-chair reservation have both been established.
+    from src.intevia.services.cq import MESSAGES
+
+    with connections[alias].cursor() as cursor:
+        cursor.execute("""WITH RECURSIVE ancestors AS (
+                SELECT p.binding,p.circle_id,p.mandate FROM public.cmt_current(%s,%s,%s) m
+                JOIN public.cmt_mandates p ON p.binding=(m.mandate->>'delegating_parent')::uuid
+                UNION SELECT p.binding,p.circle_id,p.mandate FROM ancestors a JOIN public.cmt_mandates p
+                ON p.binding=(a.mandate->>'delegating_parent')::uuid)
+            SELECT EXISTS (SELECT FROM ancestors WHERE circle_id<>%s
+                AND public.circle_effective_state(circle_id,%s,%s)='DORMANT')""",
+                       [circle.pk, at, at, circle.pk, at, at])
+        dormant_parent, = cursor.fetchone()
+    return MESSAGES["CMT_PARENT_DORMANT"] if dormant_parent else MESSAGES["CMT_CHAIR_GAP"]
 
 
 def _take_circle_office(alias, lo, credential, circle, place, office_uuid):
@@ -433,7 +476,7 @@ def recover_circle(*, credential, organism_uuid, circle_uuid, request_uuid, alia
         if not current and not authority:
             unavailable()
         if _chair_reserved(alias, circle, at):
-            raise CircleAccessRefused("The committee chair's place is empty. Ask the Board to fill it under the forming law.")
+            raise CircleAccessRefused(_reserved_recovery_message(alias, circle, at))
         if not vacant:
             episode = _vacancy_at(alias, circle, at)
             if episode is None or episode[1] != "EXPIRED":

@@ -12,8 +12,8 @@ def voters(scope):
         """SELECT m.identity_id FROM public.core_organismmembership m
         JOIN public.core_livingorganism lo ON lo.id=m.living_organism_id
         WHERE lo.organism_id=%s
-          AND public.disc_member_state(lo.id,m.identity_id,statement_timestamp())='ACTIVE'
-          AND public.disc_audience(lo.id,NULL,m.identity_id,'MEMBERS',statement_timestamp())""",
+          AND public.disc_member_state(lo.id,m.identity_id,public.intevia_clock_statement())='ACTIVE'
+          AND public.disc_audience(lo.id,NULL,m.identity_id,'MEMBERS',public.intevia_clock_statement())""",
         [scope["organism_uuid"]],
     )
     return list(

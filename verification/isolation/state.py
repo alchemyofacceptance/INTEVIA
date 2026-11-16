@@ -160,6 +160,7 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0106_circle_vacancy_records": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0107_committee_circle_dormancy": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0108_circle_reseat": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0109_committee_chair_reservation": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
     "0084_committee_mandates": {
@@ -253,6 +254,7 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0106_circle_vacancy_records": 727,  # Circle event origin trigger.
                           "0107_committee_circle_dormancy": 727,
                           "0108_circle_reseat": 727,
+                          "0109_committee_chair_reservation": 727,
                           "0103_clock_storage_column_defaults": 726,  # Column defaults only: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.
                           "0084_committee_mandates": 699}  # 681 at 0083 + 8 sources, 3 batch, 1 custody effect, 6 record guards

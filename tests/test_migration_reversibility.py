@@ -299,6 +299,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.assertIn(COUNTER_FOUND, clock_at_head["refusal"] or "",
                       "CLK-08 at head: production's startup must refuse this database, and the refusal must name the counter.")
         clock_stops = {}
+        chair = import_module("core.migrations.0109_committee_chair_reservation")
+        chair_parent = []
         reseat = import_module("core.migrations.0108_circle_reseat")
         reseat_parent = []
         committee_parent = []
@@ -307,6 +309,12 @@ class MigrationReversibilityTests(TransactionTestCase):
         records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if (not chair_parent and ("core", "0109_committee_chair_reservation") in undone_so_far
+                    and ("core", "0108_circle_reseat") not in undone_so_far):
+                with connection.cursor() as cursor:
+                    chair.expect(cursor, False)
+                    reseat.expect(cursor, True)
+                chair_parent.append(True)
             if (not reseat_parent and ("core", "0108_circle_reseat") in undone_so_far
                     and ("core", "0107_committee_circle_dormancy") not in undone_so_far):
                 with connection.cursor() as cursor:
@@ -386,7 +394,13 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.assertEqual(circle_parent, [(None, records.GUARD_TRIGGER)],
                          "REV-01 must see the 0105 trigger and no 0106 writer at the parent.")
         with connection.cursor() as cursor:
-            reseat.expect(cursor, True)
+            self.assertEqual(chair_parent, [True], "REV-01 must see the exact 0108 bodies before continuing downward.")
+            chair.expect(cursor, True)
+            for signature, _, after in reseat.REPLACEMENTS:
+                self.assertEqual(reseat.definition(cursor, signature), after, "Restoring 0109 must preserve this 0108 function: " + signature)
+            for signature, body in reseat.ADDITIONS:
+                if signature != reseat.RESEATABLE:
+                    self.assertEqual(reseat.definition(cursor, signature), body, "Restoring 0109 must preserve this 0108 addition: " + signature)
             self.assertEqual(records.episode.definition(cursor, records.WRITER), records.WRITE_SQL,
                              "REV-01 must restore the 0106 writer at head.")
         with self.subTest(claim="CLK-08", point="restored"):

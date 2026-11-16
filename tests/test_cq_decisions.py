@@ -1036,6 +1036,8 @@ class CQDecisionTests(TransactionTestCase):
             records = import_module("core.migrations.0106_circle_vacancy_records")
             committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
             reseat = import_module("core.migrations.0108_circle_reseat")
+            chair = import_module("core.migrations.0109_committee_chair_reservation")
+            chair.uninstall(None, editor)
             reseat.uninstall(None, editor)
             committee_cut.uninstall(None, editor)
             with connection.cursor() as check:
@@ -1091,6 +1093,7 @@ class CQDecisionTests(TransactionTestCase):
             self.assertEqual(records.episode.definition(cursor, committee_cut.APART), committee_cut.APART_SQL)
             reseat.install(None, editor)
             reseat.expect(cursor, True)
+            chair.install(None, editor)
             self.assertEqual(records.trigger(cursor, "zz_te_origin"), records.ORIGIN_TRIGGER)
             cursor.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
             self.assertIsNotNone(cursor.fetchone()[0], "DISC2-19 must restore the episode reading at head.")

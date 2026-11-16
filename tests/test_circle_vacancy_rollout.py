@@ -93,7 +93,7 @@ class CircleVacancyRolloutTests(TransactionTestCase):
         """W10. One rollout can distinguish a genuine old loss from contradictory historic evidence."""
         support._require_disposable_fixture_database()
         migrate(PREVIOUS)
-        self.addCleanup(migrate, "0108_circle_reseat")
+        self.addCleanup(migrate, "0109_committee_chair_reservation")
         # The fixture writes under 0104, before the settlement writer exists.
         with patch.object(commands, "settle_vacancy", return_value=None):
             old, expired = form_with_members()

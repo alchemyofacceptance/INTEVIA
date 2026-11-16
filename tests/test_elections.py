@@ -1,7 +1,6 @@
 """ELECT election, result binding and term continuity through the governed writers."""
 
 import threading
-import time
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -10,6 +9,7 @@ from django.db import IntegrityError, connection, connections, transaction
 from django.test import TransactionTestCase
 
 from core import models
+from intevia.test_postgresql_backend import clock
 from src.intevia.services import (
     circle_commands,
     cq,
@@ -85,9 +85,8 @@ class ElectionTests(TransactionTestCase):
         circle.refresh_from_db()
         self.assertIn(circle.state, ("DORMANT", "ELIGIBLE"))
         with self.subTest(timed_events="the preparation deadline, after a nomination"):
-            # A second LO. Its election's preparation has a deadline a few real seconds ahead, a member
-            # puts their name forward before it, and then the database clock passes it. The nomination
-            # sets no phase, so the preparation head is still the head the deadline's rule act answers.
+            # In the second LO, the nomination commits before the preparation deadline.
+            # It sets no phase, so the engine must still answer the original head after the move.
             lo2, founder2, scope2, _circle2, citation2 = fx.owner()
             candidate = law.add_member(lo2)
             with clarity.due_shortly(4):
@@ -106,10 +105,12 @@ class ElectionTests(TransactionTestCase):
             self.assertEqual((head["phase"], nominated_act, called_ordinal < nominated_ordinal, nominated_at < head["deadline"]),
                              ("PREPARATION", nomination, True, True),
                              "ELECT-01 preparation: the nomination must fall between the head and its deadline.")
-            waited = time.monotonic()
-            while support.database_now() < head["deadline"]:
-                self.assertLess(time.monotonic() - waited, 30, "ELECT-01 preparation: the deadline never came.")
-                time.sleep(0.1)
+            previous_offset = clock.offset()
+            clock.advance_to(head["deadline"])
+            self.assertGreater(clock.offset(), previous_offset,
+                               "ELECT-01: the owned clock must advance after the nomination commits.")
+            self.assertGreaterEqual(support.database_now(), head["deadline"],
+                                    "ELECT-01: the preparation deadline must be due before the engine runs.")
             fx.idle_until_turn_of(lo2, founder2, "CQ")
             opened = te.run(_wake(lo2, founder2), alias="default")
             self.assertEqual((opened.result, opened.consumer, opened.purpose, opened.source_ref),
@@ -623,6 +624,8 @@ class ElectionTests(TransactionTestCase):
             records = import_module("core.migrations.0106_circle_vacancy_records")
             committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
             reseat = import_module("core.migrations.0108_circle_reseat")
+            chair = import_module("core.migrations.0109_committee_chair_reservation")
+            chair.uninstall(None, editor)
             reseat.uninstall(None, editor)
             committee_cut.uninstall(None, editor)
             with connection.cursor() as check:
@@ -651,6 +654,7 @@ class ElectionTests(TransactionTestCase):
             migration.uninstall(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.")
         with connection.cursor() as record_check:
+            chair.expect(record_check, True)
             self.assertEqual(records.episode.definition(record_check, committee_cut.APART), reseat.APART_NEW,
                              "ELECT-10 must roll the populated descent back to 0108.")
             self.assertEqual(records.trigger(record_check, "zz_te_origin"), records.ORIGIN_TRIGGER,
@@ -934,7 +938,7 @@ class ElectionTests(TransactionTestCase):
         seat = models.CircleParticipation.objects.get(circle__parent_organism=lo, membership__identity=founder)
         fx.enable_voting(scope)
         at = support.database_now()
-        # Pick the nearest real date still ahead after the instrument is adopted.
+        # Pick the nearest constitutional date still ahead after the instrument is adopted.
         # These are fixture dates in a single Article, never product intervals.
         dates = {str(seconds): at + timedelta(seconds=seconds) for seconds in (3, 10, 60)}
         dates["Past"] = seat.effective_at - timedelta(seconds=1)
@@ -974,8 +978,12 @@ class ElectionTests(TransactionTestCase):
         reference = "elect-resignation:" + str(end["act"])
         self.assertFalse(assessments.filter(evidence_reference=reference).exists())
         self.assertEqual(elections.vacancies(**scope, ending_uuid=seat.participation_uuid), [])
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_sleep_until(%s)", [due])
+        previous_offset = clock.offset()
+        clock.advance_to(due)
+        self.assertGreater(clock.offset(), previous_offset,
+                           "ELECT-13: the owned clock must advance after both dated notices commit.")
+        self.assertGreaterEqual(support.database_now(), due,
+                                "ELECT-13: the shared resignation date must be due before either writer acts.")
         with self.subTest(timed_events="engine first"):
             # First wake: the resignation's assessment. Second wake: the vacancy, citing it.
             first = te.run(_wake(engine_lo, engine_founder), alias="default")

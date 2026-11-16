@@ -21,6 +21,7 @@ migration = import_module("core.migrations.0105_circle_vacancy_episode")
 records = import_module("core.migrations.0106_circle_vacancy_records")
 committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
 reseat = import_module("core.migrations.0108_circle_reseat")
+chair = import_module("core.migrations.0109_committee_chair_reservation")
 
 
 def episode(circle, at, known):
@@ -438,6 +439,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                 cursor.execute("DROP TRIGGER " + name + " ON public.core_circlestateevent")
                 cursor.execute(source)
 
+            chair.uninstall(None, editor)
             signature, before, after = reseat.REPLACEMENTS[0]
             cursor.execute(altered(after))
             with self.assertRaisesMessage(RuntimeError, "0108 installed definition differs: " + signature):
@@ -503,6 +505,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
             committee_cut.expect(cursor, True)
             reseat.install(None, editor)
             reseat.expect(cursor, True)
+            chair.install(None, editor)
             transaction.set_rollback(True)  # Leave this test's schema exactly as it entered.
 
         # An ordinary LO founding and phase advancement commit before the reducer comparison.
@@ -527,6 +530,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                                "FROM public.core_livingorganism WHERE id=%s", [cut, cut, fixture.organism.pk])
                 return result, cursor.fetchone()
 
+            chair.uninstall(None, editor)
             reseat.uninstall(None, editor)
             committee_cut.uninstall(None, editor)
             successor = lo_reading()
@@ -539,6 +543,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
             records.install(None, editor)
             committee_cut.install(None, editor)
             reseat.install(None, editor)
+            chair.install(None, editor)
             self.assertEqual(lo_reading(), successor)
             transaction.set_rollback(True)
 
@@ -557,6 +562,67 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
         self.assertEqual(target.head_event_id, head.pk)
 
     test_0105_requires_exact_predecessor_and_successor.ISOLATION_FULL_CAPTURE = True
+
+    def test_0109_refuses_drift_before_changing_any_pinned_function(self):
+        """0109 refuses a single mismatched definition before changing any of its four functions."""
+        predecessors = {
+            chair.RESERVED: None,
+            chair.EMPTY: committee_cut.EMPTY_NEW,
+            reseat.RESEATABLE: reseat.RESEATABLE_SQL,
+            chair.WORK_PLAN: committee_cut.WORK_PLAN_NEW,
+        }
+        successors = {
+            chair.RESERVED: chair.RESERVED_SQL,
+            chair.EMPTY: chair.EMPTY_SQL,
+            reseat.RESEATABLE: chair.RESEATABLE_SQL,
+            chair.WORK_PLAN: chair.WORK_PLAN_SQL,
+        }
+
+        def installed(cursor):
+            return {sig: migration.definition(cursor, sig) for sig in predecessors}
+
+        with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
+            def check_each(operation, clean):
+                for sig, body in clean.items():
+                    with self.subTest(operation=operation.__name__, signature=sig):
+                        with transaction.atomic():
+                            if body is None:
+                                # Even the correct helper body violates the pin if it exists early.
+                                drift = successors[sig]
+                            else:
+                                # W12's source-comment alteration retains the function signature.
+                                drift = body.replace("AS $function$\n", "AS $function$\n-- W12 drift\n", 1)
+                            self.assertNotEqual(drift, body, f"The fixture must change the definition of {sig}.")
+                            cursor.execute(drift)
+                            tampered = clean | {sig: drift}
+                            self.assertEqual(installed(cursor), tampered,
+                                             f"Only {sig} may differ before the attempted migration.")
+                            with self.assertRaises(RuntimeError, msg=f"{operation.__name__} must refuse drift in {sig}.") as refusal:
+                                operation(None, editor)
+                            self.assertEqual(str(refusal.exception), "0109 installed definition differs: " + sig,
+                                             f"The refusal must identify the exact mismatched function {sig}.")
+                            self.assertEqual(installed(cursor), tampered,
+                                             "The refusal must leave the altered function and its three neighbours untouched.")
+                            transaction.set_rollback(True)
+                        self.assertEqual(installed(cursor), clean,
+                                         f"Rolling back the change to {sig} must restore all four pins.")
+
+            self.assertEqual(installed(cursor), successors, "The sandbox must start at the complete 0109 head.")
+            chair.uninstall(None, editor)
+            self.assertEqual(installed(cursor), predecessors, "The forward trials must start at the exact 0108 definitions.")
+            check_each(chair.install, predecessors)
+            chair.install(None, editor)
+            self.assertEqual(installed(cursor), successors, "The reverse trials must start at the exact 0109 definitions.")
+            check_each(chair.uninstall, successors)
+
+            chair.uninstall(None, editor)
+            self.assertEqual(installed(cursor), predecessors,
+                             "A clean reversal must remove the new helper and restore the three original definitions.")
+            chair.install(None, editor)
+            self.assertEqual(installed(cursor), successors, "A clean reinstall must restore all four 0109 definitions.")
+            transaction.set_rollback(True)
+
+    test_0109_refuses_drift_before_changing_any_pinned_function.ISOLATION_FULL_CAPTURE = True
 
     def test_vacancy_records_keep_the_causal_times(self):
         """W4. Each due occurrence retains its own cause, domain dates and unique effect."""
@@ -836,7 +902,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
         # A vacant office gives nobody the holder-only claim read. Check the
         # approved formatting independently without bypassing that authority test.
         for reserved, has_parent, next_step in (
-                (True, True, "Refer the vacancy to the Board under the forming law."),
+                (True, True, "[LINK PLACEHOLDER: Send to the Board]"),
                 (False, True, "Ask an LO Coordinator to reseat the Circle before the claim is tried again."),
                 (False, False, "Follow the LO’s existing Coordinator recovery process.")):
             wording = commands._expired_capacity_message(deadline, reserved, has_parent, claim=True)
@@ -932,6 +998,91 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
         self.assertEqual(circle_turn(fixture).result, "IDLE")
         self.assertEqual(circle_receipts(fixture), [], "An action-settled occurrence must never acquire a wake receipt.")
 
+    def test_final_lo_departure_effective_before_deadline_closes_at_exit(self):
+        """D-1. A late intake must preserve the earlier final exit."""
+        from src.intevia.services.organism_membership_service import OrganismMembershipService
+        from tests.test_c1b_departure import DepartureTests
+
+        fixture, circle = form_with_members()
+        member = fixture.fx._member()
+        place = fixture.seat(circle, member)
+        founder = models.CircleParticipation.objects.get(circle=circle, membership=fixture.fx.founder_member)
+        loss = leave(fixture, circle, founder)
+        known = support.database_now()
+        vacancy = episode(circle, known, known)
+        self.assertIsNotNone(vacancy, "The founder's departure must establish a recovery deadline.")
+        cause, loss_at, deadline, status = vacancy
+        self.assertEqual((cause, loss_at, status), (loss.event_uuid, loss.effective_at, "OPEN"),
+                         "The deadline must belong to this Circle's still-open loss.")
+        exit_at = deadline - timedelta(microseconds=1)
+        self.assertLess(max(place.effective_at, loss_at), exit_at,
+                        "The departing member must hold the place during the recovery period.")
+        ends = models.CircleParticipationEnd.objects
+        remaining = models.CircleParticipation.objects.filter(circle=circle).exclude(
+            pk__in=ends.filter(participation__circle=circle).values("participation_id"))
+        self.assertEqual(list(remaining.values_list("pk", flat=True)), [place.pk],
+                         "Only the departing member's place may remain.")
+        chain = models.CircleStateEvent.objects.filter(circle=circle).order_by("sequence")
+        before = chain.last()
+        clock.advance_to(deadline + timedelta(microseconds=1))
+        self.assertGreater(support.database_now(), deadline, "The real intake must run after the deadline.")
+        self.assertFalse(chain.filter(action__in=("OPEN_VACANCY", "BECOME_DORMANT")).exists(),
+                         "The leave must settle a silent episode.")
+        route = OrganismMembershipService(authority=fixture.fx.authority, clock=support.database_now)
+        command = DepartureTests().command(member, effective_at=exit_at, occurred_at=exit_at)
+        try:
+            first = route.leave_organism(command)
+        except DatabaseError as error:
+            if getattr(getattr(error.__cause__, "diag", None), "message_primary", None) != "CIRCLE_DISSOLUTION_HISTORY":
+                raise
+            self.fail("CIRCLE_DISSOLUTION_HISTORY: the final exit before the deadline must commit at its own date.")
+
+        member.refresh_from_db()
+        transition = member.head_transition
+        self.assertEqual((member.state, transition.resulting_state, transition.lineage_reference),
+                         ("ENDED", "ENDED", first.lineage_reference),
+                         "The returned leave must identify the committed membership ending.")
+        self.assertGreater(transition.received_at, deadline, "The membership must retain its late intake.")
+        times = (exit_at, exit_at, transition.received_at)
+        self.assertEqual((transition.effective_at, transition.occurred_at, transition.received_at), times,
+                         "The membership must end at the requested earlier instant.")
+        place_ends = list(ends.filter(participation=place))
+        self.assertEqual(len(place_ends), 1, "Exactly one composed ending must remove the final place.")
+        end = place_ends[0]
+        self.assertEqual((end.composed_from_event_uuid, end.enterer_identity_id, end.entry_mode),
+                         (transition.event_uuid, member.identity_id, "COMPOSED"),
+                         "The place must end through this member's recorded departure.")
+        self.assertEqual((end.effective_at, end.occurred_at, end.received_at), times,
+                         "The place ending must preserve the exit and its receipt.")
+        new_events = list(chain.filter(sequence__gt=before.sequence))
+        self.assertEqual([event.action for event in new_events], ["OPEN_VACANCY", "DISSOLVE_CIRCLE"],
+                         "Only the vacancy opening and the final closure belong on this chain.")
+        opening, closure = new_events
+        self.assertEqual((opening.effective_at, opening.occurred_at, opening.evidence_reference),
+                         (loss_at, loss_at, f"vacancy:{cause}"), "The opening must cite and date the actual loss.")
+        self.assertGreaterEqual(opening.received_at, transition.received_at,
+                                "The opening's own receipt must be at or after intake.")
+        self.assertEqual((circle_enterer(opening), circle_enterer(closure)), (member.identity_id, member.identity_id),
+                         "The departing member must remain the enterer of both facts.")
+        self.assertEqual((opening.predecessor_id, closure.predecessor_id, closure.prior_state,
+                          closure.resulting_state, closure.evidence_reference),
+                         (before.pk, opening.pk, "ACTIVE", "CLOSED",
+                          f"last-place:{place.participation_uuid}|cause:{transition.event_uuid}"),
+                         "Closure must follow the opening and cite this final place and its membership ending.")
+        self.assertEqual((closure.effective_at, closure.occurred_at, closure.received_at), times,
+                         "Closure must use the final place's effective, occurred and received times.")
+
+        self.assertEqual(route.leave_organism(command), first, "An exact retry must return the first departure.")
+        self.assertEqual(circle_turn(fixture).result, "IDLE", "A later Circle turn must find no occurrence to open.")
+        self.assertEqual(circle_receipts(fixture), [], "The leave and later turn must leave no Circle wake receipt.")
+        self.assertEqual(list(chain.filter(sequence__gt=before.sequence).values_list("pk", flat=True)),
+                         [opening.pk, closure.pk], "Replay and the later turn must append no fact after closure.")
+        self.assertEqual(list(ends.filter(participation=place).values_list("pk", flat=True)), [end.pk],
+                         "Replay must keep precisely the original place ending.")
+        member.refresh_from_db()
+        circle.refresh_from_db()
+        self.assertEqual((member.head_transition_id, circle.state, circle.head_event_id),
+                         (transition.pk, "CLOSED", closure.pk), "The original ending and closure must remain the heads.")
 
 
 def circle_wake(fixture):
