@@ -36,4 +36,20 @@ This glossary gives first-time readers a concise route into recurring INTEVIA te
 - **Cohort** — an ordinary group of learners or participants considered together; in INTEVIA documentation this is distinct from the defined formation label `Circle`. Its appearance does not establish an enrolled, launched, or active cohort. [Source](../../README.md#current-non-claims)
 - **HPCC** — the name used in INTEVIA's current public documentation for the Human capability pathway being developed around governed Human–AI work; repository materials do not establish an active certification programme, launched cohort, or launched Circle. [Source](../../README.md#hpcc-organisms-and-circles)
 
+## Governance core terms (the C series)
+
+These terms name services that work behind the scenes on `main`; none has a screen yet. The decision is a **vote**. The role that keeps an organisation running is shown as the **Organisation Coordinator**.
+
+- **Circle dormancy and reseat** — a Circle that loses its last Coordinator while it still has members gets a recovery window; if no one takes the role in time, the Circle pauses (is dormant) instead of acting without anyone in charge, until a lawful reseat restores it. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Law in force** — an organisation's own rule (an Article, Bylaw or Policy) held as a governed record, read at the exact version in force at a given time. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Guiding Intention** — a strategic objective, which must rest on a law in force. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Suggestion** — a proposal made in the discussion forum that can go to a vote. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Clarity stage** — the step before a vote where members confirm they understand the wording. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Vote** — a decision by the members (or the Board), counted under the rules recorded for it; its result can carry out what it decided. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Election** — the filling of a place the constitution names, by a vote under the constitution's own rules. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#4-capability-and-constitutional-meaning)
+- **Committee** — a group formed under the organisation's law, with exactly the authority delegated to it; its level limits what it may decide. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#4-capability-and-constitutional-meaning)
+- **TIMED EVENTS** — the engine that lets deadlines catch up by themselves, without a scheduler; switched off on every host until a host rehearsal passes. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **INTEVIA Clock** — the one clock every time reading goes through, so a test can move time and production can trust it. [Source](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#glossary)
+- **Root Living Organism (GENESIS)** — INTEVIA's own root organisation; a governed founding route for it exists, not yet run on any host. [Source](../../README.md#hpcc-organisms-and-circles)
+
 For current implementation evidence, use the [Current Implementation Crosswalk](../architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md). For governance routes, use the [root governance index](../../GOVERNANCE_INDEX.md) and [governance navigation index](../governance/governance-index.md).

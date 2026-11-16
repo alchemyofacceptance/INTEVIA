@@ -2,7 +2,7 @@
 
 *A guided entry point into INTEVIA's conceptual architectural spine.*
 
-> **Reading boundary — refreshed 2026-11-01:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `f829d1b2b714cb282d96a273fbd0887eac9c3522`.
+> **Reading boundary — refreshed 2026-11-16:** These documents describe architecture intent and conceptual scope. They are not a current implementation-status surface. Use the [Current Implementation Crosswalk](../docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) to distinguish repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and release state at ref `f829d1b2b714cb282d96a273fbd0887eac9c3522`.
 
 For the current position and its limits, see [the README](../README.md#current-position).
 

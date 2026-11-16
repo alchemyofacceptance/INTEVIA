@@ -1,7 +1,7 @@
 # INTEVIA — a guide for funders and assessors
 
-**v0.4 · 1 November 2026 · current at main `02790ab8572181ba602ec1404eb8da90666c1f5f`**
-*v0.4 records SR-H's current GitHub evidence and PKT-B's closure. v0.3 refreshed v0.2 of 19 September 2026 for the completed PKT-B work.*
+**v0.5 · 16 November 2026 · current at main `e9b842e067c1ebe3dfda165d5e5170dc0de27907`**
+*v0.5 adds the C series (Circles, laws in force, decisions by vote, elections, committees and TIMED EVENTS), restates §3's statuses, and cites the current GitHub evidence. v0.4 recorded SR-H's GitHub evidence and PKT-B's closure. v0.3 refreshed v0.2 of 19 September 2026 for the completed PKT-B work.*
 *Supersedes v0.1, which described the audience too narrowly and described HAT incorrectly.*
 
 ---
@@ -56,14 +56,14 @@ The design work examines events of a kind any organisation meets:
 
 | Event | Why it matters to a member | Status |
 |---|---|---|
-| The last essential Coordinator leaves before the activity | coverage and responsibility must be reassessed explicitly, not assumed to continue | **design** |
-| The decision rules change mid-discussion | participants need to know which rules governed what they took part in | **design** |
-| Someone participates but disagrees | dissent should be represented, not flattened into consensus or silence | **design** |
-| An evaluator's authority lapses | authority that has expired should not quietly keep being exercised | **design** |
+| The last essential Coordinator leaves before the activity | coverage and responsibility must be reassessed explicitly, not assumed to continue | **built behind the scenes, no screen:** a Circle that loses its last Coordinator gets a recovery window, then pauses instead of acting without anyone in charge, and can be reseated ([C-series record §4](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#4-capability-and-constitutional-meaning)) |
+| The decision rules change mid-discussion | participants need to know which rules governed what they took part in | **built behind the scenes, no screen:** every vote's result traces to the rule it was counted under, and that rule to the vote that set it ([C-series record §4](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#4-capability-and-constitutional-meaning)) |
+| Someone participates but disagrees | dissent should be represented, not flattened into consensus or silence | **design**: the vote records each answer, but how dissent is represented has not been checked against this need |
+| An evaluator's authority lapses | authority that has expired should not quietly keep being exercised | **built behind the scenes, no screen:** terms end on time, and a committee's authority is checked when it acts and when the act takes effect ([C-series record §4](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#4-capability-and-constitutional-meaning)) |
 
-**What is implemented today** includes the organisation and history foundations, plus recorded processes for membership, applications, founding, explicit Birthing, governance formation and offices. Birthing is the formal act that completes formation under the recorded conditions. [The PKT-B record](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what these actions do for people.
+**What is implemented today** includes the organisation and history foundations, plus recorded processes for membership, applications, founding, explicit Birthing, governance formation and offices ([the PKT-B record](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md)). Birthing is the formal act that completes formation under the recorded conditions. The C series added Circles and their continuity, the organisation's laws in force, a discussion forum, decisions by vote, elections, committees, and TIMED EVENTS, which keeps due work on time through one clock ([the C-series record](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md)).
 
-This does not make the fictional scenario a delivered programme. There is no complete website journey or permission for public use. Custom offices remain held. The database safeguards are now built; a physical test of the reserved-office update safeguard remains due under follow-up item FW-11. Reviewing the value of tests remains planned.
+This does not make the fictional scenario a delivered programme. No feature has a screen yet, and there is no permission for public use. TIMED EVENTS is switched off on every host until a host rehearsal passes there. Custom offices remain held. A physical test of the reserved-office update safeguard remains due under follow-up item FW-11, still open on 16 November.
 
 The [public crosswalk](S015_PUBLIC_CROSSWALK.md) maps current claims to source files and keeps the earlier foundation history.
 
@@ -97,7 +97,7 @@ The Treasurer office remains in place, vacant. Ending Tom's appointment does not
 
 **Throughout, the record distinguishes who entered an action from whose act it was and the authority behind it.** A refused action can still leave a record of the request. [Evidence: responsibility](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#4-capability-and-constitutional-meaning); [recorded requests](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices).
 
-**What remains.** These are behind-the-scenes processes: there is no complete website journey or permission for public use yet. Custom offices, beyond the standard governance offices, remain held pending subscription checks. The reserved-office update safeguard still awaits a physical database test under follow-up item FW-11. Checking whether cited constitutional rules are currently in force also remains due. Further work across events, learning, services and discussions lies ahead on the path to v1.0. [Evidence: implementation limits](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary); [current capability map](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#capability-blocks).
+**What remains.** These are behind-the-scenes processes: there is no complete website journey or permission for public use yet. Custom offices, beyond the standard governance offices, remain held pending subscription checks (unchanged on 16 November). The reserved-office update safeguard still awaits a physical database test under follow-up item FW-11. A cited provision can now be resolved to the exact version in force, behind the scenes (`law_records.resolve_citation`, `library_laws.our_laws`); there is no screen for it, and INTEVIA does not interpret a constitution. The older events, learning, services and library domains are not yet joined to organisations; that is the next work on the path to v1.0 ([the C-series record §13](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#13-what-this-series-did-not-do)). [Evidence: implementation limits](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#7-exact-implementation-boundary); [current capability map](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#capability-blocks).
 
 ## 4. Maturity — stated plainly
 
@@ -109,11 +109,13 @@ be used to run a real organisation's governance today.
 | Organisation and recorded-history foundations | Built; the earlier PKT-A records retain their original boundaries |
 | Membership, applications, founding, Birthing and governance formation | Working behind-the-scenes processes; see the PKT-B record |
 | Office definitions, nomination, consent and appointment | Built through SR-H with database safeguards; custom-office access remains held, and the reserved-office update safeguard awaits its physical test (FW-11) |
-| Automatic checks on GitHub | SR-H recorded 134 product tests and 19 deliberate-defect checks; the old suite is archived, not run |
+| Circles, laws in force, Guiding Intentions, the discussion forum, decisions by vote, elections, committees, Board continuity | Working behind-the-scenes services with database guards and tests; no screen; see the C-series record |
+| TIMED EVENTS and the INTEVIA Clock | Built and tested; switched off on every host until a host rehearsal passes; no notices or email yet; the moving test clock exists only in owned test databases |
+| Automatic checks on GitHub | Main's run at the named base recorded 322 product tests and 31 deliberate-defect checks, with 38 of 38 qualification controls; the old suite is archived, not run |
 | The fictional scenario in §3 | An illustration for design, not an operational pilot or completed programme |
 | Complete website, public deployment and release readiness | Not established |
 
-The [September review](verification/reports/REPORT_2_IMPLEMENTATION_v1_0.md) remains a historical record, not the current status list. The [PKT-B Datacron §9](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) identifies remaining work and restrictions. It does not claim that every earlier foundation finding is closed.
+The [September review](verification/reports/REPORT_2_IMPLEMENTATION_v1_0.md) remains a historical record, not the current status list. The [C-series Datacron §9](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md#9-findings-carried-forward) and the [PKT-B Datacron §9](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#9-findings-carried-forward) identify remaining work and restrictions. It does not claim that every earlier foundation finding is closed.
 
 ## 5. How the work is governed — HAT and HPCC
 
@@ -136,7 +138,7 @@ The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Develo
 
 ## 6. What an assessor can check today
 
-**The current evidence.** The [SR-H GitHub run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205) recorded 134 product tests and 19 deliberate-defect checks. These are governed by six test admission rules (TAR). The automatic checking sequence took 4 min 12 s; the complete job took about 4 min 49 s.
+**The current evidence.** At `e9b842e0`, main's run [43922648845](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43922648845) recorded 322 product tests and 31 deliberate-defect checks, governed by six test admission rules (TAR), with all 38 qualification controls met. The route took 26 min 29 s on that run; the same code took 29 min 43 s on its [pull-request run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43916774322), a difference due to GitHub's runner alone. The earlier [SR-H run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/41352656205) (134 product tests, 19 deliberate-defect checks) remains the record at PKT-B's close.
 
 The Human Governor set aside the old suite of about 1,800 tests on 29 October. The new route builds one database template and uses disposable copies, called clone mode. GitHub continuous integration (CI) is the evidence of record; local diagnosis does not replace it. [The verification guide](verification/README.md) explains what a pass means. A smaller suite is not proven to give equivalent coverage.
 

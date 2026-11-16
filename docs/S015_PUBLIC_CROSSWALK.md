@@ -1,4 +1,4 @@
-# S015 — public crosswalk for PKT-A foundations and PKT-B
+# S015 — public crosswalk for PKT-A foundations, PKT-B and the C series
 
 **v1.2 · 1 November 2026 · current at main `02790ab8572181ba602ec1404eb8da90666c1f5f`** (v1.2 records SR-H's current GitHub evidence)
 
@@ -68,6 +68,10 @@ by direct SQL as well as through the application layer. The old suite is now arc
 The [detailed PKT-B mapping](architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices) lists the current implementation paths, related tests and limits in one place. A test-file reference does not establish coverage of the whole capability.
 
 The [PKT-B Datacron](holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) supplies the capability boundaries, completed changes and open work. The current route and archive policy are mapped in §6.
+
+### Current C-series mapping
+
+From 2 to 16 November 2026 the C series added, behind the scenes: Circles and their continuity; INTEVIA's own root organisation; laws in force and Guiding Intentions; the discussion forum and decisions by vote; elections; Board committees; and TIMED EVENTS with the INTEVIA Clock. The [C-series Datacron](holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) maps each unit to its commit and evidence (§§4 and 8) and lists its limits and open work (§§9 and 13). No feature has a screen yet.
 
 ## 4. The limitations the earlier lineage record admitted
 

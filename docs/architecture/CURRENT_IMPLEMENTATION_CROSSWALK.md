@@ -1,7 +1,7 @@
 # INTEVIA v1.0 — Current Implementation Crosswalk
 
-Qualified repository ref: `02790ab8572181ba602ec1404eb8da90666c1f5f` (document header; each row keeps the ref at which its paths were checked)  
-Last verified: 2026-11-01 (documentation and path review)  
+Qualified repository ref: `e9b842e067c1ebe3dfda165d5e5170dc0de27907` (document header; each row keeps the ref at which its paths were checked)  
+Last verified: 2026-11-16 (documentation and path review)  
 Document role: derivative evidence-state navigation  
 Authority effect: none
 
@@ -29,7 +29,7 @@ At this qualified ref, every capability block is internal pre-alpha; no capabili
 
 ## Current testing boundary
 
-GitHub continuous integration (CI) is the evidence of record. At SR-H the route recorded 134 product tests and 19 deliberate-defect checks under the six test admission rules (TAR). The old suite is archived and not run; selective reuse must satisfy the rules. The route uses one prepared database template and disposable copies. See [verification](../verification/README.md) and [the archive record](../../archive/tests_2026_10/00_ARCHIVE_RECORD.md).
+GitHub continuous integration (CI) is the evidence of record. At `e9b842e0`, main's run [43922648845](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43922648845) recorded 322 product tests and 31 deliberate-defect checks under the six test admission rules (TAR), with 38 of 38 qualification controls. At SR-H the route recorded 134 product tests and 19 deliberate-defect checks. The old suite is archived and not run; selective reuse must satisfy the rules. The route uses one prepared database template and disposable copies. See [verification](../verification/README.md) and [the archive record](../../archive/tests_2026_10/00_ARCHIVE_RECORD.md).
 
 Fields 3 and 4 below are current path checks. Older execution figures remain historical at their named versions. Presence in the archive supplies no current test coverage. A glob such as `archive/tests_2026_10/test_contribution_*.py` means the matching files in that directory, not a new test selection.
 
@@ -291,6 +291,42 @@ Fields 3 and 4 below are current path checks. Older execution figures remain his
 **11 — Non-claims:** No complete website, universal test coverage or release readiness.
 
 **12 — Last verification date:** 2026-11-01, documentation and path checks only.
+
+**13 — Staleness trigger:** A changed base, run, Human decision or forward-work disposition.
+
+### 10. The C series: governed Circles, laws, decisions and time
+
+**1 — Capability family and bounded claim:** Behind-the-scenes services from 2 to 16 November 2026: Circles and their continuity; INTEVIA's own root organisation; laws in force, Policy and Guiding Intentions; the discussion forum and decisions by vote; elections; Board committees; and TIMED EVENTS with the INTEVIA Clock. No feature has a screen yet.
+
+**2 — Qualified repository ref:** `e9b842e067c1ebe3dfda165d5e5170dc0de27907`.
+
+**3–4 — Current implementation and related test paths:** All paths are relative to the repository root and were checked present at the ref above. Each row names its own coverage limit.
+
+| Capability | Current implementation paths | Current related test files | Limit |
+|---|---|---|---|
+| Circles: operation, continuity when a Coordinator leaves, dormancy and reseat | `src/intevia/services/circle_commands.py`; `src/intevia/services/circle_participation.py`; `src/intevia/services/circle_work.py`; `src/intevia/services/organism_coverage.py`; `src/intevia/services/organism_recovery.py`; `src/intevia/services/organism_departure.py` | `tests/test_circle_operations.py`; `tests/test_c2_recovery.py`; `tests/test_circle_vacancy_episode.py`; `tests/test_circle_capacity_deadline.py` | Services only; no screen. The edge-case witnesses still owed are listed in the Datacron §9. |
+| INTEVIA's root organisation (GENESIS) | `src/intevia/services/root_genesis.py`; `src/intevia/services/root_circles.py`; `src/intevia/services/root_continuity.py`; `src/intevia/services/root_publication.py` | `tests/test_root_organism.py` | A governed founding route with its three pinned source records (`docs/governance/root_genesis/`); not yet run on any host. |
+| Laws in force, Policy publication and adoption, Guiding Intentions | `src/intevia/services/law_records.py`; `src/intevia/services/law_acts.py`; `src/intevia/services/library_laws.py`; `src/intevia/services/library_policy.py`; `src/intevia/services/guiding_intentions.py` | `tests/test_law_records.py`; `tests/test_law_acts.py`; `tests/test_library_laws.py`; `tests/test_guiding_intentions.py` | Resolves a cited provision to the exact version in force; INTEVIA does not interpret a constitution. No screen. |
+| The discussion forum, Suggestions, the Clarity stage and decisions by vote | `src/intevia/services/discussion.py`; `src/intevia/services/discussion_posts.py`; `src/intevia/services/cq.py`; `src/intevia/services/cq_reads.py`; `src/intevia/services/cq_voting_state.py` | `tests/test_discussion_boards.py`; `tests/test_discussion_posts.py`; `tests/test_cq_clarity.py`; `tests/test_cq_decisions.py`; `tests/test_cq_authority.py`; `tests/test_cq_settings_authority.py` | A vote that approves a payment records the approval and moves no money. Some service messages still use an internal term for the vote; replacing it with "vote" is owed. |
+| Elections | `src/intevia/services/elections.py` | `tests/test_elections.py`; `tests/test_election_mandates.py` | For the places a constitution names. A seat or office newly adopted by a vote does not yet create the arrangement an election needs (owed for Beta). |
+| Board committees and their levels | `src/intevia/services/committees.py` | `tests/test_committees.py`; `tests/test_committee_chair_authority.py`; `tests/test_circle_committee_dormancy.py` | Authority is checked when a committee acts and when the act takes effect. No screen. |
+| TIMED EVENTS and the INTEVIA Clock | `src/intevia/services/timed_events.py`; `src/intevia/services/timed_events_c2.py`; `src/intevia/services/timed_events_circle.py`; `src/intevia/services/timed_events_cmt.py`; `src/intevia/services/timed_events_cq.py`; `src/intevia/services/timed_events_elect.py`; `src/intevia/services/timed_events_handoff.py`; `src/intevia/services/timed_events_measures.py`; `src/intevia/services/clock.py` | `tests/test_timed_events.py`; `tests/test_intevia_clock.py`; `tests/test_intevia_clock_deadlines.py`; `tests/test_intevia_clock_readers.py`; `tests/test_intevia_clock_only_one.py`; `tests/test_intevia_clock_only_one_code.py` | Switched off on every host until a host rehearsal passes; no notices or email yet (T2). The moving test clock (`intevia_test_clock/`) exists only in owned test databases, which INTEVIA refuses to serve. |
+
+**5 — Last recorded execution evidence:** main's GitHub run [43922648845](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43922648845) at `e9b842e0`: 322 product tests plus 31 deliberate-defect checks, 38 of 38 qualification controls. No rerun is claimed by this document.
+
+**6 — Packet evidence source:** [The C Series — Governed Circles, Laws, Decisions and Time](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md).
+
+**7 — Independent reproduction:** Not performed for this documentation update.
+
+**8 — Human authority:** The Datacron records the Human Governor's decisions. Under the 19 October ruling, his committing or authorising commitment accepts that record, not unfinished work.
+
+**9 — Unresolved work:** See the Datacron §9 and §13. The reserved-office update safeguard still awaits its physical test (FW-11). Edge cases are recorded as owed work and brought in when their function is next worked on.
+
+**10 — Deployment and release:** Pre-alpha; the shared boundary applies. TIMED EVENTS is off on every host.
+
+**11 — Non-claims:** No screen, no host deployment, no notices or email, no universal test coverage, no release readiness.
+
+**12 — Last verification date:** 2026-11-16, documentation and path checks only.
 
 **13 — Staleness trigger:** A changed base, run, Human decision or forward-work disposition.
 

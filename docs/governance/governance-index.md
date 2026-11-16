@@ -3,8 +3,8 @@
 **Path:** `docs/governance/governance-index.md`  
 **Status:** Live navigation; not authority  
 **Owner:** Carmian Owen  
-**Qualified repository ref:** `02790ab8572181ba602ec1404eb8da90666c1f5f`  
-**Last verified:** 2026-11-01 (documentation and path review)
+**Qualified repository ref:** `e9b842e067c1ebe3dfda165d5e5170dc0de27907`  
+**Last verified:** 2026-11-16 (documentation and path review)
 
 ## Purpose
 
@@ -46,7 +46,7 @@ Moved to [`../superseded/governance/`](../superseded/governance/), retained as l
 - Slice and packet lineage records: [`../holocron/datacrons/`](../holocron/datacrons/)
 - Current implementation crosswalk: [`../architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md`](../architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md)
 
-Current packet lineage: [Governed Organisations, Membership and Offices](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Its §8 explains the six test admission rules (TAR), archived old suite and GitHub evidence; the active route now uses database copies. See [verification](../verification/README.md). Its [closing record](../holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) covers SR-H, the accepted re-plan and where each unfinished item goes; the Human Governor closed PKT-B on 1 November 2026.
+Current lineage: [The C Series — Governed Circles, Laws, Decisions and Time](../holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md), covering 2 to 16 November 2026. Packet lineage before it: [Governed Organisations, Membership and Offices](../holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md). Its §8 explains the six test admission rules (TAR), archived old suite and GitHub evidence; the active route now uses database copies. See [verification](../verification/README.md). Its [closing record](../holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) covers SR-H, the accepted re-plan and where each unfinished item goes; the Human Governor closed PKT-B on 1 November 2026.
 
 ## Interpretation rules
 

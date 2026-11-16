@@ -4,7 +4,7 @@ This is a factual navigation aid, not a release history, lifecycle ledger, or su
 
 ## Unreleased
 
-INTEVIA is pre-release; this section collects notable changes until the first release. The current account reaches main `02790ab8572181ba602ec1404eb8da90666c1f5f` on 1 November 2026.
+INTEVIA is pre-release; this section collects notable changes until the first release. The current account reaches main `e9b842e067c1ebe3dfda165d5e5170dc0de27907` on 16 November 2026.
 
 The current development practice is **IDOPT (formerly IDOP)** — INTEVIA Development Operating Protocol and Thinking. Historical records and protocol filenames retain IDOP.
 
@@ -12,6 +12,7 @@ The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-M
 
 ### Added
 
+- The C series (2 to 16 November 2026), behind the scenes: Circles, their continuity when a Coordinator leaves, and dormancy and recovery; INTEVIA's own root organisation, with a governed founding route; laws in force, read at their exact version; Guiding Intentions that cite them; the DISCUSSION forum; Suggestions that move through a Clarity stage to a vote whose result can carry out what it decided; elections; Board committees with delegated authority; and TIMED EVENTS with the INTEVIA Clock. No screen yet; TIMED EVENTS is switched off on every host. See the [C-series record](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) for each unit's commit, evidence and limits.
 - SR-H adds database safeguards against outdated office appointments, changes to reserved offices, retirement of board offices, changes of office kind and later definitions that do not supersede the latest version; damaged consent receipts are identified as record faults; see [02790ab8](https://github.com/alchemyofacceptance/INTEVIA/commit/02790ab8572181ba602ec1404eb8da90666c1f5f).
 
 - The PKT-B closing record: SR-H, the accepted re-plan and where each unfinished item goes; see the [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md).
@@ -25,6 +26,10 @@ The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-M
 - Requests are recorded before their governed commands run; retries use that record and receipt time. See the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [e832273f](https://github.com/alchemyofacceptance/INTEVIA/commit/e832273fad9ef5785437ae344ba1970588acccf9), [de7f6e7a](https://github.com/alchemyofacceptance/INTEVIA/commit/de7f6e7a7836e52f3fa3496ac2237146f090e9c6), [e155bf25](https://github.com/alchemyofacceptance/INTEVIA/commit/e155bf25ec7e0e97145a76ac50ce7efb7d12a893).
 - Continuous integration (CI), the automatic GitHub verification route, became the default closure gate. It now reuses prepared database copies in clone mode; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [39986973](https://github.com/alchemyofacceptance/INTEVIA/commit/39986973186fe43fc2baa2abfe7e8d54da7c1225), [04e9df6c](https://github.com/alchemyofacceptance/INTEVIA/commit/04e9df6ce46f0f4159c224e647844c475b862a71).
 - The Human Governor set down the old test suite and commissioned a smaller suite built around explicit obligations. The archive remains in the repository; see the [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and [35c37a44](https://github.com/alchemyofacceptance/INTEVIA/commit/35c37a4443246e66cd4b3354accd6378a6cf65d3), [c50a5585](https://github.com/alchemyofacceptance/INTEVIA/commit/c50a5585fa01928301f2be61606835aebaa404d6).
+
+### Security
+
+- Django 5.2.19, the security release of 3 November 2026, in the verification lock; see [e9b842e0](https://github.com/alchemyofacceptance/INTEVIA/commit/e9b842e067c1ebe3dfda165d5e5170dc0de27907).
 
 ### Fixed
 

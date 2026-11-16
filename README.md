@@ -17,17 +17,18 @@ Two things are held apart deliberately:
 
 ### Current position
 
-**Current position — 1 November 2026, main `02790ab8572181ba602ec1404eb8da90666c1f5f`.** INTEVIA is pre-alpha software being built toward v1.0. It now has working foundations for recording membership, applications, founding, Birthing, governance formation and office actions. Birthing is the explicit act that completes an organisation's formation under its recorded conditions. These are behind-the-scenes capabilities, not a complete website experience.
+**Current position — 16 November 2026, main `e9b842e067c1ebe3dfda165d5e5170dc0de27907`.** INTEVIA is pre-alpha software being built toward v1.0. Behind the scenes it now records organisations and their Circles; membership that survives people leaving; the organisation's own laws, read at their exact version in force; Guiding Intentions that cite those laws; a forum in which a member's Suggestion moves through a Clarity stage to a vote whose result can carry out what it decided; elections for the places a constitution names; committees with exactly the authority delegated to them; and TIMED EVENTS, which keeps due work on time through one clock. These are services with database guards and tests, not a website experience: no feature here has a screen yet, and TIMED EVENTS is switched off on every host until a host rehearsal passes there.
 
-The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains what was built and how it was checked. SR-H added the database safeguards required before office user access; custom offices still wait for entitlement-lifecycle assurance. The Human Governor closed PKT-B on 1 November 2026; its [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) lists where each unfinished item goes. See [the roadmap](ROADMAP.md#agreed-next-work-and-longer-term-direction) for the agreed next steps. This does not authorise public deployment or claim a completed product.
+The [C-series record](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) explains what was built from 2 to 16 November, how it was checked and what remains. The [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and its [closing record](docs/holocron/datacrons/D-S015-PKT-B-CLOSING-RECORD.md) remain the records of the packet before it; custom offices still wait for entitlement-lifecycle assurance. Alpha readiness is the agreed next work; see [the roadmap](ROADMAP.md#agreed-next-work-and-longer-term-direction). This does not authorise public deployment or claim a completed product.
 
 ## Start here
 
 | If you are… | Read |
 |---|---|
 | **new to INTEVIA** | [A guide for funders and assessors](docs/ASSESSOR_GUIDE.md) — what it is for, what exists today, what is still design work, what comes next |
+| **checking what was built most recently** | [the C-series record](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) — Circles, laws, decisions by vote, elections, committees and time, with their evidence and limits |
 | **checking the engineering** | [docs/verification](docs/verification/README.md) — a re-runnable verification route whose result is decided by a program separate from the one producing the evidence, with the evidence retained |
-| **tracing foundations to commits** | [the public S015 crosswalk](docs/S015_PUBLIC_CROSSWALK.md) — PKT-A foundations and current PKT-B paths, with their evidence and limits |
+| **tracing foundations to commits** | [the public S015 crosswalk](docs/S015_PUBLIC_CROSSWALK.md) — PKT-A foundations, PKT-B and the C series, with their evidence and limits |
 | **unfamiliar with the terminology** | [the plain-language glossary](docs/public/GLOSSARY.md) — a navigation aid, not an authority source |
 | **assessing evidence states** | [the Current Implementation Crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md) — navigation, not authority |
 
@@ -57,7 +58,7 @@ responsibility; it makes Human responsibility visible.**
 
 This public repository is an **internal pre-alpha build under active governance** for INTEVIA v1.0.
 
-Its current centre is the organisation work through offices C5 and the SR-H safeguards at main `02790ab8572181ba602ec1404eb8da90666c1f5f`. PKT-B adds recorded actions to the earlier database foundations and history chain. The [packet record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) explains both the capabilities and the remaining restrictions.
+Its current centre is the C series at main `e9b842e067c1ebe3dfda165d5e5170dc0de27907`: governed Circles, laws in force, decisions by vote, elections, committees and TIMED EVENTS, built on PKT-B's organisations, membership and offices. The [C-series record](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) explains both the capabilities and the remaining restrictions; the [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) keeps its own.
 
 It also contains implementation and test-definition paths from earlier work: Identity, Events, Services, Library, CARE, contribution lineage, profile effect, and a bounded Education Course-definition slice.
 
@@ -85,7 +86,7 @@ For the evidence states behind any capability statement, use the [Current Implem
 - **Developers:** begin with this README, then the [architecture entry point](architecture/README.md) and [implementation crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md).
 - **Funders and assessors:** begin with [the assessor guide](docs/ASSESSOR_GUIDE.md), then the repository posture above, then inspect the crosswalk's separate fields for repository presence, test definitions, recorded execution, Human acceptance, unresolved findings, and non-claims.
 - **Governance readers:** use the [root governance index](GOVERNANCE_INDEX.md), the [governance navigation index](docs/governance/governance-index.md), and the exact constitutional or Human-issued sources they identify.
-- **AI assessors:** do not compress path presence, test definitions, recorded execution, independent reproduction, Human acceptance, unresolved deferral, and release readiness into one maturity label. The [PKT-B Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and the earlier packet records carry their own status and limits; read those before the code.
+- **AI assessors:** do not compress path presence, test definitions, recorded execution, independent reproduction, Human acceptance, unresolved deferral, and release readiness into one maturity label. The [C-series Datacron](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md), the [PKT-B Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) and the earlier packet records carry their own status and limits; read those before the code.
 
 ## The Human-AI Team (HAT)
 
@@ -111,9 +112,9 @@ Repository evidence must be read by class:
 - Human acceptance or closure requires an exact Human-issued source; and
 - documentation creates no implementation, validation, acceptance, promotion, release, or publication authority.
 
-At the current base, the [PKT-B census](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#2-identity) counts repository text and distinguishes the archive from the live tests. It is a measure of volume, not protection.
+At the PKT-B base, the [PKT-B census](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md#2-identity) counts repository text and distinguishes the archive from the live tests. It is a measure of volume, not protection.
 
-**GitHub continuous integration (CI) is the evidence of record.** The SR-H run recorded 134 product tests and 19 deliberate-defect checks: 153 checks under the six test admission rules (TAR). The old suite of about 1,800 tests was archived on 29 October and is not run. The route now builds one database template and uses disposable copies, called clone mode. Its checking sequence took 4 min 12 s; the whole job took about 4 min 49 s. A smaller suite is not proven to give equivalent coverage. See [verification](docs/verification/README.md) for the route and evidence.
+**GitHub continuous integration (CI) is the evidence of record.** At `e9b842e0`, main's run [43922648845](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43922648845) recorded 322 product tests and 31 deliberate-defect checks under the six test admission rules (TAR), with all 38 qualification controls met. The route took 26 min 29 s on that run; the same code took 29 min 43 s on its [pull-request run](https://github.com/alchemyofacceptance/INTEVIA/actions/runs/43916774322), a difference due to GitHub's runner alone. Each run builds one database template and uses disposable copies of it, called clone mode. The old suite of about 1,800 tests was archived on 29 October and is not run, and the smaller suite is not proven to give equivalent coverage. See [verification](docs/verification/README.md) for the route and evidence.
 
 ## Current governed implementation families
 
@@ -137,13 +138,15 @@ Later foundation work also present on `main`:
 
 PKT-B then added organisation membership and application decisions; founding and registration; explicit Birthing and governance formation; recorded request handling; subscription feature access; and office definitions, consent and actions. [The current crosswalk](docs/architecture/CURRENT_IMPLEMENTATION_CROSSWALK.md#9-pkt-b-organisations-membership-and-offices) maps those claims to code. [The Datacron](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md) records their limits and the Human decisions.
 
+The C series then added, behind the scenes: Circles and their continuity when a Coordinator leaves; INTEVIA's own root organisation, with a governed founding route; laws in force and Guiding Intentions; the DISCUSSION forum and decisions by vote; elections; Board committees; and TIMED EVENTS with the INTEVIA Clock. [The C-series record](docs/holocron/datacrons/D-S015-C-SERIES-GOVERNED-CIRCLES-LAWS-DECISIONS-AND-TIME.md) maps each to its units, evidence and limits.
+
 These are bounded implementation families, not claims of complete modules or operational product capability. S014 does not establish curriculum delivery, class delivery, enrolment, assessment, certification, educator qualification, payment, or launched cohorts or Circles; its Datacron keeps `MAT-S014-01` visibly deferred. The earlier S015 packet records retain their September limitations. They are not a current status list for PKT-B. The current Datacron names remaining office safeguards, custom-office restrictions and other follow-up work; no release or operational use is established.
 
 ## HPCC, Organisms, and Circles
 
 HPCC is the Human capability pathway being developed around governed Human–AI work. Repository materials support formation and curriculum design; they do not establish an active certification programme or a launched Circle.
 
-Within INTEVIA, an Organism is an organisation and a Circle is a sub-unit, team, or grouping within it. The schema for Organisms, Circles and their memberships is present on `main` since S015, with every governed act on them recorded on an append-only chain. No Organism or Circle is claimed here as created, launched, populated, or operational.
+Within INTEVIA, an Organism is an organisation and a Circle is a sub-unit, team, or grouping within it. The schema for Organisms, Circles and their memberships is present on `main` since S015, with every governed act on them recorded on an append-only chain. INTEVIA's own root organisation now has a governed founding route (`docs/governance/root_genesis/`, migration `0062`), not yet run on any host. No Organism or Circle is claimed here as created, launched, populated, or operational.
 
 ## Repository map
 
@@ -154,6 +157,11 @@ INTEVIA/
 ├── CHANGELOG.md                      selected factual repository events
 ├── GOVERNANCE_INDEX.md               root governance navigation
 ├── manage.py                         Django management entry point
+├── intevia/                          Django project settings and URL configuration
+├── intevia_test_clock/               the INTEVIA Clock's test-only control, for owned test databases
+├── email_foundation/                 recorded email requests, one per recipient
+├── tools/                            repository tooling (including the F0 stylesheet check)
+├── archive/                          the archived test suite, retained and not run
 ├── run.py                            bounded local run entry point
 ├── .github/                          CI workflow, qualification gate and its controls
 ├── core/                             Django models, migrations, views and commands
@@ -170,6 +178,7 @@ INTEVIA/
 ├── docs/governance/                  live governance navigation, standards, and HAT practice
 ├── docs/superseded/                  superseded documentation, retained as lineage
 ├── docs/holocron/datacrons/          Slice and packet lineage records
+├── docs/holocron/shards/             smaller lineage fragments
 ├── docs/evidence/                    governed evidence surfaces
 ├── docs/public/                      public-safe articulation surfaces
 ├── governance/policies/              pre-alpha policy instruments
@@ -193,7 +202,7 @@ refuses anything.
 
 ### Provisioning a local instance
 
-Verified against PostgreSQL 17.10.
+Requires Python 3.12 and PostgreSQL 17. CI runs Python 3.12 and PostgreSQL 17 at their latest patch releases.
 
 ```
 docker volume create intevia_pgdata
@@ -256,6 +265,8 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 ## Current non-claims
 
 This repository does not claim finished-product maturity, deployment, production readiness, scientific validation, universal productivity improvement, active certification, launched cohorts or Circles, a populated Organism, or that INTEVIA has solved AI governance.
+
+It also does not claim, as of main `e9b842e0`: that any feature has a screen; that TIMED EVENTS runs on any host (it is switched off everywhere until a host rehearsal passes); that notices or email are sent for due work; that the moving test clock is available outside owned test databases (INTEVIA refuses to serve one); that the older LIBRARY resources, EVENTS, SERVICE and EDUCATION are joined to organisations; or that a vote approving a payment moves money.
 
 ## Keeper
 
