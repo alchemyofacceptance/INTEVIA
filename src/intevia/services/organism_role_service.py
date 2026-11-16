@@ -1056,6 +1056,7 @@ class OrganismRoleService(_OrganismCommandService):
                     raise CircleAccessRefused("The nominee needs an active LO membership and a current place in this Circle.")
             if ContextualRoleAssignment.objects.using(alias).filter(assignment_uuid=assignment_uuid).exists():
                 circles.unavailable()
+            circles.settle_vacancy(alias, circle, actor)
             definition = _circle_coordinator_definition(alias, lo, actor, source, at)
             office = ContextualRoleAssignment.objects.using(alias).create(
                 assignment_uuid=assignment_uuid, membership=member, role_definition=definition, circle=circle,

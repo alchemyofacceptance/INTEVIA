@@ -1033,6 +1033,18 @@ class CQDecisionTests(TransactionTestCase):
             # again last, which itself requires the landed text.
             clock_0081_0087 = import_module("core.migrations.0101_clock_storage_0081_0087")
             clock_0088_0095 = import_module("core.migrations.0102_clock_storage_0088_0095")
+            records = import_module("core.migrations.0106_circle_vacancy_records")
+            committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
+            reseat = import_module("core.migrations.0108_circle_reseat")
+            reseat.uninstall(None, editor)
+            committee_cut.uninstall(None, editor)
+            with connection.cursor() as check:
+                self.assertIsNone(records.episode.definition(check, committee_cut.APART))
+            records.uninstall(None, editor)
+            with connection.cursor() as record_check:
+                record_check.execute("SELECT to_regprocedure(%s)", [records.WRITER])
+                self.assertIsNone(record_check.fetchone()[0], "Descend through 0106 before 0105.")
+            import_module("core.migrations.0105_circle_vacancy_episode").uninstall(None, editor)
             clock_0088_0095.uninstall(None, editor)
             clock_0081_0087.uninstall(None, editor)
             c2_join.uninstall(None, editor)
@@ -1073,6 +1085,15 @@ class CQDecisionTests(TransactionTestCase):
             c2_join.install(None, editor)
             clock_0081_0087.install(None, editor)
             clock_0088_0095.install(None, editor)
+            import_module("core.migrations.0105_circle_vacancy_episode").install(None, editor)
+            records.install(None, editor)
+            committee_cut.install(None, editor)
+            self.assertEqual(records.episode.definition(cursor, committee_cut.APART), committee_cut.APART_SQL)
+            reseat.install(None, editor)
+            reseat.expect(cursor, True)
+            self.assertEqual(records.trigger(cursor, "zz_te_origin"), records.ORIGIN_TRIGGER)
+            cursor.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
+            self.assertIsNotNone(cursor.fetchone()[0], "DISC2-19 must restore the episode reading at head.")
         self.assertEqual(self.closed(journey, ballot)["post_uuid"], result)
 
     test_atomic_result_integrity_and_populated_reversal.ISOLATION_FULL_CAPTURE = True

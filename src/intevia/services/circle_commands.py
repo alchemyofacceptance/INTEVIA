@@ -1,6 +1,7 @@
 """Governed Circle commands. All externally supplied identifiers are scoped inside the registered LO lock."""
 
 from contextlib import contextmanager
+from datetime import timezone
 from hashlib import sha256
 from uuid import uuid4, uuid5
 
@@ -301,7 +302,93 @@ def _seat_founder_and_activate(alias, lo, actor, credential, circle, opening_uui
              request_uuid=uuid4(), alias=alias)
 
 
+def _vacancy_at(alias, circle, at):
+    """Read one causal episode, its original deadline and any committed dormancy at this cut."""
+    if circle.kind != "GENERIC":
+        return None
+    with connections[alias].cursor() as cursor:
+        cursor.execute("""SELECT e.cause,e.status,e.deadline,EXISTS (
+                SELECT FROM public.core_circlestateevent d WHERE d.circle_id=%s AND d.action='BECOME_DORMANT'
+                AND d.evidence_reference='vacancy:'||e.cause AND d.effective_at=e.deadline AND d.recorded_at<=%s)
+            FROM public.circle_episode(%s,%s,%s) e""", [circle.pk, at, circle.pk, at, at])
+        return cursor.fetchone()
+
+
+def settle_vacancy(alias, circle, actor):
+    """Called after authority and replay under the LO lock. The surrounding action owns rollback."""
+    if circle.kind != "GENERIC":
+        return
+    episode = _vacancy_at(alias, circle, database_now(alias))
+    if episode is None or episode[3]:
+        return
+    cause, status, _, _ = episode
+    with connections[alias].cursor() as cursor:
+        for occurrence in (("OPENED", "DORMANT") if status == "EXPIRED" else ("OPENED",)):
+            cursor.execute("SELECT public.circle_record_vacancy(%s,%s,%s,%s)",
+                           [circle.parent_organism_id, cause, occurrence, actor.pk])
+    circle.refresh_from_db(using=alias, fields=["state", "head_event"])
+
+
+def _deadline_text(deadline):
+    return deadline.astimezone(timezone.utc).strftime("%d %B %Y at %H:%M UTC").lstrip("0")
+
+
+def _has_lo_coordinator(alias, lo, at):
+    with connections[alias].cursor() as cur:
+        cur.execute("""SELECT EXISTS(SELECT FROM public.core_organismmembership m WHERE m.living_organism_id=%s
+            AND public.circle_lo_office(%s,m.identity_id,%s,%s) IS NOT NULL)""", [lo.pk, lo.pk, at, at])
+        return cur.fetchone()[0]
+
+
+def _expired_recovery_message(episode, parent_available):
+    _, _, deadline, recorded = episode
+    when = _deadline_text(deadline)
+    reason = (f"This Circle became dormant on {when} because it had no Coordinator" if recorded
+              else f"This Circle's recovery period ended at {when}")
+    if parent_available:
+        return (f"You were not appointed. {reason}. Nothing changed and your place is kept. "
+                "Ask an LO Coordinator to reseat the Circle. The LO's Coordinators handle this.")
+    return (f"You were not appointed. {reason}, and the LO currently has no Coordinator. Your place is kept. "
+            "Follow the LO’s existing Coordinator recovery process. Once in office, an LO Coordinator can take "
+            "the Circle office or nominate a member who accepts.")
+
+
+def _expired_capacity_message(deadline, reserved, parent_available, *, claim):
+    when = _deadline_text(deadline)
+    if claim:
+        start = "You could not claim this work."
+        effect = "This attempt left the work assignment unchanged."
+        if reserved:
+            return (f"{start} The committee lost its chair and its recovery period ended at {when}. {effect} "
+                    "Refer the vacancy to the Board under the forming law. The Board handles the chair appointment.")
+        if parent_available:
+            return (f"{start} The Circle’s recovery period ended at {when} without a Coordinator. {effect} "
+                    "Ask an LO Coordinator to reseat the Circle before the claim is tried again. "
+                    "The LO’s Coordinators handle ordinary Circle reseating.")
+        return (f"{start} The Circle’s recovery period ended at {when}, and the LO currently has no Coordinator. "
+                f"{effect} Follow the LO’s existing Coordinator recovery process. "
+                "The LO Coordinator who takes office can arrange the Circle’s reseating.")
+    if reserved:
+        return (f"This committee’s Circle is dormant. Its recovery period ended at {when} without a chair. "
+                "It cannot currently exercise its mandate. Check the forming law for the chair appointment. "
+                "The Board handles the vacancy under that law.")
+    if parent_available:
+        return (f"This Circle is dormant. Its recovery period ended at {when} without a Coordinator. "
+                "The Circle’s active powers are unavailable. Ask an LO Coordinator about reseating. "
+                "An effective LO Coordinator can take the office or nominate a Circle member who accepts.")
+    return (f"This Circle is dormant. Its recovery period ended at {when}, and the LO currently has no Coordinator. "
+            "The Circle’s active powers are unavailable. Follow the LO’s existing Coordinator recovery process. "
+            "The LO Coordinator who takes office can arrange the Circle’s reseating.")
+
+
+def _chair_reserved(alias, circle, at):
+    with connections[alias].cursor() as cur:
+        cur.execute("SELECT public.cmt_empty(%s,%s,%s)", [circle.pk, at, at])
+        return cur.fetchone()[0]
+
+
 def _take_circle_office(alias, lo, credential, circle, place, office_uuid):
+    """Nomination is the holder’s own consent; storage couples only the checked ASSIGN to RESEAT."""
     from src.intevia.services.organism_application_authority import ProductionApplicationAuthorityProvider
     from src.intevia.services.organism_authority import S015Authority
     from src.intevia.services.organism_role_service import OrganismRoleService
@@ -339,15 +426,35 @@ def recover_circle(*, credential, organism_uuid, circle_uuid, request_uuid, alia
                               public.circle_direct_volunteer(%s,%s,%s)""",
                            [lo.pk,actor.pk,at,at,circle.pk,at,at,lo.pk,at,at])
             authority, vacant, direct = cursor.fetchone()
-            cursor.execute("SELECT public.cmt_empty(%s,%s,%s)", [circle.pk, at, at])
-            if cursor.fetchone()[0] and (authority or models.CircleParticipation.objects.using(alias).filter(circle=circle, membership=member).exists()):
-                raise CircleAccessRefused("The committee chair's place is empty. Ask the Board to fill it under the forming law.")
             cursor.execute("""SELECT p.id FROM public.core_circleparticipation p WHERE p.circle_id=%s AND p.membership_id=%s
                             AND public.circle_office_place(%s,%s,'place:'||p.participation_uuid,%s,%s)""",
                            [circle.pk,member.pk,circle.pk,member.pk,at,at])
             current = cursor.fetchone()
-        if not vacant or (not current and not authority):
+        if not current and not authority:
             unavailable()
+        if _chair_reserved(alias, circle, at):
+            raise CircleAccessRefused("The committee chair's place is empty. Ask the Board to fill it under the forming law.")
+        if not vacant:
+            episode = _vacancy_at(alias, circle, at)
+            if episode is None or episode[1] != "EXPIRED":
+                if authority and circle.state == "ACTIVE":
+                    with connections[alias].cursor() as cursor:
+                        cursor.execute("""SELECT EXISTS(SELECT FROM public.circle_holders(%s,%s,%s)) AND
+                            EXISTS(SELECT FROM public.core_circlestateevent
+                            WHERE circle_id=%s AND action='RESEAT' AND effective_at<=%s AND recorded_at<=%s)""",
+                            [circle.pk, at, at, circle.pk, at, at])
+                        occupied, = cursor.fetchone()
+                    if occupied:
+                        raise CircleAccessRefused("This request did not fill the Circle office. The Circle already has a Coordinator. "
+                                                  "The existing appointment stands. Check the Circle’s current office record. "
+                                                  "The LO Coordinator handling this request can check the result.")
+                unavailable()
+            if not authority:
+                raise CircleAccessRefused(_expired_recovery_message(episode, _has_lo_coordinator(alias, lo, at)))
+            with connections[alias].cursor() as cursor:
+                cursor.execute("SELECT public.circle_reseatable(%s,NULL,%s,%s)", [circle.pk, at, at])
+                if not cursor.fetchone()[0]:
+                    unavailable()
         if not direct and not authority:
             raise CircleAccessRefused("This volunteer appointment needs a governed CQ vote.")
         if current:
@@ -364,7 +471,13 @@ def recover_circle(*, credential, organism_uuid, circle_uuid, request_uuid, alia
 
 
 def operating_status(*, credential, organism_uuid, circle_uuid, alias="default"):
-    """The current participant or an effective parent Coordinator can see the Circle's operating state."""
+    """Keep the existing state-only contract for callers."""
+    return operating_status_detail(credential=credential, organism_uuid=organism_uuid,
+                                   circle_uuid=circle_uuid, alias=alias)["state"]
+
+
+def operating_status_detail(*, credential, organism_uuid, circle_uuid, alias="default"):
+    """A current participant or effective parent Coordinator can see the reason and effective deadline."""
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
         if circle.kind != "GENERIC" or (lo.platform_root and not qualified_root(alias,lo,at)):
@@ -378,9 +491,15 @@ def operating_status(*, credential, organism_uuid, circle_uuid, alias="default")
             allowed, held, vacancy = cur.fetchone()
         if not allowed:
             unavailable()
-        if circle.state == "ACTIVE" and not held:
-            return "WITHOUT_COORDINATOR" if vacancy else "COORDINATOR_STANDING_UNCONFIRMED"
-        return circle.state
+        episode = _vacancy_at(alias, circle, at)
+        if episode and episode[1] == "EXPIRED":
+            message = _expired_capacity_message(episode[2], _chair_reserved(alias, circle, at),
+                                                _has_lo_coordinator(alias, lo, at), claim=False)
+            return {"state": "DORMANT", "deadline": episode[2], "message": message}
+        state = circle.state
+        if state == "ACTIVE" and not held:
+            state = "WITHOUT_COORDINATOR" if vacancy else "COORDINATOR_STANDING_UNCONFIRMED"
+        return {"state": state, "deadline": episode[2] if episode else None, "message": None}
 
 
 def request_place(
@@ -597,6 +716,7 @@ def leave(
                 "request": str(request_uuid),
             }
         )
+        settle_vacancy(alias, circle, actor)
         write_event(
             alias,
             circle,

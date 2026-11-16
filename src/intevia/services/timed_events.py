@@ -70,6 +70,7 @@ ADAPTER_MODULES = (
     "src.intevia.services.timed_events_cq",
     "src.intevia.services.timed_events_cmt",
     "src.intevia.services.timed_events_c2",
+    "src.intevia.services.timed_events_circle",
 )
 
 # Consumers whose landed writers name a human origin of their own as the enterer, never

@@ -1704,6 +1704,21 @@ class OrganismMembershipService(_OrganismCommandService):
             received_at=received_at, command=command, fingerprint=command_fingerprint,
             event_uuid=transition_event_uuid, roster=roster,
         )
+        if target_state == "ENDED":
+            # The qualified, confirmed member is still the actual enterer here.
+            # A subsequent END removes the place the episode needs to prove.
+            from core.models import Circle
+            from src.intevia.services.circle_commands import settle_vacancy
+
+            with connections[self._alias].cursor() as cursor:
+                cursor.execute("""SELECT DISTINCT p.circle_id FROM public.core_circleparticipation p
+                    JOIN public.core_circle c ON c.id=p.circle_id AND c.kind='GENERIC'
+                    WHERE p.membership_id=%s AND public.circle_office_place(c.id,p.membership_id,
+                        'place:'||p.participation_uuid,%s,%s) ORDER BY p.circle_id""",
+                               [membership.pk, effective_at, received_at])
+                circle_ids = [row[0] for row in cursor.fetchall()]
+            for circle in Circle.objects.using(self._alias).filter(pk__in=circle_ids).order_by("pk"):
+                settle_vacancy(self._alias, circle, actor)
         departure.end_offices()
 
         transition_id = _insert_membership_transition_row(

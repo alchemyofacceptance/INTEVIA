@@ -620,6 +620,21 @@ class ElectionTests(TransactionTestCase):
         with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
             # INTEVIA Clock: 0102 and 0101 move functions of 0089 to 0095 and of 0083 to 0087 onto the clock, and
             # those migrations' reverses check the landed text. They unwind first, newest first.
+            records = import_module("core.migrations.0106_circle_vacancy_records")
+            committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
+            reseat = import_module("core.migrations.0108_circle_reseat")
+            reseat.uninstall(None, editor)
+            committee_cut.uninstall(None, editor)
+            with connection.cursor() as check:
+                self.assertIsNone(records.episode.definition(check, committee_cut.APART))
+            records.uninstall(None, editor)
+            with connection.cursor() as record_check:
+                record_check.execute("SELECT to_regprocedure(%s)", [records.WRITER])
+                self.assertIsNone(record_check.fetchone()[0], "Descend through 0106 before 0105.")
+            import_module("core.migrations.0105_circle_vacancy_episode").uninstall(None, editor)
+            with connection.cursor() as check:
+                check.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
+                self.assertIsNone(check.fetchone()[0], "ELECT-10 must descend through the episode reading first.")
             import_module("core.migrations.0102_clock_storage_0088_0095").uninstall(None, editor)
             import_module("core.migrations.0101_clock_storage_0081_0087").uninstall(None, editor)
             # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
@@ -635,6 +650,11 @@ class ElectionTests(TransactionTestCase):
             import_module("core.migrations.0084_committee_mandates").change(editor, True)
             migration.uninstall(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.")
+        with connection.cursor() as record_check:
+            self.assertEqual(records.episode.definition(record_check, committee_cut.APART), reseat.APART_NEW,
+                             "ELECT-10 must roll the populated descent back to 0108.")
+            self.assertEqual(records.trigger(record_check, "zz_te_origin"), records.ORIGIN_TRIGGER,
+                             "ELECT-10 rolls its populated descent back to the 0106 head.")
         circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
         circle_commands.activate(**scope, circle_uuid=circle.circle_uuid, request_uuid=uuid4(), committee_chair_board_member=False)
         circle.refresh_from_db()

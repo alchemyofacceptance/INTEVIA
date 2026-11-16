@@ -299,8 +299,29 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.assertIn(COUNTER_FOUND, clock_at_head["refusal"] or "",
                       "CLK-08 at head: production's startup must refuse this database, and the refusal must name the counter.")
         clock_stops = {}
+        reseat = import_module("core.migrations.0108_circle_reseat")
+        reseat_parent = []
+        committee_parent = []
+        committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
+        circle_parent = []  # Observe the 0106 -> 0105 edge on the same descent.
+        records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if (not reseat_parent and ("core", "0108_circle_reseat") in undone_so_far
+                    and ("core", "0107_committee_circle_dormancy") not in undone_so_far):
+                with connection.cursor() as cursor:
+                    reseat_parent.append((reseat.definition(cursor, reseat.RESEATABLE),
+                                          reseat.definition(cursor, committee_cut.APART)))
+            if (not committee_parent and ("core", "0107_committee_circle_dormancy") in undone_so_far
+                    and ("core", "0106_circle_vacancy_records") not in undone_so_far):
+                with connection.cursor() as cursor:
+                    committee_parent.append((records.episode.definition(cursor, committee_cut.APART),
+                                             records.episode.definition(cursor, committee_cut.REPLACEMENTS[0][0])))
+            if (not circle_parent and ("core", "0106_circle_vacancy_records") in undone_so_far
+                    and ("core", "0105_circle_vacancy_episode") not in undone_so_far):
+                with connection.cursor() as cursor:
+                    circle_parent.append((records.episode.definition(cursor, records.WRITER),
+                                          records.trigger(cursor, "zz_circle_qualified_activation")))
             # CLK-08's first stop: the moving part reversed, the clock's own migration still applied.
             if "reversed" not in clock_stops and MOVING_PART in undone_so_far and CLOCK not in undone_so_far:
                 clock_stops["reversed"] = clock_observation()
@@ -359,6 +380,15 @@ class MigrationReversibilityTests(TransactionTestCase):
                 self.assertIn(part, stop["refusal"], "CLK-08 below the clock: the refusal must keep its five parts.")
         if failed_again:
             self.fail(failed_again)
+        self.assertEqual(reseat_parent, [(None, committee_cut.APART_SQL)])
+        self.assertEqual(committee_parent, [(None, committee_cut.LIVE_OLD)],
+                         "REV-01 must observe the landed mandate reader at the 0106 parent.")
+        self.assertEqual(circle_parent, [(None, records.GUARD_TRIGGER)],
+                         "REV-01 must see the 0105 trigger and no 0106 writer at the parent.")
+        with connection.cursor() as cursor:
+            reseat.expect(cursor, True)
+            self.assertEqual(records.episode.definition(cursor, records.WRITER), records.WRITE_SQL,
+                             "REV-01 must restore the 0106 writer at head.")
         with self.subTest(claim="CLK-08", point="restored"):
             clock_restored = clock_observation()
             restored_capture = instrument.capture()

@@ -453,6 +453,9 @@ class OfficeAppointmentConsentService(_OrganismCommandService):
         previous_ordinal = OfficeAppointmentConsent.objects.using(self._alias).filter(
             assignment=nomination,
         ).order_by("-ordinal").values_list("ordinal", flat=True).first() or 0
+        if nomination.circle_id is not None and role.code == "COORDINATOR" and role.scope == "CIRCLE":
+            from src.intevia.services.circle_commands import settle_vacancy
+            settle_vacancy(self._alias, nomination.circle, actor)
         consent = OfficeAppointmentConsent.objects.using(self._alias).create(
             assignment=nomination,
             proposal_event=proposal,

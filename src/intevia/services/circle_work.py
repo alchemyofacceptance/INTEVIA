@@ -65,6 +65,7 @@ def open_work(
             actor,
             at,
         )
+        commands.settle_vacancy(alias, circle, actor)
         return commands.write_event(
             alias, circle, actor, "OPEN_WORK", circle.state, source, ref, work_uuid, at
         )
@@ -124,6 +125,11 @@ def claim_work(
             return prior.event_uuid
         if models.CircleStateEvent.objects.using(alias).filter(event_uuid=request_uuid).exists():
             commands.unavailable()
+        episode = commands._vacancy_at(alias, circle, at)
+        if episode and episode[1] == "EXPIRED":
+            raise places.CircleAccessRefused(commands._expired_capacity_message(
+                episode[2], commands._chair_reserved(alias, circle, at),
+                commands._has_lo_coordinator(alias, lo, at), claim=True))
         if circle.state != "ACTIVE":
             raise places.CircleAccessRefused(
                 "The Circle must complete qualified activation before this work can be claimed."
