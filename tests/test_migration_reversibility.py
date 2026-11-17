@@ -31,7 +31,9 @@ and production's refusal, and none of them is written by a conversion.
 It takes no time from PostgreSQL's own functions and none from the host, and it never moves the clock.
 """
 
+from hashlib import sha256
 from importlib import import_module
+import re
 
 from django.db import connection
 from django.db.migrations import Migration, RunPython
@@ -170,6 +172,24 @@ def clock_observation():
             "counter": instrument.clock_counter_observation(), "refusal": refusal}
 
 
+def care_edge(care):
+    """Observe the two complete catalogue definitions and installed trigger inventory at this stop."""
+    with connection.cursor() as cursor:
+        digests = []
+        for signature in (care.WRITER, care.GATEWAY):
+            definition = care.installed_definition(cursor, signature)
+            digests.append(sha256((definition or "").encode("utf-8")).hexdigest())
+        cursor.execute("""SELECT c.relname, t.tgname, t.tgenabled, t.tgtype, t.tgdeferrable,
+                                 t.tginitdeferred, pg_get_triggerdef(t.oid)
+                            FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                           WHERE c.relnamespace=current_schema()::regnamespace AND NOT t.tgisinternal""")
+        triggers = {(row[0], row[1]): tuple(row[2:]) for row in cursor.fetchall()}
+        cursor.execute("SELECT app, name FROM django_migrations")
+        applied = set(cursor.fetchall())
+    delta = sum(n for migration, n in instrument.NON_CORE_TRIGGER_DELTAS.items() if migration in applied)
+    return tuple(digests), triggers, delta
+
+
 def real_executor(progress):
     return MigrationExecutor(connection, progress_callback=progress)
 
@@ -299,6 +319,42 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.assertIn(COUNTER_FOUND, clock_at_head["refusal"] or "",
                       "CLK-08 at head: production's startup must refuse this database, and the refusal must name the counter.")
         clock_stops = {}
+        care = import_module("core.migrations.0111_care_office_record")
+        care_key = ("core", "0111_care_office_record")
+        office_link_key = ("core", "0110_discussion_office_link")
+        care_parent = []
+        care_before = care_edge(care) if care_key in received else None
+        care_triggers = {}
+        for kind, table, action in (
+            ("setting", "core_careassistancesettingact", "SET_CARE_ASSISTANCE"),
+            ("observation", "core_careofficeobservation", "RECORD_CARE_OFFICE_OBSERVATION"),
+        ):
+            prefix = "care_" + kind
+            # pg_trigger bits encode ROW=1, BEFORE=2, INSERT=4, DELETE=8, UPDATE=16, TRUNCATE=32.
+            care_triggers.update({
+                (table, prefix + "_input"): (7, False, None),
+                (table, prefix + "_immutable"): (27, False, None),
+                (table, "s015_" + prefix + "_no_truncate"): (34, False, None),
+                (table, prefix + "_detail_complete"): (5, True, None),
+                ("core_livingorganismevent", prefix + "_event_complete"): (5, True, action),
+            })
+        if care_before:
+            _, triggers, delta = care_before
+            self.assertEqual(len(triggers) - delta, 737,
+                             "The empty 0111 head must have 737 triggers before the non-core contribution.")
+            for key, (bits, deferred, action) in care_triggers.items():
+                self.assertIn(key, triggers, "The 0111 inventory must include the guard " + ".".join(key))
+                enabled, actual_bits, deferrable, initially_deferred, ddl = triggers[key]
+                self.assertEqual((enabled, actual_bits, deferrable, initially_deferred),
+                                 ("O", bits, deferred, deferred),
+                                 "The CARE guard must have its specified timing and deferral: " + ".".join(key))
+                if action:
+                    predicate = ddl.partition(" WHEN (")[2].partition(" EXECUTE ")[0].lower()
+                    predicate = re.sub(r"::(?:character varying|text)|[()\s]", "", predicate)
+                    self.assertEqual(predicate, "new.action='" + action.lower() + "'",
+                                     "The ILC trigger must fire only on its own CARE action.")
+                else:
+                    self.assertNotIn(" WHEN (", ddl, "A CARE detail guard must cover every row at its specified operation.")
         office_link = import_module("core.migrations.0110_discussion_office_link")
         office_parent = []
 
@@ -319,6 +375,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if not care_parent and care_key in undone_so_far and office_link_key not in undone_so_far:
+                care_parent.append(care_edge(care))
             if (not office_parent and ("core", "0110_discussion_office_link") in undone_so_far
                     and ("core", "0109_committee_chair_reservation") not in undone_so_far):
                 office_parent.append(office_bodies())
@@ -401,6 +459,28 @@ class MigrationReversibilityTests(TransactionTestCase):
                 self.assertIn(part, stop["refusal"], "CLK-08 below the clock: the refusal must keep its five parts.")
         if failed_again:
             self.fail(failed_again)
+        if care_key in after_base:
+            self.assertEqual(len(care_parent), 1, "REV-01 must observe the empty 0111 to 0110 edge once.")
+            digests, parent_triggers, delta = care_parent[0]
+            self.assertEqual(digests, (
+                "1a5a28da471b96c04e1cbc36f936d2a1188f63d6b1e940ec8e8d24d656b0ae63",
+                "ac69095df8c59d0d9dadfdede5f49b409fd1af8007e78d3db9667ad811786ca7"),
+                "The empty inverse must restore both complete captured 0110 routine definitions.")
+            self.assertEqual(len(parent_triggers) - delta, 727,
+                             "The empty 0110 parent must have 727 triggers before its non-core contribution.")
+            self.assertTrue(care_triggers.keys().isdisjoint(parent_triggers),
+                            "The empty inverse must remove all ten CARE triggers.")
+            if care_before:
+                prior_inventory = {key: row for key, row in care_before[1].items() if key not in care_triggers}
+                self.assertEqual(parent_triggers, prior_inventory,
+                                 "The empty inverse must preserve every earlier trigger definition and enabled state.")
+                restored_edge = care_edge(care)
+                self.assertEqual(restored_edge, care_before,
+                                 "Restoring the received 0111 head must restore both definitions and the complete inventory.")
+                self.assertEqual(restored_edge[0], (
+                    "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
+                    "496afd9498b1d672636772f954e89d156bc43fda990890c8b6109dc5f5169a15"),
+                    "Restoration must produce both independently pinned 0111 definitions.")
         self.assertEqual(office_parent, [tuple(prior for _, prior, _ in office_link.REPLACEMENTS)],
                          "Downgrading 0110 must restore both clock-converted posting functions exactly.")
         self.assertEqual(office_bodies(), tuple(after for _, _, after in office_link.REPLACEMENTS),
@@ -414,7 +494,16 @@ class MigrationReversibilityTests(TransactionTestCase):
             self.assertEqual(chair_parent, [True], "REV-01 must see the exact 0108 bodies before continuing downward.")
             chair.expect(cursor, True)
             for signature, _, after in reseat.REPLACEMENTS:
-                self.assertEqual(reseat.definition(cursor, signature), after, "Restoring 0109 must preserve this 0108 function: " + signature)
+                installed = reseat.definition(cursor, signature)
+                if signature == care.WRITER and ("core", "0111_care_office_record") in ledger_before:
+                    # Pin the complete definition independently of 0111's replacement code.
+                    self.assertEqual(
+                        sha256((installed or "").encode("utf-8")).hexdigest(),
+                        "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
+                        "Restoring 0111 must restore the exact CARE-aware event writer.",
+                    )
+                else:
+                    self.assertEqual(installed, after, "Restoration must preserve this 0108 function: " + signature)
             for signature, body in reseat.ADDITIONS:
                 if signature != reseat.RESEATABLE:
                     self.assertEqual(reseat.definition(cursor, signature), body, "Restoring 0109 must preserve this 0108 addition: " + signature)

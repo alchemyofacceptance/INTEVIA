@@ -420,6 +420,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
 
     def test_0105_requires_exact_predecessor_and_successor(self):
         """W12. Both directions refuse drift; restoring the expected bytes permits a round trip."""
+        care = import_module("core.migrations.0111_care_office_record")
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
             def altered(sql):
                 return sql.replace("AS $function$\n", "AS $function$\n-- W12 drift\n", 1)
@@ -439,6 +440,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                 cursor.execute("DROP TRIGGER " + name + " ON public.core_circlestateevent")
                 cursor.execute(source)
 
+            care.uninstall(None, editor)
             chair.uninstall(None, editor)
             signature, before, after = reseat.REPLACEMENTS[0]
             cursor.execute(altered(after))
@@ -506,6 +508,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
             reseat.install(None, editor)
             reseat.expect(cursor, True)
             chair.install(None, editor)
+            care.install(None, editor)
             transaction.set_rollback(True)  # Leave this test's schema exactly as it entered.
 
         # An ordinary LO founding and phase advancement commit before the reducer comparison.
@@ -530,6 +533,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                                "FROM public.core_livingorganism WHERE id=%s", [cut, cut, fixture.organism.pk])
                 return result, cursor.fetchone()
 
+            care.uninstall(None, editor)
             chair.uninstall(None, editor)
             reseat.uninstall(None, editor)
             committee_cut.uninstall(None, editor)
@@ -544,6 +548,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
             committee_cut.install(None, editor)
             reseat.install(None, editor)
             chair.install(None, editor)
+            care.install(None, editor)
             self.assertEqual(lo_reading(), successor)
             transaction.set_rollback(True)
 

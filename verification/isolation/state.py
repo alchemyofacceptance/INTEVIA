@@ -161,6 +161,11 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
     "0107_committee_circle_dormancy": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0108_circle_reseat": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0109_committee_chair_reservation": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
+    "0111_care_office_record": {
+        "core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0,
+        "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0,
+        "core_careassistancesettingact": 0, "core_careofficeobservation": 0,
+    },
     "0110_discussion_office_link": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
@@ -256,6 +261,7 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0107_committee_circle_dormancy": 727,
                           "0108_circle_reseat": 727,
                           "0109_committee_chair_reservation": 727,
+                          "0111_care_office_record": 737,  # Five guards on each CARE detail/event pair.
                           "0110_discussion_office_link": 727,  # FK triggers are internal; the two posting functions keep their OIDs.
                           "0103_clock_storage_column_defaults": 726,  # Column defaults only: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.
@@ -761,6 +767,10 @@ def check_requirements(s, required_guardians):
             )
     present = {(t, n): e for t, n, e, _, _, _ in s["triggers"]}
     for table, name in required_guardians.items():
+        # These two raw tables first exist at 0111. The archived 0110 instrument still has 727 core triggers.
+        if (table in {"core_careassistancesettingact", "core_careofficeobservation"}
+                and head in REQUIRED_TRIGGER_COUNT and head < "0111_care_office_record"):
+            continue
         if present.get((table, name)) != "O":
             v.append("REQ-G1 required guardian missing or disabled: %s.%s" % (table, name))
     invalid = [(t, n) for t, n, _, ok, _ in s["constraints"] if n.startswith("s015_") and not ok]

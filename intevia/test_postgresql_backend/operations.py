@@ -27,6 +27,8 @@ S015_DATABASE_PATTERN = re.compile(r"test_intevia_living_organism_[a-z0-9_]+\Z")
 # Guardians the reset has always been required to find (0019/0020). Kept as a required
 # minimum: every entry must still be discovered, enabled, and restored.
 S015_TRUNCATE_GUARDIANS = {
+    "core_careassistancesettingact": "s015_care_setting_no_truncate",
+    "core_careofficeobservation": "s015_care_observation_no_truncate",
     "cmt_refresh_batch": "cmt_batch_no_truncate",
     "core_cmtcomposition": "s015_cmt_no_truncate",
     "core_c108restoration": "c108_restore_no_truncate",
@@ -118,6 +120,8 @@ S015_TRUNCATE_GUARDIANS = {
 # Django's flush lists only model tables; these must be reset with them.
 # 0021: s015_transaction_register. 0022: part, content, resolution and severance ledger.
 S015_UNMODELLED_RESET_TABLES = (
+    "core_careassistancesettingact",
+    "core_careofficeobservation",
     "core_tereceipt",
     "core_teorigin",
     "core_tepace",

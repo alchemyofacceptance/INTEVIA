@@ -618,42 +618,56 @@ class ElectionTests(TransactionTestCase):
         # Reach the populated historical reversal before recording an 0084 activation choice.
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
-        with self.assertRaises(RuntimeError) as populated, connection.schema_editor(atomic=True) as editor:
-            # INTEVIA Clock: 0102 and 0101 move functions of 0089 to 0095 and of 0083 to 0087 onto the clock, and
-            # those migrations' reverses check the landed text. They unwind first, newest first.
-            records = import_module("core.migrations.0106_circle_vacancy_records")
-            committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
-            reseat = import_module("core.migrations.0108_circle_reseat")
-            chair = import_module("core.migrations.0109_committee_chair_reservation")
-            chair.uninstall(None, editor)
-            reseat.uninstall(None, editor)
-            committee_cut.uninstall(None, editor)
+        care = import_module("core.migrations.0111_care_office_record")
+        with connection.schema_editor(atomic=True) as editor:
             with connection.cursor() as check:
-                self.assertIsNone(records.episode.definition(check, committee_cut.APART))
-            records.uninstall(None, editor)
-            with connection.cursor() as record_check:
-                record_check.execute("SELECT to_regprocedure(%s)", [records.WRITER])
-                self.assertIsNone(record_check.fetchone()[0], "Descend through 0106 before 0105.")
-            import_module("core.migrations.0105_circle_vacancy_episode").uninstall(None, editor)
-            with connection.cursor() as check:
-                check.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
-                self.assertIsNone(check.fetchone()[0], "ELECT-10 must descend through the episode reading first.")
-            import_module("core.migrations.0102_clock_storage_0088_0095").uninstall(None, editor)
-            import_module("core.migrations.0101_clock_storage_0081_0087").uninstall(None, editor)
-            # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
-            import_module("core.migrations.0095_te_c2_join").uninstall(None, editor)
-            # TIMED EVENTS: 0094 replaces cmt_changed(), which 0084's reverse checks. It unwinds first.
-            import_module("core.migrations.0094_te_committee").uninstall(None, editor)
-            import_module("core.migrations.0090_stand_down_supersession").uninstall(None, editor)
-            import_module("core.migrations.0089_members_restore_board").uninstall(None, editor)
-            import_module("core.migrations.0088_constitutional_board_makeup").uninstall(None, editor)
-            import_module("core.migrations.0087_members_stand_down").uninstall(None, editor)
-            import_module("core.migrations.0086_board_continuity").uninstall(None, editor)
-            import_module("core.migrations.0085_board_voting").uninstall(None, editor)
-            import_module("core.migrations.0084_committee_mandates").change(editor, True)
-            migration.uninstall(None, editor)
-        self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.")
+                care_at_head = {sig: care.installed_definition(check, sig) for sig in (care.WRITER, care.GATEWAY)}
+            care.uninstall(None, editor)
+            # The inner rollback restores 0108 and 0109 before the outer transaction reapplies 0111.
+            with (
+                self.assertRaises(RuntimeError, msg="Recorded recognition must refuse the 0083 downgrade.") as populated,
+                transaction.atomic(),
+            ):
+                # INTEVIA Clock: 0102 and 0101 move functions of 0089 to 0095 and of 0083 to 0087 onto the clock, and
+                # those migrations' reverses check the landed text. They unwind first, newest first.
+                records = import_module("core.migrations.0106_circle_vacancy_records")
+                committee_cut = import_module("core.migrations.0107_committee_circle_dormancy")
+                reseat = import_module("core.migrations.0108_circle_reseat")
+                chair = import_module("core.migrations.0109_committee_chair_reservation")
+                chair.uninstall(None, editor)
+                reseat.uninstall(None, editor)
+                committee_cut.uninstall(None, editor)
+                with connection.cursor() as check:
+                    self.assertIsNone(records.episode.definition(check, committee_cut.APART))
+                records.uninstall(None, editor)
+                with connection.cursor() as record_check:
+                    record_check.execute("SELECT to_regprocedure(%s)", [records.WRITER])
+                    self.assertIsNone(record_check.fetchone()[0], "Descend through 0106 before 0105.")
+                import_module("core.migrations.0105_circle_vacancy_episode").uninstall(None, editor)
+                with connection.cursor() as check:
+                    check.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
+                    self.assertIsNone(check.fetchone()[0], "ELECT-10 must descend through the episode reading first.")
+                import_module("core.migrations.0102_clock_storage_0088_0095").uninstall(None, editor)
+                import_module("core.migrations.0101_clock_storage_0081_0087").uninstall(None, editor)
+                # TIMED EVENTS: 0095 replaces te_consumers(), which 0094's reverse checks. It unwinds first.
+                import_module("core.migrations.0095_te_c2_join").uninstall(None, editor)
+                # TIMED EVENTS: 0094 replaces cmt_changed(), which 0084's reverse checks. It unwinds first.
+                import_module("core.migrations.0094_te_committee").uninstall(None, editor)
+                import_module("core.migrations.0090_stand_down_supersession").uninstall(None, editor)
+                import_module("core.migrations.0089_members_restore_board").uninstall(None, editor)
+                import_module("core.migrations.0088_constitutional_board_makeup").uninstall(None, editor)
+                import_module("core.migrations.0087_members_stand_down").uninstall(None, editor)
+                import_module("core.migrations.0086_board_continuity").uninstall(None, editor)
+                import_module("core.migrations.0085_board_voting").uninstall(None, editor)
+                import_module("core.migrations.0084_committee_mandates").change(editor, True)
+                migration.uninstall(None, editor)
+            care.install(None, editor)
+        self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.",
+                         "Recorded recognition must reach and refuse the 0083 downgrade.")
         with connection.cursor() as record_check:
+            for signature, expected in care_at_head.items():
+                self.assertEqual(care.installed_definition(record_check, signature), expected,
+                                 "Reapplying 0111 after the populated refusal must restore its exact function: " + signature)
             chair.expect(record_check, True)
             self.assertEqual(records.episode.definition(record_check, committee_cut.APART), reseat.APART_NEW,
                              "ELECT-10 must roll the populated descent back to 0108.")

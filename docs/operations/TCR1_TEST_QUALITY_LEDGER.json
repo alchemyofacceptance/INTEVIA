@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "U-A (A-1c and A-2), combined by the VC",
-  "baseline_commit": "553440ef816f46036904850a66f8698c2a07c2f6",
-  "baseline_methods": 293,
-  "candidate_methods": 309,
+  "package": "Alpha U-A2 office record services · V.2 candidate",
+  "baseline_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+  "baseline_methods": 309,
+  "candidate_methods": 338,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -523,6 +523,109 @@
         "log": "TAR3_A1C_RESTORED_A1CR.log",
         "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
       }
+    },
+    "ALPHA_U_A2_INT1C": {
+      "carrier": "RETURN_U_A2_INTEGRATION_v1_1.zip",
+      "carrier_sha256": "9d4167527896c24f8e46aab100e8d6491a7d0ba46ccd5d2f3a89605edd721d70",
+      "tested_export_tree": "5c4b41a9c50dc8b48f2188f03f1b122c4aa13387",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to B.4",
+      "native_result": "42 tests passed in six modules. Every changed test was inside 45 s. REV-01 took 13.2 s.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_A5": {
+      "carrier": "RETURN_U_A2_A5_v1_0.zip",
+      "carrier_sha256": "b556db98733769fff320b21646c3834d7459a460b2088e8ef43531c0a845280a",
+      "tested_export_tree": "33c615c794cf45c08c5896dd5002867ea0167374",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to R.1",
+      "native_result": "11 passed in 42.95 s. B2 4.88, A3 2.50, A4 2.52, A5 3.56, R6 2.71, B1 4.57, B3 1.74, B4 1.69, B5 4.72, A2 4.91 and A7 2.60 s.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R1": {
+      "carrier": "RETURN_U_A2_R1_v1_0.zip",
+      "carrier_sha256": "cdb79f7483f959905be4c3be40b78f3f8ed2c49ded8dfe993f81574cf2982476",
+      "tested_export_tree": "77bf6d871497ab78c2473f9412e2444af272b452",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to R.2",
+      "native_result": "R.1 was run on a fresh export. The R1 method time and named-break result were reported together with R.1a. No separate R.1 suite total was supplied.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R1A": {
+      "carrier": "RETURN_U_A2_R1A_v1_0.zip",
+      "carrier_sha256": "83186d7fa91ffc590bd0d18989aa858667990f35ef062c0b5e1a00e61332ef48",
+      "tested_export_tree": "7ff756dfd9f2b7d5358954d07995412f3f0448f3",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to R.2",
+      "native_result": "13 passed in 52.42 s. A1 took 4.45 s. R1 and A1 each failed at the named assertion and passed after restoration.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R2": {
+      "carrier": "RETURN_U_A2_R2_v1_0.zip",
+      "carrier_sha256": "7bd1fe7ce24ddc0180f987ea673bc84e46a552ca7a99fbe9eff43abcd7c23d78",
+      "tested_export_tree": "4251a6577a09b9045a0c66a6386fb9fcba211e73",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to R.3",
+      "native_result": "14 passed in 70.42 s. R4 took 15.72 s. The title-predicate break failed at the named comparison and passed after restoration.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R3": {
+      "carrier": "RETURN_U_A2_R3_v1_0.zip",
+      "carrier_sha256": "7e3ffa8c676bea0a8da0018ffb4f2ac85da9842ae588d61223a81e863d90b5ec",
+      "tested_export_tree": "4c6d367206dfb9cb8c443a02e4875fac0f8d1c0c",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: R.3b followed by R.4",
+      "native_result": "15 passed in 160.82 s. The original combined R3 method took 87.38 s and 87.39 s restored. R3-1 required splitting it.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R3B": {
+      "carrier": "RETURN_U_A2_R3B_v1_0.zip",
+      "carrier_sha256": "ff06b8082c86128640b9d79b53890c882f17bdc45fd560ef5210dc7ba0abb4a1",
+      "tested_export_tree": "b58738763247a5416fb48a223c24756ab326c523",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: R.4b correction and Continue to V.2",
+      "native_result": "Split-method TAR specification. Native R.4 carried R.3b. The VC reports all R.3b method breaks complete.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R4": {
+      "carrier": "RETURN_U_A2_R4_v1_0.zip",
+      "carrier_sha256": "f872587d16c6a9bc118dd430419b2623e366bcb83bcc1ff64838f7909d411b51",
+      "tested_export_tree": "956322d3444a8d78744acc800a2110d4d33d2f5d",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: R.4b correction and Continue to V.2",
+      "native_result": "26/27 passed in 370.41 s. R5 initially failed; slowest method was the marker-removed journey at 39.34 s. The VC reports all R.4 method breaks complete.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_R4B": {
+      "carrier": "RETURN_U_A2_R4B_v1_0.zip",
+      "carrier_sha256": "c431c6fd12f1a6937a71cbbff5b9d6301d7aa417616c75ab148d2bf914503174",
+      "tested_export_tree": "435c8f1bb40b7b75f99db319753d582cef14ecb7",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to V.1 and Continue to V.2",
+      "native_result": "27/27 passed in 340.78 s. R5 took 8.16 s, slowest 37.24 s. R3-1 and R4-1 closed by relay. The VC reports the R.4b breaks complete.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_V1": {
+      "carrier": "RETURN_U_A2_V1_v1_0.zip",
+      "carrier_sha256": "df54eefbac2e3ca41842498ffbfba28089b31ea98404d1ff27f7bb42b19d7842",
+      "tested_export_tree": "3fd1ebf5be73b0af74a219d1dd55af6f6afa27b3",
+      "base_commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+      "source": "Carmian Owen relaying the Vision Chamber, 17 November 2026: Continue to V.2",
+      "native_result": "Six passed in 34.64 s. B4, A2, B5, A7, drift and REV-01 each failed at the named line and passed after restoration.",
+      "tree_kind": "Git tree of the pinned source export with the carrier repository paths applied"
+    },
+    "ALPHA_U_A2_VC_TAR3_REST": {
+      "source": "C1_VC\\AP1\\UA2\\ASTRA\\TAR\\VC_TAR3_U_A2_REST_v1_0.md",
+      "sha256": "39bb6ea0330d0ca5a319adf0f4a250eda9ea9ad46c0cdfc5615683aa7c950317",
+      "unit_ids": [
+        "B1",
+        "B3",
+        "ELECT-10",
+        "DISC2-19",
+        "W12"
+      ],
+      "scope": "Unit-specific break and restored evidence for these five methods.",
+      "provenance": "Carmian Owen’s V.2b direction identifies the VC report and its digest."
     }
   },
   "source_index": {
@@ -729,14 +832,50 @@
     "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md": {
       "sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
       "source": "C1_VC/AP1/A1C/TAR3/VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md"
+    },
+    "ALPHA_U_A2/INT1C_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/INT1C_NOTES.md",
+      "sha256": "55eec7fdd2e8ac251fe9c1afb2ce4cc927594a34e60f3081ae6bf808aae0a118"
+    },
+    "ALPHA_U_A2/B4_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/B4_NOTES.md",
+      "sha256": "696ad67cc2f4bac87bfe6917b9bdbeadde4fa3d5b80654a7606ac84d5d662c4d"
+    },
+    "ALPHA_U_A2/B4C_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/B4C_NOTES.md",
+      "sha256": "0e930c93ea7f8d6a08cc89e99c1dbf5c845ad261b3a314bc6f01fb0c00641304"
+    },
+    "ALPHA_U_A2/A5_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/A5_NOTES.md",
+      "sha256": "5a1ebb858b054213e8f2063cc51a9078a9d9a448212c4dc553f257d7f9640897"
+    },
+    "ALPHA_U_A2/R1A_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/R1A_NOTES.md",
+      "sha256": "b80146a33cf39b3b5e81053da4cfc2a2fd5a49a485edb9c7be0a9172c278af1b"
+    },
+    "ALPHA_U_A2/R3B_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/R3B_NOTES.md",
+      "sha256": "7b899444f84ed71d9aadd9fe0e335a8b2d295381f64df4c7224533df7ca6884b"
+    },
+    "ALPHA_U_A2/R4_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/R4_NOTES.md",
+      "sha256": "623a903c0a1453e0aa14013125339811610f8598c7300ded39fdd28c365d5145"
+    },
+    "ALPHA_U_A2/R4B_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/R4B_NOTES.md",
+      "sha256": "cf3c0c2c9e9f35d55854a875d994f4614a11dbdeb71df947240f6d1e661745f7"
+    },
+    "ALPHA_U_A2/V1_NOTES.md": {
+      "source": "RETURN_U_A2_V1_v1_0.zip/V1_NOTES.md",
+      "sha256": "5889bcce10386e0dcbfab8f70c67e5ab560786623518b1e4cdb24e22f1e108d7"
     }
   },
   "coverage": {
-    "unit_tables": 32,
+    "unit_tables": 40,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 309,
+    "active": 338,
     "folded": 47,
     "retired": 2,
     "DISC4_methods": 6,
@@ -748,7 +887,11 @@
     "INTEVIA_CLOCK_methods": 10,
     "MIGRATION_REVERSIBILITY_methods": 4,
     "U_A_A2_methods": 11,
-    "U_A_A1C_methods": 5
+    "U_A_A1C_methods": 5,
+    "ALPHA_U_A2_new_methods": 28,
+    "ALPHA_U_A2_changed_existing_methods": 4,
+    "ALPHA_U_A2_existing_rows_added": 1,
+    "ALPHA_U_A2_TAR_sources": 9
   },
   "tests": [
     {
@@ -5229,6 +5372,19 @@
           "unit_ids": [
             "DISC2-19"
           ]
+        },
+        {
+          "source": "ALPHA_U_A2/INT1C_NOTES.md",
+          "line": 28,
+          "unit_ids": [
+            "DISC2-19"
+          ],
+          "normal_witness": "A genuine ballot result survives transaction rollback/retry, populated reversal guards and the historical empty hardening round trip. The final public result must be the original post UUID.",
+          "named_break_and_first_assertion": "Make 0075 return normally for the populated ballot. The landed expected-refusal assertion must fail in the 0075 subtest. Restore it and require its exact refusal, intact result and successful restoration to 0111.",
+          "target_seconds": 45,
+          "ceiling_seconds": 45,
+          "budget_basis": "Ceiling 45 s. One completed ballot witnesses the rollback, four populated guards, and the multi-migration hardening round trip.",
+          "target_kind": "The issued row gives the 45-second ceiling as its sole budget."
         }
       ],
       "review": {
@@ -5315,6 +5471,14 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_INT1C",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_VC_TAR3_REST",
+          "restored": "ALPHA_U_A2_VC_TAR3_REST",
+          "admission": null,
+          "raw_run_log": null
         }
       },
       "history": [
@@ -5494,6 +5658,10 @@
           "event": "reversal chain changed at CK-2e: migration 0102's reverse is called first, then 0101's; both are applied again last, 0101 then 0102",
           "previous_source": "tests/test_cq_decisions.py:946",
           "previous_claim": "A populated ballot retains its result and historical refusal through attempted reversals. The new head is traversed before its predecessor and restored afterwards. The populated ballot and original historical reversal survive traversing 0086, 0085 and their predecessors, followed by forward reinstallation. Uninstall 0087 before the original populated historical reversal and preserve its exact refusal/round trip. A populated forum/CQ history traverses the new head down and up while preserving the established result and all prior reversal checks. Reinstalling 0084 without first removing its successor would meet the installed-body guard. The original populated CQ history survives its historical traversal through reverse and forward migrations. Traverse 0090 before/after the original populated round trip and preserve the recorded CQ result. TIMED EVENTS (T1a-R2): the hand-unwound chain now unwinds 0094 before 0090 and reinstalls it after 0090, because 0094 replaces cmt_changed(), which 0084's reverse checks. The claim is unchanged. CK-2d: after the reversal and reinstall the database is back at the head with the INTEVIA Clock conversion of migration 0101 in place."
+        },
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
         }
       ],
       "current_source": "tests/test_cq_decisions.py:946",
@@ -16654,6 +16822,19 @@
           "unit_ids": [
             "ELECT-10"
           ]
+        },
+        {
+          "source": "ALPHA_U_A2/INT1C_NOTES.md",
+          "line": 27,
+          "unit_ids": [
+            "ELECT-10"
+          ],
+          "normal_witness": "Real founder, Organisation Coordinator and member-vote recognition establish consent and authority. The retained recognition reaches 0083’s named refusal. Both shared definitions return byte-identically at 0111.",
+          "named_break_and_first_assertion": "Suppress only 0083’s populated recognition refusal by returning normally on that branch. The expected-refusal assertion must fail. Restore the original and require the exact diagnostic, restored definitions and preserved recognition journey.",
+          "target_seconds": 45,
+          "ceiling_seconds": 45,
+          "budget_basis": "Ceiling 45 s. The same board supports the lawful recognition routes, votes, historical descent, rollback and reinstall.",
+          "target_kind": "The issued row gives the 45-second ceiling as its sole budget."
         }
       ],
       "review": null,
@@ -16779,9 +16960,13 @@
           "unit": "TIMED EVENTS T1b CK-2e",
           "event": "reversal chain changed at CK-2e: migration 0102's reverse is called first, then 0101's, because the reverses of 0089 to 0095 check the landed text that 0102 replaces; no assertion changed",
           "previous_source": "tests/test_elections.py:505"
+        },
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
         }
       ],
-      "current_source": "tests/test_elections.py:505",
+      "current_source": "tests/test_elections.py:506",
       "evidence": {
         "candidate_base": "8c8ce25f65b7a4108f05485e85fea7c977b7a68f",
         "source_commit": null,
@@ -16856,6 +17041,14 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_INT1C",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_VC_TAR3_REST",
+          "restored": "ALPHA_U_A2_VC_TAR3_REST",
+          "admission": null,
+          "raw_run_log": null
         }
       }
     },
@@ -19996,7 +20189,7 @@
         }
       },
       "claim": "An owned clone reversed below the INTEVIA Clock's migration and restored returns to exactly the state it had, at offset zero, and production's startup refuses it at head, at each of the two stops and when restored. Through the migration executor: with the moving part reversed the faces are exactly the production faces, no function of the moving part and no ledger row for its app remain, and the counter is kept at zero as it was, the only mark found; below the clock there is no face and the counter still refuses production; once every received leaf is restored the isolation instrument's full capture equals the one taken at head, with the same faces, comments, functions, ledger and counter. CK-2j1a (the ruled fold): the two stops are two points of REV-01's one descent, the first being the first point at which the moving part is reversed while core 0096 is still applied (the storage conversions above 0096 may already be reversed there), the second the lowest point; the claim is judged in a sub-test of its own within REV-01's method.",
-      "current_source": "tests/test_migration_reversibility.py:333"
+      "current_source": "tests/test_migration_reversibility.py:256"
     },
     {
       "obligation": "CLK-09",
@@ -20762,6 +20955,19 @@
           "unit_ids": [
             "REV-01"
           ]
+        },
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 53,
+          "unit_ids": [
+            "REV-01"
+          ],
+          "normal_witness": "The actual empty descent restores both 0110 definitions and the 727-core inventory. Reapply restores the received head, both definitions and all 737 core triggers.",
+          "named_break_and_first_assertion": "Make care_setting_event_complete initially immediate at installation. The timing and deferral assertion at line 348 of tests/test_migration_reversibility.py fails before descent.",
+          "target_seconds": 15,
+          "ceiling_seconds": 45,
+          "budget_basis": "15 s",
+          "retained_folded_case": "CLK-08"
         }
       ],
       "history": [
@@ -20795,6 +21001,10 @@
           "previous_label": "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
           "previous_source": "tests/test_migration_reversibility.py:191",
           "prior_candidate_run": "TIMED_EVENTS_T1B_CK1_R4C_PENDING"
+        },
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
         }
       ],
       "evidence": {
@@ -20839,10 +21049,23 @@
           "normal": null,
           "break": null,
           "restored": null
+        },
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 348,
+          "measured_example": {
+            "seconds": 13.2,
+            "run": "ALPHA_U_A2_INT1C"
+          }
         }
       },
       "claim": "The standing reversibility check. Every migration after the declared base (main b85df0db: core 0095_te_c2_join and each other app's leaf there) can be unapplied and applied again through Django's migration executor on an owned clone, which returns to the state it had, at offset zero, and which production's startup refuses throughout. Every operation after the base declares a reverse; each migration is undone one at a time and a reverse that fails is reported naming the migration; at the lowest point the ledger has lost the undone migrations and no other and the clock's counter is kept at zero; once every received leaf is applied again the isolation instrument's full capture equals the one taken at head, with the same ledger, counter and routine comments. An exemption is named with its reason and its ruling, and a stale, unruled or needless entry fails. R3g: the migration blamed for a failed reverse, the exemption considered and what is counted as undone are taken from the executor's own reports of the migration it began and finished, and a failed re-apply names the migration being applied. R4b (Gemini's G-D5a): where the restore fails after a descent that could not undo a migration, the failure names both.",
-      "current_source": "tests/test_migration_reversibility.py:236"
+      "current_source": "tests/test_migration_reversibility.py:256"
     },
     {
       "obligation": "REV-02",
@@ -21842,19 +22065,1315 @@
         }
       ],
       "current_source": "tests/test_alpha_trustee_setup.py:181"
+    },
+    {
+      "obligation": "ALPHA-U-A2-W12",
+      "baseline_label": "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_0105_requires_exact_predecessor_and_successor",
+      "current_label": "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_0105_requires_exact_predecessor_and_successor",
+      "status": "active",
+      "claim": "W12. Both directions refuse drift; restoring the expected bytes permits a round trip.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/INT1C_NOTES.md",
+          "line": 29,
+          "unit_ids": [
+            "W12"
+          ],
+          "normal_witness": "Mismatched historical bodies/triggers refuse at their own guards. Repaired bytes permit the round trip. The populated reducer produces the same readings and the direct guard preserves the circle head.",
+          "named_break_and_first_assertion": "On the deliberately altered 0108 successor, let its uninstall return normally. The first 0108 drift assertion must fail. Restore the guard and require the named refusal and both complete round trips.",
+          "target_seconds": 45,
+          "ceiling_seconds": 45,
+          "budget_basis": "Ceiling 45 s. Drift exercise and populated prefix comparison require two separately rolled-back schema descents, plus the real event refusal.",
+          "target_kind": "The issued row gives the 45-second ceiling as its sole budget."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_INT1C",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_VC_TAR3_REST",
+          "restored": "ALPHA_U_A2_VC_TAR3_REST",
+          "admission": null,
+          "raw_run_log": null
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        },
+        {
+          "unit": "C1-176",
+          "event": "Existing base method first entered here because INT-1c changed it. Earlier historical receipts were not backfilled."
+        }
+      ],
+      "current_source": "tests/test_circle_vacancy_episode.py:421"
+    },
+    {
+      "obligation": "ALPHA-U-A2-B1",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_setting_is_local_and_defaults_on",
+      "status": "active",
+      "claim": "B1. Never chosen, foreign Off and explicit first On retain their distinct local provenance.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/B4_NOTES.md",
+          "line": 34,
+          "unit_ids": [
+            "B1"
+          ],
+          "normal_witness": "Two real organisations and two Board offices distinguish default On, foreign Off and first explicit On. Check authorised attribution, a reader without switch authority, and unavailable answers. Reuse the other organisation’s actual act UUID on a fresh transition and again where the local value is already On. Require `CARE_SETTING_REPLAY` and unchanged histories and heads.",
+          "named_break_and_first_assertion": "Remove only owner qualification from the latest-setting read. The foreign-Off/local-default assertion must fail. For O-7, bypass the occupied-key check for a foreign act. The same-value trial must fail its expected-refusal assertion. Restore the original bytes and rerun.",
+          "target_seconds": 7,
+          "ceiling_seconds": 45,
+          "budget_basis": "7 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_VC_TAR3_REST",
+          "restored": "ALPHA_U_A2_VC_TAR3_REST",
+          "admission": null,
+          "raw_run_log": null,
+          "measured_example": {
+            "seconds": 4.57,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:163"
+    },
+    {
+      "obligation": "ALPHA-U-A2-B2",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_interim_switch_requires_effective_owner_office",
+      "status": "active",
+      "claim": "B2. The effective local organisation office governs switching with voting On or Off.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/B4_NOTES.md",
+          "line": 35,
+          "unit_ids": [
+            "B2"
+          ],
+          "normal_witness": "Use one Board with three eligible voters. Verify the direct voting-settings change is refused by its vote requirement, then require a real CARE switch and inspect its appointment, person, epoch, both cuts and the paired times. Also exercise the Board-only office, member, foreign office, stale epoch and an appointment ending between receipt and execution.",
+          "named_break_and_first_assertion": "Apply the direct voting-settings veto to CARE. The valid switch must fail at the English assertion requiring a committed receipt. Restore the original and re-observe the event, detail and their actual office. B2’s direct-command authority is interim.",
+          "target_seconds": 13,
+          "ceiling_seconds": 45,
+          "budget_basis": "13 s",
+          "additional_control": {
+            "source": "ALPHA_U_A2/B4C_NOTES.md",
+            "claim": "Authority must survive to execution after a real, separately committed office loss.",
+            "break": "Remove the current-office qualification. The expected CARE_SETTING_AUTHORITY refusal must fail."
+          }
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_A5",
+          "restored": "ALPHA_U_A2_A5",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 282,
+          "break_report": "R.1a direction",
+          "measured_example": {
+            "seconds": 4.88,
+            "run": "ALPHA_U_A2_A5"
+          },
+          "secondary_control": "The reported 282 failure is the B2 positive switch control. A separate execution-time guard mutation receipt was not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:230"
+    },
+    {
+      "obligation": "ALPHA-U-A2-B3",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_switch_replay_cannot_fork_lineage",
+      "status": "active",
+      "claim": "B3. Identical retry, changed retry, later replay, no-op, stale same value and direct fork.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/B4_NOTES.md",
+          "line": 36,
+          "unit_ids": [
+            "B3"
+          ],
+          "normal_witness": "Check identical and changed retries, replay after a successor, both already answers and source IDs, stale same-value refusal and the direct successor guard. Reuse the owner’s genuine first non-setting ILC event UUID while requesting the current value. Require the replay refusal and the original pair/head.",
+          "named_break_and_first_assertion": "Move same-value handling before predecessor validation. The stale same-value expected-refusal assertion must fail. For O-7, skip the non-setting ILC key check. Its fresh same-value trial must fail its expected-refusal assertion. Restore the exact bytes before the restored pass.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_VC_TAR3_REST",
+          "restored": "ALPHA_U_A2_VC_TAR3_REST",
+          "admission": null,
+          "raw_run_log": null,
+          "measured_example": {
+            "seconds": 1.74,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:375"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A3",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_first_readers_share_one_committed_observation",
+      "status": "active",
+      "claim": "A3. Two eligible first readers and a retry after a lost response share one committed observation.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/A5_NOTES.md",
+          "line": 36,
+          "unit_ids": [
+            "A3"
+          ],
+          "normal_witness": "Two distinct eligible ACTIVE readers overlap at the registered lock. The first consumer loses its response after commit. The waiter and later retry receive the stored words, source and event. Detail and ILC inventories identify one pair.",
+          "named_break_and_first_assertion": "On a source-key hit, suppress the stored receipt. The waiting reader’s public observation must equal the first committed one, line 400.",
+          "target_seconds": 21,
+          "ceiling_seconds": 45,
+          "budget_basis": "21 s. Requires two independently committing sessions and an observed PostgreSQL lock wait."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_A5",
+          "restored": "ALPHA_U_A2_A5",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 400,
+          "break_report": "R.1a direction",
+          "measured_example": {
+            "seconds": 2.5,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:426"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A4",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_outer_commit_controls_delivery",
+      "status": "active",
+      "claim": "A4. Only outer commit may publish words. A real deferred failure publishes fresh permitted facts instead.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/A5_NOTES.md",
+          "line": 37,
+          "unit_ids": [
+            "A4"
+          ],
+          "normal_witness": "Stage a real matched detail/event, then cause the outer commit to fail. Verify no provisional delivery, one newly read facts-only response, two distinct transaction IDs for the fact reads, and restoration of the prior pair inventory and head. A healthy explicit retry delivers after commit.",
+          "named_break_and_first_assertion": "Call the consumer as the inner savepoint exits. The consumer must have received no rolled-back words, line 449. This assertion examines actual deliveries even if premature dispatch also leaked the deliberate integrity error.",
+          "target_seconds": 13,
+          "ceiling_seconds": 45,
+          "budget_basis": "13 s."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_A5",
+          "restored": "ALPHA_U_A2_A5",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 449,
+          "break_report": "R.1a direction",
+          "measured_example": {
+            "seconds": 2.52,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:459"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R6",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_off_wins_before_first_display",
+      "status": "active",
+      "claim": "R6. Off commits while an eligible first reader waits. The reader sees the winning choice and creates no pair.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/A5_NOTES.md",
+          "line": 39,
+          "unit_ids": [
+            "R6"
+          ],
+          "normal_witness": "Establish positive qualification with default On, hold the switch’s organisation lock and observe the other session waiting. After commit require Off/chosen and that exact switch receipt, unchanged authorised office facts, zero observation writes/pairs and the switch as the head.",
+          "named_break_and_first_assertion": "Return the setting from before the wait. The waiting reader must see the winning Off receipt, line 485. An empty observation inventory alone cannot clear this case.",
+          "target_seconds": 19,
+          "ceiling_seconds": 45,
+          "budget_basis": "19 s. Requires contention with an independently committed Organisation Coordinator switch."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_A5",
+          "restored": "ALPHA_U_A2_A5",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 485,
+          "break_report": "R.1a direction",
+          "measured_example": {
+            "seconds": 2.71,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:518"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A1",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_only_the_approved_treasurer_clause_qualifies",
+      "status": "active",
+      "claim": "A1. Only the pinned Alpha Treasurer clause gives this vacant office live CARE guidance.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R1A_NOTES.md",
+          "line": 26,
+          "unit_ids": [
+            "A1"
+          ],
+          "normal_witness": "The installed pin matches the set-up parser output at line 773. Only the eligible exact Treasurer clause produces its committed pair. A repeat reuses it. The six negative cases above suppress the live observation and preserve history.",
+          "named_break_and_first_assertion": "In the shared SQL qualifier, replace only full digest equality with `strpos(cl.content,'The Treasurer approves ordinary payments.') > 0`. Leave the pin and all other predicates intact. Parser parity still passes. The changed-clause case calls the public display at line 832. The first discriminating assertion at line 791 compares the live result and post-read inventories/head with absence and their pre-read values. Its message is “The vacancy exception must suppress CARE guidance and leave the detail, ILC event and head unchanged.”",
+          "target_seconds": 15,
+          "ceiling_seconds": 45,
+          "budget_basis": "15 s for the whole method, including set-up. Ceiling 45 s. If timing exceeds 15 s, record the measured cost of Policy publications/adoptions, governed office amendments and the consented appointment."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R1A",
+          "restored": "ALPHA_U_A2_R1A",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 791,
+          "break_report": "Continue to R.2",
+          "measured_example": {
+            "seconds": 4.45,
+            "run": "ALPHA_U_A2_R1A"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:790"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-membership",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_rejects_membership_result_citation",
+      "status": "active",
+      "claim": "R3b. A carried membership result cannot supply a Board payment link.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R3B_NOTES.md",
+          "line": 20,
+          "unit_ids": [
+            "R3-membership"
+          ],
+          "normal_witness": "Positive valid Board citation, then an adopted successor naming a genuinely carried membership result.",
+          "named_break_and_first_assertion": "In _decision_result permit a board without a GOVERNANCE Circle by using a left Circle join and removing its kind condition. The exact only-adoption comparison at line 1283 must reject the added membership payment row.",
+          "target_seconds": 35,
+          "ceiling_seconds": 45,
+          "budget_basis": "35 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R3B",
+          "restored": "ALPHA_U_A2_R3B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1376"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-defeated",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_rejects_defeated_payment_citation",
+      "status": "active",
+      "claim": "R3c. A defeated Board result cannot supply the qualified payment link.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R3B_NOTES.md",
+          "line": 21,
+          "unit_ids": [
+            "R3-defeated"
+          ],
+          "normal_witness": "Positive citation, actual defeated Board vote and adopted successor naming it.",
+          "named_break_and_first_assertion": "Remove the count-kind refusal from _decision_result. The only-adoption comparison at line 1283 catches the defeated payment row.",
+          "target_seconds": 35,
+          "ceiling_seconds": 45,
+          "budget_basis": "35 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R3B",
+          "restored": "ALPHA_U_A2_R3B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1380"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-publication",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_rejects_publication_as_payment",
+      "status": "active",
+      "claim": "R3d. A Policy publication result cannot replace a plain payment result.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R3B_NOTES.md",
+          "line": 22,
+          "unit_ids": [
+            "R3-publication"
+          ],
+          "normal_witness": "Positive citation, then a successor naming the distinct publication result.",
+          "named_break_and_first_assertion": "Remove the plain-action condition from _decision_result. Line 1283 catches publication mislabelled as payment.",
+          "target_seconds": 30,
+          "ceiling_seconds": 45,
+          "budget_basis": "30 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R3B",
+          "restored": "ALPHA_U_A2_R3B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1384"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-malformed",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_rejects_malformed_payment_citation",
+      "status": "active",
+      "claim": "R3e. A malformed current marker cannot revive an older valid citation.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R3B_NOTES.md",
+          "line": 23,
+          "unit_ids": [
+            "R3-malformed"
+          ],
+          "normal_witness": "Positive citation, then an adopted marker containing the UUID followed by extra text.",
+          "named_break_and_first_assertion": "Parse only text.split()[0] and remove the full-text canonical comparison. Line 1283 catches the recovered payment row.",
+          "target_seconds": 30,
+          "ceiling_seconds": 45,
+          "budget_basis": "30 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R3B",
+          "restored": "ALPHA_U_A2_R3B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1388"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-marker-removed",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_omits_payment_after_marker_removed",
+      "status": "active",
+      "claim": "R3f. Removing the current marker removes the payment link while adoption remains.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R3B_NOTES.md",
+          "line": 24,
+          "unit_ids": [
+            "R3-marker-removed"
+          ],
+          "normal_witness": "Positive citation, then a genuinely adopted successor with the marker absent.",
+          "named_break_and_first_assertion": "On zero current markers, use the previous version's marker instead. Line 1283 catches revival of the prior payment.",
+          "target_seconds": 30,
+          "ceiling_seconds": 45,
+          "budget_basis": "30 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R3B",
+          "restored": "ALPHA_U_A2_R3B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied.",
+          "measured_example": {
+            "seconds": 39.34,
+            "run": "ALPHA_U_A2_R4"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1392"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A5",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_first_display_preserves_ruled_attribution",
+      "status": "active",
+      "claim": "A5. The first explicit ACTIVE display records the requester as ILC enterer. The office record omits that identity.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 70,
+          "unit_ids": [
+            "A5"
+          ],
+          "normal_witness": "Actual requester is ILC Enterer; office omits identity/epoch; exact own-entry history link.",
+          "named_break_and_first_assertion": "Substitute another active identity in envelope → valid display's plain-English failure at 619, or independent attribution assertion if the malformed pair were admitted. Additional link control: use provision UUID for observation `ilc_link` → 669.",
+          "target_seconds": 11,
+          "ceiling_seconds": 45,
+          "budget_basis": "11",
+          "earlier_break": "A5_NOTES.md, confirmed at line 576 in the Human R.1a relay."
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied.",
+          "measured_example": {
+            "seconds": 3.56,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:548"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R1",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_facts_use_effective_tenure",
+      "status": "active",
+      "claim": "R1. Follow an older definition through nomination, appointment, amendment, departure and severance.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 71,
+          "unit_ids": [
+            "R1"
+          ],
+          "normal_witness": "Old UUID, actual nomination/assignment/departure/severance; add exact field union.",
+          "named_break_and_first_assertion": "Treat pending nominee as holder → pending-tenure equality at 711.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied.",
+          "measured_example": {
+            "seconds": 4.41,
+            "run": "ALPHA_U_A2_R1A"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:689"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-topics",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_each_office_part_has_its_own_audience",
+      "status": "active",
+      "claim": "R4a. Hidden and absent Topic openings preserve the same readable office siblings.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 72,
+          "unit_ids": [
+            "R4-topics"
+          ],
+          "normal_witness": "Hidden Topic equals complete absent page including history; permitted sibling and path union.",
+          "named_break_and_first_assertion": "Landed title predicate to `AND true` → hidden/absent equality at 1063.",
+          "target_seconds": 10,
+          "ceiling_seconds": 45,
+          "budget_basis": "10"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1356"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-probation",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_pin_preserves_probationary_law_access",
+      "status": "active",
+      "claim": "R4b. An exact readable pin admits law without tenure, and hiding it removes admission.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 73,
+          "unit_ids": [
+            "R4-probation"
+          ],
+          "normal_witness": "Real stored positive; pin-only reader sees law/human history but no tenure/CARE; hiding pin removes access.",
+          "named_break_and_first_assertion": "Give pin-only reader a vacant tenure row → complete page equality at 1105. Historical adapter safely handles the absent current-definition coordinate.",
+          "target_seconds": 15,
+          "ceiling_seconds": 45,
+          "budget_basis": "15"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1361"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-laws",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_office_provisions_keep_exact_current_and_historic_law",
+      "status": "active",
+      "claim": "R4c. Unresolved and missing clauses preserve independently readable historical and current facts.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 74,
+          "unit_ids": [
+            "R4-laws"
+          ],
+          "normal_witness": "Separate original/current clauses and adoptions; unresolved alternative absent; path union.",
+          "named_break_and_first_assertion": "Substitute original clause for successor → exact successor-provision equality in `_office_audience_case`, before wrapper union.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1366"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R3-visible",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_only_the_cited_and_adoption_results_are_indexed",
+      "status": "active",
+      "claim": "R3a. Distinct payment/adoption receipts retain their independent result audiences.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 75,
+          "unit_ids": [
+            "R3-visible"
+          ],
+          "normal_witness": "Distinct result receipts, reporting/result reopening and denied openings; exact result history and path union.",
+          "named_break_and_first_assertion": "Payment lookup to `adoptions[0][\"result\"]` → decisions equality at 1269.",
+          "target_seconds": 22,
+          "ceiling_seconds": 45,
+          "budget_basis": "22"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1371"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-history",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_historic_guidance_uses_its_own_clause",
+      "status": "active",
+      "claim": "R4-history. A successor clause stops live guidance but retains the permitted old receipt only in On history.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 78,
+          "unit_ids": [
+            "R4-history"
+          ],
+          "normal_witness": "Successor office and clause; old historic row retained only while On, never presented live.",
+          "named_break_and_first_assertion": "Require today's `_source(params)` before historical rows → exact old historical row at 1574.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1563"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-charter",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_whole_charter_keeps_its_inherited_ilc_destination",
+      "status": "active",
+      "claim": "R4-charter. A protected whole-document citation keeps inherited text and its real root ILC entry.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 79,
+          "unit_ids": [
+            "R4-charter"
+          ],
+          "normal_witness": "Real charter entry, inherited ratified text, root event, zero local writes.",
+          "named_break_and_first_assertion": "Return no provision when locator is null → complete page at 1720.",
+          "target_seconds": 15,
+          "ceiling_seconds": 45,
+          "budget_basis": "15"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1679"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R4-fallback",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_history_failure_delivers_facts_after_rollback",
+      "status": "active",
+      "claim": "R4-fallback. Failure reading optional stored CARE history delivers one committed human-facts response.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4_NOTES.md",
+          "line": 80,
+          "unit_ids": [
+            "R4-fallback"
+          ],
+          "normal_witness": "Committed positive pair, actual history-query SQL error, exactly one post-commit human-facts payload.",
+          "named_break_and_first_assertion": "Call `publish(page)` after `_attach_observation`, before history and outer commit → delivery count at 1747.",
+          "target_seconds": 10,
+          "ceiling_seconds": 45,
+          "budget_basis": "10"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4",
+          "restored": "ALPHA_U_A2_R4",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1733"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R5",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_off_removes_only_care_output",
+      "status": "active",
+      "claim": "R5. Whole default/explicit On, Off, preview and On-again pages keep human facts and exact committed history.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4B_NOTES.md",
+          "line": 16,
+          "unit_ids": [
+            "R5"
+          ],
+          "normal_witness": "Committed On reuse, preview, Off and On again preserve the exact permitted response and stored rows.",
+          "named_break_and_first_assertion": "Remove the enabled guard in the historical CARE reader. The first Off page retains the observation and fails whole-page equality at line 1478.",
+          "target_seconds": 15,
+          "ceiling_seconds": 45,
+          "budget_basis": "15 s / 45 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4B",
+          "restored": "ALPHA_U_A2_R4B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied.",
+          "measured_example": {
+            "seconds": 8.16,
+            "run": "ALPHA_U_A2_R4B"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1553"
+    },
+    {
+      "obligation": "ALPHA-U-A2-R5-empty",
+      "baseline_label": null,
+      "current_label": "test_office_record_services.OfficeRecordTests.test_off_without_an_observation_keeps_human_history",
+      "status": "active",
+      "claim": "R5-empty. Both Off flags preserve human quotations and links while a later On preview remains unwritten.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/R4B_NOTES.md",
+          "line": 17,
+          "unit_ids": [
+            "R5-empty"
+          ],
+          "normal_witness": "Off retains human rows with either presentation flag. On-again preview leaves the observation inventory empty.",
+          "named_break_and_first_assertion": "Suppress human history under Off. Whole-page equality fails at line 1478.",
+          "target_seconds": 10,
+          "ceiling_seconds": 45,
+          "budget_basis": "10 s / 45 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_R4B",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_R4B",
+          "restored": "ALPHA_U_A2_R4B",
+          "admission": null,
+          "raw_run_log": null,
+          "break_report": "Continue to V.2, group completion for the named box. Individual raw logs and executed tree for the break were not supplied."
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_services.py:1558"
+    },
+    {
+      "obligation": "ALPHA-U-A2-B4",
+      "baseline_label": null,
+      "current_label": "test_office_record_guards.OfficeRecordGuardTests.test_setting_pair_is_required_on_both_sides",
+      "status": "active",
+      "claim": "B4. Detail alone, event alone and a mismatched event refuse; one matched pair commits.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 48,
+          "unit_ids": [
+            "B4"
+          ],
+          "normal_witness": "One exact switch is the new head. Four invalid successors preserve the histories and head.",
+          "named_break_and_first_assertion": "Invert the setting pair completion decision so a valid switch refuses. The genuine-pair failure at line 321 identifies the break.",
+          "target_seconds": 8,
+          "ceiling_seconds": 45,
+          "budget_basis": "8 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 321,
+          "measured_example": {
+            "seconds": 1.69,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_guards.py:143"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A2",
+      "baseline_label": null,
+      "current_label": "test_office_record_guards.OfficeRecordGuardTests.test_observation_pair_matches_its_source",
+      "status": "active",
+      "claim": "A2. A coherent runtime pair requires the actual authorised source, correct owner and the requester as ILC Enterer.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 49,
+          "unit_ids": [
+            "A2"
+          ],
+          "normal_witness": "The real authorised source commits as head. Wrong owner, citation, epoch, duplicate source and alternative route exercise distinct refusals.",
+          "named_break_and_first_assertion": "Remove the qualifier’s alternative-route veto. The final coherent alternative commits and the outcome plus footprint assertion at line 436 fails.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 436,
+          "measured_example": {
+            "seconds": 4.91,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_guards.py:174"
+    },
+    {
+      "obligation": "ALPHA-U-A2-B5",
+      "baseline_label": null,
+      "current_label": "test_office_record_guards.OfficeRecordGuardTests.test_0111_refuses_populated_reversal",
+      "status": "active",
+      "claim": "B5. The migration refuses either kind of committed history before changing rows, schema or the ledger.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 50,
+          "unit_ids": [
+            "B5"
+          ],
+          "normal_witness": "Three committed history combinations refuse with 23514 and CARE_OFFICE_RECORD_POPULATED, before any submitted change. Qualified flush restores the baseline.",
+          "named_break_and_first_assertion": "Insert a CREATE TEMP TABLE immediately after PREFLIGHT’s LOCK and before its refusal. The batch observer assertion at line 499 sees CREATE even after rollback. The existing break removing both observation history arms still fails the refusal verdict.",
+          "target_seconds": 12,
+          "ceiling_seconds": 45,
+          "budget_basis": "12 s",
+          "folded_cases": [
+            "B5",
+            "A6 populated reverse"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 499,
+          "measured_example": {
+            "seconds": 4.72,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_guards.py:274"
+    },
+    {
+      "obligation": "ALPHA-U-A2-A7",
+      "baseline_label": null,
+      "current_label": "test_office_record_guards.OfficeRecordGuardTests.test_detail_history_resists_mutation",
+      "status": "active",
+      "claim": "A7. Direct updates, deletes and truncation cannot alter either recorded pair or the organisation head.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 51,
+          "unit_ids": [
+            "A7"
+          ],
+          "normal_witness": "Both guardians exist. Six direct mutation attempts retain both pairs and their heads.",
+          "named_break_and_first_assertion": "Allow UPDATE through the observation row guardian. The first direct update fails the diagnostic and full-state assertion at line 583.",
+          "target_seconds": 8,
+          "ceiling_seconds": 45,
+          "budget_basis": "8 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 583,
+          "measured_example": {
+            "seconds": 2.6,
+            "run": "ALPHA_U_A2_A5"
+          }
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_guards.py:370"
+    },
+    {
+      "obligation": "ALPHA-U-A2-V1-drift",
+      "baseline_label": null,
+      "current_label": "test_office_record_guards.OfficeRecordGuardTests.test_0111_refuses_drift_in_each_shared_definition",
+      "status": "active",
+      "claim": "An empty install or reverse must refuse unrelated edits to either shared routine.",
+      "unit_TAR": [
+        {
+          "source": "ALPHA_U_A2/V1_NOTES.md",
+          "line": 52,
+          "unit_ids": [
+            "V1-drift"
+          ],
+          "normal_witness": "Each of two routines with altered text refuses each direction, identifying the exact routine and preserving the caller’s received state.",
+          "named_break_and_first_assertion": "Skip the digest checks for the gateway alone. The first reverse of a drifted gateway succeeds and the expected RuntimeError assertion at line 607 fails.",
+          "target_seconds": 6,
+          "ceiling_seconds": 45,
+          "budget_basis": "6 s"
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "ALPHA_U_A2": {
+          "normal": "ALPHA_U_A2_V1",
+          "normal_result": "passed",
+          "break": "ALPHA_U_A2_V1",
+          "restored": "ALPHA_U_A2_V1",
+          "admission": null,
+          "raw_run_log": null,
+          "reported_failure_line": 607
+        }
+      },
+      "history": [
+        {
+          "unit": "Alpha U-A2 V.2",
+          "event": "Source and TAR reconciled to this candidate. The native evidence applies to the named earlier export. Unit admission remains with Carmian Owen."
+        }
+      ],
+      "current_source": "tests/test_office_record_guards.py:421"
     }
   ],
   "previous_unit": {
-    "package": "TIMED EVENTS T1b CK-1 R4c",
-    "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
-    "baseline_methods": 267,
-    "candidate_methods": 293,
+    "package": "U-A (A-1c and A-2), combined by the VC",
+    "baseline_commit": "553440ef816f46036904850a66f8698c2a07c2f6",
+    "baseline_methods": 293,
+    "candidate_methods": 309,
     "coverage": {
-      "unit_tables": 26,
+      "unit_tables": 32,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 293,
+      "active": 309,
       "folded": 47,
       "retired": 2,
       "DISC4_methods": 6,
@@ -21864,98 +23383,207 @@
       "C1_108_methods": 3,
       "TIMED_EVENTS_methods": 10,
       "INTEVIA_CLOCK_methods": 10,
-      "MIGRATION_REVERSIBILITY_methods": 4
+      "MIGRATION_REVERSIBILITY_methods": 4,
+      "U_A_A2_methods": 11,
+      "U_A_A1C_methods": 5
     },
     "previous_unit": {
-      "package": "C1-108 P4c2",
-      "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
-      "baseline_methods": 254,
-      "candidate_methods": 257,
+      "package": "TIMED EVENTS T1b CK-1 R4c",
+      "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
+      "baseline_methods": 267,
+      "candidate_methods": 293,
       "coverage": {
-        "unit_tables": 25,
+        "unit_tables": 26,
         "SR_C2_staging_tables": 1,
         "historical_carryovers": 90,
         "DISC3_methods": 8,
-        "active": 257,
-        "folded": 46,
+        "active": 293,
+        "folded": 47,
         "retired": 2,
         "DISC4_methods": 6,
         "ELECT_methods": 13,
         "HARD_methods_added": 1,
         "COMMITTEES_methods": 6,
-        "C1_108_methods": 3
+        "C1_108_methods": 3,
+        "TIMED_EVENTS_methods": 10,
+        "INTEVIA_CLOCK_methods": 10,
+        "MIGRATION_REVERSIBILITY_methods": 4
       },
       "previous_unit": {
-        "package": "COMMITTEES P1g2",
-        "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-        "baseline_methods": 243,
-        "candidate_methods": 254,
+        "package": "C1-108 P4c2",
+        "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+        "baseline_methods": 254,
+        "candidate_methods": 257,
         "coverage": {
-          "unit_tables": 18,
+          "unit_tables": 25,
           "SR_C2_staging_tables": 1,
           "historical_carryovers": 90,
           "DISC3_methods": 8,
-          "active": 254,
+          "active": 257,
           "folded": 46,
           "retired": 2,
           "DISC4_methods": 6,
           "ELECT_methods": 13,
           "HARD_methods_added": 1,
-          "COMMITTEES_methods": 6
+          "COMMITTEES_methods": 6,
+          "C1_108_methods": 3
         },
         "previous_unit": {
-          "package": "HARD P1b",
-          "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-          "baseline_methods": 253,
-          "candidate_methods": 243,
+          "package": "COMMITTEES P1g2",
+          "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+          "baseline_methods": 243,
+          "candidate_methods": 254,
           "coverage": {
-            "unit_tables": 13,
+            "unit_tables": 18,
             "SR_C2_staging_tables": 1,
             "historical_carryovers": 90,
             "DISC3_methods": 8,
-            "active": 243,
+            "active": 254,
             "folded": 46,
             "retired": 2,
             "DISC4_methods": 6,
-            "ELECT_methods": 8,
-            "HARD_methods_added": 1
+            "ELECT_methods": 13,
+            "HARD_methods_added": 1,
+            "COMMITTEES_methods": 6
           },
-          "earlier": {
-            "package": "ELECT P2",
-            "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-            "baseline_methods": 245,
-            "candidate_methods": 253,
+          "previous_unit": {
+            "package": "HARD P1b",
+            "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+            "baseline_methods": 253,
+            "candidate_methods": 243,
             "coverage": {
               "unit_tables": 13,
               "SR_C2_staging_tables": 1,
               "historical_carryovers": 90,
               "DISC3_methods": 8,
-              "active": 253,
-              "folded": 35,
+              "active": 243,
+              "folded": 46,
               "retired": 2,
               "DISC4_methods": 6,
-              "ELECT_methods": 8
+              "ELECT_methods": 8,
+              "HARD_methods_added": 1
+            },
+            "earlier": {
+              "package": "ELECT P2",
+              "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+              "baseline_methods": 245,
+              "candidate_methods": 253,
+              "coverage": {
+                "unit_tables": 13,
+                "SR_C2_staging_tables": 1,
+                "historical_carryovers": 90,
+                "DISC3_methods": 8,
+                "active": 253,
+                "folded": 35,
+                "retired": 2,
+                "DISC4_methods": 6,
+                "ELECT_methods": 8
+              }
             }
           }
         }
       }
+    },
+    "discovery": {
+      "commit": "553440ef816f46036904850a66f8698c2a07c2f6",
+      "collected_at_baseline": 322,
+      "ledger_active_at_baseline": 293,
+      "note": "baseline_methods 293 is the inherited ledger active-row count, not main's collected suite. 29 collected methods on main have no row; they are owed.",
+      "unledgered_by_module": {
+        "test_circle_vacancy_episode": 12,
+        "test_circle_committee_dormancy": 5,
+        "test_circle_capacity_deadline": 4,
+        "test_committee_chair_authority": 4,
+        "test_circle_dated_custody_and_coverage": 3,
+        "test_circle_vacancy_rollout": 1
+      },
+      "method": "VC_COUNT_COLLECTED_TESTS_v1_0.py (44ad5cc841d14f988bd597c9336a36ffc647b4b22212feb78dad50c451d20207); test_s015_0021_negative_direct_sql (41 methods) counted at source",
+      "owed": "Ledger catch-up reconciliation of the 29 methods; and a recurring CI check of ledger rows against the discovered suite (Human Governor, 17 Nov 2026 08:01)",
+      "decision": "HG_DECISION_U_A_LANDS_WITH_LEDGER_GAP_DISCLOSED_20261117_CAPTURE.txt",
+      "decision_sha256": "249a52028f6d59a39ccc4605216478c66c2ac61787351073a77f99b2ec0facf4"
     }
   },
   "discovery": {
-    "commit": "553440ef816f46036904850a66f8698c2a07c2f6",
-    "collected_at_baseline": 322,
-    "ledger_active_at_baseline": 293,
-    "note": "baseline_methods 293 is the inherited ledger active-row count, not main's collected suite. 29 collected methods on main have no row; they are owed.",
+    "commit": "0c8f3abe827a55f996823e81fa32d160a2b05bd3",
+    "candidate_parent": "ALPHA_U_A2_V1",
+    "method": "AST inventory of test_*.py class test methods on the pinned export and overlay; exact base active-label and inherited-gap comparison. Native discovery evidence is the VC's targeted runs, not collection of the entire V.2 suite.",
+    "collected_at_baseline": 338,
+    "ledger_active_at_baseline": 309,
+    "source_methods_at_candidate": 366,
+    "ledger_active_at_candidate": 338,
+    "unit_changed_labels": [
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_0105_requires_exact_predecessor_and_successor",
+      "test_cq_decisions.CQDecisionTests.test_atomic_result_integrity_and_populated_reversal",
+      "test_elections.ElectionTests.test_recognised_incumbents_require_constitution_consent_and_remaining_term",
+      "test_migration_reversibility.MigrationReversibilityTests.test_every_migration_after_the_base_can_be_undone_and_reapplied",
+      "test_office_record_guards.OfficeRecordGuardTests.test_0111_refuses_drift_in_each_shared_definition",
+      "test_office_record_guards.OfficeRecordGuardTests.test_0111_refuses_populated_reversal",
+      "test_office_record_guards.OfficeRecordGuardTests.test_detail_history_resists_mutation",
+      "test_office_record_guards.OfficeRecordGuardTests.test_observation_pair_matches_its_source",
+      "test_office_record_guards.OfficeRecordGuardTests.test_setting_pair_is_required_on_both_sides",
+      "test_office_record_services.OfficeRecordTests.test_each_office_part_has_its_own_audience",
+      "test_office_record_services.OfficeRecordTests.test_first_display_preserves_ruled_attribution",
+      "test_office_record_services.OfficeRecordTests.test_first_readers_share_one_committed_observation",
+      "test_office_record_services.OfficeRecordTests.test_historic_guidance_uses_its_own_clause",
+      "test_office_record_services.OfficeRecordTests.test_history_failure_delivers_facts_after_rollback",
+      "test_office_record_services.OfficeRecordTests.test_interim_switch_requires_effective_owner_office",
+      "test_office_record_services.OfficeRecordTests.test_off_removes_only_care_output",
+      "test_office_record_services.OfficeRecordTests.test_off_wins_before_first_display",
+      "test_office_record_services.OfficeRecordTests.test_off_without_an_observation_keeps_human_history",
+      "test_office_record_services.OfficeRecordTests.test_office_facts_use_effective_tenure",
+      "test_office_record_services.OfficeRecordTests.test_office_omits_payment_after_marker_removed",
+      "test_office_record_services.OfficeRecordTests.test_office_pin_preserves_probationary_law_access",
+      "test_office_record_services.OfficeRecordTests.test_office_provisions_keep_exact_current_and_historic_law",
+      "test_office_record_services.OfficeRecordTests.test_office_rejects_defeated_payment_citation",
+      "test_office_record_services.OfficeRecordTests.test_office_rejects_malformed_payment_citation",
+      "test_office_record_services.OfficeRecordTests.test_office_rejects_membership_result_citation",
+      "test_office_record_services.OfficeRecordTests.test_office_rejects_publication_as_payment",
+      "test_office_record_services.OfficeRecordTests.test_only_the_approved_treasurer_clause_qualifies",
+      "test_office_record_services.OfficeRecordTests.test_only_the_cited_and_adoption_results_are_indexed",
+      "test_office_record_services.OfficeRecordTests.test_outer_commit_controls_delivery",
+      "test_office_record_services.OfficeRecordTests.test_setting_is_local_and_defaults_on",
+      "test_office_record_services.OfficeRecordTests.test_switch_replay_cannot_fork_lineage",
+      "test_office_record_services.OfficeRecordTests.test_whole_charter_keeps_its_inherited_ilc_destination"
+    ],
     "unledgered_by_module": {
-      "test_circle_vacancy_episode": 12,
-      "test_circle_committee_dormancy": 5,
       "test_circle_capacity_deadline": 4,
-      "test_committee_chair_authority": 4,
+      "test_circle_committee_dormancy": 5,
       "test_circle_dated_custody_and_coverage": 3,
-      "test_circle_vacancy_rollout": 1
+      "test_circle_vacancy_episode": 11,
+      "test_circle_vacancy_rollout": 1,
+      "test_committee_chair_authority": 4
     },
-    "method": "VC_COUNT_COLLECTED_TESTS_v1_0.py (44ad5cc841d14f988bd597c9336a36ffc647b4b22212feb78dad50c451d20207); test_s015_0021_negative_direct_sql (41 methods) counted at source",
-    "owed": "Ledger catch-up reconciliation of the 29 methods; and a recurring CI check of ledger rows against the discovered suite (Human Governor, 17 Nov 2026 08:01)",
+    "unledgered_labels": [
+      "test_circle_capacity_deadline.CircleCapacityDeadlineTests.test_board_cannot_transfer_election_to_expired_recipient",
+      "test_circle_capacity_deadline.CircleCapacityDeadlineTests.test_circle_reporting_authority_at_its_deadline",
+      "test_circle_capacity_deadline.CircleCapacityDeadlineTests.test_committee_cannot_exercise_its_law_grant_after_expiry",
+      "test_circle_capacity_deadline.CircleCapacityDeadlineTests.test_gi_owner_authority_at_its_deadline",
+      "test_circle_committee_dormancy.CircleCommitteeDormancyTests.test_board_can_fill_the_reserved_chair_while_the_mandate_has_no_power",
+      "test_circle_committee_dormancy.CircleCommitteeDormancyTests.test_child_expiry_stops_only_its_own_mandate",
+      "test_circle_committee_dormancy.CircleCommitteeDormancyTests.test_deadline_returns_assigned_work_and_refuses_its_former_worker",
+      "test_circle_committee_dormancy.CircleCommitteeDormancyTests.test_deadline_returns_work_in_progress_and_refuses_submission",
+      "test_circle_committee_dormancy.CircleCommitteeDormancyTests.test_parent_expiry_vetoes_an_active_child",
+      "test_circle_dated_custody_and_coverage.DatedCustodyAndCoverageTests.test_elect_vacancy_commits_the_seats_work_return",
+      "test_circle_dated_custody_and_coverage.DatedCustodyAndCoverageTests.test_last_lo_coordinator_term_opens_real_coverage",
+      "test_circle_dated_custody_and_coverage.DatedCustodyAndCoverageTests.test_roster_change_reforecasts_the_later_lo_term_before_elect_ends_the_treasury",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_0109_refuses_drift_before_changing_any_pinned_function",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_circle_claim_skips_a_held_target_without_charging",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_expired_volunteer_sees_the_cause_at_the_entitled_cut",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_final_lo_departure_effective_before_deadline_closes_at_exit",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_final_place_closes_a_recorded_vacancy_dormancy",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_last_loss_owns_the_half_open_deadline",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_member_exit_settles_both_occurrences_before_its_write",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_office_and_recovery_place_check_the_execution_cut",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_parent_assignment_and_reseat_share_one_commit",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_two_parent_issuers_cannot_take_the_same_vacancy",
+      "test_circle_vacancy_episode.CircleVacancyEpisodeTests.test_vacancy_records_keep_the_causal_times",
+      "test_circle_vacancy_rollout.CircleVacancyRolloutTests.test_populated_rollout_preserves_dates_or_refuses_the_whole_step",
+      "test_committee_chair_authority.CommitteeChairAuthorityTests.test_child_chair_is_reserved_across_both_deadlines",
+      "test_committee_chair_authority.CommitteeChairAuthorityTests.test_child_chair_releases_only_after_lawful_parent_reseat",
+      "test_committee_chair_authority.NamedCommitteeBodyTests.test_named_appointing_circle_must_be_active",
+      "test_committee_chair_authority.NamedCommitteeBodyTests.test_named_completion_circle_must_be_active"
+    ],
+    "owed": "C1-176: 28 other inherited methods and the recurring discovery check remain with the ledger catch-up. Current unit admission and V.2 native recheck are separate.",
     "decision": "HG_DECISION_U_A_LANDS_WITH_LEDGER_GAP_DISCLOSED_20261117_CAPTURE.txt",
     "decision_sha256": "249a52028f6d59a39ccc4605216478c66c2ac61787351073a77f99b2ec0facf4"
   }
