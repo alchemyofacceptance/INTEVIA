@@ -55,12 +55,16 @@ def _edited_during_clarity(receipt):
 
 
 def start_topic(*, credential, organism_uuid, category_uuid, thread_uuid, post_uuid, request_uuid,
-                title, markdown, topic_type="TOPIC", circle_uuid=None):
+                title, markdown, topic_type="TOPIC", circle_uuid=None, office_definition_uuid=None):
+    """Open a Topic, optionally pinning the selected Board office definition at START."""
     if type(title) is not str or not title.strip() or "\x00" in title or not 1 <= len(title) <= 90 or type(topic_type) is not str or topic_type not in {"TOPIC", "QUESTION", "SUGGESTION"}:
         raise disc.DiscussionRefused(code="DISC_POST_INPUT")
+    selection = {}
+    if office_definition_uuid is not None:
+        selection["office_definition_uuid"] = disc._uuid(office_definition_uuid)
     return _command(credential=credential, organism_uuid=organism_uuid, category_uuid=category_uuid,
                     thread_uuid=thread_uuid, post_uuid=post_uuid, request_uuid=request_uuid, operation="START",
-                    circle_uuid=circle_uuid, title=title, markdown=markdown, type=topic_type, quote=None)
+                    circle_uuid=circle_uuid, title=title, markdown=markdown, type=topic_type, quote=None, **selection)
 
 
 def reply(*, credential, organism_uuid, category_uuid, thread_uuid, post_uuid, request_uuid,
@@ -119,21 +123,28 @@ def _category(actor, organism_uuid, circle_uuid, category_uuid):
     board = disc._audience(actor, organism_uuid, circle_uuid, category_uuid)
     rows = disc._rows("""SELECT c.* FROM public.disc_categories c JOIN public.core_discboard b USING(board_uuid)
       WHERE c.category_uuid=%s AND c.board_uuid=%s
-      AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())""",
-                     [category_uuid, board["board_uuid"], actor.pk])
+      AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,%s)""",
+                     [category_uuid, board["board_uuid"], actor.pk, board["audience_at"]])
     if not rows:
         raise disc.DiscussionUnavailable()
     return board, rows[0]
+
+
+def _title_visible_sql(coordinator_sql):
+    """Both operands concern this board and this Topic's opening. Callers supply fixed SQL.
+    Callers must name the opening post `opening`.
+    """
+    return f"({coordinator_sql} OR NOT opening.coordinator_hidden)"
 
 
 def category_topics(*, credential, organism_uuid, category_uuid, circle_uuid=None):
     with transaction.atomic():
         actor = disc._actor(credential)
         board, _ = _category(actor, organism_uuid, circle_uuid, category_uuid)
-        return disc._rows("""SELECT t.thread_uuid,t.topic_type,t.record_kind,t.created_at,t.actor_id,t.pinned,t.closed,
-          p.coordinator_hidden AS hidden,
-          CASE WHEN %s OR NOT p.coordinator_hidden THEN t.title END AS title
-          FROM public.discp_threads t JOIN public.discp_posts p ON p.thread_uuid=t.thread_uuid AND p.post_number=1
+        return disc._rows(f"""SELECT t.thread_uuid,t.topic_type,t.record_kind,t.created_at,t.actor_id,t.pinned,t.closed,
+          opening.coordinator_hidden AS hidden,
+          CASE WHEN {_title_visible_sql("%s")} THEN t.title END AS title
+          FROM public.discp_threads t JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
           WHERE t.category_uuid=%s ORDER BY t.pinned DESC,t.created_sequence DESC,t.thread_uuid""",
                          [board["office"] is not None, category_uuid])
 
@@ -173,19 +184,77 @@ def _thread(actor, organism_uuid, circle_uuid, thread_uuid):
 
 
 def read_thread(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
+    """Read the Topic and show its original office version whenever its opening title is visible."""
     with transaction.atomic():
         actor = disc._actor(credential)
         board, category = _thread(actor, organism_uuid, circle_uuid, thread_uuid)
         coordinator = board["office"] is not None
+        rows = disc._rows(f"""
+            SELECT t.*, {_title_visible_sql("%s")} AS title_visible,
+                   h.office_definition_uuid, d.definition_version AS office_definition_version
+            FROM public.discp_threads t
+            JOIN public.core_discthread h USING (thread_uuid)
+            JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
+            LEFT JOIN public.core_organismroledefinition d ON d.role_uuid=h.office_definition_uuid
+            WHERE t.thread_uuid=%s AND t.board_uuid=%s AND t.category_uuid=%s
+        """, [coordinator, thread_uuid, board["board_uuid"], category["category_uuid"]])
+        if not rows:
+            raise disc.DiscussionUnavailable()
+        topic = rows[0]
+        title_visible = topic.pop("title_visible")
+        if not title_visible:
+            topic["title"] = None
+        if not title_visible or topic["office_definition_uuid"] is None:
+            del topic["office_definition_uuid"], topic["office_definition_version"]
         posts = disc._rows(POST_SELECT + " WHERE p.thread_uuid=%s AND v.version_uuid=p.version_uuid ORDER BY p.post_number",
                            [coordinator, coordinator, thread_uuid])
-        topic = disc._rows("SELECT * FROM public.discp_threads WHERE thread_uuid=%s", [thread_uuid])[0]
-        if posts[0]["topic_hidden"] and not coordinator:
-            topic["title"] = None
-        results = cq_reads._thread_results(board["board_uuid"], thread_uuid, coordinator or not posts[0]["topic_hidden"])
+        results = cq_reads._thread_results(board["board_uuid"], thread_uuid, title_visible)
         if results:
             posts = sorted([*posts, *results], key=lambda post: post["post_number"])
         return {"topic": topic, "posts": posts, "category_retired": category["retired"]}
+
+
+def topics_about_office(*, credential, organism_uuid, office_definition_uuid) -> list:
+    """List visible Circle Topic openings across the versions of one organisation's Board office."""
+    with transaction.atomic():
+        actor = disc._actor(credential)
+        disc._read_uuid(organism_uuid)
+        disc._read_uuid(office_definition_uuid)
+        params = {"owner": organism_uuid, "reader": actor.pk, "office": office_definition_uuid}
+        if not disc._rows(f"SELECT 1 FROM ({disc._READABLE_BOARDS}) b LIMIT 1", params):
+            return []
+        disc._lock_registered_organism("default", organism_uuid)
+        coordinator = "public.disc_office(b.organism_id,b.circle_id,%(reader)s,b.audience_at) IS NOT NULL"
+        rows = disc._rows(f"""
+            WITH readable_boards AS ({disc._READABLE_BOARDS}), visible AS (
+                SELECT t.thread_uuid, b.board_uuid, b.circle_uuid, c.category_uuid, t.title,
+                       opening.effective_at AS created_at, pin.role_uuid AS office_definition_uuid,
+                       pin.definition_version AS office_definition_version, event.sequence
+                FROM readable_boards b
+                JOIN public.core_organismroledefinition target ON target.living_organism_id=b.organism_id
+                    AND target.role_uuid=%(office)s AND target.scope='LIVING_ORGANISM' AND target.kind='BOARD_OFFICE'
+                JOIN public.core_organismroledefinition pin ON pin.living_organism_id=target.living_organism_id
+                    AND pin.scope=target.scope AND pin.kind=target.kind AND pin.code=target.code
+                JOIN public.core_discthread t ON t.office_definition_uuid=pin.role_uuid
+                JOIN public.disc_categories c ON c.category_uuid=t.category_uuid AND c.board_uuid=b.board_uuid
+                JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
+                JOIN public.core_livingorganismevent event ON event.event_uuid=t.creation_act
+                WHERE b.circle_id IS NOT NULL
+                  AND public.disc_audience(b.organism_id,b.circle_id,%(reader)s,c.access_level,b.audience_at)
+                  AND {_title_visible_sql(coordinator)}
+            )
+            SELECT v.thread_uuid, v.board_uuid, v.circle_uuid, v.category_uuid, v.title, v.created_at,
+                   v.office_definition_uuid, v.office_definition_version
+            FROM (SELECT 1 FROM readable_boards LIMIT 1) standing
+            LEFT JOIN visible v ON true
+            ORDER BY v.sequence DESC, v.thread_uuid
+        """, params)
+        if not rows:
+            return []
+        # The left join distinguishes confirmed standing with zero matches from
+        # lost standing. Its null row is internal to the handoff, never a result.
+        disc.handoff.mark(organism_uuid, actor)
+        return rows if rows[0]["thread_uuid"] is not None else []
 
 
 def post_history(*, credential, organism_uuid, post_uuid, circle_uuid=None):

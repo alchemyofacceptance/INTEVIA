@@ -299,6 +299,16 @@ class MigrationReversibilityTests(TransactionTestCase):
         self.assertIn(COUNTER_FOUND, clock_at_head["refusal"] or "",
                       "CLK-08 at head: production's startup must refuse this database, and the refusal must name the counter.")
         clock_stops = {}
+        office_link = import_module("core.migrations.0110_discussion_office_link")
+        office_parent = []
+
+        def office_bodies():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure(%s)", [office_link.EXECUTE])
+                writer = cursor.fetchone()[0]
+                cursor.execute("SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure(%s)", [office_link.INPUT])
+                return writer, cursor.fetchone()[0]
+
         chair = import_module("core.migrations.0109_committee_chair_reservation")
         chair_parent = []
         reseat = import_module("core.migrations.0108_circle_reseat")
@@ -309,6 +319,9 @@ class MigrationReversibilityTests(TransactionTestCase):
         records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if (not office_parent and ("core", "0110_discussion_office_link") in undone_so_far
+                    and ("core", "0109_committee_chair_reservation") not in undone_so_far):
+                office_parent.append(office_bodies())
             if (not chair_parent and ("core", "0109_committee_chair_reservation") in undone_so_far
                     and ("core", "0108_circle_reseat") not in undone_so_far):
                 with connection.cursor() as cursor:
@@ -388,6 +401,10 @@ class MigrationReversibilityTests(TransactionTestCase):
                 self.assertIn(part, stop["refusal"], "CLK-08 below the clock: the refusal must keep its five parts.")
         if failed_again:
             self.fail(failed_again)
+        self.assertEqual(office_parent, [tuple(prior for _, prior, _ in office_link.REPLACEMENTS)],
+                         "Downgrading 0110 must restore both clock-converted posting functions exactly.")
+        self.assertEqual(office_bodies(), tuple(after for _, _, after in office_link.REPLACEMENTS),
+                         "Reapplying 0110 must restore both guarded posting functions exactly.")
         self.assertEqual(reseat_parent, [(None, committee_cut.APART_SQL)])
         self.assertEqual(committee_parent, [(None, committee_cut.LIVE_OLD)],
                          "REV-01 must observe the landed mandate reader at the 0106 parent.")

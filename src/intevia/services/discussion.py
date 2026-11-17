@@ -29,6 +29,7 @@ MESSAGES = {
     "CQ_VOTE_LOCKED": "This wording is locked because voting has opened. Start a new Suggestion to change it.",
     "CQ_LOCKED": "This wording is locked because clarity was reached on it. Start a new Suggestion to change it.",
     "DISC_POST_INPUT": "Supply a title of 1 to 90 characters, a topic, question or suggestion type, and Markdown text.",
+    "DISC_OFFICE_SELECTION": "Choose a current Board office in this organisation.",
     "DISC_POST_AUTHORITY": "You do not have permission to perform this act on this discussion. Suspended and restricted members cannot change discussions.",
     "DISC_CATEGORY_RETIRED": "This category is retired. Its history remains readable, but it accepts no new topics or replies.",
     "DISC_CLOSED": "This topic is closed. Its history remains readable, but it accepts no new replies.",
@@ -217,19 +218,29 @@ def _read_owner(organism_uuid, circle_uuid):
         _read_uuid(circle_uuid)
 
 
+# Shared with the office lookup. Filter each real board by the authenticated
+# person's present standing before using its office or its category permissions.
+_READABLE_BOARDS = """
+    SELECT b.*, circle.circle_uuid, clock.cut AS audience_at
+    FROM public.core_discboard b
+    JOIN public.core_livingorganism lo ON lo.id=b.organism_id
+    LEFT JOIN public.core_circle circle ON circle.id=b.circle_id
+    CROSS JOIN (SELECT public.intevia_clock_statement() AS cut) clock
+    WHERE lo.organism_id=%(owner)s
+      AND (public.disc_audience(b.organism_id,b.circle_id,%(reader)s,'MEMBERS',clock.cut)
+        OR public.disc_audience(b.organism_id,b.circle_id,%(reader)s,'PROBATIONARY',clock.cut))
+"""
+
+
 def _audience(actor, organism_uuid, circle_uuid, category_uuid=_NO_CATEGORY):
     # Omitted category is valid for a board read; explicit None is not a UUID.
     _read_owner(organism_uuid, circle_uuid)
     if category_uuid is not _NO_CATEGORY:
         _read_uuid(category_uuid)
-    query = """SELECT b.*,public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement()) AS member_state,
-        public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) AS office
-        FROM public.core_discboard b JOIN public.core_livingorganism lo ON lo.id=b.organism_id
-        LEFT JOIN public.core_circle c ON c.id=b.circle_id
-        WHERE lo.organism_id=%s AND c.circle_uuid IS NOT DISTINCT FROM %s::uuid
-          AND (public.disc_audience(b.organism_id,b.circle_id,%s,'MEMBERS',public.intevia_clock_statement())
-            OR public.disc_audience(b.organism_id,b.circle_id,%s,'PROBATIONARY',public.intevia_clock_statement()))"""
-    params = [actor.pk, actor.pk, organism_uuid, circle_uuid, actor.pk, actor.pk]
+    query = f"""SELECT b.*, public.disc_member_state(b.organism_id,%(reader)s,b.audience_at) AS member_state,
+        public.disc_office(b.organism_id,b.circle_id,%(reader)s,b.audience_at) AS office
+        FROM ({_READABLE_BOARDS}) b WHERE b.circle_uuid IS NOT DISTINCT FROM %(circle)s::uuid"""
+    params = {"owner": organism_uuid, "reader": actor.pk, "circle": circle_uuid}
     rows = _rows(query, params)
     if not rows:
         raise DiscussionUnavailable()

@@ -92,8 +92,9 @@ class CircleVacancyRolloutTests(TransactionTestCase):
     def test_populated_rollout_preserves_dates_or_refuses_the_whole_step(self):
         """W10. One rollout can distinguish a genuine old loss from contradictory historic evidence."""
         support._require_disposable_fixture_database()
+        received_head = support.current_applied_core_head(connection)[0][1]
+        self.addCleanup(migrate, received_head)
         migrate(PREVIOUS)
-        self.addCleanup(migrate, "0109_committee_chair_reservation")
         # The fixture writes under 0104, before the settlement writer exists.
         with patch.object(commands, "settle_vacancy", return_value=None):
             old, expired = form_with_members()

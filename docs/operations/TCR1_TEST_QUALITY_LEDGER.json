@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "package": "TIMED EVENTS T1b CK-1 R4c",
-  "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
-  "baseline_methods": 267,
-  "candidate_methods": 293,
+  "package": "U-A (A-1c and A-2), combined by the VC",
+  "baseline_commit": "553440ef816f46036904850a66f8698c2a07c2f6",
+  "baseline_methods": 293,
+  "candidate_methods": 309,
   "counting": "One row per original obligation. Active rows give collected methods. Folded and retired rows retain traceability. A class move keeps its obligation.",
   "interpretation": "Historic unit tables are identified by exact source digest and line. An admission or recurring registry is a fault specification. A null candidate break/restored field means evidence is outstanding. A suite pass alone does not supply an admission triple.",
   "update": "At each unit reconcile discovery, add or update the claim, target, evidence and commit for each changed obligation; retain old labels, affected cases and authorised shed events. Bind the tested candidate commit/tree in its run evidence, then enter its identity on a subsequent ledger update. Preserve the original source record.",
@@ -450,6 +450,79 @@
     "TIMED_EVENTS_T1B_CK2I_PENDING": {
       "source": "VC PostgreSQL run pending",
       "candidate_commit": null
+    },
+    "U_A_A2_1_VC": {
+      "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+      "sha256": "eafac9f06cb4bd8410f697f6cbc18ac9f1c35796d538a6d6c584fbfc52016bde",
+      "tested_method_file_lf_sha256": "f85f92b89cf09ac7d2ec6caf3662ebeb00c489c3d60dfabaf77ffdb183382294",
+      "normal": {
+        "log": "VC_TARGETED_RUN_A21T1.log",
+        "sha256": "704cce21c74f0483383c90f8712ae4ed2acc946e6904086fa18a20b5c195b504"
+      },
+      "restored": {
+        "log": "TAR3_A21_RESTORED.log",
+        "sha256": "8877559588d4b1cec45ec5cf28accde2e1debb664bb93dd58e52203f5028dcde"
+      }
+    },
+    "U_A_A2_2_VC": {
+      "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+      "sha256": "8faae568f21613157d5fd9c3fbc1ce44bf880dabeadaa7a4d3c814a5303774cd",
+      "tested_method_file_lf_sha256": "c26b0dcb376d17ada7427f76c5e8365f0f9fa09b5f586876abfd10f6d0d58aa7",
+      "normal": {
+        "log": "VC_TARGETED_RUN_A22T1.log",
+        "sha256": "2938b42a5f1e697d902aafbf2db96159f9d94586901103c9d0703224e5cddb44"
+      },
+      "restored": {
+        "log": "TAR3_A22_RESTORED.log",
+        "sha256": "a93f81213c88e56e0e3faf4a246d481e9792854ff5bd406c085c144e13b6d6d0"
+      }
+    },
+    "U_A_A2_3_VC": {
+      "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+      "sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+      "tested_method_file_lf_sha256": "b1bffc50c95f4569b4d75a6f1431c423535d9eff263564c4bb7a6210c5d08878",
+      "normal": {
+        "log": "VC_TARGETED_RUN_A23T2.log",
+        "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+      },
+      "restored": {
+        "log": "TAR3_A23_RESTORED.log",
+        "sha256": "00b21cee5550fa82ba6b05039b02ecc3bb41b22c282eaa2be9938783d7e73cff"
+      }
+    },
+    "U_A_A2_4_PENDING": {
+      "source": "RETURN_U_A_A2_4_P1_v1_0.zip/NOTE.md",
+      "candidate_file_lf_sha256": "2f2946f20ae798bf3523e32e2e5f362a4dca4f3ad862e53aca8d7ee11332c97c",
+      "candidate_commit": null,
+      "normal": null,
+      "break": null,
+      "restored": null
+    },
+    "U_A_A2_4_VC": {
+      "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_4_v1_0.md",
+      "sha256": "d902837fa375fae83d78483d5113758d2f09479e7cfb9b2f0cd75e7f726ef858",
+      "tested_method_file_lf_sha256": "2f2946f20ae798bf3523e32e2e5f362a4dca4f3ad862e53aca8d7ee11332c97c",
+      "normal": {
+        "log": "VC_TARGETED_RUN_A24T1.log",
+        "sha256": "24e13e626ec11c1cd76ca436cd3ae4e4815edfe68dde06d884491c447fe41fa3"
+      },
+      "restored": {
+        "log": "TAR3_A24_RESTORED.log",
+        "sha256": "0e0296bb9f900369bd0aec37e3d001f626503cefa561301c40de98e832791c9d"
+      }
+    },
+    "U_A_A1C_VC": {
+      "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+      "sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+      "tested_method_file_lf_sha256": "464d05c8e2167733d1a4b3924ef1df678daefe890845648dc55b42a47911985c",
+      "normal": {
+        "log": "VC_TARGETED_RUN_A1C2.log",
+        "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+      },
+      "restored": {
+        "log": "TAR3_A1C_RESTORED_A1CR.log",
+        "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+      }
     }
   },
   "source_index": {
@@ -632,14 +705,38 @@
     "TIMED_EVENTS_T1B_CK2_CODE_TAR_TABLE.md": {
       "sha256": "4ff75f1bf0ba244c4a74b0bb61ab56384e61b7513153a7109d68ab1d295181b3",
       "source": "TIMED EVENTS T1b CK-2i return"
+    },
+    "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md": {
+      "sha256": "eafac9f06cb4bd8410f697f6cbc18ac9f1c35796d538a6d6c584fbfc52016bde",
+      "source": "01_GOVERNING/VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md"
+    },
+    "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md": {
+      "sha256": "8faae568f21613157d5fd9c3fbc1ce44bf880dabeadaa7a4d3c814a5303774cd",
+      "source": "01_GOVERNING/VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md"
+    },
+    "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md": {
+      "sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+      "source": "01_GOVERNING/VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md"
+    },
+    "RETURN_U_A_A2_4_P1_v1_0.zip/NOTE.md": {
+      "sha256": "e289915afa04cafdce10b2f9865e5ec5ff71890f1866edfdee29730c26a8d8f0",
+      "source": "RETURN_U_A_A2_4_P1_v1_0.zip/NOTE.md"
+    },
+    "VC_TAR_ADHERENCE_REPORT_U_A_A2_4_v1_0.md": {
+      "sha256": "d902837fa375fae83d78483d5113758d2f09479e7cfb9b2f0cd75e7f726ef858",
+      "source": "C1_VC/AP1/A2/TAR3/VC_TAR_ADHERENCE_REPORT_U_A_A2_4_v1_0.md"
+    },
+    "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md": {
+      "sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+      "source": "C1_VC/AP1/A1C/TAR3/VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md"
     }
   },
   "coverage": {
-    "unit_tables": 26,
+    "unit_tables": 32,
     "SR_C2_staging_tables": 1,
     "historical_carryovers": 90,
     "DISC3_methods": 8,
-    "active": 293,
+    "active": 309,
     "folded": 47,
     "retired": 2,
     "DISC4_methods": 6,
@@ -649,7 +746,9 @@
     "C1_108_methods": 3,
     "TIMED_EVENTS_methods": 10,
     "INTEVIA_CLOCK_methods": 10,
-    "MIGRATION_REVERSIBILITY_methods": 4
+    "MIGRATION_REVERSIBILITY_methods": 4,
+    "U_A_A2_methods": 11,
+    "U_A_A1C_methods": 5
   },
   "tests": [
     {
@@ -20983,80 +21082,881 @@
         }
       ],
       "current_source": "tests/test_clock_time_field_migrations.py:43"
+    },
+    {
+      "obligation": "U-A-A2-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeStartTests.test_start_records_exact_office",
+      "claim": "A trustee's START binds the exact office to the opening and discloses it with the title.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-01"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_2": {
+          "run": "U_A_A2_2_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "report_sha256": "8faae568f21613157d5fd9c3fbc1ce44bf880dabeadaa7a4d3c814a5303774cd",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A22T1.log",
+            "sha256": "2938b42a5f1e697d902aafbf2db96159f9d94586901103c9d0703224e5cddb44"
+          },
+          "break": {
+            "log": "TAR3_A22_B1.log",
+            "sha256": "abb4c95a060dfe3f6522c5cb3e7a383e60849c679bc37630793b3ed975e68c71"
+          },
+          "restored": {
+            "log": "TAR3_A22_RESTORED.log",
+            "sha256": "a93f81213c88e56e0e3faf4a246d481e9792854ff5bd406c085c144e13b6d6d0"
+          },
+          "admission": "HG_DECISION_U_A_A2_2_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0e721213db7288faced677229c50020ea1dbc52a79f1208eb3906bd2c2ba2f63"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.2",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:212"
+    },
+    {
+      "obligation": "U-A-A2-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeLinkTests.test_link_requires_eligible_target",
+      "claim": "A Circle Topic can select only a current Board office of its owner that existed at receipt.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-02"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_1": {
+          "run": "U_A_A2_1_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "report_sha256": "eafac9f06cb4bd8410f697f6cbc18ac9f1c35796d538a6d6c584fbfc52016bde",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A21T1.log",
+            "sha256": "704cce21c74f0483383c90f8712ae4ed2acc946e6904086fa18a20b5c195b504"
+          },
+          "break": {
+            "log": "TAR3_A21_B1.log",
+            "sha256": "9c31372a12266f6b7d760d90f8f85ecf34405d104c5487b0ffaf6776572c5e5b"
+          },
+          "restored": {
+            "log": "TAR3_A21_RESTORED.log",
+            "sha256": "8877559588d4b1cec45ec5cf28accde2e1debb664bb93dd58e52203f5028dcde"
+          },
+          "admission": "HG_DECISION_U_A_A2_1_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "73d3b51863d6c6803f0344308d4c688fc0d59775df49cd3cae73d4db2db574af"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.1",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:104"
+    },
+    {
+      "obligation": "U-A-A2-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeLinkTests.test_only_circle_topic_start_carries_reference",
+      "claim": "Only an ordinary Circle Topic START may carry a canonical office UUID.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-03"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_1": {
+          "run": "U_A_A2_1_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "report_sha256": "eafac9f06cb4bd8410f697f6cbc18ac9f1c35796d538a6d6c584fbfc52016bde",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A21T1.log",
+            "sha256": "704cce21c74f0483383c90f8712ae4ed2acc946e6904086fa18a20b5c195b504"
+          },
+          "break": {
+            "log": "TAR3_A21_B2.log",
+            "sha256": "ba56085205e0d738fc85608211c222686234c60809963dcba9367f7cb2fbd31e"
+          },
+          "restored": {
+            "log": "TAR3_A21_RESTORED.log",
+            "sha256": "8877559588d4b1cec45ec5cf28accde2e1debb664bb93dd58e52203f5028dcde"
+          },
+          "admission": "HG_DECISION_U_A_A2_1_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "73d3b51863d6c6803f0344308d4c688fc0d59775df49cd3cae73d4db2db574af"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.1",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:134"
+    },
+    {
+      "obligation": "U-A-A2-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeLinkTests.test_child_must_match_start",
+      "claim": "An opening whose thread omits the selected office is refused with none of its six records left.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-04"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_1": {
+          "run": "U_A_A2_1_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_1_v1_0.md",
+          "report_sha256": "eafac9f06cb4bd8410f697f6cbc18ac9f1c35796d538a6d6c584fbfc52016bde",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A21T1.log",
+            "sha256": "704cce21c74f0483383c90f8712ae4ed2acc946e6904086fa18a20b5c195b504"
+          },
+          "break": {
+            "log": "TAR3_A21_B3.log",
+            "sha256": "4b8b5a09f7f9aa3fdf87b330c70ca9710a24fa14d999175370e8c0459b7d38d9"
+          },
+          "restored": {
+            "log": "TAR3_A21_RESTORED.log",
+            "sha256": "8877559588d4b1cec45ec5cf28accde2e1debb664bb93dd58e52203f5028dcde"
+          },
+          "admission": "HG_DECISION_U_A_A2_1_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "73d3b51863d6c6803f0344308d4c688fc0d59775df49cd3cae73d4db2db574af"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.1",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:164"
+    },
+    {
+      "obligation": "U-A-A2-05",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeStartTests.test_retry_preserves_original_selection",
+      "claim": "Exact retries keep their receipt and original version while added, removed or changed pins conflict.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-05"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_2": {
+          "run": "U_A_A2_2_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "report_sha256": "8faae568f21613157d5fd9c3fbc1ce44bf880dabeadaa7a4d3c814a5303774cd",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A22T1.log",
+            "sha256": "2938b42a5f1e697d902aafbf2db96159f9d94586901103c9d0703224e5cddb44"
+          },
+          "break": {
+            "log": "TAR3_A22_B2.log",
+            "sha256": "7a62cf7056f3fa9c62f3393d40dd44e06477235797ed77baa8da61d31f0ec07a"
+          },
+          "restored": {
+            "log": "TAR3_A22_RESTORED.log",
+            "sha256": "a93f81213c88e56e0e3faf4a246d481e9792854ff5bd406c085c144e13b6d6d0"
+          },
+          "admission": "HG_DECISION_U_A_A2_2_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0e721213db7288faced677229c50020ea1dbc52a79f1208eb3906bd2c2ba2f63"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.2",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:287"
+    },
+    {
+      "obligation": "U-A-A2-06",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeSearchTests.test_current_office_finds_earlier_version",
+      "claim": "Either Treasurer version finds both openings in creation order with their original pins.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-06"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_3": {
+          "run": "U_A_A2_3_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "report_sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A23T2.log",
+            "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+          },
+          "break": {
+            "log": "TAR3_A23_B1.log",
+            "sha256": "1170d8954a44e54a06be8bcfd641d48d51f720e4434cb59d65af807fa91734ef"
+          },
+          "restored": {
+            "log": "TAR3_A23_RESTORED.log",
+            "sha256": "00b21cee5550fa82ba6b05039b02ecc3bb41b22c282eaa2be9938783d7e73cff"
+          },
+          "admission": "HG_DECISION_U_A_A2_3_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0a2690b71ffb204de9f011b722c58cd53b4f59352bd7b0903b48cdeea0233b8d"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.3",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:407"
+    },
+    {
+      "obligation": "U-A-A2-07",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeSearchTests.test_search_discloses_no_unreadable_board",
+      "claim": "A member sees only matches on their current Circle boards, with identical empty responses elsewhere.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-07"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_3": {
+          "run": "U_A_A2_3_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "report_sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A23T2.log",
+            "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+          },
+          "break": {
+            "log": "TAR3_A23_B2.log",
+            "sha256": "32ee0162abc28aa4ca751cc7324b5b14505077c8243dd01c6a8904fbcc10a3eb"
+          },
+          "restored": {
+            "log": "TAR3_A23_RESTORED.log",
+            "sha256": "00b21cee5550fa82ba6b05039b02ecc3bb41b22c282eaa2be9938783d7e73cff"
+          },
+          "admission": "HG_DECISION_U_A_A2_3_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0a2690b71ffb204de9f011b722c58cd53b4f59352bd7b0903b48cdeea0233b8d"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.3",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:420"
+    },
+    {
+      "obligation": "U-A-A2-08",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeSearchTests.test_search_uses_exact_category",
+      "claim": "Each visible match must satisfy its own category's current audience on the same board.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-08"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_3": {
+          "run": "U_A_A2_3_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "report_sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A23T2.log",
+            "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+          },
+          "break": {
+            "log": "TAR3_A23_B3.log",
+            "sha256": "91da4bf71ca6c871f9dbd3752ab09cdd9bfd952da73ec05ba373c3cacd365434"
+          },
+          "restored": {
+            "log": "TAR3_A23_RESTORED.log",
+            "sha256": "00b21cee5550fa82ba6b05039b02ecc3bb41b22c282eaa2be9938783d7e73cff"
+          },
+          "admission": "HG_DECISION_U_A_A2_3_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0a2690b71ffb204de9f011b722c58cd53b4f59352bd7b0903b48cdeea0233b8d"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.3",
+          "event": "Initial run had a fixture error. The VC supplied description and order to revise_category. The cited normal run uses that correction."
+        },
+        {
+          "unit": "U-A A-2.3",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:451"
+    },
+    {
+      "obligation": "U-A-A2-09",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeSearchTests.test_link_visibility_follows_opening_title",
+      "claim": "Opening-title visibility governs the office list and forward link through hide, restore and retirement.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-09"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_3": {
+          "run": "U_A_A2_3_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "report_sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A23T2.log",
+            "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+          },
+          "break": {
+            "log": "TAR3_A23_B4.log",
+            "sha256": "9c841f4f29359742142bae98b493b2a688fc6f53eaa3e308ccee1beccd8f8388"
+          },
+          "restored": {
+            "log": "TAR3_A23_RESTORED.log",
+            "sha256": "00b21cee5550fa82ba6b05039b02ecc3bb41b22c282eaa2be9938783d7e73cff"
+          },
+          "admission": "HG_DECISION_U_A_A2_3_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0a2690b71ffb204de9f011b722c58cd53b4f59352bd7b0903b48cdeea0233b8d"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.3",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:472"
+    },
+    {
+      "obligation": "U-A-A2-10",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeStartTests.test_no_office_authority_bypass",
+      "claim": "Office selection discloses target eligibility only to an author with posting standing in this Circle.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-10"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_2": {
+          "run": "U_A_A2_2_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_2_v1_0.md",
+          "report_sha256": "8faae568f21613157d5fd9c3fbc1ce44bf880dabeadaa7a4d3c814a5303774cd",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A22T1.log",
+            "sha256": "2938b42a5f1e697d902aafbf2db96159f9d94586901103c9d0703224e5cddb44"
+          },
+          "break": {
+            "log": "TAR3_A22_B3.log",
+            "sha256": "d13610e80c1f932b4d12e58282d6feee3a63b4be1803a74a0d7c80b4acbe52a2"
+          },
+          "restored": {
+            "log": "TAR3_A22_RESTORED.log",
+            "sha256": "a93f81213c88e56e0e3faf4a246d481e9792854ff5bd406c085c144e13b6d6d0"
+          },
+          "admission": "HG_DECISION_U_A_A2_2_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0e721213db7288faced677229c50020ea1dbc52a79f1208eb3906bd2c2ba2f63"
+        },
+        "U_A_A2_3_F1": {
+          "run": "U_A_A2_3_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_3_v1_0.md",
+          "report_sha256": "795bba091d2287d99423ef7941cc157426aa47108c97d4b8105e27ea58ddc220",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A23T2.log",
+            "sha256": "7e51c05f14288627a6f209b1e2db5b77760b5c9a6d6dee9ef220e697e7ec7e35"
+          },
+          "admission": "HG_DECISION_U_A_A2_3_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "0a2690b71ffb204de9f011b722c58cd53b4f59352bd7b0903b48cdeea0233b8d"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.2",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence."
+        },
+        {
+          "unit": "U-A A-2.3",
+          "event": "Human Governor admitted the l.351 expectation for the existing UUID refusal. The original one-defect triple remains attached to the authority claim."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:332"
+    },
+    {
+      "obligation": "U-A-A2-11",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_discussion_office_links.DiscussionOfficeMigrationTests.test_migration_preserves_link_history",
+      "claim": "0110 round-trips unlinked history and refuses to discard a recorded office link.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A2_4_v1_0.md",
+          "unit_ids": [
+            "U-A-A2-11"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A2_4": {
+          "run": "U_A_A2_4_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A2_4_v1_0.md",
+          "report_sha256": "d902837fa375fae83d78483d5113758d2f09479e7cfb9b2f0cd75e7f726ef858",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A24T1.log",
+            "sha256": "24e13e626ec11c1cd76ca436cd3ae4e4815edfe68dde06d884491c447fe41fa3"
+          },
+          "break": {
+            "log": "TAR3_A24_B1.log",
+            "sha256": "f769716ba4bfbeaa36fda6f31a3ae9b7b387d65703de9bc9949e49adc686063a"
+          },
+          "restored": {
+            "log": "TAR3_A24_RESTORED.log",
+            "sha256": "0e0296bb9f900369bd0aec37e3d001f626503cefa561301c40de98e832791c9d"
+          },
+          "admission": "HG_DECISION_U_A_A2_4_TEST_ADMITTED_20261117_CAPTURE.txt",
+          "admission_sha256": "dc59eb23b2d94a2042ce6d2a6cf096ed670a1025aec791b079223ac3a39281da",
+          "limit": "The break proves the refusal half; the unlinked round trip has assertions but no break run (Advisor F4)."
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-2.4",
+          "event": "New populated migration witness. Runtime evidence, review and Human admission pending."
+        },
+        {
+          "unit": "U-A A-2.4",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_discussion_office_links.py:510"
+    },
+    {
+      "obligation": "U-A-A1C-01",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_alpha_trustee_setup.AlphaDatabaseBoundaryTests.test_nonqualifying_database_stops_before_provisioning",
+      "claim": "A1-DB: The Alpha set-up command refuses a non-qualifying database before any provisioning or SQL.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "unit_ids": [
+            "A1-DB"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A1C": {
+          "run": "U_A_A1C_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "report_sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A1C2.log",
+            "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+          },
+          "break": {
+            "log": "TAR3_A1C_B1.log",
+            "sha256": "764565f8d35be4a855acfa655e4614c3428f436f44ab569ad3ce2cd658af7533"
+          },
+          "restored": {
+            "log": "TAR3_A1C_RESTORED_A1CR.log",
+            "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+          },
+          "admission": "HG_DECISION_U_A_A1C_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "91523a03383db1abd8eac34d6b85aac43398855bd912863d41dd7a187fedb54e"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-1c",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (16 Nov 2026); row entered by the VC at the U-A combination (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_alpha_trustee_setup.py:20"
+    },
+    {
+      "obligation": "U-A-A1C-02",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_alpha_trustee_setup.AlphaTrusteeSetupTests.test_root_resumes_from_issued_bytes_and_refuses_changed_source",
+      "claim": "A1-ROOT: A retry returns the same issued root receipt, and a changed root source is refused.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "unit_ids": [
+            "A1-ROOT"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A1C": {
+          "run": "U_A_A1C_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "report_sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A1C2.log",
+            "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+          },
+          "break": {
+            "log": "TAR3_A1C_B2.log",
+            "sha256": "9838600081a7440cfb3b9c2de0567c572bb6d11d3997106dc929b5cf7a3b1de5"
+          },
+          "restored": {
+            "log": "TAR3_A1C_RESTORED_A1CR.log",
+            "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+          },
+          "admission": "HG_DECISION_U_A_A1C_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "91523a03383db1abd8eac34d6b85aac43398855bd912863d41dd7a187fedb54e"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-1c",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (16 Nov 2026); row entered by the VC at the U-A combination (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_alpha_trustee_setup.py:57"
+    },
+    {
+      "obligation": "U-A-A1C-03",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_alpha_trustee_setup.AlphaTrusteeSetupTests.test_interrupted_people_stage_resumes_and_founding_replays",
+      "claim": "A1-FOUND: An interrupted people stage resumes its registrations, and the founding replays to the same organisation and phase.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "unit_ids": [
+            "A1-FOUND"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A1C": {
+          "run": "U_A_A1C_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "report_sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A1C2.log",
+            "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+          },
+          "break": {
+            "log": "TAR3_A1C_B3.log",
+            "sha256": "86c126b7c6791245fa9d476fe5b94b57f50fe46050b32fb1e0e68af5711794d7"
+          },
+          "restored": {
+            "log": "TAR3_A1C_RESTORED_A1CR.log",
+            "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+          },
+          "admission": "HG_DECISION_U_A_A1C_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "91523a03383db1abd8eac34d6b85aac43398855bd912863d41dd7a187fedb54e"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-1c",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (16 Nov 2026); row entered by the VC at the U-A combination (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_alpha_trustee_setup.py:80"
+    },
+    {
+      "obligation": "U-A-A1C-04",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_alpha_trustee_setup.AlphaTrusteeSetupTests.test_a0_finishes_on_original_appointments_after_interrupted_seating",
+      "claim": "A1c-A0: An interrupted Board set-up reaches the authorised A0 exactly once, on its original appointments.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "unit_ids": [
+            "A1c-A0"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A1C": {
+          "run": "U_A_A1C_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "report_sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A1C2.log",
+            "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+          },
+          "break": {
+            "log": "TAR3_A1C_B4.log",
+            "sha256": "77b71f74ee3340b61ea54874f7ff44e46b7de6b3c7bc4588886657974aebad03"
+          },
+          "restored": {
+            "log": "TAR3_A1C_RESTORED_A1CR.log",
+            "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+          },
+          "admission": "HG_DECISION_U_A_A1C_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "91523a03383db1abd8eac34d6b85aac43398855bd912863d41dd7a187fedb54e"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-1c",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (16 Nov 2026); row entered by the VC at the U-A combination (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_alpha_trustee_setup.py:111"
+    },
+    {
+      "obligation": "U-A-A1C-05",
+      "baseline_label": null,
+      "status": "active",
+      "current_label": "test_alpha_trustee_setup.AlphaTrusteeSetupTests.test_a1_departure_ends_only_the_treasurers_membership_and_appointment",
+      "claim": "A1c-A1: The Treasurer's voluntary departure ends only that membership and appointment, opening the vacancy while the original seats continue.",
+      "unit_TAR": [
+        {
+          "source": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "unit_ids": [
+            "A1c-A1"
+          ]
+        }
+      ],
+      "review": null,
+      "admission_registry": [],
+      "recurring_controls": [],
+      "evidence": {
+        "U_A_A1C": {
+          "run": "U_A_A1C_VC",
+          "report": "VC_TAR_ADHERENCE_REPORT_U_A_A1C_v1_0.md",
+          "report_sha256": "e4a68b010fabf75eb800343fb7992b9ced374175a416839bb76a71d46fa7b976",
+          "normal": {
+            "log": "VC_TARGETED_RUN_A1C2.log",
+            "sha256": "403c56f1878fc104b506f6284fba5f82ef86da9e3dcd6691aaf14eefa1db3670"
+          },
+          "break": {
+            "log": "TAR3_A1C_B5.log",
+            "sha256": "ba8bf8b879fa59b62306dbb084b754f8585b37b64a147462905c6502836cfec7"
+          },
+          "restored": {
+            "log": "TAR3_A1C_RESTORED_A1CR.log",
+            "sha256": "364b9fb70a393633c72e3854143599f1e31b133b69fd10c9904bbfbca7cee8bc"
+          },
+          "admission": "HG_DECISION_U_A_A1C_TESTS_ADMITTED_20261116_CAPTURE.txt",
+          "admission_sha256": "91523a03383db1abd8eac34d6b85aac43398855bd912863d41dd7a187fedb54e"
+        }
+      },
+      "history": [
+        {
+          "unit": "U-A A-1c",
+          "event": "Human Governor admitted this method on the reported VC normal, one-defect and restored evidence (16 Nov 2026); row entered by the VC at the U-A combination (17 Nov 2026)."
+        }
+      ],
+      "current_source": "tests/test_alpha_trustee_setup.py:181"
     }
   ],
   "previous_unit": {
-    "package": "C1-108 P4c2",
-    "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
-    "baseline_methods": 254,
-    "candidate_methods": 257,
+    "package": "TIMED EVENTS T1b CK-1 R4c",
+    "baseline_commit": "b85df0db10ad3430a44b8947177df9829920853f",
+    "baseline_methods": 267,
+    "candidate_methods": 293,
     "coverage": {
-      "unit_tables": 25,
+      "unit_tables": 26,
       "SR_C2_staging_tables": 1,
       "historical_carryovers": 90,
       "DISC3_methods": 8,
-      "active": 257,
-      "folded": 46,
+      "active": 293,
+      "folded": 47,
       "retired": 2,
       "DISC4_methods": 6,
       "ELECT_methods": 13,
       "HARD_methods_added": 1,
       "COMMITTEES_methods": 6,
-      "C1_108_methods": 3
+      "C1_108_methods": 3,
+      "TIMED_EVENTS_methods": 10,
+      "INTEVIA_CLOCK_methods": 10,
+      "MIGRATION_REVERSIBILITY_methods": 4
     },
     "previous_unit": {
-      "package": "COMMITTEES P1g2",
-      "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
-      "baseline_methods": 243,
-      "candidate_methods": 254,
+      "package": "C1-108 P4c2",
+      "baseline_commit": "e96f30d4cac51d0cf52dbf3b8f03713c99ad7c4f",
+      "baseline_methods": 254,
+      "candidate_methods": 257,
       "coverage": {
-        "unit_tables": 18,
+        "unit_tables": 25,
         "SR_C2_staging_tables": 1,
         "historical_carryovers": 90,
         "DISC3_methods": 8,
-        "active": 254,
+        "active": 257,
         "folded": 46,
         "retired": 2,
         "DISC4_methods": 6,
         "ELECT_methods": 13,
         "HARD_methods_added": 1,
-        "COMMITTEES_methods": 6
+        "COMMITTEES_methods": 6,
+        "C1_108_methods": 3
       },
       "previous_unit": {
-        "package": "HARD P1b",
-        "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
-        "baseline_methods": 253,
-        "candidate_methods": 243,
+        "package": "COMMITTEES P1g2",
+        "baseline_commit": "4e99212d65b8a663ac96a6ab8f346beb43732b15",
+        "baseline_methods": 243,
+        "candidate_methods": 254,
         "coverage": {
-          "unit_tables": 13,
+          "unit_tables": 18,
           "SR_C2_staging_tables": 1,
           "historical_carryovers": 90,
           "DISC3_methods": 8,
-          "active": 243,
+          "active": 254,
           "folded": 46,
           "retired": 2,
           "DISC4_methods": 6,
-          "ELECT_methods": 8,
-          "HARD_methods_added": 1
+          "ELECT_methods": 13,
+          "HARD_methods_added": 1,
+          "COMMITTEES_methods": 6
         },
-        "earlier": {
-          "package": "ELECT P2",
-          "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
-          "baseline_methods": 245,
-          "candidate_methods": 253,
+        "previous_unit": {
+          "package": "HARD P1b",
+          "baseline_commit": "1050f2f5dc2b4d2dee8a672815474f8fdb651f06",
+          "baseline_methods": 253,
+          "candidate_methods": 243,
           "coverage": {
             "unit_tables": 13,
             "SR_C2_staging_tables": 1,
             "historical_carryovers": 90,
             "DISC3_methods": 8,
-            "active": 253,
-            "folded": 35,
+            "active": 243,
+            "folded": 46,
             "retired": 2,
             "DISC4_methods": 6,
-            "ELECT_methods": 8
+            "ELECT_methods": 8,
+            "HARD_methods_added": 1
+          },
+          "earlier": {
+            "package": "ELECT P2",
+            "baseline_commit": "38eabfddddf04c8b40ac5c79bd74077fd65fe967",
+            "baseline_methods": 245,
+            "candidate_methods": 253,
+            "coverage": {
+              "unit_tables": 13,
+              "SR_C2_staging_tables": 1,
+              "historical_carryovers": 90,
+              "DISC3_methods": 8,
+              "active": 253,
+              "folded": 35,
+              "retired": 2,
+              "DISC4_methods": 6,
+              "ELECT_methods": 8
+            }
           }
         }
       }
     }
+  },
+  "discovery": {
+    "commit": "553440ef816f46036904850a66f8698c2a07c2f6",
+    "collected_at_baseline": 322,
+    "ledger_active_at_baseline": 293,
+    "note": "baseline_methods 293 is the inherited ledger active-row count, not main's collected suite. 29 collected methods on main have no row; they are owed.",
+    "unledgered_by_module": {
+      "test_circle_vacancy_episode": 12,
+      "test_circle_committee_dormancy": 5,
+      "test_circle_capacity_deadline": 4,
+      "test_committee_chair_authority": 4,
+      "test_circle_dated_custody_and_coverage": 3,
+      "test_circle_vacancy_rollout": 1
+    },
+    "method": "VC_COUNT_COLLECTED_TESTS_v1_0.py (44ad5cc841d14f988bd597c9336a36ffc647b4b22212feb78dad50c451d20207); test_s015_0021_negative_direct_sql (41 methods) counted at source",
+    "owed": "Ledger catch-up reconciliation of the 29 methods; and a recurring CI check of ledger rows against the discovered suite (Human Governor, 17 Nov 2026 08:01)",
+    "decision": "HG_DECISION_U_A_LANDS_WITH_LEDGER_GAP_DISCLOSED_20261117_CAPTURE.txt",
+    "decision_sha256": "249a52028f6d59a39ccc4605216478c66c2ac61787351073a77f99b2ec0facf4"
   }
 }
