@@ -1,1 +1,9 @@
-{% if href %}<a class="button {{ variant|default:'primary' }}" href="{{ href }}">{{ label }}</a>{% else %}<button class="button {{ variant|default:'primary' }}" type="{{ type|default:'button' }}"{% if disabled or loading %} disabled{% endif %}{% if loading %} aria-busy="true"{% endif %}>{% if loading %}… {% endif %}{{ label }}</button>{% endif %}
+{% with kind=variant|default:'primary' %}{% if href %}
+  {% if kind == 'primary' and disabled or kind == 'primary' and loading %}
+    <a class="button primary" role="link" aria-disabled="true"{% if loading %} aria-busy="true"{% endif %}>{% if loading %}… {% endif %}{{ label }}</a>
+  {% else %}
+    <a class="button {{ kind }}" href="{{ href }}">{{ label }}</a>
+  {% endif %}
+{% else %}
+  <button class="{% if kind == 'text-command' %}text-command{% else %}button {% if kind == 'primary' %}command {% endif %}{{ kind }}{% endif %}" type="{{ type|default:'button' }}"{% if disabled or loading %} disabled{% endif %}{% if loading %} aria-busy="true"{% endif %}>{% if loading %}… {% endif %}{{ label }}</button>
+{% endif %}{% endwith %}

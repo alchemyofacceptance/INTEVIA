@@ -1,0 +1,6 @@
+{% extends "core/base.html" %}
+{% block title %}{{ title }} | INTEVIA{% endblock %}
+{% block content %}
+{% include "core/components/notice.html" with kind="refusal" page_title=title message=why effect=effect next_url=next_url next_label=action next_instruction=action retained=help_text only %}
+{% if choice %}<p>Your submitted choice: {{ choice }}</p>{% endif %}
+{% endblock %}

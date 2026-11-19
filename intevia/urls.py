@@ -17,11 +17,15 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from core import views, ui_views
+from core import office_switch, organisation_pages, views, ui_views
 
 urlpatterns = [
     path('explore/', ui_views.placeholder, {"section": "explore"}, name='f0-explore'),
-    path('intevia/', ui_views.placeholder, {"section": "organisation"}, name='f0-organisation'),
+    path('intevia/', organisation_pages.entry, name='f0-organisation'),
+    path('intevia/<uuid:org>/', organisation_pages.home, name='organisation_home'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/', organisation_pages.circle_page, name='circle_page'),
+    path('intevia/<uuid:org>/offices/<uuid:office>/', ui_views.office_page, name='office_page'),
+    path('intevia/<uuid:org>/offices/<uuid:office>/assistance/', office_switch.change_assistance, name='office_switch'),
     path('history/', ui_views.placeholder, {"section": "history"}, name='f0-history'),
     path('you/', ui_views.you, name='f0-you'),
     path('spaces/<str:scope>/<str:domain>/', ui_views.domain, name='f0-domain'),

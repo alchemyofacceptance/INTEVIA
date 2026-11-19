@@ -1,22 +1,61 @@
-"""Derive catalogue tokens and contrast from the sole stylesheet input."""
+"""Derive the catalogue's token values and contrast ratios from F0's single theme."""
+import json
+import re
 from pathlib import Path
-import re,json
-C=Path(__file__).resolve().parents[1]
-s=(C/'core/styles/theme.css').read_text()
-tokens=[{'name':a,'value':b.strip()} for a,b in re.findall(r'--([\w-]+):([^;{}]+);',s.split('@layer base')[0]) if a!='color-']
-colors={a['name'][6:]:a['value'] for a in tokens if a['name'].startswith('color-')}
-def lum(x):
- vals=[int(x[i:i+2],16)/255 for i in (1,3,5)];return sum((v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4)*w for v,w in zip(vals,[.2126,.7152,.0722]))
-def ratio(a,b):
- l,h=sorted([lum(colors[a]),lum(colors[b])]);return round((h+.05)/(l+.05),2)
-pairs=[]
-for bg in ['page','surface']:
- for fg in ['text','muted','primary','accent']:pairs.append((fg,bg,'Text'))
-for fg,bg in [('primary','primary-soft'),('accent','accent-soft'),('success','success-bg'),('warning','warning-bg'),('danger','danger-bg'),('pending','pending-bg')]:pairs.append((fg,bg,'Text and status symbol'))
-for bg in ['primary','success','danger']:pairs.append(('surface',bg,'Button label'))
-for bg in ['surface','page','primary-soft','pending-bg','accent-soft','success-bg','warning-bg','danger-bg']:pairs.extend([('control',bg,'Control boundary'),('focus',bg,'Focus outline')])
-for fg in ['violet','luminous','moon']:pairs.append((fg,'night','Reserved; not active in F0'))
-pairs.append(('line','surface','Decorative only, never a control'))
-refs={'tokens':tokens,'contrast':[{'pair':a+' / '+b,'ratio':ratio(a,b),'use':u} for a,b,u in pairs]}
+
+THEME = Path(__file__).resolve().parents[1] / "core/styles/theme.css"
+DECLARATION = re.compile(r"--([\w-]+):([^;{}]+);")
+
+
+def luminance(colour):
+    channels = [int(colour[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+    return sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+
+def ratio(palette, ink, ground):
+    low, high = sorted(luminance(palette[name]) for name in (ink, ground))
+    return round((high + 0.05) / (low + 0.05), 2)
+
+
+def contrast_pairs():
+    for ground in ("page", "surface", "band"):
+        for ink in ("text", "heading", "muted", "primary", "accent", "danger"):
+            yield ink, ground, "Text"
+    for ink, ground in (("primary", "primary-soft"), ("accent", "accent-soft"),
+                        ("success", "success-bg"), ("warning", "warning-bg"),
+                        ("danger", "danger-bg"), ("pending", "pending-bg")):
+        yield ink, ground, "Text and status symbol"
+    for ink, ground in (("on-button", "button"), ("surface", "success"), ("surface", "danger")):
+        yield ink, ground, "Flat fallback label" if ink == "on-button" else "Flat button label"
+    for ground in ("surface", "page", "band", "primary-soft", "pending-bg", "accent-soft",
+                   "success-bg", "warning-bg", "danger-bg"):
+        yield "control", ground, "Control boundary"
+        yield "focus", ground, "Focus outline"
+    for ink in ("violet", "luminous", "moon"):
+        yield ink, "night", "Brand palette"
+    yield "line", "surface", "Decorative divider"
+
+
 def reference_bytes():
-    return (json.dumps(refs,indent=2)+'\n').encode('utf-8')
+    source = THEME.read_text(encoding="utf-8")
+    light = dict(DECLARATION.findall(source.partition("@theme {")[2].partition("@layer base")[0]))
+    for block in re.findall(r"@variant\s+dark-page\s*\{([^{}]+)\}", source):
+        overrides = dict(DECLARATION.findall(block))
+        if "color-page" in overrides:
+            break
+    else:
+        raise ValueError("The dark-page palette must declare --color-page.")
+    dark = light | overrides
+    tokens = [{"name": name, "value": value.strip(), "dark_value": dark[name].strip()}
+              for name, value in light.items()]
+    palettes = [{name.removeprefix("color-"): value for name, value in mode.items()
+                 if name.startswith("color-")} for mode in (light, dark)]
+    contrast = [{"pair": f"{ink} / {ground}", "ratio": ratio(palettes[0], ink, ground),
+                 "dark_ratio": ratio(palettes[1], ink, ground), "use": use}
+                for ink, ground, use in contrast_pairs()]
+    # The light control is bounded by its fill. The dark control has a separate rim.
+    for ground in ("page", "surface"):
+        contrast.append({"pair": f"Flat fallback edge / {ground}", "ratio": ratio(palettes[0], "button", ground),
+                         "dark_ratio": ratio(palettes[1], "violet", ground), "use": "Control boundary"})
+    return (json.dumps({"tokens": tokens, "contrast": contrast}, indent=2) + "\n").encode("utf-8")

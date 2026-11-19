@@ -1,5 +1,6 @@
 <aside class="notice {{ kind|default:'info' }}"{% if kind == 'refusal' or kind == 'error' %} role="alert"{% else %} role="status"{% endif %}>
-{% if title %}<h2>{{ title }}</h2>{% endif %}<p>{{ message }}</p>
-{% if next_url %}<p class="next-action">{% include 'core/components/button.html' with href=next_url label=next_label variant='secondary' only %}</p>{% endif %}
+{% if page_title %}<h1>{{ page_title }}</h1>{% elif title %}<h2>{{ title }}</h2>{% endif %}<p>{{ message }}</p>
+{% if effect %}<p>{{ effect }}</p>{% endif %}
+{% if next_url %}<p class="next-action">{% include 'core/components/button.html' with href=next_url label=next_label variant='secondary' only %}</p>{% elif next_instruction %}<p>{{ next_instruction }}</p>{% endif %}
 {% if retained %}<p>{{ retained }}</p>{% endif %}
 </aside>

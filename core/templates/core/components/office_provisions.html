@@ -1,0 +1,17 @@
+<section aria-labelledby="office-provisions">
+  <p class="eyebrow" id="office-provisions">Office provisions</p>
+  {% for row in rows %}
+    {% if row.provision.status == "cited_at_definition" %}
+      <details class="card office-provision">
+        <summary>Cited when the office was defined · Version {{ row.provision.version }}</summary>
+        {% include "core/components/office_provision.html" with row=row office=office only %}
+      </details>
+    {% else %}
+      <article class="card office-provision">
+        {% include "core/components/office_provision.html" with row=row office=office only %}
+      </article>
+    {% endif %}
+  {% empty %}
+    <p>No provisions to show here.</p>
+  {% endfor %}
+</section>

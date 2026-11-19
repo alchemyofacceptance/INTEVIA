@@ -1,0 +1,27 @@
+{% with provision=row.provision observation=row.observation %}
+<h2>{{ row.label }}{% if provision.locator %} · Clause {{ provision.locator }}{% endif %}</h2>
+<p class="meta">Version {{ provision.version }}</p>
+{% if provision.status == "cited_and_in_force" %}<p>Cited and in force</p>{% elif provision.status == "in_force_now" %}<p>In force now</p>{% endif %}
+<div{% if observation %} class="office-source-pair"{% endif %}>
+  <blockquote class="office-clause">{{ provision.clause }}</blockquote>
+  {% if observation %}
+    <aside class="office-observation" aria-label="CARE observation">
+      <p class="eyebrow">{{ observation.label }}</p>
+      <h3>Observation</h3>
+      <p>{{ observation.words }}</p>
+      <p class="meta">Source: clause {{ observation.source_locator }}, version {{ observation.source_version }}</p>
+    </aside>
+  {% endif %}
+</div>
+<details class="office-adoption">
+  <summary>Adoption record</summary>
+  <dl class="office-facts">
+    {% if provision.adopting_body %}<dt>Adopting body</dt><dd>{% if provision.adopting_body == office.organism_uuid %}{{ office.organisation_full_name }}{% else %}Inherited from another organisation{% endif %}</dd>{% endif %}
+    {% if provision.adoption_route %}<dt>Adoption route</dt><dd>{{ provision.adoption_route }}</dd>{% endif %}
+    <dt>In force from</dt><dd>{% include "core/components/office_time.html" with stamp=provision.in_force_from only %}</dd>
+    <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=provision.recorded_at only %}</dd>
+    <dt>Adoption record</dt><dd>{{ provision.adoption_record }}</dd>
+    {% if provision.adoption_result_link %}<dt>Adoption result</dt><dd>{{ provision.adoption_result_link }}</dd>{% endif %}
+  </dl>
+</details>
+{% endwith %}

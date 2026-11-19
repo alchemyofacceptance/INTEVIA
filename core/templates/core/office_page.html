@@ -1,0 +1,97 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}{{ record.office.label|default:"Office record" }} | INTEVIA{% endblock %}
+{% block organisation_navigation %}
+{% if record.office.organism_uuid and record.office.organisation_short_label %}<nav class="org-strip" aria-label="Organisations"><a class="org-chip" aria-current="true" href="{% url 'organisation_home' record.office.organism_uuid %}">{{ record.office.organisation_short_label }}</a></nav>{% endif %}
+{% endblock %}
+{% block content %}
+{% with office=record.office %}
+<nav aria-label="Breadcrumb">
+  <span>{{ office.organisation_short_label }}</span>{% if office.board_short_label %} <span aria-hidden="true">›</span> <span>{{ office.board_short_label }}</span>{% endif %}
+  <span aria-hidden="true">›</span> <span aria-current="page">{{ office.label|default:"Office record" }}</span>
+</nav>
+<hgroup>
+  <p class="eyebrow">{{ office.organisation_full_name }}{% if office.board_full_name %} · {{ office.board_full_name }}{% endif %}</p>
+  <h1>{{ office.label|default:"Office record" }}</h1>
+</hgroup>
+<p>Office definition · Version {{ office.requested_version }}</p>
+{% if office.current_version and office.current_version != office.requested_version %}
+<p>Current office definition · Version {{ office.current_version }}</p>
+{% endif %}
+{% endwith %}
+
+{% if record.tenure %}
+<section class="card" aria-labelledby="tenure-heading">
+  <h2 id="tenure-heading">Office tenure</h2>
+  {% for term in record.tenure %}
+    {% if term.state == "vacant" %}
+      <p>Vacant</p>
+    {% else %}
+      <p>{% if term.state == "ongoing" %}Current term{% else %}Former term{% endif %}{% if term.holder_name %} · {{ term.holder_name }}{% endif %}</p>
+      <p class="meta">From <time datetime="{{ term.starts_at|date:'c' }}">{{ term.starts_at|date:"j F Y" }}</time>{% if term.ends_at %} · {% if term.state == "ongoing" %}Scheduled to finish{% else %}Ended{% endif %} <time datetime="{{ term.ends_at|date:'c' }}">{{ term.ends_at|date:"j F Y" }}</time>{% endif %}</p>
+    {% endif %}
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if record.care %}
+<section class="card" aria-labelledby="office-assistance">
+  <h2 id="office-assistance">CARE assistance</h2>
+  <p><span class="tag {% if record.care.enabled %}ok{% else %}neutral{% endif %}">{% if record.care.enabled %}On{% else %}Off{% endif %}</span>{% if record.care.choice_source == "default" %} · On by default{% elif record.care.choice_source == "chosen" %} · Organisation choice{% endif %}</p>
+  {% if record.care.switched_by and record.care.switched_by_name %}
+    <dl class="office-facts"><dt>Chosen by</dt><dd>{{ record.care.switched_by_name }}</dd></dl>
+  {% endif %}
+  {% if switch_forms %}
+    <p>As Organisation Coordinator, you can change this.</p>
+    <div class="office-switch-actions">
+    {% for choice, label, key, variant in switch_forms %}
+      <form method="post" action="{{ switch_url }}">
+        {% csrf_token %}
+        <input type="hidden" name="enabled" value="{{ choice }}">
+        <input type="hidden" name="predecessor" value="{{ record.care.switch_receipt|default:'' }}">
+        <input type="hidden" name="request_uuid" value="{{ key }}">
+        {% include "core/components/button.html" with type="submit" label=label variant=variant only %}
+      </form>
+    {% endfor %}
+    </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% office_provisions record %}
+
+<section aria-labelledby="office-topics">
+  <h2 id="office-topics">Topics about this office</h2>
+  {% for topic in record.topics %}
+    <article class="card office-topic">
+      <h3>{{ topic.title }}</h3>
+      <p class="meta">Started {% include "core/components/office_time.html" with stamp=topic.created_at only %} · Office version {{ topic.office_version }}</p>
+    </article>
+  {% empty %}
+    <p>No Topics to show here.</p>
+  {% endfor %}
+</section>
+
+<section aria-labelledby="office-decisions">
+  <h2 id="office-decisions">Decisions</h2>
+  {% for decision in record.decisions %}
+    <article class="card office-decision">
+      {% if decision.purpose == "standing_adoption" %}<h3>Adoption of the standing Policy</h3>
+      {% elif decision.purpose == "one_payment" %}<h3>One payment</h3>{% endif %}
+      <p><strong>{{ decision.outcome }}</strong> {{ decision.label|capfirst }}{% if decision.adopted_version %} · Version {{ decision.adopted_version }}{% endif %}</p>
+      <dl class="office-facts">
+        {% if decision.body %}<dt>Deciding body</dt><dd>{{ record.office.board_short_label|default:"Board" }}</dd>{% endif %}
+        <dt>Effective</dt><dd>{% include "core/components/office_time.html" with stamp=decision.effective_at only %}</dd>
+        <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=decision.recorded_at only %}</dd>
+        <dt>Result reference</dt><dd>{{ decision.result_link }}</dd>
+        {% if decision.adopted_binding %}<dt>Adopted provision reference</dt><dd>{{ decision.adopted_binding }}</dd>{% endif %}
+        {% if decision.reporting_rule_link %}<dt>Reporting rule reference</dt><dd>{{ decision.reporting_rule_link }}</dd>{% endif %}
+      </dl>
+    </article>
+  {% empty %}
+    <p>No decisions to show here.</p>
+  {% endfor %}
+</section>
+
+{% office_timeline record %}
+{% endblock %}

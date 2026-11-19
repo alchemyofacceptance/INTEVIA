@@ -1,6 +1,8 @@
 """F0 placeholders and catalogue; never a source of product authority."""
 import json
+import re
 from pathlib import Path
+from uuid import uuid4
 from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -8,8 +10,9 @@ from django.contrib.auth.views import redirect_to_login
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
 from core.cache import personal_response
+from core.models import Identity
 from core.ui import DOMAINS, participation
 
 PAGES = {
@@ -26,11 +29,64 @@ def placeholder(request, section):
     title, heading, message = PAGES[section]
     return render(request,"core/ui_placeholder.html",{"title":title,"heading":heading,"message":message,"section":section})
 
+def is_prefetch(request):
+    # Either purpose header can mark a speculative request, including prefetch;prerender.
+    return any(
+        "prefetch" in re.split(r"[;,\s]+", request.headers.get(header, "").casefold())
+        for header in ("Sec-Purpose", "Purpose")
+    )
+
+
 @personal_response
 @login_required(login_url="login")
-@require_GET
+@require_http_methods(["GET", "HEAD"])
+def office_page(request, org, office):
+    """Render one office read for the credential bound by the session middleware."""
+    from src.intevia.services.care_assistance import SettingRefused
+    from src.intevia.services.office_record import office_record
+
+    prefetch = is_prefetch(request)
+    try:
+        page = office_record(credential=request.user, organism_uuid=org, office_definition_uuid=office,
+                             present_care=request.method == "GET" and not prefetch)
+    except SettingRefused as exc:
+        if exc.code != "CARE_SETTING_UNAVAILABLE":
+            raise
+        return render(request, "core/office_unavailable.html", status=404)
+    setting = page.get("care", {})
+    forms = []
+    if setting.get("can_change"):
+        if setting["enabled"]:
+            forms.append(("off", "Turn assistance off", uuid4(), "text-command"))
+        else:
+            forms.append(("on", "Turn assistance on", uuid4(), "primary"))
+    return render(request, "core/office_page.html", {
+        "record": page, "switch_forms": forms,
+        "switch_url": reverse("office_switch", args=(org, office)) if forms else None,
+    })
+
+
+@personal_response
+@login_required(login_url="login")
+@require_http_methods(["GET", "POST"])
 def you(request):
-    return render(request,"core/you.html")
+    context = {"colour_choices": Identity.ColourMode.choices}
+    if request.method == "POST":
+        submitted = request.POST.getlist("colour_mode")
+        if len(submitted) != 1 or submitted[0] not in Identity.ColourMode.values:
+            context["appearance_error"] = "Choose one of the three colour modes."
+            return render(request, "core/you.html", context, status=400)
+
+        identity = request.intevia_identity
+        saved = Identity.objects.filter(
+            pk=identity.pk, credential=request.user, access_epoch=identity.access_epoch,
+            access_state=Identity.AccessState.ACTIVE,
+        ).update(colour_mode=submitted[0])
+        if not saved:
+            context["appearance_error"] = "Your session has changed. Sign in again to save your appearance."
+            return render(request, "core/you.html", context, status=403)
+        return redirect("f0-you")
+    return render(request, "core/you.html", context)
 
 @personal_response
 @require_GET

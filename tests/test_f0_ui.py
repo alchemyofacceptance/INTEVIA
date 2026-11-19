@@ -53,6 +53,9 @@ class F0PresentationTests(SimpleTestCase):
         self.user=SimpleNamespace(is_authenticated=True,is_active=True,get_full_name=lambda:"Alex Morgan")
         self.identity=SimpleNamespace(display_name="Alex Morgan",access_state="active")
         self.auth=patch("django.contrib.auth.middleware.get_user",return_value=self.user)
+        memberships = patch("src.intevia.services.organism_membership_service.OrganismMembershipReader.list_own_memberships", return_value=[])
+        memberships.start()
+        self.addCleanup(memberships.stop)
         self.binding=patch("core.session.IdentityAccessMiddleware._valid_identity",return_value=self.identity)
         self.auth.start();self.binding.start();self.addCleanup(self.auth.stop);self.addCleanup(self.binding.stop)
         self.event=SimpleNamespace(event_id="event:f0",title="Fictional event",description="An example.",resources=[],
@@ -233,3 +236,17 @@ class F0PresentationTests(SimpleTestCase):
         js=(root/"core/static/core/f0.js").read_text()
         self.assertNotRegex(js,r"https?://|fetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon","F0 JavaScript must not reference external URLs or initiate network requests.")
         self.assertNotRegex(js,r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.","F0 must not add browser storage.")
+
+    def test_keyboard_scrolling_reserves_space_for_fixed_navigation(self):
+        """Check the served breakpoint rules. Chromium measures actual Tab positions."""
+        css = (Path(__file__).resolve().parents[1] / "core/static/core/f0.css").read_text()
+        phone, breakpoint, desktop = css.partition("@media (min-width:64rem){")
+        self.assertTrue(breakpoint, "The served shell must have its wide navigation breakpoint.")
+        self.assertIn("html:has(.main-nav){scroll-padding-bottom:calc(var(--bar) + var(--safe) + var(--space-sm))}",
+                      phone, "Phone keyboard scrolling must reserve the bottom navigation and focus gap.")
+        self.assertIn("html:has(.domain-nav){scroll-padding-bottom:calc(var(--bar) + var(--domains) + var(--safe) + var(--space-sm))}",
+                      phone, "Phone focus must reserve the domain bar even while scrolling has collapsed it.")
+        self.assertIn("html:has(.main-nav){scroll-padding-bottom:0}", desktop,
+                      "A wide side rail alone must not reserve space below the viewport.")
+        self.assertIn("html:has(.domain-nav){scroll-padding-bottom:calc(var(--domains) + var(--space-sm))}",
+                      desktop, "Wide keyboard scrolling must reserve the domain bar and focus gap.")

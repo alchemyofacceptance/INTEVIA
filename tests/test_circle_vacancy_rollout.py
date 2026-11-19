@@ -95,6 +95,7 @@ class CircleVacancyRolloutTests(TransactionTestCase):
         received_head = support.current_applied_core_head(connection)[0][1]
         self.addCleanup(migrate, received_head)
         migrate(PREVIOUS)
+        support.supply_identity_colour_mode(self)
         # The fixture writes under 0104, before the settlement writer exists.
         with patch.object(commands, "settle_vacancy", return_value=None):
             old, expired = form_with_members()

@@ -4,6 +4,9 @@ from uuid import UUID, uuid4
 from django.db import DatabaseError, connection, transaction
 from psycopg import sql
 
+from core.models import CircleStateEvent
+from src.intevia.services._office_family import office_family
+from src.intevia.services._record_names import full_name_and_short_label, office_label
 from src.intevia.services import care_assistance as care
 from src.intevia.services import discussion as disc
 from src.intevia.services import cq_reads, discussion_posts, law_records, library_laws
@@ -17,105 +20,46 @@ _PAIR = """public.core_careofficeobservation o JOIN public.core_livingorganismev
           AND e.action='RECORD_CARE_OFFICE_OBSERVATION'"""
 
 
-def _tenure(family_ids, owner_id, at):
-    # A rejoin retains the membership anchor. Bind its departure to this
-    # appointment's period, using the original proposal and the actual award.
-    rows = disc._rows("""
-        WITH appointments AS (
-            SELECT a.assignment_uuid AS occupancy,a.id AS assignment_id,m.id AS member_id,m.identity_id,
-                   award.effective_at AS starts,
-                   least(public.elect_office_deadline(award.id,%(at)s),
-                         (SELECT min(x.effective_at) FROM public.core_contextualroleassignmentstateevent x
-                           WHERE x.assignment_id=a.id AND x.resulting_state='ENDED'
-                             AND greatest(x.received_at,x.recorded_at)<=%(at)s),
-                         (SELECT min(x.effective_at) FROM public.core_organismmembershiptransition x
-                           WHERE x.membership_id=m.id AND x.resulting_state='ENDED'
-                             AND (x.recorded_at>origin.recorded_at OR x.effective_at>=award.effective_at)
-                             AND greatest(x.received_at,x.recorded_at)<=%(at)s)) AS ends
-              FROM public.core_contextualroleassignment a
-              JOIN public.core_organismmembership m ON m.id=a.membership_id AND m.living_organism_id=%(owner_id)s
-              JOIN public.core_contextualroleassignmentstateevent origin ON origin.assignment_id=a.id AND origin.sequence=1
-              JOIN public.core_contextualroleassignmentstateevent award ON award.assignment_id=a.id AND award.action='ASSIGN'
-             WHERE a.role_definition_id=ANY(%(versions)s::bigint[]) AND a.circle_id IS NULL
-               AND award.effective_at<=%(at)s AND greatest(award.received_at,award.recorded_at)<=%(at)s
-        ), terms AS (
-            SELECT p.*,public.elect_term_includes(%(at)s,p.starts,p.ends)
-                       AND public.elect_office_effective(p.assignment_id,%(at)s,%(at)s) AS ongoing
-              FROM appointments p WHERE p.ends IS NULL OR p.starts<p.ends
-        ), held AS (
-            SELECT t.* FROM terms t WHERE t.ongoing OR (
-                t.ends<=%(at)s AND EXISTS (
-                    SELECT FROM (
-                        SELECT t.starts AS moment
-                        UNION ALL
-                        SELECT e.effective_at FROM public.core_contextualroleassignmentstateevent e
-                         WHERE e.assignment_id=t.assignment_id AND e.resulting_state='ACTIVE'
-                           AND greatest(e.received_at,e.recorded_at)<=%(at)s
-                        UNION ALL
-                        SELECT m.effective_at FROM public.core_organismmembershiptransition m
-                         WHERE m.membership_id=t.member_id AND m.resulting_state='ACTIVE'
-                           AND greatest(m.received_at,m.recorded_at)<=%(at)s
-                    ) probe
-                    WHERE probe.moment>=t.starts AND probe.moment<t.ends
-                      AND public.elect_office_effective(t.assignment_id,probe.moment,%(at)s)
-                )
-            )
-        )
-        SELECT visible_vacancy,ongoing,starts,ends,holder_name
-          FROM (
-            SELECT false AS visible_vacancy,h.ongoing,h.starts,h.ends,r.display_name AS holder_name,h.occupancy
-              FROM held h
-              LEFT JOIN public.core_identityresolution r ON r.identity_id=h.identity_id
-               AND NOT EXISTS (SELECT FROM public.core_identityresolutionsevered z WHERE z.identity_id=h.identity_id)
-            UNION ALL
-            SELECT true,false,NULL,NULL,NULL,NULL
-             WHERE NOT EXISTS (SELECT FROM terms WHERE ongoing)
-          ) visible
-         ORDER BY visible_vacancy DESC,ongoing DESC,starts DESC,occupancy
-    """, {"versions": family_ids, "owner_id": owner_id, "at": at})
-    tenure = []
-    for row in rows:
-        if row["visible_vacancy"]:
-            tenure.append({"state": "vacant"})
-            continue
-        term = {"state": "ongoing" if row["ongoing"] else "former",
-                "starts_at": row["starts"], "ends_at": row["ends"]}
-        if row["holder_name"]:
-            term["holder_name"] = row["holder_name"]
-        tenure.append(term)
-    return tenure
+def _office_setting(access, actor, owner):
+    setting = care._setting_projection(access, actor, owner)
+    chooser = setting.get("switched_by")
+    if chooser is not None:
+        rows = disc._rows("""
+            SELECT r.display_name FROM public.core_identity i
+              JOIN public.core_identityresolution r ON r.identity_id=i.id
+             WHERE i.identity_id=%s AND NOT EXISTS (
+                   SELECT 1 FROM public.core_identityresolutionsevered z WHERE z.identity_id=i.id)
+        """, [chooser])
+        if rows and rows[0]["display_name"].strip():
+            setting["switched_by_name"] = rows[0]["display_name"]
+    return setting
 
 
 def _office_facts(params, access, setting):
     at = access["evaluated_at"]
     office = {"organism_uuid": params["owner"], "requested_definition": params["office"],
               "requested_version": access["definition_version"]}
+    owner_id = params["owner_id"]
+    office["organisation_full_name"], office["organisation_short_label"] = full_name_and_short_label(
+        owner_id=owner_id, cut=at,
+    )
     page = {"evaluated_at": at, "office": office, "care": setting, "tenure": [], "history": []}
     # An exact Topic pin identifies its own definition/version. It grants neither
     # a family lookup nor a read of a holder, an ending or the fact of a vacancy.
     if access["state"] not in ("ACTIVE", "SUSPENDED", "RESTRICTED"):
         return page
     code = access["code"]
-    office.update(code=code, label=code)  # OrganismRoleDefinition.office_label for BOARD_OFFICE.
-    current = disc._rows("""
-        WITH RECURSIVE family AS (
-            SELECT id,role_uuid,definition_version,supersedes_id,active FROM public.core_organismroledefinition
-             WHERE living_organism_id=%(owner)s AND scope='LIVING_ORGANISM' AND kind='BOARD_OFFICE'
-               AND code=%(code)s AND effective_at<=%(at)s AND received_at<=%(at)s AND recorded_at<=%(at)s
-        ), lineage AS (
-            SELECT id AS current_id,id,role_uuid,supersedes_id FROM family WHERE active
-            UNION
-            SELECT l.current_id,p.id,p.role_uuid,p.supersedes_id
-              FROM lineage l JOIN family p ON p.id=l.supersedes_id
-        )
-        SELECT c.id,c.role_uuid,c.definition_version,array_agg(l.id) AS family_ids
-          FROM lineage l JOIN family c ON c.id=l.current_id
-         GROUP BY c.id,c.role_uuid,c.definition_version HAVING bool_or(l.role_uuid=%(requested)s)
-    """, {"owner": params["owner_id"], "code": code, "at": at, "requested": params["office"]})
-    if len(current) == 1:
-        role = current[0]
-        office.update(current_definition=role["role_uuid"], current_version=role["definition_version"])
-        page["tenure"] = _tenure(role["family_ids"], params["owner_id"], at)
+    office.update(code=code, label=office_label(code))
+    # This office belongs to the organisation. Its Board may not have been formed at the read cut.
+    birth = CircleStateEvent.objects.filter(
+        circle__parent_organism_id=owner_id, circle__kind="GOVERNANCE", sequence=1,
+        effective_at__lte=at, received_at__lte=at, recorded_at__lte=at,
+    ).select_related("circle").only("circle__parent_organism_id", "circle__kind").first()
+    board_names = full_name_and_short_label(owner_id=owner_id, circle=birth.circle, cut=at) if birth else (None, None)
+    office["board_full_name"], office["board_short_label"] = board_names
+    family = office_family(owner_id=owner_id, code=code, requested=params["office"], at=at)
+    if family is not None:
+        office["current_definition"], office["current_version"], page["tenure"] = family
     return page
 
 
@@ -511,7 +455,7 @@ def _attempt(credential, owner, office, present, publish, *, facts_only=False):
             received = disc._rows("SELECT public.intevia_clock_statement() AS receipt")[0]["receipt"]
             owner_id = care._lock_scope(owner, actor)
             access = care._office_access_locked(credential, owner, office, actor, owner_id)
-            setting = care._setting_projection(access, actor, owner)
+            setting = _office_setting(access, actor, owner)
             params = dict(owner=owner, owner_id=owner_id, office=office, reader=actor.pk, epoch=actor.access_epoch)
             page = _office_facts(params, access, setting)
             current = page["office"].get("current_definition")

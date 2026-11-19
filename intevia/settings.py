@@ -50,6 +50,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'core.cache.appearance_privacy',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'core.session.IdentityAccessMiddleware',
@@ -59,6 +60,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'intevia.urls'
+CSRF_FAILURE_VIEW = 'core.office_switch.csrf_failure'
 
 TEMPLATES = [
     {

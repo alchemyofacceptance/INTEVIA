@@ -121,6 +121,16 @@ def overlapping_reads(test, owner, first, second):
 # The independent public-path catalogue and its actual emitting case groups.
 # Every group must belong to a real method; each method compares its observed
 # union to these paths exactly. Adding an unused permitted field is a failure.
+def expected_owner_labels(owner, *, pin_only=False):
+    # Read these independently from the fixture; an exact Topic pin grants no Board or tenure lookup.
+    name = models.LOFoundingContentVersion.objects.get(living_organism=owner, version=1).name
+    labels = {"organisation_full_name": name, "organisation_short_label": name}
+    if not pin_only:
+        board = models.Circle.objects.filter(parent_organism=owner, kind="GOVERNANCE").exists()
+        labels.update(board_full_name="Board of Trustees" if board else None, board_short_label="Board" if board else None)
+    return labels
+
+
 def _paths(prefix, names):
     return {prefix + name for name in names.split()}
 
@@ -128,6 +138,7 @@ def _paths(prefix, names):
 OFFICE_PATH_GROUPS = {
     "base": {"evaluated_at", "tenure[]", "history[]", "provisions[]", "topics[]", "decisions[]"}
         | _paths("office.", "organism_uuid requested_definition requested_version code label current_definition current_version")
+        | _paths("office.", "organisation_full_name organisation_short_label board_full_name board_short_label")
         | _paths("care.", "enabled choice_source can_change"),
     "vacant": {"tenure[vacant].state"},
     "ongoing": _paths("tenure[ongoing].", "state starts_at ends_at holder_name"),
@@ -137,7 +148,7 @@ OFFICE_PATH_GROUPS = {
     "adoption_link": {"provisions[].adoption_result_link"},
     "topic": _paths("topics[].", "title created_at office_definition office_version board_uuid circle_uuid category_uuid thread_link"),
     "decision": _paths("decisions[].", "purpose label body result_uuid outcome effective_at recorded_at result_link reporting_rule_link adopted_binding adopted_version"),
-    "chosen": _paths("care.", "switch_receipt switched_by"),
+    "chosen": _paths("care.", "switch_receipt switched_by switched_by_name"),
     "live": _paths("care.observation.", "label words event_ref source_version source_locator source_link"),
     "law_history": _paths("history[law_adoption].", "kind at label source_link ilc_link ilc_label"),
     "topic_history": _paths("history[topic].", "kind at label source_link ilc_link ilc_label"),
@@ -729,8 +740,8 @@ class OfficeRecordTests(TransactionTestCase):
         current_role = models.OrganismRoleDefinition.objects.get(role_uuid=current)
         self.assertEqual(current_role.supersedes_id, role.pk, "The second definition must actually supersede the first.")
         through_old = read(old, True)
-        self.assertEqual(through_old["office"], {"organism_uuid": owner.organism_id, "code": role.code,
-                         "label": role.office_label, "requested_definition": old, "requested_version": role.definition_version,
+        self.assertEqual(through_old["office"], {**expected_owner_labels(owner), "organism_uuid": owner.organism_id, "code": role.code,
+                         "label": "Treasurer", "requested_definition": old, "requested_version": role.definition_version,
                          "current_definition": current, "current_version": current_role.definition_version},
                          "The old UUID must retain the requested version and identify its actual current Board definition.")
         self.assertEqual((through_old["tenure"], read(current)["tenure"]), ([ongoing], [ongoing]),
@@ -1103,7 +1114,8 @@ class OfficeRecordTests(TransactionTestCase):
             pin_only = read(probationer, present=True, pin_only=True)
             with self.subTest(case="law and Topic pin without tenure"):
                 self.assertEqual(pin_only, {"evaluated_at": pin_only["evaluated_at"],
-                                 "office": {"organism_uuid": owner.organism_id, "requested_definition": office,
+                                 "office": {**expected_owner_labels(owner, pin_only=True),
+                                            "organism_uuid": owner.organism_id, "requested_definition": office,
                                             "requested_version": version_number}, "tenure": [], "history": sorted([
                                      {"kind": "law_adoption", "at": original["in_force_from"],
                                       "label": "Office provision adopted", "source_link": binding,
@@ -1423,9 +1435,9 @@ class OfficeRecordTests(TransactionTestCase):
             {"kind": "topic", "at": topic_at, "label": "Topic started: " + title, "source_link": topic["thread"],
              "ilc_link": topic["act"], "ilc_label": "View in ILC"},
         ]
-        expected = {"office": {"organism_uuid": owner.organism_id, "requested_definition": office,
+        expected = {"office": {**expected_owner_labels(owner), "organism_uuid": owner.organism_id, "requested_definition": office,
                     "requested_version": definition_row.definition_version, "current_definition": office,
-                    "current_version": definition_row.definition_version, "code": definition.code, "label": definition.code},
+                    "current_version": definition_row.definition_version, "code": definition.code, "label": "Treasurer"},
                     "tenure": [{"state": "vacant"}], "decisions": [],
                     "provisions": [{"relationship": "OFFICE_BASIS", "status": "cited_and_in_force", "binding": binding,
                         "version": version.version_number, "adoption_record": adopted, "adopting_body": owner.organism_id,
@@ -1473,7 +1485,7 @@ class OfficeRecordTests(TransactionTestCase):
         latest = database_now()
         self.assertTrue(cuts and all(earliest <= cut <= latest for cut in cuts),
                         "Each office evaluation must use a database timestamp within this read.")
-        self._assert_office_field_paths(page)
+        self._assert_office_field_paths(page, named_chooser="switched_by_name" in expected["care"])
         self.assertEqual(page, expected,
                          "The complete office response must equal its independently evidenced facts, exact history and allowed CARE paths.")
         self.assertEqual(self._history_state(fixture), before,
@@ -1508,8 +1520,10 @@ class OfficeRecordTests(TransactionTestCase):
             with fixture.peer.cursor() as cur:
                 cur.execute("SELECT effective_at FROM public.core_careassistancesettingact WHERE act_uuid=%s", [key])
                 at = cur.fetchone()[0]
+                cur.execute("SELECT display_name FROM public.core_identityresolution WHERE identity_id=%s", [founder.pk])
+                chooser_name = cur.fetchone()[0]
             setting = {"enabled": enabled, "choice_source": "chosen", "can_change": True,
-                       "switch_receipt": key, "switched_by": founder.identity_id}
+                       "switch_receipt": key, "switched_by": founder.identity_id, "switched_by_name": chooser_name}
             history.append({"kind": "setting_change", "at": at,
                             "label": "CARE assistance turned " + ("On" if enabled else "Off"),
                             "source_link": key, "ilc_link": key, "ilc_label": "View in ILC",
@@ -1604,7 +1618,7 @@ class OfficeRecordTests(TransactionTestCase):
         self.assertEqual(self._office_observed_paths, expected,
                          "The union of actual positive, negative and empty response paths must exactly match this case's independent map.")
 
-    def _assert_office_field_paths(self, page, *, pin_only=False):
+    def _assert_office_field_paths(self, page, *, pin_only=False, named_chooser=False):
         """5B's independent closed key sets; value and audience assertions accompany each calling case."""
         seen = getattr(self, "_office_observed_paths", set())
 
@@ -1624,9 +1638,9 @@ class OfficeRecordTests(TransactionTestCase):
         self._office_observed_paths = seen
         self.assertEqual(set(page), {"evaluated_at", "office", "care", "tenure", "history", "provisions", "topics", "decisions"},
                          "The office envelope must not acquire an unexamined public field.")
-        office = {"organism_uuid", "requested_definition", "requested_version"}
+        office = {"organism_uuid", "requested_definition", "requested_version", "organisation_full_name", "organisation_short_label"}
         if not pin_only:
-            office |= {"code", "label", "current_definition", "current_version"}
+            office |= {"code", "label", "current_definition", "current_version", "board_full_name", "board_short_label"}
         self.assertEqual(set(page["office"]), office, "Office identifiers must match this reader's exact admission route.")
         for term in page["tenure"]:
             self.assertIn(term["state"], {"vacant", "ongoing", "former"}, "Tenure must have an established public state.")
@@ -1657,6 +1671,8 @@ class OfficeRecordTests(TransactionTestCase):
         self.assertIn(page["care"]["choice_source"], {"default", "chosen"}, "The setting must distinguish default from recorded choice.")
         if page["care"]["choice_source"] == "chosen":
             setting |= {"switch_receipt", "switched_by"}
+            if named_chooser:
+                setting.add("switched_by_name")
         if "observation" in page["care"]:
             setting.add("observation")
             self.assertEqual(set(page["care"]["observation"]),
@@ -1710,8 +1726,8 @@ class OfficeRecordTests(TransactionTestCase):
         page = office_record(**display_args(owner, founder, office))
         self.assertTrue(earliest <= page["evaluated_at"] <= database_now(), "The whole-charter read must report its own database time.")
         expected = {"evaluated_at": page["evaluated_at"],
-            "office": {"organism_uuid": owner.organism_id, "requested_definition": office,
-                       "requested_version": role_row.definition_version, "code": "TREASURER", "label": "TREASURER",
+            "office": {**expected_owner_labels(owner), "organism_uuid": owner.organism_id, "requested_definition": office,
+                       "requested_version": role_row.definition_version, "code": "TREASURER", "label": "Treasurer",
                        "current_definition": office, "current_version": role_row.definition_version},
             "care": {"enabled": True, "choice_source": "default", "can_change": True},
             "tenure": [{"state": "vacant"}], "topics": [], "decisions": [],

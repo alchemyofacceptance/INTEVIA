@@ -32,7 +32,15 @@ class _S012Index(models.Index):
 # Canonical durable Human identity. Django User remains the credential and
 # session substrate; organisational belonging and authority remain external.
 # ---------------------------------------------------------
+class ColourMode(models.TextChoices):
+    DEVICE = "device", "Use device setting"
+    LIGHT = "light", "Light"
+    DARK = "dark", "Dark"
+
+
 class Identity(models.Model):
+    ColourMode = ColourMode
+
     class AccessState(models.TextChoices):
         PENDING = "pending", "Pending"
         ACTIVE = "active", "Active"
@@ -50,6 +58,12 @@ class Identity(models.Model):
         related_name="intevia_identity",
     )
     display_name = models.CharField(max_length=90, blank=True)
+    colour_mode = models.CharField(
+        max_length=6,
+        choices=ColourMode.choices,
+        default=ColourMode.DEVICE,
+        db_default=ColourMode.DEVICE,
+    )
     canonical_username = models.CharField(max_length=255, unique=True)
     access_state = models.CharField(
         max_length=16,
@@ -69,6 +83,10 @@ class Identity(models.Model):
             models.CheckConstraint(
                 condition=Q(access_epoch__gte=0),
                 name="identity_access_epoch_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(colour_mode__in=ColourMode.values),
+                name="identity_colour_mode_valid",
             ),
             models.CheckConstraint(
                 condition=Q(

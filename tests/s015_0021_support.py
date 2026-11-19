@@ -100,6 +100,21 @@ def restore_migration_targets(connection, targets):
     executor.migrate(targets)
 
 
+def supply_identity_colour_mode(test_case):
+    """Let live Identity fixtures run at 0104/0105 without recording a later migration."""
+    _require_disposable_fixture_database()
+    field = Identity._meta.get_field("colour_mode")
+    with connection.schema_editor() as editor:
+        editor.add_field(Identity, field)
+
+    def remove_fixture_field():
+        with connection.schema_editor() as editor:
+            editor.remove_field(Identity, field)
+
+    # Cleanups run in reverse order. Remove the fixture column before 0112 adds it.
+    test_case.addCleanup(remove_fixture_field)
+
+
 def migrate_to_target_with_restore(test_case, target):
     from django.db.migrations.executor import MigrationExecutor
 

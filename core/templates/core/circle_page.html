@@ -1,0 +1,41 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}{{ circle.full_name }} | INTEVIA{% endblock %}
+{% block content %}
+<nav aria-label="Breadcrumb"><a href="{% url 'organisation_home' organisation.organism_uuid %}">{{ organisation.short_label }}</a> <span aria-hidden="true">›</span> <span aria-current="page">{{ circle.short_label }}</span></nav>
+<hgroup><p class="eyebrow">{{ circle.kind|circle_kind_label }}</p><h1>{{ circle.full_name }}</h1></hgroup>
+<section class="card" aria-labelledby="description-heading">
+  <h2 id="description-heading">Description</h2>
+  {% if excerpt %}
+  <div class="circle-description">
+    <p class="description-excerpt">{{ excerpt }}</p>
+    <details><summary><span class="read-more">Read more</span><span class="read-less">Read less</span></summary>
+      <p class="description-text">{{ description }}</p>
+    </details>
+  </div>
+  {% elif description %}<p class="description-text">{{ description }}</p>
+  {% else %}<p>No description is available.</p>{% endif %}
+</section>
+{% if board_offices != None %}
+<section aria-labelledby="board-offices-heading">
+  <h2 id="board-offices-heading">Board offices</h2>
+  {% if board_offices %}<ul class="circle-list">
+    {% for office in board_offices %}
+    <li><a href="{% url 'office_page' organisation.organism_uuid office.office_definition_uuid %}"
+           aria-labelledby="office-label-{{ forloop.counter }}"{% if office.vacant != None %} aria-describedby="office-state-{{ forloop.counter }}"{% endif %}>
+      <span>
+        <strong id="office-label-{{ forloop.counter }}">{{ office.label }}</strong>
+        {% if office.vacant != None %}<small><span id="office-state-{{ forloop.counter }}" class="board-office-state{% if office.vacant %} vacant{% endif %}">{% if office.vacant %}Vacant{% else %}Held{% endif %}</span></small>{% endif %}
+      </span>
+      <span aria-hidden="true">›</span>
+    </a></li>
+    {% endfor %}
+  </ul>{% else %}<p>No offices to show here.</p>{% endif %}
+</section>
+{% endif %}
+{% if status %}<section class="card" aria-labelledby="status-heading">
+  <h2 id="status-heading">Operating status</h2>
+  <p>{{ status.state }}</p>
+  {% if status.deadline %}<p>Deadline · <time datetime="{{ status.deadline|date:'c' }}">{{ status.deadline|date:"j F Y, H:i T" }}</time></p>{% endif %}
+</section>{% endif %}
+{% endblock %}

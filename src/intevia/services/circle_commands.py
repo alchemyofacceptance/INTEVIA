@@ -519,18 +519,23 @@ def operating_status(*, credential, organism_uuid, circle_uuid, alias="default")
                                    circle_uuid=circle_uuid, alias=alias)["state"]
 
 
-def operating_status_detail(*, credential, organism_uuid, circle_uuid, alias="default"):
-    """A current participant or effective parent Coordinator can see the reason and effective deadline."""
+def operating_status_detail(*, credential, organism_uuid, circle_uuid, alias="default", participants_only=False):
+    """Read status for a participant or effective parent Coordinator.
+
+    Member screens restrict this read to a Circle place at the status cut.
+    """
     with command_context(alias, credential, organism_uuid, require_member=True) as (lo, actor, at):
         circle = target_circle(alias, lo, circle_uuid)
         if circle.kind != "GENERIC" or (lo.platform_root and not qualified_root(alias,lo,at)):
             unavailable()
         with connections[alias].cursor() as cur:
-            cur.execute("""SELECT public.circle_lo_office(%s,%s,%s,%s) IS NOT NULL OR EXISTS(
+            cur.execute("""SELECT (%s AND public.circle_lo_office(%s,%s,%s,%s) IS NOT NULL) OR EXISTS(
                 SELECT FROM public.core_organismmembership m WHERE m.living_organism_id=%s AND m.identity_id=%s
                 AND public.circle_place_at(%s,m.id,%s,%s)), EXISTS(SELECT FROM public.circle_holders(%s,%s,%s)),
                 public.circle_vacant(%s,NULL,%s,%s)""",
-                [lo.pk,actor.pk,at,at, lo.pk,actor.pk,circle.pk,at,at, circle.pk,at,at, circle.pk,at,at])
+                [not participants_only, lo.pk, actor.pk, at, at,
+                 lo.pk, actor.pk, circle.pk, at, at,
+                 circle.pk, at, at, circle.pk, at, at])
             allowed, held, vacancy = cur.fetchone()
         if not allowed:
             unavailable()

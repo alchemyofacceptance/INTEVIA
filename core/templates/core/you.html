@@ -1,1 +1,21 @@
-{% extends 'core/base.html' %}{% block title %}You | INTEVIA{% endblock %}{% block content %}<h1>You</h1><p>Your account and activity.</p><div class="card"><h2>Your activity</h2><p>Your cross-organisation activity view and subscriber personal space arrive in later website slices. Nothing is created here yet.</p><a href="{% url 'event-list' %}">Open Events in your view</a></div>{% include 'core/components/signout.html' %}{% endblock %}
+{% extends 'core/base.html' %}
+{% block title %}You | INTEVIA{% endblock %}
+{% block content %}
+<h1>You</h1><p>Your account and activity.</p>
+<section class="card" aria-labelledby="appearance-heading">
+  <h2 id="appearance-heading">Appearance</h2>
+  <form method="post" action="{% url 'f0-you' %}">
+    {% csrf_token %}
+    <fieldset class="appearance-options"{% if appearance_error %} aria-describedby="appearance-error"{% endif %}>
+      <legend>Colour mode</legend>
+      {% if appearance_error %}<p class="errors" id="appearance-error" role="alert">{{ appearance_error }}</p>{% endif %}
+      {% for value, label in colour_choices %}
+      <label class="button-row"><input type="radio" name="colour_mode" value="{{ value }}"{% if ui.colour_mode == value %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+    {% include 'core/components/button.html' with type='submit' label='Save appearance' only %}
+  </form>
+</section>
+<div class="card"><h2>Your activity</h2><p>Your cross-organisation activity view and subscriber personal space arrive in later website slices.</p><a href="{% url 'event-list' %}">Open Events in your view</a></div>
+{% include 'core/components/signout.html' %}
+{% endblock %}

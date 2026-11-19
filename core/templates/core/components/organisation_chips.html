@@ -1,0 +1,3 @@
+<nav class="org-strip" aria-label="Organisations">
+  {% for chip in organisation_chips %}<a class="org-chip" href="{% url 'organisation_home' chip.organism_uuid %}"{% if chip.organism_uuid == organisation.organism_uuid %} aria-current="true"{% endif %}>{{ chip.short_label }}</a>{% endfor %}
+</nav>

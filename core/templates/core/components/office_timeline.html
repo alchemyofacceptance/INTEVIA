@@ -1,0 +1,18 @@
+<section class="card" aria-labelledby="office-history">
+  <h2 id="office-history">The path here</h2>
+  {% if rows %}
+    <ol class="office-timeline" role="list">
+      {% for row in rows %}
+        <li>
+          {% include "core/components/office_time.html" with stamp=row.at only %}
+          <strong>{% if row.care %}<span class="office-care-label">CARE</span> Observation recorded{% else %}{{ row.action }}{% endif %}</strong>
+          <p>{{ row.sentence }}</p>
+          {% if row.care %}<span class="office-timeline-note">Source: clause {{ row.locator }}, version {{ row.version }}</span>{% endif %}
+          <span class="office-timeline-note">View in ILC — not yet available</span>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p>No history to show here.</p>
+  {% endif %}
+</section>

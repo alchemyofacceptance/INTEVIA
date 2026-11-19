@@ -16,10 +16,10 @@ from tests import s015_0021_support as support
 from tests import test_law_acts as fixtures
 
 
-def independent_circle(lo, actor):
+def independent_circle(lo, actor, *, name=None):
     member = fixtures.add_member(lo)
     circle = circle_commands.form(credential=actor.credential, organism_uuid=lo.organism_id,
-        circle_uuid=uuid4(), kind="GENERIC", purpose="DISC1 independent Circle office", request_uuid=uuid4())
+        circle_uuid=uuid4(), kind="GENERIC", name=name, purpose="DISC1 independent Circle office", request_uuid=uuid4())
     membership = models.OrganismMembership.objects.get(identity=member, living_organism=lo)
     request = circle_commands.request_place(credential=member.credential, organism_uuid=lo.organism_id,
         circle_uuid=circle.circle_uuid, membership_uuid=membership.membership_uuid,

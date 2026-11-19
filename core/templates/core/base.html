@@ -1,10 +1,15 @@
 {% load static f0_ui %}{% ui_frame as ui %}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}INTEVIA{% endblock %}</title>
+<html lang="en"{% if ui.colour_mode == "light" or ui.colour_mode == "dark" %} data-mode="{{ ui.colour_mode }}"{% endif %}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}INTEVIA{% endblock %}</title>
 <link rel="stylesheet" href="{% static 'core/f0.css' %}"><link rel="icon" type="image/png" href="{% static 'core/brand/icon-32.png' %}"><link rel="apple-touch-icon" href="{% static 'core/brand/icon-192.png' %}"><script src="{% static 'core/f0.js' %}" defer></script></head>
 <body><a class="skip-link" href="#main-content">Skip to main content</a>
-<header class="identity-bar">{% if ui.restricted_page %}<span class="brand">{% else %}<a class="brand" href="{% url 'shell' %}">{% endif %}<img src="{% static 'core/brand/tree.png' %}" width="160" height="217" alt=""><span>INTEVIA</span>{% if ui.restricted_page %}</span>{% else %}</a>{% endif %}
+<header class="identity-bar">{% if ui.restricted_page %}<span class="brand">{% else %}<a class="brand" href="{% url 'shell' %}">{% endif %}<img class="light-tree" src="{% static 'core/brand/tree.png' %}" width="160" height="217" alt=""><img class="dark-tree" src="{% static 'core/brand/tree-dark-title.png' %}" width="821" height="1120" alt=""><span>INTEVIA</span>{% if ui.restricted_page %}</span>{% else %}</a>{% endif %}
 {% if request.user.is_authenticated %}<a class="profile-link" href="{{ ui.you_url }}" aria-label="You — your account">{{ ui.initials }}</a>{% else %}<a class="profile-link" href="{% url 'login' %}">Sign in</a>{% endif %}</header>
 {% if not ui.restricted_page %}<nav class="main-nav" aria-label="Primary navigation">{% for tab in ui.tabs %}<a class="nav-item" href="{{ tab.url }}"{% if tab.id == ui.active %} aria-current="page"{% endif %}>{% include 'core/components/icon.html' with name=tab.icon only %}<span>{{ tab.label }}</span></a>{% endfor %}</nav>{% endif %}
+<div class="page-frame">
+<div class="page-column">
+{% block organisation_navigation %}{% if organisation_chips %}{% include "core/components/organisation_chips.html" %}{% endif %}{% endblock %}
 {% if request.user.is_authenticated and request.resolver_match.url_name != 'restricted' %}<aside class="capability-notice" aria-label="Product capability notice"><p><strong>INTERNAL PRE-ALPHA</strong></p><p>You can view Events and your existing registration and attendance records.</p><p>Seeing an Event here does not guarantee that an action is available.</p></aside>{% endif %}
 <main id="main-content" tabindex="-1">{% if messages %}{% for message in messages %}{% include 'core/components/notice.html' with kind='info' message=message only %}{% endfor %}{% endif %}{% block content %}{% endblock %}</main>
+</div>
+</div>
 {% if ui.show_domains %}{% include 'core/components/domains.html' %}{% endif %}</body></html>

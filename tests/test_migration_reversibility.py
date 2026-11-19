@@ -190,6 +190,15 @@ def care_edge(care):
     return tuple(digests), triggers, delta
 
 
+def colour_mode_present(reader):
+    with reader.cursor() as cursor:
+        cursor.execute("""SELECT EXISTS (
+            SELECT FROM pg_catalog.pg_attribute
+             WHERE attrelid = 'public.core_identity'::regclass AND attname = 'colour_mode'
+               AND attnum > 0 AND NOT attisdropped)""")
+        return cursor.fetchone()[0]
+
+
 def real_executor(progress):
     return MigrationExecutor(connection, progress_callback=progress)
 
@@ -259,7 +268,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         the state it had, at offset zero, and which production's startup refuses at head, at the lowest point and
         when restored. CLK-08: reversed below the clock's migration and restored, the clone returns to exactly the
         state it had, at offset zero, and production's startup refuses it at head, at each of the two stops and
-        when restored."""
+        when restored. At 0112 the personal colour column must exist, disappear at its
+        own inverse and return on reapply. The 0111 CARE protections must survive that edge."""
         executor = MigrationExecutor(connection)
         graph = executor.loader.graph
         received = tuple(graph.leaf_nodes())
@@ -322,8 +332,14 @@ class MigrationReversibilityTests(TransactionTestCase):
         care = import_module("core.migrations.0111_care_office_record")
         care_key = ("core", "0111_care_office_record")
         office_link_key = ("core", "0110_discussion_office_link")
+        appearance_key = ("core", "0112_identity_colour_mode")
+        appearance_parent = []
+        schema_reader = connection.copy()
+        self.addCleanup(schema_reader.close)
+        if appearance_key in after_base:
+            self.assertTrue(colour_mode_present(schema_reader), "The personal colour preference must exist before reversing 0112.")
         care_parent = []
-        care_before = care_edge(care) if care_key in received else None
+        care_before = care_edge(care) if care_key in ledger_before else None
         care_triggers = {}
         for kind, table, action in (
             ("setting", "core_careassistancesettingact", "SET_CARE_ASSISTANCE"),
@@ -338,10 +354,11 @@ class MigrationReversibilityTests(TransactionTestCase):
                 (table, prefix + "_detail_complete"): (5, True, None),
                 ("core_livingorganismevent", prefix + "_event_complete"): (5, True, action),
             })
-        if care_before:
-            _, triggers, delta = care_before
+
+        def check_care_inventory(snapshot):
+            _, triggers, delta = snapshot
             self.assertEqual(len(triggers) - delta, 737,
-                             "The empty 0111 head must have 737 triggers before the non-core contribution.")
+                             "The 0111 CARE baseline must have 737 triggers before the non-core contribution.")
             for key, (bits, deferred, action) in care_triggers.items():
                 self.assertIn(key, triggers, "The 0111 inventory must include the guard " + ".".join(key))
                 enabled, actual_bits, deferrable, initially_deferred, ddl = triggers[key]
@@ -355,6 +372,13 @@ class MigrationReversibilityTests(TransactionTestCase):
                                      "The ILC trigger must fire only on its own CARE action.")
                 else:
                     self.assertNotIn(" WHEN (", ddl, "A CARE detail guard must cover every row at its specified operation.")
+
+        # Preserve the head-time guard witness for these two known, trigger-equivalent heads.
+        # A later core head may add guards; the 737 baseline then belongs to the 0111 stop.
+        check_inventory_at_head = care_key in received or appearance_key in received
+        if check_inventory_at_head:
+            check_care_inventory(care_before)
+
         office_link = import_module("core.migrations.0110_discussion_office_link")
         office_parent = []
 
@@ -375,6 +399,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if not appearance_parent and appearance_key in undone_so_far and care_key not in undone_so_far:
+                appearance_parent.append((colour_mode_present(schema_reader), care_edge(care)))
             if not care_parent and care_key in undone_so_far and office_link_key not in undone_so_far:
                 care_parent.append(care_edge(care))
             if (not office_parent and ("core", "0110_discussion_office_link") in undone_so_far
@@ -429,6 +455,15 @@ class MigrationReversibilityTests(TransactionTestCase):
             clock_stops["below"] = clock_observation()   # CLK-08's second stop: below the clock, no face at all
         failed_again = restore_failure(not_undone, restore())
 
+        # Judge the inverse before reporting any dependent reapply failure.
+        if appearance_key in undone:
+            self.assertEqual(len(appearance_parent), 1, "The descent must observe 0112 reversed while 0111 is installed.")
+            field_present, parent_care = appearance_parent[0]
+            self.assertFalse(field_present, "Reversing 0112 must remove the personal colour preference.")
+            if appearance_key in received:
+                self.assertEqual(parent_care, care_before,
+                                 "Reversing 0112 must preserve both CARE functions and the full trigger inventory.")
+
         # CLK-08 at its two stops, judged before REV-01's own verdict so that each claim reports its own failure.
         with self.subTest(claim="CLK-08", point="the two stops"):
             self.assertEqual(sorted(clock_stops), ["below", "reversed"],
@@ -459,6 +494,8 @@ class MigrationReversibilityTests(TransactionTestCase):
                 self.assertIn(part, stop["refusal"], "CLK-08 below the clock: the refusal must keep its five parts.")
         if failed_again:
             self.fail(failed_again)
+        if appearance_key in after_base:
+            self.assertTrue(colour_mode_present(schema_reader), "Reapplying 0112 must restore the personal colour preference.")
         if care_key in after_base:
             self.assertEqual(len(care_parent), 1, "REV-01 must observe the empty 0111 to 0110 edge once.")
             digests, parent_triggers, delta = care_parent[0]
@@ -470,17 +507,19 @@ class MigrationReversibilityTests(TransactionTestCase):
                              "The empty 0110 parent must have 727 triggers before its non-core contribution.")
             self.assertTrue(care_triggers.keys().isdisjoint(parent_triggers),
                             "The empty inverse must remove all ten CARE triggers.")
-            if care_before:
-                prior_inventory = {key: row for key, row in care_before[1].items() if key not in care_triggers}
-                self.assertEqual(parent_triggers, prior_inventory,
-                                 "The empty inverse must preserve every earlier trigger definition and enabled state.")
-                restored_edge = care_edge(care)
-                self.assertEqual(restored_edge, care_before,
-                                 "Restoring the received 0111 head must restore both definitions and the complete inventory.")
-                self.assertEqual(restored_edge[0], (
-                    "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
-                    "496afd9498b1d672636772f954e89d156bc43fda990890c8b6109dc5f5169a15"),
-                    "Restoration must produce both independently pinned 0111 definitions.")
+            care_at_0111 = appearance_parent[0][1] if appearance_key in undone else care_before
+            if not check_inventory_at_head:
+                check_care_inventory(care_at_0111)
+            triggers = care_at_0111[1]
+            prior_inventory = {key: row for key, row in triggers.items() if key not in care_triggers}
+            self.assertEqual(parent_triggers, prior_inventory,
+                             "The empty inverse must preserve every earlier trigger definition and enabled state.")
+            self.assertEqual(care_edge(care), care_before,
+                             "Restoring the received head must restore both CARE definitions and the complete trigger inventory.")
+            self.assertEqual(care_at_0111[0], (
+                "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
+                "496afd9498b1d672636772f954e89d156bc43fda990890c8b6109dc5f5169a15"),
+                "The 0111 boundary must have both independently pinned CARE definitions.")
         self.assertEqual(office_parent, [tuple(prior for _, prior, _ in office_link.REPLACEMENTS)],
                          "Downgrading 0110 must restore both clock-converted posting functions exactly.")
         self.assertEqual(office_bodies(), tuple(after for _, _, after in office_link.REPLACEMENTS),

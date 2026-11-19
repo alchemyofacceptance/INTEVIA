@@ -14,7 +14,7 @@ from src.intevia.services import organism_role_definition_service as definitions
 from tests import committee_support, cq_authority_support, discussion_support, election_support
 from tests import test_law_acts as laws
 from tests.cq_authority_support import authority
-from tests.s015_0021_support import database_now, migrate_to_target_with_restore
+from tests.s015_0021_support import current_applied_core_head, database_now, migrate_to_target_with_restore
 
 
 MARKDOWN = "Who will keep the Treasurer’s accounts?"
@@ -544,6 +544,7 @@ class DiscussionOfficeMigrationTests(TransactionTestCase):
         self.assertIsNone(footprint()[3][first["thread"]])
 
         # This committed descent has real unlinked data. Register restoration of the received heads first.
+        received_head = current_applied_core_head(connection)
         migrate_to_target_with_restore(self, parent)
         column, index, bodies, _ = footprint()
         self.assertEqual((column, index, bodies), (None, None, [prior for _, prior, _ in migration.REPLACEMENTS]))
@@ -559,6 +560,8 @@ class DiscussionOfficeMigrationTests(TransactionTestCase):
         self.assertIsNotNone(index)
         self.assertEqual(bodies, [after for _, _, after in migration.REPLACEMENTS])
         self.assertEqual((pins[first["thread"]], pins[receipt["thread"]]), (None, None))
+        # Replay and link through the current services with their received Identity schema.
+        MigrationExecutor(connection).migrate(received_head)
         retry = public_start_args(owner, author, circle, category)
         retry.update(thread_uuid=UUID(old["thread"]), post_uuid=UUID(old["post"]),
                      request_uuid=UUID(old["request"]), title=old["title"])
@@ -566,6 +569,8 @@ class DiscussionOfficeMigrationTests(TransactionTestCase):
 
         linked = discussion_posts.start_topic(**public_start_args(owner, author, circle, category),
                                               office_definition_uuid=office)
+        # Observe only the 0110 inverse, after later migrations have left the schema.
+        MigrationExecutor(connection).migrate([head])
         before = footprint()
         self.assertEqual(before[3][linked["thread"]], office)
         ddl = []
