@@ -138,8 +138,13 @@ class OfficeDisplayTests(TransactionTestCase):
             self.assertEqual(clause["text"], self.source["clause_text"], "The adjacent quotation must be the exact qualifying clause.")
             self.assertIn(self.source["sentence"], [p["text"] for p in page.select("p", within=aside)],
                           "The observation must give the qualified source's exact words.")
-            self.assertIn(f'Source: clause {self.source["locator"]}, version {self.source["library_version_number"]}',
-                          aside["text"], "The observation must identify its own source locator and version.")
+            self.assertEqual([p["text"].strip() for p in page.select("p", within=aside, classes=("meta",))],
+                             [f'Source: clause \u201c{self.source["locator"]}\u201d, '
+                              f'version {self.source["library_version_number"]}'],
+                             "The observation must name its own source clause in quotation marks, and its own version.")
+            self.assertIn(f'Office basis \u00b7 Clause \u201c{self.source["locator"]}\u201d',
+                          [heading["text"].strip() for heading in page.select("h2")],
+                          "The provision heading must name the source clause in quotation marks.")
             self.assertNotIn(str(self.reader.identity_id).encode(), response.content,
                              "The office page must not expose the first requester's identity reference.")
             self.assertTrue(self.reader.display_name.strip(), "The privacy control needs a named requester.")

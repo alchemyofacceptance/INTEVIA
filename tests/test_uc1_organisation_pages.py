@@ -185,10 +185,14 @@ class OrganisationPresentationTests(SimpleTestCase):
                     rows = page.select("nav", classes=("org-strip",))
                     self.assertTrue(len(column) == len(rows) == 1 and rows[0]["parents"][-1] is column[0],
                                     "The chip row must be a direct child of the centred page column.")
-                    band = page.select("aside", classes=("capability-notice",))
+                    self.assertFalse(page.select("aside", classes=("capability-notice",))
+                                     or page.select("aside", **{"aria-label": "Product capability notice"}),
+                                     "A signed-in page must show no release-stage band.")
+                    self.assertFalse(any("pre-alpha" in node["text"].lower() for node in page.select("body")),
+                                     "No release-stage wording may appear anywhere on a signed-in page.")
                     main = page.select("main")
-                    self.assertTrue(len(band) == len(main) == 1 and band[0]["parents"][-1] is column[0]
-                                    and main[0]["parents"][-1] is column[0], "Band, chips and main must share one column.")
+                    self.assertTrue(len(main) == 1 and main[0]["parents"][-1] is column[0],
+                                    "Chips and main must share one column.")
                     self.assertEqual(chips(page), {member_url(self.owner["organism_uuid"]): ("Alder Beck", "true")},
                                      "An organisation chip must use the admitted short label.")
                     heading = self.circle if target == "circle" else self.owner

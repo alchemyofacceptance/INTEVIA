@@ -19,10 +19,23 @@ from core.management.commands import setup_alpha_trustee as setup
 class AlphaDatabaseBoundaryTests(SimpleTestCase):
     def test_nonqualifying_database_stops_before_provisioning(self):
         """A1-DB: refusal before provisioning. CLI boundary; no SQL permitted."""
-        name = "intevia_alpha_throwaway_a1"
+        # A protected name, outside both disposable families. The owned-database argument
+        # equals the configured name, so only the family check can be what refuses.
+        name = "intevia_production"
         with patch.dict(connection.settings_dict, NAME=name):
             with self.assertRaisesMessage(CommandError, "named disposable database does not qualify"):
                 call_command("setup_alpha_trustee", "texts", owned_database=name, stdout=StringIO())
+
+    def test_owned_name_must_equal_the_configured_name(self):
+        """A1-DB2: two qualifying names that differ still refuse before provisioning. No SQL permitted."""
+        configured, owned = "intevia_alpha_throwaway_film1", "intevia_alpha_throwaway_film2"
+        with patch.dict(connection.settings_dict, NAME=configured):
+            self.assertTrue(
+                setup.fixture_terms_permitted("default"),
+                "Control: the configured name qualifies, so the refusal below is the owned-name comparison's.",
+            )
+            with self.assertRaisesMessage(CommandError, "named disposable database does not qualify"):
+                call_command("setup_alpha_trustee", "texts", owned_database=owned, stdout=StringIO())
 
 
 class AlphaTrusteeSetupTests(TransactionTestCase):

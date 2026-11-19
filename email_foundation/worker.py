@@ -281,7 +281,18 @@ def recover(limit=100, adapter=None):
             attempt = row.attempts.order_by("number").last()
             if attempt is None:
                 continue
-            pre_send = bool(expired and attempt.phase == "CLAIMED")
+            # A CLAIMED phase proves that no send started only for an adapter that declares
+            # authoritative absence: its acceptance is the capture row, which shares the
+            # sending transaction with the STARTED marker. For any other adapter the content
+            # can leave before that transaction commits, and a lost transaction takes the
+            # marker with it. Such an expired claim is asked about like a started one and is
+            # left uncertain: it is never queued again on the strength of its phase.
+            pre_send = bool(
+                expired
+                and attempt.phase == "CLAIMED"
+                and adapter.capabilities.authoritative_absence
+                and adapter.capabilities.local_capture
+            )
             if pre_send:
                 outcome = "ABSENT"  # No backend call was started for this lease.
             else:

@@ -98,14 +98,23 @@ class TimelineTests(SimpleTestCase):
         page = Markup(raw)
         self.assertEqual([n["text"] for n in page.select("span", classes=("office-care-label",))], ["CARE"],
                          "The observation needs an explicit visible CARE label.")
-        self.assertIn("Source: clause original-source, version 4", raw, "Historic guidance must keep its own readable clause coordinates.")
+        self.assertEqual([n["text"].strip() for n in page.select("span", classes=("office-timeline-note",))],
+                         ["Source: clause \u201coriginal-source\u201d, version 4", ILC_NOTICE],
+                         "Historic guidance must keep its own stored clause and version, in its own words.")
+        self.assertNotIn("\u201cdifferent\u201d", raw, "The current observation's clause must not appear in a history row.")
         self.assertFalse(page.select("guidance"), "Stored words must not create HTML elements.")
         self.assertNotIn(live["words"], raw, "Today's observation must not replace the historic sentence.")
         stored_only = self.render([entry], care={"enabled": True}, provisions=[])
         self.assertEqual(self.sentences(stored_only), [words],
                          "An independently readable historical observation needs no current live card or current clause.")
+        self.assertIn("Source: clause \u201coriginal-source\u201d, version 4", stored_only,
+                      "A history row must show its stored source with no current card or current clause.")
+        awkward = self.entry("care_observation", "CARE", words="Stored guidance.", source_locator='a<b>&"c', source_version=4)
+        self.assertIn("Source: clause \u201ca&lt;b&gt;&amp;&quot;c\u201d, version 4", self.render([awkward]),
+                      "A history row must escape its stored clause identifier.")
         off = self.render([entry], care={"enabled": False, "observation": live})
         self.assertEqual(Markup(off).select("li"), [], "Off must omit a CARE row even if a stale input still contains it.")
+        self.assertNotIn("Source: clause", off, "Off must leave no source line.")
         self.assertEqual(off, self.render([], care={"enabled": False}), "A filtered history must have the same markup as an empty one.")
 
     def test_timeline_keeps_the_delivered_order_including_ties(self):

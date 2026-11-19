@@ -101,7 +101,21 @@ class OfficePartsTests(SimpleTestCase):
                          "The guidance must immediately follow its own quotation in reading order.")
         self.assertEqual(children[0]["text"], self.current["clause"], "The guidance must belong to the current matching text.")
         self.assertEqual(raw.count(self.observation["words"]), 1, "The exact supplied observation must appear once.")
-        self.assertIn("Source: clause approval, version 2", children[1]["text"], "The guidance must identify its source locator and version.")
+        self.assertEqual([p["text"].strip() for p in page.select("p", within=children[1], classes=("meta",))],
+                         ["Source: clause \u201capproval\u201d, version 2"],
+                         "The guidance must name its own clause in quotation marks, and its own version.")
+        self.assertEqual(self.one(page, "h2", within=self.one(page, "article", classes=("office-provision",)))["text"],
+                         "Office basis \u00b7 Clause \u201capproval\u201d",
+                         "The provision heading must name the clause in quotation marks.")
+        # A clause identifier is shown as text, whatever characters it holds.
+        awkward = 'a<b>&"c'
+        escaped = self.render(provisions=[self.current | {"locator": awkward}],
+                              care={"enabled": True, "observation": self.observation | {"source_locator": awkward}})
+        self.assertIn("Source: clause \u201ca&lt;b&gt;&amp;&quot;c\u201d, version 2", escaped,
+                      "The source line must escape its clause identifier.")
+        self.assertIn("<h2>Office basis \u00b7 Clause \u201ca&lt;b&gt;&amp;&quot;c\u201d</h2>", escaped,
+                      "The provision heading must escape its clause identifier.")
+        self.assertFalse(Markup(escaped).select("b"), "A clause identifier must never create an HTML element.")
         for label, changes in (
             ("ambiguous", {"provisions": [self.current, dict(self.current)]}),
             ("wrong version", {"provisions": [self.current | {"version": 3}]}),
@@ -117,6 +131,10 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertNotIn(self.observation["words"], withheld, "An unmatched, ambiguous or withheld observation must leave no words.")
                 self.assertNotIn('aria-label="CARE observation"', withheld, "Withheld guidance must leave no accessible card.")
                 self.assertIn(self.current["clause"], withheld, "Omitting guidance must preserve the human quotation.")
+                self.assertNotIn("Source: clause", withheld, "Withheld guidance must leave no source line.")
+                if "provisions" not in changes:
+                    self.assertIn("<h2>Office basis \u00b7 Clause \u201capproval\u201d</h2>", withheld,
+                                  "Without CARE's guidance the human provision must keep its heading.")
 
     def test_inherited_whole_document_keeps_its_own_adoption(self):
         foreign = uuid4()

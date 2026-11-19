@@ -111,7 +111,6 @@
  .notice{border:var(--stroke) solid currentColor;border-left:var(--stripe) solid currentColor;border-radius:var(--radius-sm);padding:var(--space-md);margin-block:var(--space-md);background:var(--color-accent-soft);color:var(--color-accent)}
  .notice.success{background:var(--color-success-bg);color:var(--color-success)}.notice.warning{background:var(--color-warning-bg);color:var(--color-warning)}.notice.refusal,.notice.error{background:var(--color-danger-bg);color:var(--color-danger)}.notice.pending{background:var(--color-pending-bg);color:var(--color-pending)}
  .notice h2{color:inherit;font-family:var(--font-sans);font-size:var(--text-base);font-weight:var(--weight);margin-top:0}.notice a{color:inherit}
- .capability-notice{padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);color:var(--color-warning);background:var(--color-warning-bg)}
  .office-timeline { list-style:none; margin:0; padding:0 }
  .office-timeline > li { position:relative; margin-inline-start:8px; padding:0 0 24px; padding-inline-start:28px; border-inline-start:1px solid var(--color-control); overflow-wrap:anywhere }
  .office-timeline > li::before { content:""; position:absolute; inset-inline-start:-5px; top:7px; width:9px; height:9px; border-radius:50%; background:var(--color-accent) }

@@ -5,7 +5,7 @@
     "kind": "python",
     "target": "email_foundation.worker._outside_transaction",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": "if connection.in_atomic_block:",
     "new": "if False:",
     "defect": "Allow the worker inside an uncommitted act transaction."
@@ -16,7 +16,7 @@
     "kind": "python",
     "target": "email_foundation.worker.deliver",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": "state, code = Outbox.State.ACCEPTANCE_UNCERTAIN, \"ACCEPTANCE_UNKNOWN\"",
     "new": "state, code = Outbox.State.QUEUED, \"ACCEPTANCE_UNKNOWN\"",
     "defect": "Treat uncertain acceptance as queued for resend."
@@ -27,7 +27,7 @@
     "kind": "python",
     "target": "email_foundation.worker.recover",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": "code = \"CLAIM_RECOVERED\" if pre_send else \"LEASE_RECOVERED\"",
     "new": "state = Outbox.State.FAILED\n                code = \"CLAIM_RECOVERED\" if pre_send else \"LEASE_RECOVERED\"",
     "defect": "Discard an abandoned final-slot pre-send claim instead of immediately renewing it."
@@ -38,7 +38,7 @@
     "kind": "python",
     "target": "email_foundation.worker.claim",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": "bucket.notice_used >= total - reserve",
     "new": "bucket.notice_used >= total",
     "defect": "Allow NOTICE to consume the essential reserve."
@@ -71,7 +71,7 @@
     "kind": "python",
     "target": "email_foundation.worker._allowed",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": " or row.to_address != address.verified_address",
     "new": "",
     "defect": "Send a queued notice to an address superseded before delivery."
@@ -82,7 +82,7 @@
     "kind": "python",
     "target": "email_foundation.worker.housekeeping",
     "source_path": "email_foundation/worker.py",
-    "source_sha256": "6903506dc1a9064572cde15f57fa17f3a040951a6c981093f973b860fac31a73",
+    "source_sha256": "c9554b0b4425360c205c28f544b49bad9b5019707c7844dfd85e4830bb233971",
     "old": "number(\"INTEVIA_EMAIL_RETENTION_DAYS\", 180)",
     "new": "3650",
     "defect": "Keep operational payloads beyond the specified retention window."
@@ -93,10 +93,21 @@
     "kind": "python",
     "target": "email_foundation.views.outbox",
     "source_path": "email_foundation/views.py",
-    "source_sha256": "f4a2cf54f50e996a5679de588dfe25fdc2ef8d7b45693165521334efecc5bcb8",
-    "old": "settings.SETTINGS_MODULE\n        not in {\"intevia.peek_settings\", \"intevia.email_local_settings\"}",
+    "source_sha256": "13c6b4cde35dc18b796c766844f92c1762cc286d50c0ee40088d3085f2e04794",
+    "old": "settings.SETTINGS_MODULE\n        not in {\n            \"intevia.peek_settings\",\n            \"intevia.email_local_settings\",\n            \"intevia.alpha_settings\",\n        }",
     "new": "False",
     "defect": "Expose the operator view under ordinary production settings if its flag is enabled."
+  },
+  {
+    "id": "EMA-09A",
+    "test": "tests.test_em_a.EmailFoundationTests.test_09_operator_view_local_only_and_read_only",
+    "kind": "python",
+    "target": "email_foundation.views.outbox",
+    "source_path": "email_foundation/views.py",
+    "source_sha256": "13c6b4cde35dc18b796c766844f92c1762cc286d50c0ee40088d3085f2e04794",
+    "old": "            \"intevia.alpha_settings\",\n",
+    "new": "",
+    "defect": "Drop the Alpha settings from the operator view's own list while the Alpha route stays registered."
   },
   {
     "id": "EMA-10",

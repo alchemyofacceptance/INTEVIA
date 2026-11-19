@@ -80,7 +80,7 @@ class OfficePageTests(TransactionTestCase):
                             msg_prefix="The independent cited office version must be visible.")
         self.assertContains(response, f"Current office definition · Version {current_row.definition_version}",
                             msg_prefix="The current office definition must be reported alongside the cited version.")
-        self.assertContains(response, "<h2>Office basis · Clause approval</h2>", html=True,
+        self.assertContains(response, "<h2>Office basis · Clause \u201capproval\u201d</h2>", html=True,
                             msg_prefix="The approval clause must be headed by its delivered relationship and locator.")
         self.assertContains(response, f'<p class="meta">Version {version.version_number}</p>', html=True,
                             msg_prefix="The provision must display its own law version.")

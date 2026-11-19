@@ -184,8 +184,8 @@ class RenderedScreenTests(SimpleTestCase):
         self.assertIn("@media (prefers-color-scheme:dark){html:not([data-mode]) " + live, css,
                       "Device-dark primary paint must apply only on a dark device without a saved mode.")
 
-    def test_notice_and_heading_share_the_page_column(self):
-        """Shell, You and Events share one inset for the painted band and heading in both modes."""
+    def test_main_and_heading_share_the_page_column(self):
+        """Shell, You and Events share one inset for main and heading in both modes, with no release-stage band."""
         home = SimpleNamespace(display_name="Avery", events=[])
         user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: home.display_name)
         factory = RequestFactory()
@@ -213,13 +213,14 @@ class RenderedScreenTests(SimpleTestCase):
                                                                for left, right in zip(siblings, siblings[1:]))
                                         and frame["tag"] == "div" and "page-frame" in frame["attrs"]["class"].split(),
                                         "The main navigation must immediately precede the page frame as its sibling.")
-                        bands = page.select("aside", classes=("capability-notice",))
-                        self.assertEqual(len(bands), 1, "The signed-in page must show one stage notice.")
-                        self.assertIs(bands[0]["parents"][-1], column,
-                                      "The painted notice must sit directly inside the page column.")
+                        self.assertFalse(page.select("aside", classes=("capability-notice",))
+                                         or page.select("aside", **{"aria-label": "Product capability notice"}),
+                                         "A signed-in page must show no release-stage band.")
+                        self.assertNotIn("pre-alpha", response.content.decode().lower(),
+                                         "No release-stage wording may appear anywhere on a signed-in page.")
                         mains = page.select("main", id="main-content")
                         self.assertEqual(len(mains), 1, "The skip link must retain one main-content destination.")
-                        self.assertIs(mains[0]["parents"][-1], column, "Main must share the stage notice's column.")
+                        self.assertIs(mains[0]["parents"][-1], column, "Main must sit directly inside the page column.")
                         headings = page.select("h1", within=mains[0])
                         self.assertEqual(len(headings), 1, "The requested page must have one heading.")
                         self.assertIs(headings[0]["parents"][-1], mains[0],
@@ -250,9 +251,9 @@ class RenderedScreenTests(SimpleTestCase):
                     values = values[1::2]  # right and left in a CSS shorthand
                 self.assertTrue(all(re.fullmatch(r"0(?:px|rem|em|%)?", v) for v in values),
                                 "The heading text must have zero inline inset at every width.")
-        band = declarations(css, ".capability-notice")
-        self.assertEqual(band.get("background"), "var(--color-warning-bg)", "The stage notice must paint its own rectangle.")
-        self.assertFalse(any(k.startswith("margin") for k in band), "The band must have no independent outer margin.")
+        self.assertEqual(declarations(css, ".capability-notice"), {},
+                         "The removed release-stage band must leave no style rule in the served stylesheet.")
+        self.assertNotIn("capability-notice", css, "The served stylesheet must not mention the removed band at all.")
         desktop = css.partition("@media (min-width:64rem){")[2].partition("@media ")[0]
         self.assertEqual(declarations(desktop, ".main-nav+.page-frame").get("padding-inline-start"),
                          "calc(var(--rail) + var(--space-lg))", "Desktop rail clearance must belong to the outer frame.")

@@ -1,4 +1,4 @@
-"""Read-only disposable local/peek operator view, not a product inbox."""
+"""Read-only disposable local, peek and Alpha operator view, not a product inbox."""
 
 from django.conf import settings
 from django.http import Http404
@@ -16,7 +16,11 @@ from .models import Outbox
 def outbox(request):
     if (
         settings.SETTINGS_MODULE
-        not in {"intevia.peek_settings", "intevia.email_local_settings"}
+        not in {
+            "intevia.peek_settings",
+            "intevia.email_local_settings",
+            "intevia.alpha_settings",
+        }
         or not settings.DEBUG
         or not settings.INTEVIA_EMAIL_OUTBOX_PAGE
     ):

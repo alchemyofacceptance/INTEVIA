@@ -8,7 +8,6 @@
 <div class="page-frame">
 <div class="page-column">
 {% block organisation_navigation %}{% if organisation_chips %}{% include "core/components/organisation_chips.html" %}{% endif %}{% endblock %}
-{% if request.user.is_authenticated and request.resolver_match.url_name != 'restricted' %}<aside class="capability-notice" aria-label="Product capability notice"><p><strong>INTERNAL PRE-ALPHA</strong></p><p>You can view Events and your existing registration and attendance records.</p><p>Seeing an Event here does not guarantee that an action is available.</p></aside>{% endif %}
 <main id="main-content" tabindex="-1">{% if messages %}{% for message in messages %}{% include 'core/components/notice.html' with kind='info' message=message only %}{% endfor %}{% endif %}{% block content %}{% endblock %}</main>
 </div>
 </div>

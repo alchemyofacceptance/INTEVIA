@@ -23,6 +23,7 @@ gateway versions and fixture_terms_permitted for fixture-terms checks.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -156,24 +157,44 @@ class CoordinatorNominationEntitlementFactSource(Protocol):
         ...
 
 
+# The internal Alpha's disposable database family (Human Governor, 19 November 2026).
+# The whole name is matched: the prefix, then one or more lower-case ASCII letters,
+# digits or underscores. It is deliberately not shared with the test family's rule.
+_ALPHA_DATABASE_NAME = re.compile(r"intevia_alpha_throwaway_[a-z0-9_]+")
+
+
 def fixture_terms_permitted(database_alias: str) -> bool:
     """Return whether this database name permits fixture platform terms.
 
-    True only when the alias's configured NAME has type exactly str,
-    starts with "test_intevia_living_organism_", and has a suffix beyond
-    that prefix. Any other configured name gives False. This checks the
-    name only; it does not establish that a test runner owns the database
-    or that the deployment is a test environment.
+    Two families of disposable database are admitted, and no other name:
 
-    Founding qualification and the identity service use this predicate
-    when deciding whether fixture terms or the test registration executor
-    may be used.
+    - The test family: the alias's configured NAME has type exactly str,
+      starts with "test_intevia_living_organism_", and has a suffix beyond
+      that prefix. This condition is unchanged.
+    - The Alpha family: the configured NAME has type exactly str and is, in
+      full, "intevia_alpha_throwaway_" followed by one or more lower-case
+      ASCII letters, digits or underscores. Added by the Human Governor's
+      ruling of 19 November 2026, so that the internal Alpha's database is
+      named for what it is and not as a test database.
+
+    Any other configured name gives False: either bare prefix, a value of
+    any other type (nothing is coerced), and every protected, Beta or
+    deployment name. Only the alias given is read, and only its name; this
+    does not establish that a test runner or an operator owns the database,
+    or that the deployment is disposable.
+
+    Founding qualification, the identity service, root GENESIS and the
+    Alpha trustee set-up use this predicate when deciding whether fixture
+    terms or the test registration executor may be used.
     """
     database_name = connections[database_alias].settings_dict.get("NAME")
     return (
         type(database_name) is str
         and database_name.startswith("test_intevia_living_organism_")
         and database_name != "test_intevia_living_organism_"
+    ) or (
+        type(database_name) is str
+        and _ALPHA_DATABASE_NAME.fullmatch(database_name) is not None
     )
 
 

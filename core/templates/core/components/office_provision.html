@@ -1,5 +1,5 @@
 {% with provision=row.provision observation=row.observation %}
-<h2>{{ row.label }}{% if provision.locator %} · Clause {{ provision.locator }}{% endif %}</h2>
+<h2>{{ row.label }}{% if provision.locator %} · Clause “{{ provision.locator }}”{% endif %}</h2>
 <p class="meta">Version {{ provision.version }}</p>
 {% if provision.status == "cited_and_in_force" %}<p>Cited and in force</p>{% elif provision.status == "in_force_now" %}<p>In force now</p>{% endif %}
 <div{% if observation %} class="office-source-pair"{% endif %}>
@@ -9,7 +9,7 @@
       <p class="eyebrow">{{ observation.label }}</p>
       <h3>Observation</h3>
       <p>{{ observation.words }}</p>
-      <p class="meta">Source: clause {{ observation.source_locator }}, version {{ observation.source_version }}</p>
+      <p class="meta">{% include "core/components/office_source.html" with locator=observation.source_locator version=observation.source_version only %}</p>
     </aside>
   {% endif %}
 </div>

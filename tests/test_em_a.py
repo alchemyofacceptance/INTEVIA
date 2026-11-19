@@ -783,7 +783,6 @@ class EmailFoundationTests(TransactionTestCase):
     def test_09_operator_view_local_only_and_read_only(self):
         """EMA-09: only an explicitly named active operator sees local captures; production and writes refuse."""
         import logging
-        import time
 
         request_logger = logging.getLogger("django.request")
         self.addCleanup(request_logger.setLevel, request_logger.level)
@@ -795,7 +794,7 @@ class EmailFoundationTests(TransactionTestCase):
         session = client.session
         session[SESSION_IDENTITY_KEY] = str(self.person.identity_id)
         session[SESSION_ACCESS_EPOCH_KEY] = self.person.access_epoch
-        session[SESSION_STARTED_AT_KEY] = int(time.time())
+        session[SESSION_STARTED_AT_KEY] = int(database_now().timestamp())
         session.save()
         url = "/development/email-outbox/"
         with override_settings(
@@ -826,7 +825,27 @@ class EmailFoundationTests(TransactionTestCase):
                 405,
                 "The operator outbox must not offer a write or resend action.",
             )
-            with override_settings(INTEVIA_EMAIL_OPERATOR_IDENTITIES=()):
+            # Django reads SETTINGS_MODULE as None in any override layer that does not state it,
+            # and the view's module gate would then answer 404 by itself. So each nested case
+            # below states the module, and the unnamed-operator 404 has a named-operator control.
+            local_module = "intevia.email_local_settings"
+            with override_settings(
+                SETTINGS_MODULE=local_module,
+                INTEVIA_EMAIL_OPERATOR_IDENTITIES=(str(self.person.identity_id),),
+            ):
+                self.assertEqual(
+                    client.get(url).status_code,
+                    200,
+                    "Control: with the module restated and the operator named, the same request must reach the outbox.",
+                )
+            with override_settings(
+                SETTINGS_MODULE=local_module, INTEVIA_EMAIL_OPERATOR_IDENTITIES=()
+            ):
+                self.assertEqual(
+                    settings.SETTINGS_MODULE,
+                    local_module,
+                    "The unnamed-operator case must run under a permitted settings module, or its 404 proves nothing.",
+                )
                 self.assertEqual(
                     client.get(url).status_code,
                     404,
@@ -838,6 +857,131 @@ class EmailFoundationTests(TransactionTestCase):
                     404,
                     "Even an enabled flag and operator session must not expose the page under production settings.",
                 )
+        # U-D P1 (rule page G6): the forced route above proves the view. The real URL
+        # configuration, loaded afresh under each settings module, proves the registration.
+        # Each case below sets all of its settings in one override, SETTINGS_MODULE included,
+        # so no case can pass or fail because a nested layer read the module as None.
+        import importlib.util
+        import sys
+
+        from django.urls import Resolver404, resolve
+
+        import intevia.urls as shipped_urls
+        from email_foundation.views import outbox as outbox_view
+
+        def real_urls():
+            name = "tests._ud_real_intevia_urls_" + uuid.uuid4().hex
+            spec = importlib.util.spec_from_file_location(name, shipped_urls.__file__)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            self.addCleanup(sys.modules.pop, name, None)
+            spec.loader.exec_module(module)
+            return name
+
+        operator = (str(self.person.identity_id),)
+        alpha_module = "intevia.alpha_settings"
+        alpha = {
+            "SETTINGS_MODULE": alpha_module,
+            "DEBUG": True,
+            "INTEVIA_EMAIL_OUTBOX_PAGE": True,
+        }
+        with override_settings(**alpha, INTEVIA_EMAIL_OPERATOR_IDENTITIES=operator):
+            alpha_urls = real_urls()
+            try:
+                match = resolve(url, urlconf=alpha_urls)
+            except Resolver404:
+                self.fail(
+                    "Under the Alpha settings the real URL configuration must register the operator outbox; it has no such route."
+                )
+            self.assertEqual(
+                match.url_name,
+                "ema-outbox",
+                "Under the Alpha settings the real URL configuration must register the operator outbox.",
+            )
+            self.assertIs(
+                match.func,
+                outbox_view,
+                "The Alpha route must lead to the guarded operator view and no other.",
+            )
+        with override_settings(
+            **alpha, ROOT_URLCONF=alpha_urls, INTEVIA_EMAIL_OPERATOR_IDENTITIES=operator
+        ):
+            response = client.get(url)
+            self.assertEqual(
+                response.status_code,
+                200,
+                "Under the Alpha settings the named active operator must reach the outbox through the real route.",
+            )
+            self.assertIn(
+                "no-store",
+                response["Cache-Control"],
+                "The Alpha route must keep captured addresses out of every cache.",
+            )
+            self.assertEqual(
+                client.post(url).status_code,
+                405,
+                "The Alpha route must stay read-only.",
+            )
+        # The same request and settings as the 200 above, with no operator named.
+        with override_settings(
+            **alpha, ROOT_URLCONF=alpha_urls, INTEVIA_EMAIL_OPERATOR_IDENTITIES=()
+        ):
+            self.assertEqual(
+                settings.SETTINGS_MODULE,
+                alpha_module,
+                "The unnamed-operator case must run under the Alpha module, or its 404 proves nothing.",
+            )
+            self.assertEqual(
+                client.get(url).status_code,
+                404,
+                "Under the Alpha settings the route exists, and still denies a signed-in user who is not a named operator.",
+            )
+        # The same settings as the registered load above, with one switch off.
+        for switch in ("DEBUG", "INTEVIA_EMAIL_OUTBOX_PAGE"):
+            with override_settings(
+                **{**alpha, switch: False}, INTEVIA_EMAIL_OPERATOR_IDENTITIES=operator
+            ):
+                self.assertEqual(
+                    settings.SETTINGS_MODULE,
+                    alpha_module,
+                    f"The {switch}-off case must load the URL configuration under the Alpha module, so the switch alone removes the route.",
+                )
+                with self.assertRaises(
+                    Resolver404,
+                    msg=f"With {switch} off, even the Alpha settings must register no operator route.",
+                ):
+                    resolve(url, urlconf=real_urls())
+        with override_settings(
+            **{**alpha, "SETTINGS_MODULE": "intevia.settings"},
+            INTEVIA_EMAIL_OPERATOR_IDENTITIES=operator,
+        ):
+            self.assertEqual(
+                settings.SETTINGS_MODULE,
+                "intevia.settings",
+                "The base case must load the URL configuration under the base module.",
+            )
+            base_urls = real_urls()
+            with self.assertRaises(
+                Resolver404,
+                msg="Under the base settings the real URL configuration must register no operator route, whatever the flags.",
+            ):
+                resolve(url, urlconf=base_urls)
+        # At request time everything here would admit: the Alpha module, both switches and the
+        # named operator, exactly as for the 200 above. Only the URL configuration differs, so
+        # this 404 is the missing route's and not the view's module gate.
+        with override_settings(
+            **alpha, ROOT_URLCONF=base_urls, INTEVIA_EMAIL_OPERATOR_IDENTITIES=operator
+        ):
+            self.assertEqual(
+                settings.SETTINGS_MODULE,
+                alpha_module,
+                "The missing-route case must run under a module the view would admit, or its 404 proves nothing.",
+            )
+            self.assertEqual(
+                client.get(url).status_code,
+                404,
+                "The URL configuration loaded under the base settings must offer no outbox, even to a request the view would admit.",
+            )
         row.refresh_from_db()
         self.assertEqual(
             row.state,
