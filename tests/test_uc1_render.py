@@ -256,7 +256,7 @@ class RenderedScreenTests(SimpleTestCase):
         self.assertNotIn("capability-notice", css, "The served stylesheet must not mention the removed band at all.")
         desktop = css.partition("@media (min-width:64rem){")[2].partition("@media ")[0]
         self.assertEqual(declarations(desktop, ".main-nav+.page-frame").get("padding-inline-start"),
-                         "calc(var(--rail) + var(--space-lg))", "Desktop rail clearance must belong to the outer frame.")
+                         "calc(var(--rail) + .5rem)", "The wide frame must add 8 px after the rail for a 24 px content gap.")
 
     def test_state_words_survive_both_colour_modes(self):
         """The selected appearance, current tab and unavailable domains retain their names."""
@@ -283,3 +283,13 @@ class RenderedScreenTests(SimpleTestCase):
                 self.assertCountEqual([" ".join(n["text"].split()) for n in domains],
                                       [name + " — arrives later" for name in expected_domains],
                                       "Every unavailable You domain must say in words that it arrives later.")
+
+    def test_box_spacing_uses_the_directed_v3_declarations(self):
+        css = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        self.assertEqual(declarations(css, ".card,.panel").get("padding-block"), "calc(var(--space-lg) - 5px)",
+                         "Cards and panels must compensate the vertical padding for the type's ink.")
+        for child, side in (("first", "top"), ("last", "bottom")):
+            selectors = ",".join(f".{box}>:{child}-child" for box in ("card", "panel", "event-item"))
+            self.assertEqual(declarations(css, selectors).get(f"margin-{side}"), "0")
+        self.assertEqual(declarations(css, ".card>details:last-child").get("margin-bottom"),
+                         "calc(-1 * var(--space-sm))", "A closing disclosure must keep the directed bottom spacing.")

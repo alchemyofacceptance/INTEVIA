@@ -80,10 +80,14 @@ class OfficePageTests(TransactionTestCase):
                             msg_prefix="The independent cited office version must be visible.")
         self.assertContains(response, f"Current office definition · Version {current_row.definition_version}",
                             msg_prefix="The current office definition must be reported alongside the cited version.")
-        self.assertContains(response, "<h2>Office basis · Clause \u201capproval\u201d</h2>", html=True,
-                            msg_prefix="The approval clause must be headed by its delivered relationship and locator.")
-        self.assertContains(response, f'<p class="meta">Version {version.version_number}</p>', html=True,
-                            msg_prefix="The provision must display its own law version.")
+        law_section = page.select("section", **{"aria-labelledby": "office-provisions"})[0]
+        self.assertEqual([node["text"] for node in page.select("h3", within=law_section)
+                          if node["attrs"].get("id", "").startswith("office-law-tier-")], ["Policy"],
+                         "The real adopted Policy must supply its tier heading.")
+        self.assertContains(response, "<h2>Establishes this office</h2>", html=True,
+                            msg_prefix="An unmapped law must name its relationship as the heading.")
+        self.assertContains(response, f'<p class="meta">Clause “approval” · Version {version.version_number}</p>', html=True,
+                            msg_prefix="The provision must display its own locator and law version together.")
         self.assertContains(response, "<p>Vacant</p>", html=True, msg_prefix="Only an evidenced vacancy may be displayed.")
 
         foreign, foreign_founder = ordinary_birth()

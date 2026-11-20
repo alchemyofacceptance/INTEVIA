@@ -620,9 +620,12 @@ class ElectionTests(TransactionTestCase):
         migration = import_module("core.migrations.0083_elect_board_continuity")
         care = import_module("core.migrations.0111_care_office_record")
         account = import_module("core.migrations.0113_care_system_account")
+        board = import_module("core.migrations.0114_alpha_treasurer_board_clause")
         with connection.schema_editor(atomic=True) as editor:
             with connection.cursor() as check:
                 care_at_head = {sig: care.installed_definition(check, sig) for sig in (care.WRITER, care.GATEWAY)}
+            # 0114 is the newest CARE migration: it unwinds first and is reapplied last.
+            board.uninstall(None, editor)
             account.uninstall(None, editor)
             care.uninstall(None, editor)
             # The inner rollback restores 0108 and 0109 before the outer transaction reapplies 0111.
@@ -665,6 +668,7 @@ class ElectionTests(TransactionTestCase):
                 migration.uninstall(None, editor)
             care.install(None, editor)
             account.install_migration(None, editor)
+            board.install(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.",
                          "Recorded recognition must reach and refuse the 0083 downgrade.")
         with connection.cursor() as record_check:

@@ -1039,6 +1039,9 @@ class CQDecisionTests(TransactionTestCase):
             chair = import_module("core.migrations.0109_committee_chair_reservation")
             care = import_module("core.migrations.0111_care_office_record")
             account = import_module("core.migrations.0113_care_system_account")
+            board = import_module("core.migrations.0114_alpha_treasurer_board_clause")
+            # 0114 is the newest CARE migration: it unwinds first and is reapplied last.
+            board.uninstall(None, editor)
             account.uninstall(None, editor)
             care.uninstall(None, editor)
             chair.uninstall(None, editor)
@@ -1100,6 +1103,7 @@ class CQDecisionTests(TransactionTestCase):
             chair.install(None, editor)
             care.install(None, editor)
             account.install_migration(None, editor)
+            board.install(None, editor)
             self.assertEqual(records.trigger(cursor, "zz_te_origin"), records.ORIGIN_TRIGGER)
             cursor.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
             self.assertIsNotNone(cursor.fetchone()[0], "DISC2-19 must restore the episode reading at head.")

@@ -144,7 +144,7 @@ OFFICE_PATH_GROUPS = {
     "vacant": {"tenure[vacant].state"},
     "ongoing": _paths("tenure[ongoing].", "state starts_at ends_at holder_name"),
     "former": _paths("tenure[former].", "state starts_at ends_at holder_name"),
-    "law": _paths("provisions[].", "relationship status binding version adoption_record adopting_body in_force_from recorded_at clause adoption_route"),
+    "law": _paths("provisions[].", "relationship status binding version adoption_record adopting_body in_force_from recorded_at clause adoption_route tier library_reference"),
     "clause_locator": {"provisions[].locator"},
     "adoption_link": {"provisions[].adoption_result_link"},
     "topic": _paths("topics[].", "title created_at office_definition office_version board_uuid circle_uuid category_uuid thread_link"),
@@ -1047,7 +1047,8 @@ class OfficeRecordTests(TransactionTestCase):
             self.assertIsNotNone(row, "The expected clause must have a recorded adoption in this organisation.")
             self.assertEqual((row[0], row[4]), (version.pk, "COORDINATOR_ROUTE"),
                              "This fixture must use the direct Organisation Coordinator route for the specified version.")
-            return dict(relationship="OFFICE_BASIS", locator="approval", clause=clause, version=version.version_number,
+            return dict(relationship="OFFICE_BASIS", locator="approval", clause=clause.strip(), version=version.version_number,
+                        tier="Policy", library_reference=version.resource.resource_id,
                         binding=key, status=status, in_force_from=row[1], recorded_at=row[2], adoption_record=row[3],
                         adopting_body=owner.organism_id, adoption_route="Organisation Coordinator decision")
 
@@ -1241,7 +1242,7 @@ class OfficeRecordTests(TransactionTestCase):
 
         previous_version = first
         previous_binding = binding
-        approval = DUTIES_TEXT.removeprefix("[#approval]")
+        approval = DUTIES_TEXT.removeprefix("[#approval]").strip()
         narrative = "The repair is approved for the community room. The Treasurer keeps the receipt."
 
         def adopt(marker, *, label):
@@ -1454,7 +1455,8 @@ class OfficeRecordTests(TransactionTestCase):
                     "tenure": [{"state": "vacant"}], "decisions": [],
                     "provisions": [{"relationship": "OFFICE_BASIS", "status": "cited_and_in_force", "binding": binding,
                         "version": version.version_number, "adoption_record": adopted, "adopting_body": owner.organism_id,
-                        "in_force_from": law_at, "recorded_at": recorded, "locator": "approval", "clause": clause,
+                        "in_force_from": law_at, "recorded_at": recorded, "locator": "approval", "clause": clause.strip(),
+                        "tier": "Policy", "library_reference": version.resource.resource_id,
                         "adoption_route": "Organisation Coordinator decision"}],
                     "topics": [{"title": title, "created_at": topic_at, "office_definition": office,
                         "office_version": definition_row.definition_version, "board_uuid": UUID(category["board"]),
@@ -1663,7 +1665,7 @@ class OfficeRecordTests(TransactionTestCase):
             self.assertEqual(set(term), fields, "A term may expose its permitted name and dates, never private receipt or person links.")
         for provision in page["provisions"]:
             fields = {"relationship", "status", "binding", "version", "adoption_record", "adopting_body",
-                      "in_force_from", "recorded_at", "clause", "adoption_route"}
+                      "in_force_from", "recorded_at", "clause", "adoption_route", "tier", "library_reference"}
             for optional in ("locator", "adoption_result_link"):
                 if optional in provision:
                     fields.add(optional)
@@ -1747,12 +1749,13 @@ class OfficeRecordTests(TransactionTestCase):
             "provisions": [{"relationship": "OFFICE_BASIS", "status": "cited_and_in_force", "binding": law_row["binding"],
                             "version": law_row["version_number"], "adoption_record": law_row["act"],
                             "adopting_body": root.organism_id, "in_force_from": law_row["in_force_from"],
-                            "recorded_at": law_row["adoption_recorded_at"], "clause": exact,
+                            "recorded_at": law_row["adoption_recorded_at"], "clause": exact.strip(),
+                            "tier": law_row["display_class"], "library_reference": charter.resource,
                             "adoption_route": "Founder Steward decision"}],
             "history": [{"kind": "law_adoption", "at": law_row["in_force_from"], "label": "Office provision adopted",
                          "source_link": law_row["binding"], "ilc_link": law_row["act"], "ilc_label": "View in ILC"}]}
         self._assert_office_field_paths(page)
-        self.assertEqual(page, expected, "The inherited whole charter must keep exact bytes and root attribution without inventing a local adoption or locator.")
+        self.assertEqual(page, expected, "The displayed charter must preserve its wording and root attribution without inventing a local adoption or locator.")
         with peer.cursor() as cur:
             cur.execute("SELECT living_organism_id FROM public.core_livingorganismevent WHERE event_uuid=%s", [law_row["act"]])
             self.assertEqual(cur.fetchone(), (root.pk,), "The charter's ILC link must open its actual root entry, not a fabricated local event.")
@@ -1790,3 +1793,53 @@ class OfficeRecordTests(TransactionTestCase):
         self.assertEqual(page, expected, "A history failure must deliver all permitted human facts, without live or historical CARE output.")
         self.assertEqual(self._history_state(fixture), before, "The failed read and fallback must preserve full committed rows and the organisation head.")
         self._assert_observed_path_union("R4-fallback")
+
+
+class TreasurerClauseMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
+    def test_0114_switches_the_qualified_clause_and_reverses(self):
+        """Run the real migration in both directions against two in-force, vacant Treasurer offices."""
+        from django.db.migrations.executor import MigrationExecutor
+
+        def vacant_office(appointing_body):
+            owner, reader = law.ordinary_birth(board_seats=0)
+            reference = "edge-duties-" + uuid4().hex
+            clause = (f" The organisation has a Treasurer. The {appointing_body} appoints "
+                      "the holder with the nominee's consent. The Treasurer approves ordinary payments.")
+            version, _, receipt = a1_adopt_policy(owner, reader, reference, "[#approval]" + clause)
+            self.assertEqual(receipt.status, "ADOPT", "Both clause alternatives must be actual local adoptions.")
+            office = record_office(owner, reader, a1_definition(reference, version.version_number))
+            return owner.organism_id, office, reader.pk, reader.access_epoch, clause
+
+        old = vacant_office("Organisation Coordinator")
+        board = vacant_office("Board of Trustees")
+
+        def qualified():
+            observed = []
+            with connection.cursor() as cursor:
+                for organism, office, reader, epoch, _ in (old, board):
+                    cursor.execute("""
+                        SELECT clause_text, may_create
+                        FROM public.care_alpha_treasurer_qualify(
+                            %s, %s, %s, %s, public.intevia_clock_statement(), true)
+                    """, [organism, office, reader, epoch])
+                    observed.append(cursor.fetchall())
+            return observed
+
+        old_only = [[(old[-1], True)], []]
+        board_only = [[], [(board[-1], True)]]
+        executor = MigrationExecutor(connection)
+        edge = executor.loader.get_migration("core", "0114_alpha_treasurer_board_clause")
+        before = executor.loader.project_state(edge.dependencies)
+        # PostgreSQL rolls back both the qualifier DDL and the migration ledger
+        # to the received head, including when an assertion interrupts the walk.
+        with transaction.atomic():
+            executor.unapply_migration(before, edge)
+            self.assertEqual(qualified(), old_only, "At 0113 only the complete former clause must qualify.")
+            executor.apply_migration(before, edge)
+            self.assertEqual(qualified(), board_only, "0114 must qualify the Board clause and refuse the former wording.")
+            executor.unapply_migration(before, edge)
+            self.assertEqual(qualified(), old_only, "Reversing 0114 must restore only the former complete clause.")
+            transaction.set_rollback(True)
+        self.assertEqual(qualified(), board_only, "The witness must return the database to its received 0114 behaviour.")

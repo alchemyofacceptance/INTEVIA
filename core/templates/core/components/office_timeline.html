@@ -1,9 +1,20 @@
-<section class="card" aria-labelledby="office-history">
+<section class="office-path" aria-labelledby="office-history">
+  <p class="eyebrow">Office history</p>
   <h2 id="office-history">The path here</h2>
   {% if rows %}
+    <div class="office-history-bar">
+      <span>{% if pages == 1 %}Showing all {{ total }} entries, newest first{% else %}Showing entries {{ first }} to {{ last }} of {{ total }}, newest first{% endif %}</span>
+      <form class="office-history-size" method="get" action="#office-history">
+        <label>Show <select name="show">
+          {% for choice in sizes %}<option value="{{ choice }}"{% if choice == size %} selected{% endif %}>{{ choice }}</option>{% endfor %}
+        </select> at a time</label>
+        <button type="submit" class="text-command">Show</button>
+      </form>
+    </div>
     <ol class="office-timeline" role="list">
       {% for row in rows %}
         <li>
+          <span class="office-entry-number">Entry {{ row.number }} of {{ total }}</span>
           {% include "core/components/office_time.html" with stamp=row.at only %}
           <strong>{% if row.care %}<span class="office-care-label">CARE</span> Observation recorded{% else %}{{ row.action }}{% endif %}</strong>
           <p>{{ row.sentence }}</p>
@@ -12,6 +23,13 @@
         </li>
       {% endfor %}
     </ol>
+    {% if pages > 1 %}
+      <nav class="office-history-pages" aria-label="Office history pages">
+        {% if page > 1 %}<a href="?show={{ size }}&amp;page={{ newer }}#office-history">‹ Newer</a>{% else %}<span class="office-history-limit">‹ Newer</span>{% endif %}
+        <span>Page {{ page }} of {{ pages }}</span>
+        {% if page < pages %}<a href="?show={{ size }}&amp;page={{ older }}#office-history">Older ›</a>{% else %}<span class="office-history-limit">Older ›</span>{% endif %}
+      </nav>
+    {% endif %}
   {% else %}
     <p>No history to show here.</p>
   {% endif %}

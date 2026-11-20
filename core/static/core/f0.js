@@ -1,6 +1,11 @@
 "use strict";
 // Presentation only. No storage, cookies, network calls or business decisions.
 (() => {
+  const historySize = document.querySelector(".office-history-size");
+  if (historySize && typeof historySize.requestSubmit === "function") {
+    historySize.elements.show.addEventListener("change", () => historySize.requestSubmit());
+    historySize.querySelector('button[type="submit"]').hidden = true;
+  }
   const row = document.querySelector(".domain-nav");
   let scrolling = false;
   let timer;

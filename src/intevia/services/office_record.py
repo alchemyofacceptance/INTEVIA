@@ -89,6 +89,7 @@ def _provision_at(citation, binding, allowed, status):
     if not law or law["act"] != binding["adoption_act"] or law["library_reference"] != citation["resource_reference"]:
         return None
     result = {"relationship": citation["relationship"], "status": status, "binding": law["binding"],
+              "tier": law["display_class"], "library_reference": law["library_reference"],
               "version": law["version_number"], "adoption_record": law["act"], "adopting_body": law["issuer"],
               "in_force_from": law["in_force_from"], "recorded_at": law["adoption_recorded_at"]}
     locator = citation["locator"]
@@ -96,13 +97,13 @@ def _provision_at(citation, binding, allowed, status):
         clauses = disc._rows("SELECT content FROM public.l_clauses(%s) WHERE locator=%s", [law["content"], locator])
         if len(clauses) != 1:
             return None
-        result.update(locator=locator, clause=clauses[0]["content"])
+        result.update(locator=locator, clause=clauses[0]["content"].strip())
     else:
         # LAW recognises a whole-document citation only for a protected charter.
         charter = disc._rows("SELECT public.l_charter_pin(%s) IS NOT NULL AS protected", [law["library_reference"]])
         if not charter[0]["protected"]:
             return None
-        result["clause"] = law["content"]
+        result["clause"] = law["content"].strip()
     route = _ADOPTIONS.get(law["decision_route"])
     if route:
         result["adoption_route"] = route

@@ -1,5 +1,7 @@
 """CARE's installed identity, its migration edge and the public account routes."""
 
+import re
+from hashlib import sha256
 from io import StringIO
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -12,7 +14,9 @@ from django.db import connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from psycopg import sql as pg_sql
 
+from core import models
 from core.models import Identity, LearnerRegistration, PlatformTermsVersion
 from core.session import (
     SESSION_ACCESS_EPOCH_KEY,
@@ -33,6 +37,11 @@ RESERVATION = (
     "This name belongs to CARE and is reserved by INTEVIA. "
     "Nothing was registered or changed. Choose another name and try again. "
     "If you think this is wrong, contact INTEVIA support."
+)
+REFERENCE_REFUSAL = (
+    "CARE's account could not be removed. Another record refers to it. "
+    "The account and its history have been kept. Keep this migration in place. "
+    "Ask the database operator to review the references before any further action."
 )
 COLLISION = (
     "CARE's account could not be installed. An existing account already holds the "
@@ -244,33 +253,143 @@ class CareMigrationTests(TestCase):
             "Reinstalling must restore the name and credential under the same public identity.",
         )
 
+    def assert_reverse_preflight(self, expected):
+        from tests.test_office_record_guards import change_verbs
+
+        def snapshot():
+            return query("""
+                SELECT i.id, u.id, r.identity_id, r.credential_link, t.tgenabled,
+                       (SELECT count(*) FROM public.core_identityresolutionsevered WHERE identity_id=i.id),
+                       EXISTS (SELECT FROM django_migrations WHERE app='core' AND name='0113_care_system_account')
+                  FROM public.core_identity i JOIN public.auth_user u ON u.id=i.credential_id
+                  LEFT JOIN public.core_identityresolution r ON r.identity_id=i.id
+                  JOIN pg_trigger t ON t.tgrelid='public.core_identityresolution'::regclass
+                       AND t.tgname='s015_0022_resolution_severance'
+                 WHERE i.identity_id=%s
+            """, [PUBLIC_ID])
+
+        def observe(execute, statement, params, many, context):
+            text = statement.as_string(connection.connection) if isinstance(statement, pg_sql.Composable) else statement
+            # A locking SELECT is a read. Scan the rest, including DDL and the body of a write CTE.
+            writes = change_verbs(re.sub(r"\bFOR (?:NO KEY )?UPDATE\b", "", text, flags=re.IGNORECASE))
+            self.assertEqual(writes, [], "The reverse must refuse before issuing any data or schema change.")
+            return execute(statement, params, many, context)
+
+        before = snapshot()
+        self.assertEqual([(row[4], row[6]) for row in before], [("O", True)],
+                         "The recorder must be enabled and 0113 applied before the reverse.")
+        with connection.execute_wrapper(observe):
+            try:
+                self.executor.unapply_migration(self.parent, self.edge)
+            except (RuntimeError, TypeError) as exc:
+                outcome = (type(exc), str(exc))
+            else:
+                outcome = (None, "reversed")
+        self.assertEqual(outcome, (RuntimeError, expected), "The reverse must give the ruled preflight refusal.")
+        self.assertEqual(snapshot(), before, "The triplet, severance record, recorder and ledger must be preserved.")
+
     def test_reverse_refuses_a_reference_before_pausing_the_recorder(self):
         ident = care()
         group = Group.objects.create(name="migration reference witness")
         ident.credential.groups.add(group)
-        ddl = []
-
-        def observe(execute, sql, params, many, context):
-            if sql.lstrip().upper().startswith(("ALTER", "DELETE")):
-                ddl.append(sql.split()[0])
-            return execute(sql, params, many, context)
-
-        with (
-            connection.execute_wrapper(observe),
-            self.assertRaises(
-                RuntimeError, msg="A dependent record must stop the reverse in its preflight."
-            ) as refusal,
-        ):
-            self.executor.unapply_migration(self.parent, self.edge)
-        self.assertIn(
-            "Another record refers to it.",
-            str(refusal.exception),
-            "The refusal must identify the outstanding reference.",
-        )
-        self.assertEqual(ddl, [], "The preflight must refuse before any trigger change or delete.")
+        self.assert_reverse_preflight(REFERENCE_REFUSAL)
         self.assertTrue(
             care().credential.groups.filter(pk=group.pk).exists(),
             "A refused reverse must keep the dependent record intact.",
+        )
+
+    def test_reverse_refuses_each_non_fk_reference(self):
+        from src.intevia.services.command_intake import (
+            FINGERPRINT_SCHEMA,
+            INSERT_COMMAND_INTAKE_SQL,
+        )
+        from src.intevia.services.organism_authority import (
+            authority_target_fingerprint,
+            canonical_json_bytes,
+        )
+        from tests.test_law_records import Document
+
+        ident = care()
+        human = register_test_learner(username="tb2-reference-reader")
+        stamp = database_now()
+        event = models.Event.objects.create(event_id="tb2-event", title="Reference fixture", owner=human, created_at=stamp)
+        doc = Document(human)
+        link = models.EventResourceRelationship.objects.create(
+            relationship_id="tb2-link", event=event, library_resource=doc.resource, created_at=stamp,
+        )
+        assertion = models.EventResourceAssertion.objects.create(
+            relationship=link, revision=1, library_resource_version=doc.first, purpose="REFERENCE",
+            state="CURRENT", created_by=human, actor_access_epoch=human.access_epoch, created_at=stamp,
+        )
+        transition = models.EventResourceRelationshipTransition.objects.create(
+            relationship=link, sequence=1, action="CREATE", resulting_assertion=assertion,
+            actor=human, actor_access_epoch=human.access_epoch, authority_scope="create",
+            event_authority_reference="tb2-authority", event_authority_evaluated_at=stamp,
+            request_reference="tb2-request", consumer_reference="tb2-consumer", idempotency_key="tb2-link",
+            payload_fingerprint=sha256(b"tb2-link").hexdigest(), transaction_reference=uuid4(), occurred_at=stamp,
+        )
+        link.head_assertion = assertion
+        link.save(update_fields=["head_assertion"])
+
+        def evidence(field):
+            payload = b'{"result":"QUALIFIED"}'
+            return models.EventResourceRelationshipEvidence.objects.create(
+                transition=transition, kind="EVENT_AUTHORITY", schema_id="tb2", schema_version=1,
+                canonicalization="json", result="QUALIFIED", determination_reference="tb2-determination",
+                policy_reference="tb2-policy", canonical_payload=payload, payload_sha256=sha256(payload).hexdigest(),
+                evaluated_at=stamp, **{field: PUBLIC_ID},
+            )
+
+        def intake(_field):
+            pk, _ = query(INSERT_COMMAND_INTAKE_SQL, [
+                human.pk, PUBLIC_ID, human.access_epoch, "FOUND_LIVING_ORGANISM", "FOUND_LIVING_ORGANISM",
+                "tb2-intake", "tb2-request", sha256(b"tb2-intake").hexdigest(), FINGERPRINT_SCHEMA, None,
+            ])[0]
+            return models.CommandIntake.objects.get(pk=pk)
+
+        def decision(field):
+            target = {"fixture": "tb2"}
+            actor_uuid = PUBLIC_ID if field == "actor_identity_id" else human.identity_id
+            credential_pk = ident.credential_id if field == "actor_credential_pk" else human.credential_id
+            payload = {"actor_identity_id": str(actor_uuid), "actor_credential_pk": credential_pk, "target": target}
+            encoded = canonical_json_bytes(payload)
+            return models.AuthorityDecision.objects.create(
+                decision_reference="s015d1:" + sha256(b"INTEVIA:S015:ORGANISM_AUTHORITY_DECISION:v1\x00" + encoded).hexdigest(),
+                decision_payload=payload, decision_payload_bytes=encoded, request_kind="COMMAND",
+                action="FOUND_LIVING_ORGANISM", command_subtype="tb2", actor=human, actor_identity_id=actor_uuid,
+                actor_access_epoch=human.access_epoch, actor_credential_pk=credential_pk, target=target,
+                target_bytes=canonical_json_bytes(target), target_fingerprint=authority_target_fingerprint(target),
+                effective_at=stamp, evaluated_at=stamp, facts_read=["fixture"], outcome="QUALIFIED",
+                provider_identity="tb2", provider_version="1", request_reference="tb2-request", idempotency_key="tb2",
+            )
+
+        for make, field in ((evidence, "actor_identity_id"), (evidence, "viewer_identity_id"),
+                            (intake, "actor_identity_id"), (decision, "actor_identity_id"),
+                            (decision, "actor_credential_pk")):
+            with self.subTest(table=make.__name__, field=field), transaction.atomic():
+                ref = make(field)
+                # Force real FK and deferred checks before observing the migration.
+                with connection.cursor() as cur:
+                    cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+                stored = type(ref).objects.filter(pk=ref.pk)
+                before = stored.values().get()
+                expected = ident.credential_id if field == "actor_credential_pk" else PUBLIC_ID
+                self.assertEqual(before[field], expected, "This stored snapshot must refer to CARE.")
+                self.assert_reverse_preflight(REFERENCE_REFUSAL)
+                self.assertEqual(stored.values().get(), before, "The complete referring row must survive.")
+                transaction.set_rollback(True)  # The next case starts without this reference.
+
+    def test_reverse_refuses_an_incomplete_triplet(self):
+        ident = care()
+        removed = query("DELETE FROM public.core_identityresolution WHERE identity_id=%s RETURNING identity_id",
+                        [ident.pk])
+        self.assertEqual(removed, [(ident.pk,)], "Remove only CARE's name record inside the test transaction.")
+        self.assertEqual(resolution(ident), [])
+        self.assertTrue(User.objects.filter(pk=ident.credential_id).exists())
+        self.assert_reverse_preflight(
+            "CARE's account could not be removed. Its three linked records could not be "
+            "identified together. Nothing was removed. Keep this migration in place "
+            "and ask the database operator to check the records."
         )
 
 

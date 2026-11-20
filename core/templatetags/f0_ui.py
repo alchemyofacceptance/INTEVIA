@@ -57,12 +57,19 @@ def field_control(field):
 
 
 _PROVISION_LABELS = {
-    "OFFICE_BASIS": "Office basis",
+    "OFFICE_BASIS": "Establishes this office",
     "APPOINTING_AUTHORITY": "Appointing authority",
     "ALTERNATIVE_ROUTE": "Alternative route",
     "NOMINATION_ROUTE": "Nomination route",
     "PARTICIPATION_REQUIRED": "Required participation",
     "EX_OFFICIO_SEAT": "Seat held by virtue of office",
+}
+
+
+# PLACEHOLDER (Human Governor, 20 Nov 2026): replace with LAW family and title
+# when the records carry them. This map is for the film's display only.
+_FILM_LAW_DISPLAY = {
+    "alpha-treasurer-duties": {"family": "Governance", "title": "Treasurer office"},
 }
 
 
@@ -83,18 +90,31 @@ def office_provisions(record):
         if len(matches) == 1:
             source = matches[0]
 
-    # Keep each historical disclosure next to the current row of the same relationship.
-    ordered = sorted(provisions, key=lambda row: (row["relationship"], row["status"] == "cited_at_definition"))
-    rows = [{
-        "provision": row,
-        "label": _PROVISION_LABELS[row["relationship"]],
-        "observation": observation if row is source else None,
-    } for row in ordered]
-    return {"office": record["office"], "rows": rows}
+    groups = {}
+    for index, provision in enumerate(provisions):
+        tier = provision.get("tier")
+        display = _FILM_LAW_DISPLAY.get(provision.get("library_reference"), {})
+        family = display.get("family") if tier == "Policy" else None
+        # Unclassified rows stand alone at their arrival position. LAW tiers are text.
+        key = tier or index
+        group = groups.setdefault(key, {"tier": tier, "family": family, "rows": []})
+        # A tier heading can name a family only when it applies to every row.
+        if group["family"] != family:
+            group["family"] = None
+        group["rows"].append({
+            "provision": provision,
+            "label": _PROVISION_LABELS[provision["relationship"]],
+            "title": display.get("title"),
+            "observation": observation if provision is source else None,
+        })
+    return {"office": record["office"], "groups": groups.values()}
+
+
+_HISTORY_SIZES = (10, 20, 50, 100, 200)
 
 
 @register.inclusion_tag("core/components/office_timeline.html")
-def office_timeline(record):
+def office_timeline(record, query=None):
     """Render the delivered history in order, joining only this reader's returned facts."""
     versions = {(p["adoption_record"], p["binding"]): p["version"]
                 for p in record.get("provisions", ()) if p.get("adoption_record") and p.get("binding")}
@@ -129,4 +149,22 @@ def office_timeline(record):
         else:
             continue
         rows.append({"at": entry["at"], "action": entry["label"], "sentence": sentence})
-    return {"rows": rows}
+
+    query = query or {}
+    size = next((n for n in _HISTORY_SIZES if str(n) == query.get("show")), 10)
+    total = len(rows)
+    pages = max(1, (total + size - 1) // size)
+    digits = query.get("page", "").strip().removeprefix("+").lstrip("0")
+    page = 1
+    if digits.isascii() and digits.isdecimal():
+        # Clamp even a decimal too long for Python's integer conversion.
+        page = pages if len(digits) > len(str(pages)) else min(int(digits), pages)
+    start = (page - 1) * size
+    visible = rows[start:start + size]
+    for index, row in enumerate(visible, start):
+        row["number"] = total - index
+    return {
+        "rows": visible, "total": total, "size": size, "sizes": _HISTORY_SIZES,
+        "first": total - start, "last": total - start - len(visible) + 1,
+        "page": page, "pages": pages, "newer": page - 1, "older": page + 1,
+    }

@@ -1,16 +1,23 @@
 <section aria-labelledby="office-provisions">
-  <p class="eyebrow" id="office-provisions">Office provisions</p>
-  {% for row in rows %}
-    {% if row.provision.status == "cited_at_definition" %}
-      <details class="card office-provision">
-        <summary>Cited when the office was defined · Version {{ row.provision.version }}</summary>
-        {% include "core/components/office_provision.html" with row=row office=office only %}
-      </details>
-    {% else %}
-      <article class="card office-provision">
-        {% include "core/components/office_provision.html" with row=row office=office only %}
-      </article>
+  <p class="eyebrow" id="office-provisions">Constitutional Law related to this office</p>
+  {% for group in groups %}
+    {% if group.tier %}
+      <section aria-labelledby="office-law-tier-{{ forloop.counter }}">
+        <h3 id="office-law-tier-{{ forloop.counter }}">{{ group.tier }}{% if group.family %} · {{ group.family }}{% endif %}</h3>
     {% endif %}
+    {% for row in group.rows %}
+      {% if row.provision.status == "cited_at_definition" %}
+        <details class="card office-provision">
+          <summary>Cited when the office was defined · Version {{ row.provision.version }}</summary>
+          {% include "core/components/office_provision.html" with row=row office=office only %}
+        </details>
+      {% else %}
+        <article class="card office-provision">
+          {% include "core/components/office_provision.html" with row=row office=office only %}
+        </article>
+      {% endif %}
+    {% endfor %}
+    {% if group.tier %}</section>{% endif %}
   {% empty %}
     <p>No provisions to show here.</p>
   {% endfor %}

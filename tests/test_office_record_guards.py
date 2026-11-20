@@ -355,6 +355,57 @@ class OfficeRecordGuardTests(TransactionTestCase):
                                  "Refusal must leave the observation history and current head intact.")
         self.assertEqual(initial[:2], before[:2], "The provisional read must leave no observation or event.")
 
+    def test_inactive_identity_is_refused_before_the_organisation_lock(self):
+        owner, opener, office, *_ = approved_office()
+        source = read_source_candidate(owner, opener, office)
+        self.assertTrue(source["may_create"], "The active opener must qualify for this vacant office.")
+        before = observation_footprint(owner)
+
+        def insert_outcome():
+            try:
+                with transaction.atomic():
+                    insert_observation_input(source, uuid4(), opener.pk, opener.access_epoch)
+                    transaction.set_rollback(True)  # Only the input trigger is under test.
+            except DatabaseError as exc:
+                detail = diagnostic(exc)
+                return detail.sqlstate, detail.message_primary
+            return None, "inserted"
+
+        peer = connection.copy()
+        self.addCleanup(peer.close)
+        peer.set_autocommit(False)
+        try:
+            with peer.cursor() as cur:
+                cur.execute("SELECT id FROM public.core_livingorganism WHERE id=%s FOR UPDATE NOWAIT", [owner.pk])
+                self.assertEqual(cur.fetchone(), (owner.pk,))
+            # The downstream qualifier makes the same refusal. The owner lock separates the two cuts.
+            self.assertEqual(insert_outcome()[0], "55P03", "The active control must reach the occupied owner row.")
+            for state in (models.Identity.AccessState.DEACTIVATED, models.Identity.AccessState.RESTRICTED):
+                with self.subTest(state=state):
+                    models.Identity.objects.filter(pk=opener.pk).update(access_state=state)
+                    with connection.cursor() as cur:
+                        cur.execute("""
+                            SELECT i.access_state, i.access_epoch, u.is_active,
+                                   public.disc_member_state(%s,i.id,public.intevia_clock_statement())
+                              FROM public.core_identity i JOIN public.auth_user u ON u.id=i.credential_id
+                             WHERE i.id=%s
+                        """, [owner.pk, opener.pk])
+                        self.assertEqual(cur.fetchone(), (state, opener.access_epoch, True, "ACTIVE"),
+                                         "Only the identity state may disqualify this opener.")
+                    self.assertEqual(insert_outcome(), ("23514", "CARE_OBSERVATION_SOURCE"),
+                                     "An inactive opener must be refused before the organisation lock.")
+                    self.assertEqual(observation_footprint(owner), before,
+                                     "The refusal must preserve the detail, event and organisation head.")
+        finally:
+            peer.rollback()
+
+        for state in (models.Identity.AccessState.DEACTIVATED, models.Identity.AccessState.RESTRICTED):
+            with self.subTest(uncontended=state):
+                models.Identity.objects.filter(pk=opener.pk).update(access_state=state)
+                self.assertEqual(insert_outcome(), ("23514", "CARE_OBSERVATION_SOURCE"),
+                                 "An uncontended insert must give the same source refusal.")
+                self.assertEqual(observation_footprint(owner), before)
+
     def test_0111_refuses_populated_reversal(self):
         """B5. The migration refuses either kind of committed history before changing rows, schema or the ledger.
 

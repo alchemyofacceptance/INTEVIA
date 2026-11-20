@@ -1,6 +1,6 @@
 {% with provision=row.provision observation=row.observation %}
-<h2>{{ row.label }}{% if provision.locator %} · Clause “{{ provision.locator }}”{% endif %}</h2>
-<p class="meta">Version {{ provision.version }}</p>
+<h2>{{ row.title|default:row.label }}</h2>
+<p class="meta">{% if row.title %}{{ row.label }} · {% endif %}{% if provision.locator %}Clause “{{ provision.locator }}” · {% endif %}Version {{ provision.version }}</p>
 {% if provision.status == "cited_and_in_force" %}<p>Cited and in force</p>{% elif provision.status == "in_force_now" %}<p>In force now</p>{% endif %}
 <div{% if observation %} class="office-source-pair"{% endif %}>
   <blockquote class="office-clause">{{ provision.clause }}</blockquote>

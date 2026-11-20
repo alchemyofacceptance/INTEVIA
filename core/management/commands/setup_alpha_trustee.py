@@ -36,7 +36,7 @@ DEMO_LO = "Alder Beck Community Trust"
 DEMO_PURPOSE = "Rehearse a trustee handover."
 DUTIES_REF = "alpha-treasurer-duties"
 APPROVAL = "approval"
-DUTIES_TEXT = (f"[#{APPROVAL}] The organisation has a Treasurer. The Organisation Coordinator appoints "
+DUTIES_TEXT = (f"[#{APPROVAL}] The organisation has a Treasurer. The Board of Trustees appoints "
                "the holder with the nominee's consent. The Treasurer approves ordinary payments.")
 MINIMUM_REF = "alpha-board-minimum"
 MINIMUM_TEXT = '{"board_makeup":{"minimum":3}}'

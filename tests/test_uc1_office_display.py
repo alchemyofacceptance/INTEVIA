@@ -135,16 +135,22 @@ class OfficeDisplayTests(TransactionTestCase):
             children = [node for node in page.nodes if node["parents"] and node["parents"][-1] is pairs[0]]
             self.assertEqual([n["tag"] for n in children], ["blockquote", "aside"], "The observation must immediately follow its clause.")
             clause, aside = children
-            self.assertEqual(clause["text"], self.source["clause_text"], "The adjacent quotation must be the exact qualifying clause.")
+            self.assertTrue(self.source["clause_text"].startswith(" "), "The stored source must exercise the leading-space case.")
+            self.assertEqual(clause["text"], self.source["clause_text"].strip(),
+                             "The displayed approval clause must have no outer whitespace and preserve its full wording.")
             self.assertIn(self.source["sentence"], [p["text"] for p in page.select("p", within=aside)],
                           "The observation must give the qualified source's exact words.")
             self.assertEqual([p["text"].strip() for p in page.select("p", within=aside, classes=("meta",))],
                              [f'Source: clause \u201c{self.source["locator"]}\u201d, '
                               f'version {self.source["library_version_number"]}'],
                              "The observation must name its own source clause in quotation marks, and its own version.")
-            self.assertIn(f'Office basis \u00b7 Clause \u201c{self.source["locator"]}\u201d',
-                          [heading["text"].strip() for heading in page.select("h2")],
-                          "The provision heading must name the source clause in quotation marks.")
+            provision = pairs[0]["parents"][-1]
+            self.assertEqual([n["text"] for n in page.select("h2", within=provision)], ["Establishes this office"],
+                             "The unmapped provision must show its human relationship.")
+            self.assertEqual([n["text"] for n in page.select("p", within=provision, classes=("meta",))
+                              if n["parents"][-1] is provision],
+                             [f'Clause “{self.source["locator"]}” · Version {self.source["library_version_number"]}'],
+                             "The provision must name its own quoted locator and source version.")
             self.assertNotIn(str(self.reader.identity_id).encode(), response.content,
                              "The office page must not expose the first requester's identity reference.")
             self.assertTrue(self.reader.display_name.strip(), "The privacy control needs a named requester.")
@@ -179,7 +185,7 @@ class OfficeDisplayTests(TransactionTestCase):
 
         with connection.execute_wrapper(fail_history):
             fallback = self.client.get(self.path)
-        clause = self.source["clause_text"]
+        clause = self.source["clause_text"].strip()
         self.assertTrue(fallback.status_code == 200 and clause in unescape(fallback.content.decode()),
                         "A failed optional presentation must still serve the human clause.")
         assert_private(self, fallback)
@@ -238,6 +244,6 @@ class OfficeDisplayTests(TransactionTestCase):
         self.assertFalse(any(words in value for value in response.headers.values()), "The first Off response must omit guidance from headers.")
         self.assertFalse(page.select("aside", classes=("office-observation",)), "Off must omit the observation card itself.")
         main = page.select("main")[0]["text"]
-        self.assertIn(self.source["clause_text"], main, "An Off choice must preserve the human source clause.")
+        self.assertIn(self.source["clause_text"].strip(), main, "An Off choice must preserve the human source clause.")
         self.assertEqual(main, Markup(oracle.content.decode()).select("main")[0]["text"], "An Off display must agree with the facts-only read.")
         self.assertEqual(self.history(), before, "Off-first must create neither an observation nor a page-view entry.")

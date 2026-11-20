@@ -105,16 +105,16 @@ class OfficePartsTests(SimpleTestCase):
                          ["Source: clause \u201capproval\u201d, version 2"],
                          "The guidance must name its own clause in quotation marks, and its own version.")
         self.assertEqual(self.one(page, "h2", within=self.one(page, "article", classes=("office-provision",)))["text"],
-                         "Office basis \u00b7 Clause \u201capproval\u201d",
-                         "The provision heading must name the clause in quotation marks.")
+                         "Establishes this office",
+                         "The unmapped provision heading must give its relationship.")
         # A clause identifier is shown as text, whatever characters it holds.
         awkward = 'a<b>&"c'
         escaped = self.render(provisions=[self.current | {"locator": awkward}],
                               care={"enabled": True, "observation": self.observation | {"source_locator": awkward}})
         self.assertIn("Source: clause \u201ca&lt;b&gt;&amp;&quot;c\u201d, version 2", escaped,
                       "The source line must escape its clause identifier.")
-        self.assertIn("<h2>Office basis \u00b7 Clause \u201ca&lt;b&gt;&amp;&quot;c\u201d</h2>", escaped,
-                      "The provision heading must escape its clause identifier.")
+        self.assertIn('<p class="meta">Clause “a&lt;b&gt;&amp;&quot;c” · Version 2</p>', escaped,
+                      "The provision metadata must escape its quoted clause identifier.")
         self.assertFalse(Markup(escaped).select("b"), "A clause identifier must never create an HTML element.")
         for label, changes in (
             ("ambiguous", {"provisions": [self.current, dict(self.current)]}),
@@ -133,14 +133,14 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertIn(self.current["clause"], withheld, "Omitting guidance must preserve the human quotation.")
                 self.assertNotIn("Source: clause", withheld, "Withheld guidance must leave no source line.")
                 if "provisions" not in changes:
-                    self.assertIn("<h2>Office basis \u00b7 Clause \u201capproval\u201d</h2>", withheld,
+                    self.assertIn("<h2>Establishes this office</h2>", withheld,
                                   "Without CARE's guidance the human provision must keep its heading.")
 
     def test_inherited_whole_document_keeps_its_own_adoption(self):
         foreign = uuid4()
         charter = {k: v for k, v in self.current.items() if k not in ("locator", "adoption_route", "adoption_result_link")}
         charter.update(adopting_body=foreign, clause="First charter line.\nSecond charter line.", status="cited_and_in_force")
-        for kind, label in (("OFFICE_BASIS", "Office basis"), ("APPOINTING_AUTHORITY", "Appointing authority"),
+        for kind, label in (("OFFICE_BASIS", "Establishes this office"), ("APPOINTING_AUTHORITY", "Appointing authority"),
                             ("ALTERNATIVE_ROUTE", "Alternative route"), ("NOMINATION_ROUTE", "Nomination route"),
                             ("PARTICIPATION_REQUIRED", "Required participation"), ("EX_OFFICIO_SEAT", "Seat held by virtue of office")):
             with self.subTest(kind=kind):
@@ -152,11 +152,54 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertNotIn(str(foreign), raw, "The other organisation's identifier must occur nowhere in this response.")
                 self.assertEqual(self.one(page, "h2", within=card)["text"], label,
                                  "A whole document must have its own relationship heading without an invented locator.")
+                self.assertEqual(self.one(page, "p", within=card, classes=("meta",))["text"], "Version 2",
+                                 "A whole-document citation must omit the clause segment.")
                 self.assertEqual(self.one(page, "blockquote", within=card)["text"], charter["clause"],
                                  "The whole-document citation must preserve its complete text.")
                 self.assertEqual(set(self.facts(page, card)), {"Adopting body", "Adoption record", "In force from", "Recorded"},
                                  "Missing route and result permissions must remove their labels and values.")
                 self.assertIn("Cited and in force", card["text"], "A combined citation must display its combined status once.")
+
+    def test_law_section_names_the_office_and_film_policy(self):
+        film = self.current | {"tier": "Policy", "library_reference": "alpha-treasurer-duties", "version": 1}
+        page = Markup(self.render(provisions=[film], care={"enabled": False}))
+        section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
+        self.assertEqual(self.one(page, "p", within=section, id="office-provisions")["text"],
+                         "Constitutional Law related to this office", "Use the ruled section heading.")
+        self.assertEqual([n["text"] for n in page.select("h3", within=section)], ["Policy · Governance"],
+                         "The film Policy must identify its Governance family.")
+        card = self.one(page, "article", within=section)
+        self.assertEqual(self.one(page, "h2", within=card)["text"], "Treasurer office")
+        self.assertEqual(self.one(page, "p", within=card, classes=("meta",))["text"],
+                         "Establishes this office · Clause “approval” · Version 1")
+
+    def test_law_groups_keep_arrival_order_and_unknown_rows_stand_alone(self):
+        def row(tier, reference, words):
+            return self.current | {"tier": tier, "library_reference": reference, "clause": words}
+
+        rows = [row("Bylaw", "local-a", "First bylaw."), row("Policy", "local-b", "Other policy."),
+                row(None, "unclassified", "Unknown tier."), row("Bylaw", "local-c", "Second bylaw.")]
+        page = Markup(self.render(provisions=rows, care={"enabled": False}))
+        section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
+        groups = page.select("section", within=section)
+        self.assertEqual([n["text"] for n in page.select("h3", within=section)], ["Bylaw", "Policy"],
+                         "Each known tier gets one heading in first-seen order, with no guessed family or tier.")
+        self.assertEqual([[n["text"] for n in page.select("blockquote", within=g)] for g in groups],
+                         [["First bylaw.", "Second bylaw."], ["Other policy."]])
+        cards = page.select("article", within=section)
+        self.assertEqual([self.one(page, "h2", within=c)["text"] for c in cards], ["Establishes this office"] * 4)
+        self.assertEqual([self.one(page, "p", within=c, classes=("meta",))["text"] for c in cards],
+                         ["Clause “approval” · Version 2"] * 4, "An unmapped law must use the untitled layout.")
+        ungrouped = [self.one(page, "blockquote", within=c)["text"] for c in cards if c["parents"][-1] is section]
+        self.assertEqual(ungrouped, ["Unknown tier."], "The unknown tier must sit outside every named group.")
+
+        film = row("Policy", "alpha-treasurer-duties", "Film policy.")
+        mixed = Markup(self.render(provisions=[film, rows[1]], care={"enabled": False}))
+        section = self.one(mixed, "section", **{"aria-labelledby": "office-provisions"})
+        self.assertEqual([n["text"] for n in mixed.select("h3", within=section)], ["Policy"],
+                         "A shared tier heading must not assign the film family to an unmapped neighbour.")
+        self.assertEqual([n["text"] for n in mixed.select("h2", within=section)],
+                         ["Treasurer office", "Establishes this office"], "Only the mapped law gets a title.")
 
     def test_later_reader_can_distinguish_the_two_results(self):
         adoption_id, payment_id = uuid4(), uuid4()

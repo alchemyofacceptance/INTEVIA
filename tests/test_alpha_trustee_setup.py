@@ -137,6 +137,10 @@ class AlphaTrusteeSetupTests(TransactionTestCase):
             self.stage("activate")
         self.stage("policies")
         in_force = {law["library_reference"]: law for law in library_laws.our_laws(**scope)["laws"]}
+        self.assertEqual(in_force[setup.DUTIES_REF]["content"],
+                         "[#approval] The organisation has a Treasurer. The Board of Trustees appoints "
+                         "the holder with the nominee's consent. The Treasurer approves ordinary payments.",
+                         "The adopted film law must use the Board wording and retain the parser's source space.")
         for ref, content in [(setup.DUTIES_REF, setup.DUTIES_TEXT), (setup.MINIMUM_REF, setup.MINIMUM_TEXT)]:
             self.assertEqual((in_force[ref]["content"], in_force[ref]["decision_route"],
                               in_force[ref]["class_name"], in_force[ref]["inherited"]),

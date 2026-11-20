@@ -156,10 +156,29 @@ class TimelineTests(SimpleTestCase):
                    self.entry("setting_change", "CARE assistance turned Off", enabled=False)]
         raw = self.render(history)
         page = Markup(raw)
-        self.assertFalse(page.select("a"), "The interim ILC notice must have no destination.")
+        timeline, = page.select("ol", classes=("office-timeline",))
+        self.assertFalse(page.select("a", within=timeline), "The interim ILC notice must have no destination.")
         self.assertFalse(any(n["tag"] in ("button", "input") or
                              any(k in n["attrs"] for k in ("href", "tabindex", "onclick", "contenteditable"))
-                             for n in page.nodes), "The timeline must not introduce a keyboard stop or interactive stand-in.")
+                             for n in page.nodes if any(p is timeline for p in n["parents"])),
+                         "The timeline entries must not introduce a keyboard stop or interactive stand-in.")
+        size_form, = page.select("form", classes=("office-history-size",))
+        outside_actions = []
+        for node in page.nodes:
+            if any(parent is timeline for parent in node["parents"]):
+                continue
+            tag, attrs = node["tag"], node["attrs"]
+            outside_actions.extend(sorted({"href", "tabindex", "onclick", "contenteditable"}.intersection(attrs)))
+            in_size_form = any(parent is size_form for parent in node["parents"])
+            if in_size_form and tag == "select":
+                outside_actions.append(("select", attrs.get("name")))
+            elif in_size_form and tag == "button":
+                outside_actions.append(("button", attrs.get("type"), node["text"].strip()))
+            elif (tag in ("a", "button", "input", "select", "textarea", "details", "summary", "iframe")
+                  or (tag in ("audio", "video") and "controls" in attrs)):
+                outside_actions.append(tag)
+        self.assertCountEqual(outside_actions, [("select", "show"), ("button", "submit", "Show")],
+                              "Outside the entries, the history may offer only the size choice and its Show button.")
         items = page.select("li")
         self.assertEqual(len(items), len(history), "Both permitted entries must have their own interim notice.")
         for item, entry in zip(items, history):
@@ -189,6 +208,12 @@ class TimelineTests(SimpleTestCase):
         self.assertIn(end.get("border-inline-start-color"), ("transparent", "#0000"), "The line must stop at the final marker.")
         self.assertEqual((cap.get("height"), cap.get("border-inline-start")), (marker["top"], row["border-inline-start"]),
                          "The last entry needs only the short line down to its circle.")
+        pager = declarations(css, ".office-history-pages")
+        self.assertEqual((pager.get("justify-content"), pager.get("margin-inline-start")), ("center", "36px"),
+                         "The pager must centre on the entry text, 36 pixels in from the list edge.")
+        number = declarations(css, ".office-entry-number")
+        self.assertEqual(number.get("color"), "var(--color-accent)",
+                         "Entry numbers must use the timeline’s teal accent.")
         label = declarations(css, ".office-care-label")
         self.assertEqual((label.get("color"), label.get("background")),
                          ("var(--color-accent)", "var(--color-accent-soft)"), "The CARE label must use its two approved colour roles.")
