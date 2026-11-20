@@ -2,8 +2,9 @@
 from uuid import UUID, uuid4
 
 from django.db import DatabaseError, connection, transaction
-from psycopg import sql
+from psycopg import Cursor
 
+from core.care_identity import CARE_ID
 from core.models import CircleStateEvent
 from src.intevia.services._office_family import office_family
 from src.intevia.services._record_names import full_name_and_short_label, office_label
@@ -370,43 +371,37 @@ def _source(params):
 
 def _record(params, received):
     key = uuid4()
-    with connection.cursor() as cur:
-        cur.execute(sql.SQL("""
-            DO $care_display$
-            DECLARE
-                q record;
-                d public.core_careofficeobservation;
-                lo public.core_livingorganism;
-                h public.core_livingorganismevent;
-                state_at_cut text;
-                stamp timestamptz := public.intevia_clock_statement();
-            BEGIN
-                SELECT eligible.* INTO q FROM (
-                    SELECT candidate.*,count(*) OVER () AS source_count
-                      FROM public.care_alpha_treasurer_qualify({owner},{office},{reader},{epoch},stamp,true) candidate
-                ) eligible WHERE eligible.source_count=1;
-                IF NOT FOUND THEN RETURN; END IF;
+    # Use server-side binding on the existing transaction. Django's wrapper
+    # still handles database errors and runs the normal execution hooks.
+    with connection.make_cursor(Cursor(connection.connection)) as cur:
+        cur.execute("""
+            WITH eligible AS (
+                SELECT q.*, count(*) OVER () AS source_count
+                  FROM public.care_alpha_treasurer_qualify(
+                      %(owner)s, %(office)s, %(reader)s, %(epoch)s, public.intevia_clock_statement(), true
+                  ) q
+            ), detail AS (
                 INSERT INTO public.core_careofficeobservation
                     (event_uuid,organism_id,definition_uuid,provision_uuid,binding_uuid,library_version_id,
                      library_version_number,adoption_uuid,resource_reference,locator,clause_text,observation_kind,
                      rule_reference,sentence,setting_act_uuid,requester_id,requester_epoch,received_at)
-                VALUES ({key},q.organism_id,q.definition_uuid,q.provision_uuid,q.binding_uuid,q.library_version_id,
-                        q.library_version_number,q.adoption_uuid,q.resource_reference,q.locator,q.clause_text,
-                        q.observation_kind,q.rule_reference,q.sentence,q.setting_act_uuid,{reader},{epoch},{received})
-                RETURNING * INTO STRICT d;
-                SELECT * INTO STRICT lo FROM public.core_livingorganism WHERE id=d.organism_id;
-                SELECT * INTO STRICT h FROM public.core_livingorganismevent WHERE id=lo.head_event_id;
-                state_at_cut:=public.s015_fold_effective_state('core_livingorganism',lo.id,stamp,stamp);
-                PERFORM public.s015_append_event('core_livingorganism',lo.id,'RECORD_CARE_OFFICE_OBSERVATION',
-                    state_at_cut,stamp,d.occurred_at,d.received_at,d.requester_id,lo.founding_authority_basis_id,
-                    public.care_observation_decision(d.rule_reference,d.payload_fingerprint),
-                    'care-office-observation:'||d.event_uuid,'care-office-presentation:'||d.event_uuid,
-                    d.payload_fingerprint,jsonb_build_object(),NULL,d.event_uuid,h.id,h.sequence::integer,
-                    NULL,d.rule_reference,'care-office-presentation:'||d.event_uuid);
-            END $care_display$;
-        """).format(owner=sql.Literal(params["owner"]), office=sql.Literal(params["office"]),
-                    reader=sql.Literal(params["reader"]), epoch=sql.Literal(params["epoch"]),
-                    key=sql.Literal(key), received=sql.Literal(received)))
+                SELECT %(key)s,q.organism_id,q.definition_uuid,q.provision_uuid,q.binding_uuid,q.library_version_id,
+                       q.library_version_number,q.adoption_uuid,q.resource_reference,q.locator,q.clause_text,
+                       q.observation_kind,q.rule_reference,q.sentence,q.setting_act_uuid,%(reader)s,%(epoch)s,%(received)s
+                  FROM eligible q WHERE q.source_count=1
+                RETURNING event_uuid,organism_id,rule_reference,payload_fingerprint,qualification_at,occurred_at,received_at
+            )
+            SELECT public.s015_append_event('core_livingorganism',lo.id,'RECORD_CARE_OFFICE_OBSERVATION',
+                public.s015_fold_effective_state('core_livingorganism',lo.id,d.qualification_at,d.qualification_at),
+                d.qualification_at,d.occurred_at,d.received_at,
+                (SELECT i.id FROM public.core_identity i WHERE i.identity_id=%(care)s),
+                lo.founding_authority_basis_id,public.care_observation_decision(d.rule_reference,d.payload_fingerprint),
+                'care-office-observation:'||d.event_uuid,'care-office-presentation:'||d.event_uuid,
+                d.payload_fingerprint,jsonb_build_object(),NULL,d.event_uuid,h.id,h.sequence::integer,
+                NULL,d.rule_reference,'care-office-presentation:'||d.event_uuid)
+              FROM detail d JOIN public.core_livingorganism lo ON lo.id=d.organism_id
+              JOIN public.core_livingorganismevent h ON h.id=lo.head_event_id
+        """, {**params, "care": CARE_ID, "key": key, "received": received})
     # The only possible new result is the pair established at the write cut above.
     return disc._rows(f"SELECT {_PUBLIC} FROM {_PAIR} WHERE o.event_uuid=%s AND o.organism_id=%s",
                       [key, params["owner_id"]])

@@ -421,6 +421,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
     def test_0105_requires_exact_predecessor_and_successor(self):
         """W12. Both directions refuse drift; restoring the expected bytes permits a round trip."""
         care = import_module("core.migrations.0111_care_office_record")
+        account = import_module("core.migrations.0113_care_system_account")
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
             def altered(sql):
                 return sql.replace("AS $function$\n", "AS $function$\n-- W12 drift\n", 1)
@@ -440,6 +441,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                 cursor.execute("DROP TRIGGER " + name + " ON public.core_circlestateevent")
                 cursor.execute(source)
 
+            account.uninstall(None, editor)
             care.uninstall(None, editor)
             chair.uninstall(None, editor)
             signature, before, after = reseat.REPLACEMENTS[0]
@@ -533,6 +535,7 @@ class CircleVacancyEpisodeTests(TransactionTestCase):
                                "FROM public.core_livingorganism WHERE id=%s", [cut, cut, fixture.organism.pk])
                 return result, cursor.fetchone()
 
+            account.uninstall(None, editor)
             care.uninstall(None, editor)
             chair.uninstall(None, editor)
             reseat.uninstall(None, editor)

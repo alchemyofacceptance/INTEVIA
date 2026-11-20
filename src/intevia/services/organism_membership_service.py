@@ -53,6 +53,7 @@ from uuid import UUID, uuid4
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connections, transaction
 
+from core.care_identity import CARE_ID
 from core.models import (
     AuthorityBasis,
     CircleParticipation,
@@ -957,6 +958,7 @@ class OrganismMembershipService(_OrganismCommandService):
            then locks the actor's membership context. The context helper
            requires the actor's membership in this LO to be ACTIVE and to have
            a non-null head transition; allow_probationary is not supplied.
+           A request to open membership for CARE then receives the system-account refusal.
         4. Calls _evaluate_authority with the actor, its membership context
            and role references, the request reference and idempotency key,
            the target fingerprint and received_at. It does not supply
@@ -1080,6 +1082,14 @@ class OrganismMembershipService(_OrganismCommandService):
             living_organism_id=living_organism_id,
             unavailable=S015MembershipAuthorityUnavailable,
         )
+
+        if target_identity.identity_id == CARE_ID:
+            raise S015MembershipRefused(
+                "Membership could not be opened. CARE is INTEVIA's system account. "
+                "No membership was created. Choose the person who is joining. "
+                "If you need help, contact the Organisation Coordinator.",
+                refusal_code=S015AuthorityRefusalCode.DENIED,
+            )
 
         decision = self._evaluate_authority(
             actor=actor,

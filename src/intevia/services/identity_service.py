@@ -14,6 +14,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 
+from core.care_identity import CARE_ID, RESERVED_NAME, reserved_name
 from core.identity import canonical_username_v1
 from core.models import (
     Identity,
@@ -1090,6 +1091,11 @@ class LearnerRegistrationService:
             )
 
         canonical_username = canonical_username_v1(username)
+        if reserved_name(canonical_username, display_name):
+            raise RegistrationServiceRefused(
+                "REG_NAME_RESERVED", RESERVED_NAME, submitted_version=terms_version,
+                current_version=current_version, effective_at=effective_at, received_at=received_at,
+            )
         if cls._username_unavailable(username, canonical_username):
             raise RegistrationServiceRefused(
                 "REG_USERNAME_UNAVAILABLE",
@@ -1286,6 +1292,8 @@ class CredentialService:
             raise ValidationError("explicit Human classification is required")
         occurred_at = IdentityLifecycleService._at(occurred_at)
         canonical = canonical_username_v1(username)
+        if reserved_name(canonical, display_name):
+            raise CredentialServiceRefused("NAME_RESERVED", RESERVED_NAME)
         credential = User(
             username=username,
             is_active=False,
@@ -1351,8 +1359,10 @@ class CredentialService:
 
         Raises CredentialServiceRefused USERNAME_CHANGE_UNAVAILABLE: a
         username is fixed once registered; the display name can still
-        change. Reads and locks nothing; its parameters are not used.
+        change. A request for CARE's reserved name has the shared name refusal.
         """
+        if str(identity_id) != str(CARE_ID) and reserved_name(username):
+            raise CredentialServiceRefused("NAME_RESERVED", RESERVED_NAME)
         raise CredentialServiceRefused(
             "USERNAME_CHANGE_UNAVAILABLE",
             "Your username was not changed. Usernames in INTEVIA are fixed once "

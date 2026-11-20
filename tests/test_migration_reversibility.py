@@ -190,6 +190,55 @@ def care_edge(care):
     return tuple(digests), triggers, delta
 
 
+# Independently pinned pg_get_functiondef outputs in writer, gateway, matcher, input order.
+CARE_ROUTINES_0112 = (
+    "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
+    "496afd9498b1d672636772f954e89d156bc43fda990890c8b6109dc5f5169a15",
+    "143854059979571826356840aace0cdd3bf2582db1b80baff07fac53bd4b3f58",
+    "e4adcf86cad1c5829fffed3783cfa3eaad250244e0a06aaae2bf29978aebd110",
+)
+CARE_ROUTINES_0113 = (
+    "9993ec0bff9ddd87dbd5330ce150af274154c6259a6fee959b8fd5f733231273",
+    "c4be26c5eb58f66008b5a804f24ea4c9bf0f18197864dcdb512445c5ba3fdba1",
+    "26cb18bcfb30637f0188a0a3ed25a74b4e308ff6eabbfc93f5d39f030f7c34dd",
+    "747d38a216bc9896e82b6b720a323e07402055c754919da77d2a3e237d428c43",
+)
+CARE_MEMBER_BODY = "d110664005e8c1bdfce7878a7d67c476371189bd15284e4783c4ecc9ee176179"
+CARE_MEMBER_KEY = ("core_organismmembership", "care_membership_subject")
+CARE_MEMBER_TRIGGER = (
+    "O", 7, False, False,
+    "CREATE TRIGGER care_membership_subject BEFORE INSERT ON public.core_organismmembership "
+    "FOR EACH ROW EXECUTE FUNCTION care_membership_subject()",
+)
+
+
+def account_edge(care, inventory):
+    """Read the 0113/0112 evidence using the stable public ID and the real catalogue."""
+    with connection.cursor() as cursor:
+        extra = []
+        for signature in ("public.care_observation_matches(public.core_livingorganismevent)",
+                          "public.care_observation_input()"):
+            body = care.installed_definition(cursor, signature)
+            extra.append(sha256(body.encode()).hexdigest() if body is not None else None)
+        cursor.execute("""SELECT u.username, i.canonical_username, i.display_name,
+                                 r.canonical_username, r.display_name
+                            FROM public.core_identity i
+                            JOIN public.auth_user u ON u.id=i.credential_id
+                            JOIN public.core_identityresolution r ON r.identity_id=i.id AND r.credential_link=u.id
+                           WHERE i.identity_id=%s""", ["b79c7d99-67b3-4dd0-8ab7-ee1328d1e183"])
+        triplet = cursor.fetchall()
+        cursor.execute("""SELECT (SELECT count(*) FROM public.auth_user),
+                                 (SELECT count(*) FROM public.core_identity),
+                                 (SELECT count(*) FROM public.core_identityresolution),
+                                 (SELECT count(*) FROM public.core_identityresolutionsevered)""")
+        counts = cursor.fetchone()
+        cursor.execute("""SELECT prosrc FROM pg_proc
+                           WHERE oid=to_regprocedure('public.care_membership_subject()')""")
+        member_body = cursor.fetchone()
+    member_pin = sha256(member_body[0].encode()).hexdigest() if member_body else None
+    return inventory[0] + tuple(extra), triplet, counts, member_pin
+
+
 def colour_mode_present(reader):
     with reader.cursor() as cursor:
         cursor.execute("""SELECT EXISTS (
@@ -269,7 +318,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         when restored. CLK-08: reversed below the clock's migration and restored, the clone returns to exactly the
         state it had, at offset zero, and production's startup refuses it at head, at each of the two stops and
         when restored. At 0112 the personal colour column must exist, disappear at its
-        own inverse and return on reapply. The 0111 CARE protections must survive that edge."""
+        own inverse and return on reapply. The 0111 CARE protections must survive that edge.
+        AC11 observes the account, severance recorder and CARE catalogue on the 0113 round trip."""
         executor = MigrationExecutor(connection)
         graph = executor.loader.graph
         received = tuple(graph.leaf_nodes())
@@ -333,6 +383,8 @@ class MigrationReversibilityTests(TransactionTestCase):
         care_key = ("core", "0111_care_office_record")
         office_link_key = ("core", "0110_discussion_office_link")
         appearance_key = ("core", "0112_identity_colour_mode")
+        account_key = ("core", "0113_care_system_account")
+        account_parent = []  # Exact 0112 state immediately after reversing 0113.
         appearance_parent = []
         schema_reader = connection.copy()
         self.addCleanup(schema_reader.close)
@@ -340,6 +392,15 @@ class MigrationReversibilityTests(TransactionTestCase):
             self.assertTrue(colour_mode_present(schema_reader), "The personal colour preference must exist before reversing 0112.")
         care_parent = []
         care_before = care_edge(care) if care_key in ledger_before else None
+        linked_names = [("care", "care", "CARE", "care", "CARE")]
+        if account_key in received:
+            pins, triplet, counts, member_pin = account_edge(care, care_before)
+            self.assertEqual(pins, CARE_ROUTINES_0113, "The installed 0113 must have all four exact CARE routines.")
+            self.assertEqual(member_pin, CARE_MEMBER_BODY, "The installed membership refusal must have its pinned body.")
+            self.assertEqual(care_before[1].get(CARE_MEMBER_KEY), CARE_MEMBER_TRIGGER,
+                             "The installed membership guard must have its exact enabled insert definition.")
+            self.assertEqual((triplet, counts), (linked_names, (1, 1, 1, 0)),
+                             "The empty 0113 head must have only the linked CARE triplet and no severance.")
         care_triggers = {}
         for kind, table, action in (
             ("setting", "core_careassistancesettingact", "SET_CARE_ASSISTANCE"),
@@ -399,6 +460,9 @@ class MigrationReversibilityTests(TransactionTestCase):
         records = import_module("core.migrations.0106_circle_vacancy_records")
 
         def observe_clock(undone_so_far):
+            if not account_parent and account_key in undone_so_far and appearance_key not in undone_so_far:
+                inventory = care_edge(care)
+                account_parent.append((inventory, account_edge(care, inventory)))
             if not appearance_parent and appearance_key in undone_so_far and care_key not in undone_so_far:
                 appearance_parent.append((colour_mode_present(schema_reader), care_edge(care)))
             if not care_parent and care_key in undone_so_far and office_link_key not in undone_so_far:
@@ -456,12 +520,23 @@ class MigrationReversibilityTests(TransactionTestCase):
         failed_again = restore_failure(not_undone, restore())
 
         # Judge the inverse before reporting any dependent reapply failure.
+        if account_key in undone:
+            self.assertEqual(len(account_parent), 1, "The descent must observe the 0113 inverse at 0112.")
+            parent_inventory, (pins, triplet, counts, member_pin) = account_parent[0]
+            self.assertEqual(pins, CARE_ROUTINES_0112, "The empty inverse must restore all four exact 0112 CARE routines.")
+            self.assertNotIn(CARE_MEMBER_KEY, parent_inventory[1], "The 0113 membership trigger must be absent at 0112.")
+            self.assertIsNone(member_pin, "The membership refusal routine must be absent at 0112.")
+            recorder = parent_inventory[1].get(("core_identityresolution", "s015_0022_resolution_severance"))
+            self.assertEqual(recorder and recorder[0], "O", "The inverse must leave the severance recorder enabled at 0112.")
+            self.assertEqual((triplet, counts), ([], (0, 0, 0, 0)),
+                             "The empty inverse must remove all three CARE records without leaving a severance.")
         if appearance_key in undone:
             self.assertEqual(len(appearance_parent), 1, "The descent must observe 0112 reversed while 0111 is installed.")
             field_present, parent_care = appearance_parent[0]
             self.assertFalse(field_present, "Reversing 0112 must remove the personal colour preference.")
-            if appearance_key in received:
-                self.assertEqual(parent_care, care_before,
+            if account_parent or appearance_key in received:
+                at_0112 = account_parent[0][0] if account_parent else care_before
+                self.assertEqual(parent_care, at_0112,
                                  "Reversing 0112 must preserve both CARE functions and the full trigger inventory.")
 
         # CLK-08 at its two stops, judged before REV-01's own verdict so that each claim reports its own failure.
@@ -496,6 +571,15 @@ class MigrationReversibilityTests(TransactionTestCase):
             self.fail(failed_again)
         if appearance_key in after_base:
             self.assertTrue(colour_mode_present(schema_reader), "Reapplying 0112 must restore the personal colour preference.")
+        if account_key in received:
+            restored_inventory = care_edge(care)
+            pins, triplet, counts, member_pin = account_edge(care, restored_inventory)
+            self.assertEqual(pins, CARE_ROUTINES_0113, "Reapplying 0113 must restore the four pinned CARE routines.")
+            self.assertEqual(member_pin, CARE_MEMBER_BODY, "Reapplying 0113 must restore the membership refusal body.")
+            self.assertEqual(restored_inventory[1].get(CARE_MEMBER_KEY), CARE_MEMBER_TRIGGER,
+                             "Reapplying 0113 must restore the exact enabled membership trigger.")
+            self.assertEqual((triplet, counts), (linked_names, (1, 1, 1, 0)),
+                             "Reapplying 0113 must restore the linked triplet under CARE's original UUID.")
         if care_key in after_base:
             self.assertEqual(len(care_parent), 1, "REV-01 must observe the empty 0111 to 0110 edge once.")
             digests, parent_triggers, delta = care_parent[0]
@@ -535,11 +619,11 @@ class MigrationReversibilityTests(TransactionTestCase):
             for signature, _, after in reseat.REPLACEMENTS:
                 installed = reseat.definition(cursor, signature)
                 if signature == care.WRITER and ("core", "0111_care_office_record") in ledger_before:
-                    # Pin the complete definition independently of 0111's replacement code.
+                    # 0113 replaces this writer. The old digest is still required at the 0111 and 0112 stops.
                     self.assertEqual(
                         sha256((installed or "").encode("utf-8")).hexdigest(),
-                        "39c40cfdb3def4fefba837f49c9cc9685031a907face3c11d28749ba3a7dff4f",
-                        "Restoring 0111 must restore the exact CARE-aware event writer.",
+                        CARE_ROUTINES_0113[0] if account_key in ledger_before else CARE_ROUTINES_0112[0],
+                        "Restoration must recover the exact CARE event writer for the received schema.",
                     )
                 else:
                     self.assertEqual(installed, after, "Restoration must preserve this 0108 function: " + signature)

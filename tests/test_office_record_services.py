@@ -11,6 +11,7 @@ from django.db import IntegrityError, transaction, connection, connections
 from django.test import TransactionTestCase
 
 from core import models
+from core.care_identity import CARE_ID
 from src.intevia.services import care_assistance as care
 from src.intevia.services import circle_commands, cq, law_records, library_laws
 from src.intevia.services import organism_membership_service as memberships
@@ -557,7 +558,7 @@ class OfficeRecordTests(TransactionTestCase):
         self.assertEqual(attempted, [], "Off must stop the first-display append before it is attempted.")
 
     def test_first_display_preserves_ruled_attribution(self):
-        """A5. The first explicit ACTIVE display records the requester as ILC enterer. The office record omits that identity.
+        """A5. CARE writes and enters the observation. The active trustee who opened the office stays private.
 
         Probation is checked at the SQL qualifier here. R4 covers the public probationary read.
         Check the actual immutable envelope and the other reader's live, historical and source-link projections.
@@ -573,6 +574,17 @@ class OfficeRecordTests(TransactionTestCase):
             fixture_membership_state(owner, founder, reader, state)
         basis = models.OrganismRoleDefinitionProvision.objects.get(definition__role_uuid=office,
                                                                    relationship="OFFICE_BASIS")
+        care_pk = models.Identity.objects.get(identity_id=CARE_ID).pk
+        # A storage-level namesake makes a display-name lookup ambiguous.
+        # The public registration route reserves this name.
+        with transaction.atomic(), connection.cursor() as cur:
+            models.Identity.objects.filter(pk=probationary.pk).update(display_name="CARE")
+            cur.execute("UPDATE public.core_identityresolution SET display_name=%s WHERE identity_id=%s",
+                        ["CARE", probationary.pk])
+            cur.execute("""SELECT i.id FROM public.core_identity i JOIN public.core_identityresolution r
+                           ON r.identity_id=i.id WHERE i.display_name=%s AND r.display_name=%s""", ["CARE", "CARE"])
+            self.assertEqual({key for key, in cur.fetchall()}, {care_pk, probationary.pk},
+                             "The fixture must include CARE and a different person with its name.")
         initial = observation_footprint(owner)
         self.assertEqual(initial[:2], ([], []), "The first-reader controls must start without observation history.")
 
@@ -624,12 +636,20 @@ class OfficeRecordTests(TransactionTestCase):
             self.assertEqual(observation_footprint(owner), initial,
                              "An ACTIVE reader must explicitly request presentation before any pair is written.")
 
-        try:
-            first = show(presenter)
-        except IntegrityError as exc:
-            if exc.__cause__.diag.message_primary != "CARE_OBSERVATION_PAIR":
-                raise
-            self.fail("The organisation's history must record the requesting ACTIVE trustee as the entry's enterer.")
+        first = show(presenter)
+        with connection.cursor() as cur:
+            cur.execute("""SELECT o.requester_id,o.requester_epoch,e.enterer_identity_id,
+                                  e.actor_state,e.actor_capacity,e.actor_id,e.actor_access_epoch,
+                                  e.entry_mode,e.composing_rule_state,e.composing_rule_reference,o.rule_reference,
+                                  e.composer_state,e.composer_identity_id,e.authority_basis_id,
+                                  o.definition_uuid,o.provision_uuid,o.binding_uuid,o.library_version_id,
+                                  o.qualification_at,o.sentence,to_jsonb(e)::text
+                           FROM public.core_careofficeobservation o JOIN public.core_livingorganismevent e
+                           ON e.event_uuid=o.event_uuid AND e.living_organism_id=o.organism_id
+                           WHERE o.organism_id=%s AND e.action='RECORD_CARE_OFFICE_OBSERVATION'""", [owner.pk])
+            stored = cur.fetchone()
+        self.assertEqual(stored[2] if stored else None, care_pk,
+                         "The first display must commit an observation entered by CARE's fixed identity.")
         live = first["care"].get("observation")
         self.assertIsNotNone(live, "The ACTIVE trustee's explicit request must return committed CARE guidance.")
         paired = observation_footprint(owner)
@@ -637,26 +657,19 @@ class OfficeRecordTests(TransactionTestCase):
                          "The first explicit display must commit one detail and one ILC event with the same UUID.")
         event = paired[0][0]
         self.assertNotEqual(paired[2], initial[2], "The first observation must advance the organisation's ILC head.")
-        with connection.cursor() as cur:
-            cur.execute("""SELECT o.requester_id,o.requester_epoch,e.enterer_identity_id,
-                                  e.actor_state,e.actor_capacity,e.actor_id,e.actor_access_epoch,
-                                  e.entry_mode,e.composing_rule_state,e.composing_rule_reference,o.rule_reference,
-                                  e.composer_state,e.composer_identity_id,e.authority_basis_id,
-                                  o.definition_uuid,o.provision_uuid,o.binding_uuid,o.library_version_id,
-                                  o.qualification_at,o.sentence
-                           FROM public.core_careofficeobservation o JOIN public.core_livingorganismevent e
-                           ON e.event_uuid=o.event_uuid AND e.living_organism_id=o.organism_id
-                           WHERE o.event_uuid=%s""", [event])
-            stored = cur.fetchone()
-        self.assertIsNotNone(stored, "The named event must have its matching immutable detail.")
-        self.assertEqual(stored[:14],
-                         (presenter.pk, presenter.access_epoch, presenter.pk, "NONE", "NA_NO_PARTY", None, None,
-                          "COMPOSED", "REFERENCE", "CARE:ALPHA:TREASURER_VACANCY:1",
-                          "CARE:ALPHA:TREASURER_VACANCY:1", "NOT_ESTABLISHED", None, owner.founding_authority_basis_id),
-                         "Only the requesting trustee may be the enterer; the versioned rule supplies the words.")
+        self.assertEqual(stored[:2], (None, None), "The detail must forget the reader and their access epoch.")
+        self.assertEqual(stored[3:7], ("NONE", "NA_NO_PARTY", None, None),
+                         "Nobody acted or exercised authority by opening the office.")
+        self.assertEqual(stored[7:14],
+                         ("COMPOSED", "REFERENCE", "CARE:ALPHA:TREASURER_VACANCY:1",
+                          "CARE:ALPHA:TREASURER_VACANCY:1", "REFERENCE", care_pk, owner.founding_authority_basis_id),
+                         "CARE must compose the words under the cited rule and the organisation's founding authority.")
         self.assertEqual(stored[14:18], (office, basis.provision_uuid, binding, version.pk),
                          "The immutable source must identify this office, exact provision, local binding and version.")
-        stamp, words = stored[18:]
+        stamp, words, entry_text = stored[18:]
+        for private_value in (str(presenter.identity_id), presenter.canonical_username, presenter.display_name):
+            if private_value:
+                self.assertNotIn(private_value, entry_text, "The history entry must not identify the trustee who opened the page.")
         live_fields = {"label", "words", "event_ref", "source_version", "source_locator", "source_link"}
         history_fields = {"kind", "at", "label", "source_link", "words", "event_ref", "source_version", "source_locator",
                           "ilc_link", "ilc_label"}
@@ -687,7 +700,7 @@ class OfficeRecordTests(TransactionTestCase):
                 for private_value in (str(presenter.identity_id), presenter.canonical_username, presenter.display_name):
                     if private_value:
                         self.assertNotIn(private_value, page_text,
-                                         "The other reader must receive no identifier, name or link identifying the first requester.")
+                                         "The other reader must receive no identifier, name or link identifying the first trustee.")
                 self.assertEqual(visible_law(reader), [version.pk],
                                  "The source link must reopen an exact Policy the current reader can see.")
                 source = law_records.resolve_citation(owner.organism_id, UUID(str(output["source_link"])))
@@ -695,7 +708,7 @@ class OfficeRecordTests(TransactionTestCase):
                                   source["now"]["governing"]["binding_uuid"]), (version.pk,"approval",binding),
                                  "Opening the scoped provision reference must lead to its exact governing clause.")
                 self.assertEqual(observation_footprint(owner), paired,
-                                 "Reuse must preserve the original requester, event pair and organisation head.")
+                                 "Reuse must preserve the committed pair and the organisation head.")
 
     def test_office_facts_use_effective_tenure(self):
         """R1. Follow an older definition through nomination, appointment, amendment, departure and severance."""

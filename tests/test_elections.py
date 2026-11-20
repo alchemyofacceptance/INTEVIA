@@ -619,9 +619,11 @@ class ElectionTests(TransactionTestCase):
         from importlib import import_module
         migration = import_module("core.migrations.0083_elect_board_continuity")
         care = import_module("core.migrations.0111_care_office_record")
+        account = import_module("core.migrations.0113_care_system_account")
         with connection.schema_editor(atomic=True) as editor:
             with connection.cursor() as check:
                 care_at_head = {sig: care.installed_definition(check, sig) for sig in (care.WRITER, care.GATEWAY)}
+            account.uninstall(None, editor)
             care.uninstall(None, editor)
             # The inner rollback restores 0108 and 0109 before the outer transaction reapplies 0111.
             with (
@@ -662,12 +664,13 @@ class ElectionTests(TransactionTestCase):
                 import_module("core.migrations.0084_committee_mandates").change(editor, True)
                 migration.uninstall(None, editor)
             care.install(None, editor)
+            account.install_migration(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.",
                          "Recorded recognition must reach and refuse the 0083 downgrade.")
         with connection.cursor() as record_check:
             for signature, expected in care_at_head.items():
                 self.assertEqual(care.installed_definition(record_check, signature), expected,
-                                 "Reapplying 0111 after the populated refusal must restore its exact function: " + signature)
+                                 "Reapplying the received CARE migrations must restore this exact function: " + signature)
             chair.expect(record_check, True)
             self.assertEqual(records.episode.definition(record_check, committee_cut.APART), reseat.APART_NEW,
                              "ELECT-10 must roll the populated descent back to 0108.")

@@ -172,8 +172,10 @@ S015_RESET_EXCLUDED_TABLES = frozenset({"django_migrations"})
 
 # Data seeded by migrations, restored after a reset by calling the migration's own
 # function, so the values come from the governing migration and are not copied here.
+_CARE_SEED = ("core.migrations.0113_care_system_account", "install")
 S015_MIGRATION_SEEDS = (
     ("core.migrations.0003_seed_triad_roles", "create_triad_roles"),
+    _CARE_SEED,
     ("core.migrations.0045_sbg_governance_formation", "restore_platform_rules"),
     ("core.migrations.0046_se_entitlement_foundation", "restore_entitlement_rules"),
     ("core.migrations.0074_cq_clarity", "restore_reporting_default"),
@@ -845,6 +847,16 @@ $s015$;
                         self._clock_to_real_time()
                         schema_editor = self.connection.schema_editor()
                         for module_name, function_name in S015_MIGRATION_SEEDS:
+                            if (module_name, function_name) == _CARE_SEED:
+                                # A flush at an older migration head must leave that head intact.
+                                with self.connection.cursor() as probe:
+                                    probe.execute("""
+                                        SELECT EXISTS (SELECT FROM public.django_migrations
+                                                       WHERE app = 'core' AND name = '0113_care_system_account')
+                                    """)
+                                    applied = probe.fetchone()[0]
+                                if not applied:
+                                    continue
                             seed = getattr(importlib.import_module(module_name), function_name)
                             seed(django_apps, schema_editor)
                         after = self._sequence_discipline_findings()

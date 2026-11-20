@@ -171,6 +171,13 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
         "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0,
         "core_careassistancesettingact": 0, "core_careofficeobservation": 0,
     },
+    # 0113 installs one linked CARE triplet, without recording an act or adding another platform rule.
+    "0113_care_system_account": {
+        "core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0,
+        "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0,
+        "core_careassistancesettingact": 0, "core_careofficeobservation": 0,
+        "auth_user": 1, "core_identity": 1, "core_identityresolution": 1,
+    },
     "0110_discussion_office_link": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
@@ -268,6 +275,7 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0109_committee_chair_reservation": 727,
                           "0111_care_office_record": 737,  # Five guards on each CARE detail/event pair.
                           "0112_identity_colour_mode": 737,  # One Identity column and CHECK; no trigger or seed change.
+                          "0113_care_system_account": 738,  # 737 plus the membership subject BEFORE INSERT guard.
                           "0110_discussion_office_link": 727,  # FK triggers are internal; the two posting functions keep their OIDs.
                           "0103_clock_storage_column_defaults": 726,  # Column defaults only: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.

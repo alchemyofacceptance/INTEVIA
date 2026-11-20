@@ -5,6 +5,7 @@ from uuid import uuid4
 from django.db import connection
 from psycopg import sql
 
+from core.models import Identity
 from core.management.commands import setup_alpha_trustee as alpha
 from src.intevia.services import law_acts, library_policy
 from src.intevia.services import organism_role_definition_service as definitions
@@ -53,7 +54,7 @@ def observation_footprint(owner):
         return cur.fetchone()
 
 
-def submit_pair(owner, actor, key, mode, prior=None, enabled=False, epoch=None):
+def submit_pair(owner, actor, key, mode, prior=None, enabled=False, epoch=None, writer=None):
     with connection.cursor() as cur:
         cur.execute(sql.SQL("""
             DO $pair$
@@ -86,7 +87,7 @@ def submit_pair(owner, actor, key, mode, prior=None, enabled=False, epoch=None):
                     state_at_cut := public.s015_fold_effective_state('core_livingorganism',org.id,stamp,stamp);
                     PERFORM public.s015_append_event(
                         'core_livingorganism',org.id,'SET_CARE_ASSISTANCE',state_at_cut,
-                        stamp,stamp,stamp,actor_,org.founding_authority_basis_id,
+                        stamp,stamp,stamp,{writer},org.founding_authority_basis_id,
                         CASE WHEN mode_='wrong_authority' THEN 's015d1:'||repeat('0',64)
                              ELSE public.care_setting_decision(src,fp) END,'care-setting-act:'||key_,
                         'care-setting:'||key_,
@@ -96,6 +97,7 @@ def submit_pair(owner, actor, key, mode, prior=None, enabled=False, epoch=None):
             END $pair$;
         """).format(key=sql.Literal(key), prior=sql.Literal(prior), actor_pk=sql.Literal(actor.pk),
                     actor_uuid=sql.Literal(actor.identity_id), owner_pk=sql.Literal(owner.pk),
+                    writer=sql.Literal(actor.pk if writer is None else writer.pk),
                     enabled=sql.Literal(enabled), mode=sql.Literal(mode),
                     epoch=sql.Literal(actor.access_epoch if epoch is None else epoch)))
         # Select the action-completion constraint before the deferred FK backstop.
@@ -126,10 +128,32 @@ def read_source_candidate(owner, reader, office):
     return json.loads(value) if isinstance(value, str) else value
 
 
+def insert_observation_input(source, key, requester_id, epoch):
+    """Submit a raw detail to the actual BEFORE trigger and read its RETURNING tuple.
+
+    The caller owns the transaction. Completion still requires a matching event.
+    """
+    with connection.cursor() as cur:
+        cur.execute("""
+            INSERT INTO public.core_careofficeobservation
+            SELECT d.* FROM jsonb_populate_record(NULL::public.core_careofficeobservation,
+                (%s::jsonb - 'qualification_at') || jsonb_build_object(
+                    'event_uuid', %s::uuid, 'requester_id', %s::bigint, 'requester_epoch', %s::bigint,
+                    'received_at', public.intevia_clock_statement())) d
+            RETURNING requester_id, requester_epoch
+        """, [json.dumps(source, default=str), key, requester_id, epoch])
+        return cur.fetchone()
+
+
+def care_account():
+    return Identity.objects.get(identity_id="b79c7d99-67b3-4dd0-8ab7-ee1328d1e183")
+
+
 def propose_observation(owner, reader, claim, key, mode="matched", event_owner=None, enterer=None, epoch=None):
     """Use the runtime role, two real locks, one execution statement and the normal shared writer."""
     event_owner = event_owner or owner
-    enterer = enterer or reader
+    if enterer is None:
+        enterer = care_account()
     with connection.cursor() as cur:
         cur.execute("SELECT public.intevia_clock_statement()")
         received, = cur.fetchone()

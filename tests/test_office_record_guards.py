@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 from psycopg import sql
 
@@ -21,7 +22,8 @@ from verification.route import Route
 from tests import test_law_acts as laws
 from tests.test_discussion_office_links import record_office
 from tests.office_record_support import (
-    approved_office, footprint, observation_footprint, propose_observation, read_source_candidate, submit_pair,
+    approved_office, care_account, footprint, insert_observation_input, observation_footprint, propose_observation,
+    read_source_candidate, submit_pair,
 )
 
 
@@ -130,12 +132,24 @@ def care_schema():
         return columns, constraints, triggers, bodies, cur.fetchall()
 
 
-def committed_observation():
+def requester_schema():
+    with connection.cursor() as cur:
+        cur.execute("""SELECT attname, attnotnull FROM pg_attribute
+                       WHERE attrelid='public.core_careofficeobservation'::regclass
+                         AND attname IN ('requester_id','requester_epoch') ORDER BY attname""")
+        columns = cur.fetchall()
+        cur.execute("""SELECT convalidated, pg_catalog.pg_get_expr(conbin, conrelid) FROM pg_constraint
+                       WHERE conrelid='public.core_careofficeobservation'::regclass
+                         AND conname='care_observation_requester_erased'""")
+        return columns, cur.fetchone()
+
+
+def committed_observation(*, legacy=False):
     owner, founder, office, _, _, _ = approved_office()
     source = read_source_candidate(owner, founder, office)
     key = uuid4()
     with transaction.atomic():
-        propose_observation(owner, founder, source, key)
+        propose_observation(owner, founder, source, key, enterer=founder if legacy else None)
     return owner, founder, key
 
 
@@ -172,7 +186,7 @@ class OfficeRecordGuardTests(TransactionTestCase):
                                  "A refused switch must leave both histories and the organisation head intact.")
 
     def test_observation_pair_matches_its_source(self):
-        """A2. A coherent runtime pair requires the actual authorised source, correct owner and the requester as ILC Enterer.
+        """A2. A coherent runtime pair requires the actual authorised source, correct owner and the governed ILC entry.
 
         Removing the alternative veto must allow the otherwise-valid forged pair to commit and fail the test.
         """
@@ -195,14 +209,15 @@ class OfficeRecordGuardTests(TransactionTestCase):
             "resource_reference", "locator", "clause_text")}
         initial = observation_footprint(owner)
         foreign_initial = observation_footprint(foreign)
+        system = care_account()
         for label, claim, mode, event_owner, enterer, expected in (
-            ("missing event", source, "detail_only", owner, founder, "CARE_OBSERVATION_PAIR"),
-            ("missing detail", source, "event_only", owner, founder, "CARE_OBSERVATION_PAIR"),
+            ("missing event", source, "detail_only", owner, system, "CARE_OBSERVATION_PAIR"),
+            ("missing detail", source, "event_only", owner, system, "CARE_OBSERVATION_PAIR"),
             ("internally consistent invented clause", source | {"clause_text": " A different clause."},
-             "matched", owner, founder, "CARE_OBSERVATION_SOURCE"),
-            ("local tenure with a foreign citation", foreign_citation, "matched", owner, founder, "CARE_OBSERVATION_SOURCE"),
-            ("wrong organisation's event", source, "matched", foreign, founder, "CARE_OBSERVATION_PAIR"),
-            ("substitute enterer", source, "matched", owner, other, "CARE_OBSERVATION_PAIR"),
+             "matched", owner, system, "CARE_OBSERVATION_SOURCE"),
+            ("local tenure with a foreign citation", foreign_citation, "matched", owner, system, "CARE_OBSERVATION_SOURCE"),
+            ("wrong organisation's event", source, "matched", foreign, system, "CARE_OBSERVATION_PAIR"),
+            ("substitute enterer", source, "matched", owner, other, "CARE_WRITER_PRINCIPAL"),
         ):
             with self.subTest(case=label):
                 with self.assertRaises(IntegrityError, msg="The false or incomplete observation must refuse.") as caught:
@@ -226,22 +241,32 @@ class OfficeRecordGuardTests(TransactionTestCase):
             with transaction.atomic():
                 propose_observation(owner, founder, source, key)
         except IntegrityError as exc:
-            if diagnostic(exc).message_primary not in ("CARE_OBSERVATION_SOURCE", "CARE_OBSERVATION_PAIR"):
+            if diagnostic(exc).message_primary not in ("CARE_OBSERVATION_SOURCE", "CARE_OBSERVATION_PAIR", "CARE_GATEWAY_PAIR"):
                 raise
             self.fail("The runtime role must be able to commit the genuine source and its matching observation.")
         committed = observation_footprint(owner)
         self.assertEqual(committed[:2], ([key], [key]), "The accepted observation must have one matching ILC UUID.")
         self.assertEqual(head_receipt(owner, committed[2]), (key, "RECORD_CARE_OFFICE_OBSERVATION"),
                          "The organisation head must be the ILC entry for this exact CARE observation.")
+        with connection.cursor() as cur:
+            cur.execute("""SELECT actor_state, actor_id, actor_access_epoch, actor_capacity,
+                           entry_mode, composing_rule_state, composing_rule_reference,
+                           composer_state, composer_identity_id, enterer_identity_id
+                           FROM public.core_livingorganismevent WHERE event_uuid=%s""", [key])
+            self.assertEqual(cur.fetchone(), ("NONE", None, None, "NA_NO_PARTY", "COMPOSED", "REFERENCE",
+                             "CARE:ALPHA:TREASURER_VACANCY:1", "REFERENCE", system.pk, system.pk),
+                             "The exact rule must compose this entry with CARE as Composer and Enterer and nobody as Actor.")
         # Keep all public evidence fixed and independently vary each private input on a typed copy.
         with connection.cursor() as cur:
-            cur.execute('''SELECT d.payload_fingerprint, public.care_observation_payload(d),
+            cur.execute('''SELECT d.requester_id, d.requester_epoch, d.payload_fingerprint, public.care_observation_payload(d),
                         public.care_observation_payload(jsonb_populate_record(
                             d,jsonb_build_object('requester_id',%s::bigint))),
                         public.care_observation_payload(jsonb_populate_record(
-                            d,jsonb_build_object('requester_epoch',d.requester_epoch+1)))
-                    FROM public.core_careofficeobservation d WHERE d.event_uuid=%s''', [other.pk, key])
-            stored, computed, different_reader, different_epoch = cur.fetchone()
+                            d,jsonb_build_object('requester_epoch',%s::bigint)))
+                    FROM public.core_careofficeobservation d WHERE d.event_uuid=%s''', [other.pk, founder.access_epoch + 1, key])
+            opener, epoch, stored, computed, different_reader, different_epoch = cur.fetchone()
+        self.assertEqual((opener, epoch), (None, None),
+                         "A committed observation must retain neither opener nor access epoch.")
         self.assertEqual((computed, different_reader, different_epoch), (stored, stored, stored),
                          "The public digest must stay identical when only the private requester or epoch changes.")
         with self.assertRaises(IntegrityError, msg="A second event UUID cannot claim the same source key.") as duplicate:
@@ -270,6 +295,65 @@ class OfficeRecordGuardTests(TransactionTestCase):
             outcome = "committed"
         self.assertEqual((outcome, observation_footprint(owner)), ("CARE_OBSERVATION_SOURCE", before),
                          "A real alternative must refuse the coherent pair and preserve the old details, events and head.")
+
+    def test_opener_is_checked_at_insert_and_erased_before_storage(self):
+        """AC5. Exercise storage independently of the later writer attribution change."""
+        from tests.test_office_record_services import fixture_membership_state
+
+        owner, founder, office, _, _, _ = approved_office()
+        source = read_source_candidate(owner, founder, office)
+        self.assertEqual(requester_schema(), ([("requester_epoch", False), ("requester_id", False)],
+                                             (False, "((requester_id IS NULL) AND (requester_epoch IS NULL))")),
+                         "Both requester columns must be nullable and the new-write check must remain unvalidated.")
+        before = observation_footprint(owner)
+        key = uuid4()
+        with transaction.atomic():
+            try:
+                with transaction.atomic():
+                    returned = insert_observation_input(source, key, founder.pk, founder.access_epoch)
+            except IntegrityError as exc:
+                self.fail("A qualified opener and epoch must produce a detail with both inputs erased. "
+                          f"The database refused it at {diagnostic(exc).constraint_name}.")
+            self.assertEqual(returned, (None, None), "RETURNING must expose two empty requester fields.")
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT requester_id, requester_epoch, payload_fingerprint = public.care_observation_payload(d),
+                           payload_fingerprint = public.care_observation_payload(jsonb_populate_record(
+                               d, jsonb_build_object('requester_id', %s::bigint))),
+                           payload_fingerprint = public.care_observation_payload(jsonb_populate_record(
+                               d, jsonb_build_object('requester_epoch', %s::bigint)))
+                    FROM public.core_careofficeobservation d WHERE event_uuid=%s
+                """, [founder.pk, founder.access_epoch + 1, key])
+                self.assertEqual(cur.fetchone(), (None, None, True, True, True),
+                                 "The actual detail must erase both inputs and keep the public evidence digest.")
+            # A detail alone is provisional. Roll it back before its pair falls due.
+            transaction.set_rollback(True)
+
+        self.assertEqual(observation_footprint(owner), before, "The provisional detail must leave no record or head change.")
+        outsider = laws.ordinary_birth()[1]
+        probationer = laws.add_member(owner)
+        fixture_membership_state(owner, founder, probationer, "PROBATIONARY")
+        # Member and office fixture changes legitimately advance the head.
+        initial = observation_footprint(owner)
+        for label, claim, opener, epoch in (
+            ("missing opener", source, None, founder.access_epoch),
+            ("missing epoch", source, founder.pk, None),
+            ("missing both", source, None, None),
+            ("stale epoch", source, founder.pk, founder.access_epoch + 1),
+            ("another organisation", source, outsider.pk, outsider.access_epoch),
+            ("probationary membership", source, probationer.pk, probationer.access_epoch),
+            ("different clause", source | {"clause_text": "Different wording."}, founder.pk, founder.access_epoch),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(IntegrityError, msg="An unqualified input must be refused at insert.") as refused:
+                    with transaction.atomic():
+                        insert_observation_input(claim, uuid4(), opener, epoch)
+                detail = diagnostic(refused.exception)
+                self.assertEqual((detail.sqlstate, detail.message_primary), ("23514", "CARE_OBSERVATION_SOURCE"),
+                                 "The source check must explain the refusal at the write cut.")
+                self.assertEqual(observation_footprint(owner), initial,
+                                 "Refusal must leave the observation history and current head intact.")
+        self.assertEqual(initial[:2], before[:2], "The provisional read must leave no observation or event.")
 
     def test_0111_refuses_populated_reversal(self):
         """B5. The migration refuses either kind of committed history before changing rows, schema or the ledger.
@@ -424,6 +508,9 @@ class OfficeRecordGuardTests(TransactionTestCase):
         operation = care.Migration.operations[0]
         with connection.schema_editor(atomic=True) as editor, connection.cursor() as cursor:
             initial = care_schema()
+            # Rehearse 0111 against its own writer and gateway. The enclosing
+            # rollback restores 0113, including its seed and its definitions.
+            import_module("core.migrations.0113_care_system_account").uninstall(None, editor)
             for direction in ("reverse", "forward"):
                 if direction == "forward":
                     operation.reverse_code(None, editor)
@@ -453,3 +540,130 @@ class OfficeRecordGuardTests(TransactionTestCase):
                          "After the rehearsal the received schema, routine definitions, OIDs and ledger must be restored.")
 
     test_0111_refuses_drift_in_each_shared_definition.ISOLATION_FULL_CAPTURE = True
+
+
+class CareRequesterMigrationTests(TransactionTestCase):
+    ISOLATION_FULL_CAPTURE = True
+
+    def step(self, forward):
+        executor = MigrationExecutor(connection)
+        edge = executor.loader.get_migration("core", "0113_care_system_account")
+        previous = executor.loader.project_state(edge.dependencies)
+        method = executor.apply_migration if forward else executor.unapply_migration
+        method(previous, edge)
+
+    def check_reverse_refusal(self, expected):
+        def seed_and_recorder():
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT i.id, u.id, r.identity_id, r.credential_link, t.tgenabled
+                    FROM public.core_identity i
+                    JOIN public.auth_user u ON u.id=i.credential_id
+                    JOIN public.core_identityresolution r ON r.identity_id=i.id
+                    JOIN pg_trigger t ON t.tgrelid='public.core_identityresolution'::regclass
+                                     AND t.tgname='s015_0022_resolution_severance'
+                    WHERE i.identity_id=%s
+                """, ["b79c7d99-67b3-4dd0-8ab7-ee1328d1e183"])
+                return cur.fetchall()
+
+        old_rows, old_schema, old_seed = all_care_rows(), care_schema(), seed_and_recorder()
+        changes = []
+
+        def observe(execute, statement, params, many, context):
+            text = statement.as_string(connection.connection) if isinstance(statement, sql.Composable) else statement
+            # Locking reads include FOR UPDATE. It is not a data change.
+            changes.extend(change_verbs(re.sub(r"\bFOR (?:NO KEY )?UPDATE\b", "", text, flags=re.I)))
+            return execute(statement, params, many, context)
+
+        with transaction.atomic():
+            try:
+                with transaction.atomic(), connection.execute_wrapper(observe):
+                    self.step(False)
+            except RuntimeError as exc:
+                outcome = str(exc)
+            except DatabaseError as exc:
+                outcome = diagnostic(exc).message_primary
+            else:
+                outcome = "reversed"
+            self.assertEqual(outcome, expected,
+                             "The reverse must stop at the named history preflight before any change.")
+            self.assertEqual(changes, [], "The reverse must refuse before its first data or schema change.")
+            self.assertEqual((all_care_rows(), care_schema(), seed_and_recorder()), (old_rows, old_schema, old_seed),
+                             "The refused reverse must preserve history, heads, schema, ledger, CARE and the recorder.")
+            transaction.set_rollback(True)
+
+    def test_legacy_observation_survives_upgrade_and_reverse(self):
+        self.step(False)
+        # Restore the received edge even if the legacy fixture or an assertion fails.
+        self.addCleanup(self.restore_head)
+        previous_schema = care_schema()
+        owner, founder, key = committed_observation(legacy=True)
+        old_rows = all_care_rows()
+        with connection.cursor() as cur:
+            cur.execute("SELECT requester_id, requester_epoch FROM public.core_careofficeobservation "
+                        "WHERE event_uuid=%s", [key])
+            self.assertEqual(cur.fetchone(), (founder.pk, founder.access_epoch),
+                             "The previous edge must have committed a real observation with both original inputs.")
+        self.step(True)
+        self.assertEqual(requester_schema(), ([("requester_epoch", False), ("requester_id", False)],
+                                             (False, "((requester_id IS NULL) AND (requester_epoch IS NULL))")),
+                         "A populated upgrade must keep both columns and add the unvalidated two-NULL check.")
+        self.assertEqual(all_care_rows(), old_rows, "The upgrade must preserve the entire legacy history and owner head.")
+        # Exercise the installed event-Enterer FK probe now, using the real
+        # legacy event as a positive control. Observe, without altering, the
+        # actual downgrade query and the bound CARE key on the old-only path.
+        care_pk = care_account().pk
+        event_queries = []
+
+        def see_enterer(execute, statement, params, many, context):
+            if (isinstance(statement, str) and "core_livingorganismevent child" in statement
+                    and "child.enterer_identity_id = parent.id" in statement):
+                event_queries.append((statement, tuple(params)))
+            return execute(statement, params, many, context)
+
+        with connection.execute_wrapper(see_enterer):
+            self.step(False)
+        self.assertEqual([params for _, params in event_queries], [(care_pk,)],
+                         "The reverse must consult the installed event Enterer reference with CARE's local key.")
+        with connection.cursor() as cur:
+            cur.execute(event_queries[0][0], [founder.pk])
+            self.assertEqual(cur.fetchone(), (True,), "The same reference probe must find the real legacy Enterer.")
+        self.assertEqual(all_care_rows(), old_rows,
+                         "A legacy-only history must reverse with the same records, evidence, identities and head.")
+        self.assertEqual(care_schema(), previous_schema, "Reversal must restore the previous catalogue and migration ledger.")
+        self.assertEqual(head_receipt(owner, observation_footprint(owner)[2]), (key, "RECORD_CARE_OFFICE_OBSERVATION"),
+                         "The old head must still name the original observation after reversal.")
+
+    def restore_head(self):
+        edge = ("core", "0113_care_system_account")
+        if edge not in MigrationExecutor(connection).loader.applied_migrations:
+            self.step(True)
+
+    def test_new_format_detail_refuses_reverse_at_preflight(self):
+        owner, founder, office, _, _, _ = approved_office()
+        source = read_source_candidate(owner, founder, office)
+        with transaction.atomic():
+            insert_observation_input(source, uuid4(), founder.pk, founder.access_epoch)
+            self.check_reverse_refusal(
+                "CARE's migration could not be reversed. An observation uses the new private record format. "
+                "Its history has been kept. Keep this migration in place and ask the database operator "
+                "to review the observation history."
+            )
+            # The event is deliberately still pending, so no event FK can mask this refusal.
+            transaction.set_rollback(True)
+
+    def test_care_entered_observation_refuses_reverse_at_reference_preflight(self):
+        owner, opener, office, _, _, _ = approved_office()
+        source = read_source_candidate(owner, opener, office)
+        care = care_account()
+        key = uuid4()
+        with transaction.atomic():
+            propose_observation(owner, opener, source, key, enterer=care)
+        with connection.cursor() as cur:
+            cur.execute("SELECT enterer_identity_id FROM public.core_livingorganismevent WHERE event_uuid=%s", [key])
+            self.assertEqual(cur.fetchone(), (care.pk,), "A committed ILC event must actually name CARE as its Enterer.")
+        self.check_reverse_refusal(
+            "CARE's account could not be removed. Another record refers to it. "
+            "The account and its history have been kept. Keep this migration in place. "
+            "Ask the database operator to review the references before any further action."
+        )
