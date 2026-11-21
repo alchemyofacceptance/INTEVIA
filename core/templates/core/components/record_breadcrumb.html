@@ -1,0 +1,6 @@
+{% if ancestors %}
+<nav class="record-crumb" aria-label="Breadcrumb">
+  <span class="wide-path">{% for label, url in ancestors %}{% if url %}<a href="{{ url }}">{{ label }}</a>{% else %}<span>{{ label }}</span>{% endif %} <span aria-hidden="true">›</span> {% endfor %}<span aria-current="page">{{ current }}</span></span>
+  <span class="phone-path"><span class="sr-only">Full path: {% for label, url in ancestors %}{{ label }} › {% endfor %}{{ current }}. </span>{% if parent_url %}<a href="{{ parent_url }}"><span aria-hidden="true">‹</span> {{ parent }}</a>{% else %}<span><span aria-hidden="true">‹</span> {{ parent }}</span>{% endif %}</span>
+</nav>
+{% endif %}

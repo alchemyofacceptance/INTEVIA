@@ -96,6 +96,10 @@ class BoardOfficeJourneyTests(TransactionTestCase):
             link = labelled_link(self, page, "board-offices-heading", "Treasurer")
             return [n["text"] for n in page.select("span", within=link, classes=("board-office-state",))]
 
+        def holder_lines():
+            page = markup(client.get(path))
+            return [n["text"] for n in page.select("p", classes=("board-office-holder",))]
+
         def has_vacancy():
             tenure = office_record(credential=reader.credential, organism_uuid=owner.organism_id,
                                    office_definition_uuid=treasurer)["tenure"]
@@ -103,14 +107,18 @@ class BoardOfficeJourneyTests(TransactionTestCase):
 
         self.assertTrue(has_vacancy(), "The office read must independently confirm the pending vacancy.")
         self.assertEqual(board_state(), ["Vacant"], "A pending nominee must leave the unfilled Treasurer shown Vacant.")
+        self.assertEqual(holder_lines(), [], "A pending nominee must not be named as the holder.")
         service = organism_role_service.OrganismRoleService(authority=authority(), clock=database_now)
         service.transition_assignment(fixture._transition_command(proposed, "ASSIGN"))
         self.assertFalse(has_vacancy(), "The office read must recognise the effective award.")
         self.assertEqual(board_state(), ["Held"], "An effective Treasurer must be shown Held.")
+        self.assertEqual(holder_lines(), ["Held by " + nominee.identity.display_name],
+                         "The real page must name the effective Treasurer from the database.")
         membership = organism_membership_service.OrganismMembershipService(authority=authority(), clock=database_now)
         membership.leave_organism(test_c1b_departure.DepartureTests().command(nominee))
         self.assertTrue(has_vacancy(), "The office read must confirm the vacancy after departure.")
         self.assertEqual(board_state(), ["Vacant"], "The Board must show Vacant again after the holder departs.")
+        self.assertEqual(holder_lines(), [], "The real page must no longer name the departed holder.")
 
     def test_office_link_with_a_different_member_organisation_is_unavailable(self):
         from tests.office_record_support import approved_office
@@ -139,41 +147,43 @@ class BoardOfficeJourneyTests(TransactionTestCase):
 
 
 class BoardOfficeProjectionTests(SimpleTestCase):
+    def setUp(self):
+        self.owner, self.circle = uuid4(), uuid4()
+
+    def read(self, kind, offices):
+        route = member_url(self.owner, self.circle)
+        organisation = {"organism_uuid": self.owner, "full_name": "River trust", "short_label": "River"}
+        request = RequestFactory().get(route)
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        request.intevia_identity = SimpleNamespace(display_name="Reader", access_state="active", colour_mode="light")
+        request.resolver_match = match = resolve(route)
+        selected = {"kind": kind, "circle_uuid": self.circle, "full_name": "Selected circle",
+                    "short_label": "Circle", "description": None}
+        data = {"organisation": organisation, "selected_circle": selected, "board_offices": offices}
+        with patch.object(pages, "_memberships", return_value=[self.owner]), \
+             patch.object(pages.transaction, "atomic", return_value=nullcontext()), \
+             patch.object(pages.navigation, "member_navigation", return_value=data), \
+             patch.object(pages, "_status", return_value=None):
+            return markup(match.func(request, **match.kwargs))
+
     def test_only_the_board_shows_links_and_withheld_tenure_has_no_status(self):
-        owner, circle, pinned = uuid4(), uuid4(), uuid4()
-        name = {"organism_uuid": owner, "full_name": "River trust", "short_label": "River"}
+        owner, pinned = self.owner, uuid4()
         pin = {"office_definition_uuid": pinned, "label": "Office record"}
-        route = member_url(owner, circle)
-
-        def read(kind, offices):
-            request = RequestFactory().get(route)
-            request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
-            request.intevia_identity = SimpleNamespace(display_name="Reader", access_state="active", colour_mode="light")
-            request.resolver_match = match = resolve(route)
-            selected = {"kind": kind, "circle_uuid": circle, "full_name": "Selected circle",
-                        "short_label": "Circle", "description": None}
-            data = {"organisation": name, "selected_circle": selected, "board_offices": offices}
-            with patch.object(pages, "_memberships", return_value=[owner]), \
-                 patch.object(pages.transaction, "atomic", return_value=nullcontext()), \
-                 patch.object(pages.navigation, "member_navigation", return_value=data), \
-                 patch.object(pages, "_status", return_value=None):
-                return markup(match.func(request, **match.kwargs))
-
-        page = read("GOVERNANCE", [pin])
+        page = self.read("GOVERNANCE", [pin])
         link = labelled_link(self, page, "board-offices-heading", "Office record")
         self.assertEqual(link["attrs"]["href"], reverse("office_page", args=(owner, pinned)),
                          "A label-only row must link to its exact permitted definition.")
         self.assertFalse(page.select("span", within=link, classes=("board-office-state",)),
                          "A withheld tenure must produce neither a Vacant nor a Held marker.")
         self.assertNotIn("aria-describedby", link["attrs"], "A withheld status must have no accessible status reference.")
-        empty = read("GOVERNANCE", [])
+        empty = self.read("GOVERNANCE", [])
         self.assertTrue(any(n["text"] == "No offices to show here." for n in empty.select("p")),
                         "An empty admitted Board list must describe only what can be shown.")
-        other = read("GENERIC", [pin])
+        other = self.read("GENERIC", [pin])
         self.assertFalse(other.select("section", **{"aria-labelledby": "board-offices-heading"}),
                          "An ordinary Circle must not display the organisation's Board office list.")
 
-        ordinary = read("GOVERNANCE", [
+        ordinary = self.read("GOVERNANCE", [
             {"office_definition_uuid": pinned, "label": "Treasurer", "vacant": True},
             {"office_definition_uuid": uuid4(), "label": "Secretary", "vacant": False},
         ])
@@ -185,3 +195,48 @@ class BoardOfficeProjectionTests(SimpleTestCase):
                              "Each link's accessible name must identify only its own office.")
             self.assertEqual([n["text"] for n in ordinary.select("span", id=status_id)], [status],
                              "Each office link must describe its own effective status separately.")
+
+    def holder_page(self, tenure):
+        definition = uuid4()
+        cut = object()
+        with patch.object(models.OrganismRoleDefinition.objects, "filter") as roles, \
+             patch.object(pages.navigation, "office_family", return_value=(definition, 1, tenure)) as family:
+            roles.return_value.order_by.return_value.values_list.return_value = [(definition, "CHAIR")]
+            offices = pages.navigation._board_offices(self.owner, cut)
+        family.assert_called_once_with(owner_id=self.owner, code="CHAIR", requested=definition, at=cut)
+        return self.read("GOVERNANCE", offices), definition
+
+    def test_held_office_shows_ongoing_name_as_text(self):
+        page, _ = self.holder_page([{"state": "ongoing", "holder_name": "Remy <Martin>"},
+                                    {"state": "former", "holder_name": "Earlier holder"}])
+        lines = page.select("p", classes=("board-office-holder",))
+        self.assertEqual([line["text"] for line in lines], ["Held by Remy <Martin>"],
+                         "Show the ongoing holder as escaped text after the label.")
+        self.assertEqual([n["text"] for n in page.select("span", within=lines[0])], ["Remy <Martin>"])
+        self.assertFalse(page.select("a", within=lines[0]), "The biography has no route yet.")
+        self.assertFalse(any(n["tag"] == "a" for n in lines[0]["parents"]), "The holder is outside the office link.")
+
+    def test_vacant_office_omits_former_holder(self):
+        page, _ = self.holder_page([{"state": "vacant"}, {"state": "former", "holder_name": "Previous Chair"}])
+        link = labelled_link(self, page, "board-offices-heading", "Chair")
+        self.assertEqual([n["text"] for n in page.select("span", within=link, classes=("vacant",))], ["Vacant"])
+        self.assertFalse(page.select("p", classes=("board-office-holder",)), "Vacancy must have no holder line.")
+        self.assertNotIn("Previous Chair", page.select("main")[0]["text"])
+
+    def test_withheld_name_keeps_held_chip_only(self):
+        page, _ = self.holder_page([{"state": "ongoing"}, {"state": "former", "holder_name": "Previous Chair"}])
+        link = labelled_link(self, page, "board-offices-heading", "Chair")
+        self.assertEqual([n["text"] for n in page.select("span", within=link, classes=("board-office-state",))], ["Held"])
+        self.assertFalse(page.select("p", classes=("board-office-holder",)), "A withheld name must omit the whole line.")
+        self.assertNotIn("Previous Chair", page.select("main")[0]["text"])
+
+    def test_named_holder_leaves_the_office_label_as_the_only_link(self):
+        page, definition = self.holder_page([{"state": "ongoing", "holder_name": "Remy Martin"}])
+        section, = page.select("section", **{"aria-labelledby": "board-offices-heading"})
+        row, = page.select("li", within=section)
+        link = labelled_link(self, page, "board-offices-heading", "Chair")
+        self.assertEqual(link["attrs"]["href"], reverse("office_page", args=(self.owner, definition)),
+                         "Chair must link to its own definition in the selected organisation.")
+        self.assertEqual(page.select("a", within=row), [link], "Only the office receives a link.")
+        self.assertEqual([n["text"] for n in page.select("strong", within=link, id=link["attrs"]["aria-labelledby"])],
+                         ["Chair"], "The holder must not replace the accessible name of the office.")

@@ -43,9 +43,8 @@ class HistoryPagingTests(SimpleTestCase):
         self.assertNotIn("card", section["attrs"]["class"].split(), "Office history must stand outside a card.")
         self.assertIn("office-path", section["attrs"]["class"].split())
         children = [n for n in page.nodes if n["parents"] and n["parents"][-1] is section]
-        eyebrow, heading = children[:2]
-        self.assertEqual((eyebrow["tag"], eyebrow["text"]), ("p", "Office history"))
-        self.assertIn("eyebrow", eyebrow["attrs"]["class"].split())
+        heading = children[0]
+        self.assertFalse(page.select("p", within=section, classes=("eyebrow",)))
         self.assertEqual((heading["tag"], heading["attrs"]["id"], heading["text"]),
                          ("h2", "office-history", "The path here"))
 
@@ -63,6 +62,9 @@ class HistoryPagingTests(SimpleTestCase):
                                  ("Entry 1 of 3", "Adoption 1")])
 
     def test_page_size_and_same_page_get_form(self):
+        single = render(history(1))
+        summary, = single.select("div", classes=("office-history-bar",))
+        self.assertEqual(single.select("span", within=summary)[0]["text"], "Showing 1 entry, newest first")
         entries = history(47)
         for query, size in (({}, 10), ({"show": "20"}, 20), ({"show": "11"}, 10),
                             ({"show": "50"}, 50), ({"show": "100"}, 100), ({"show": "200"}, 200)):
@@ -78,7 +80,8 @@ class HistoryPagingTests(SimpleTestCase):
                                  [(s, s) for s in ("10", "20", "50", "100", "200")])
                 self.assertEqual([o["text"] for o in options if "selected" in o["attrs"]], [str(size)])
                 submit, = page.select("button", within=form, type="submit")
-                self.assertEqual(submit["text"], "Show")
+                self.assertEqual(submit["text"], "Apply")
+                self.assertNotIn("form", submit["attrs"], "Apply must belong to its enclosing native GET form.")
                 self.assertNotIn("hidden", submit["attrs"])
                 self.assertFalse(page.select("input", within=form), "Changing size starts on page one.")
                 count = min(size, 47)

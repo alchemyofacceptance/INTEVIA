@@ -1,14 +1,13 @@
-<section class="office-path" aria-labelledby="office-history">
-  <p class="eyebrow">Office history</p>
-  <h2 id="office-history">The path here</h2>
+<section class="office-path record-section" aria-labelledby="office-history">
+  <h2 class="record-heading" id="office-history">The path here</h2>
   {% if rows %}
     <div class="office-history-bar">
-      <span>{% if pages == 1 %}Showing all {{ total }} entries, newest first{% else %}Showing entries {{ first }} to {{ last }} of {{ total }}, newest first{% endif %}</span>
+      <span>{% if total == 1 %}Showing 1 entry, newest first{% elif pages == 1 %}Showing all {{ total }} entries, newest first{% else %}Showing entries {{ first }} to {{ last }} of {{ total }}, newest first{% endif %}</span>
       <form class="office-history-size" method="get" action="#office-history">
         <label>Show <select name="show">
           {% for choice in sizes %}<option value="{{ choice }}"{% if choice == size %} selected{% endif %}>{{ choice }}</option>{% endfor %}
         </select> at a time</label>
-        <button type="submit" class="text-command">Show</button>
+        <button type="submit" class="text-command">Apply</button>
       </form>
     </div>
     <ol class="office-timeline" role="list">

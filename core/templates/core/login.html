@@ -3,7 +3,7 @@
 {% block content %}
   <h1>Sign in</h1>
   <p class="lede">Enter your governed INTEVIA credential.</p>
-  <form method="post" class="panel" novalidate>
+  <form method="post" class="panel content-insets" novalidate>
     {% csrf_token %}
     {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
     {% include 'core/components/field.html' with field=form.username only %}

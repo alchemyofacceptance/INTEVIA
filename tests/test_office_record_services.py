@@ -1171,6 +1171,10 @@ class OfficeRecordTests(TransactionTestCase):
         with self.subTest(case="cited and currently governing versions"):
             self.assertEqual((revised_page["provisions"], revised_page["topics"]), ([historical, current], [sibling]),
                              "Keep the originally cited clause, the exact changed clause and adoption, and the surviving Topic.")
+            from core.templatetags.f0_ui import office_provisions
+            rendered_group, = office_provisions(revised_page)["groups"]
+            self.assertEqual([row["provision"]["binding"] for row in rendered_group["rows"]],
+                             [successor, binding], "The actual successor must precede its cited predecessor on display.")
             self.assertIn((successor, body), [(row["binding"], row["content"]) for row in library_laws.our_laws(
                           **(scope | {"credential": member.credential}))["laws"]],
                           "The separate law route must still return the whole readable successor, including its other clause.")

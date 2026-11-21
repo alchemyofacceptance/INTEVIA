@@ -5,6 +5,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.staticfiles import finders
 from django.template.loader import render_to_string
@@ -47,6 +48,55 @@ def contrast(first, second):
 
 
 class RenderedScreenTests(SimpleTestCase):
+    def test_card_spacing_uses_visible_content(self):
+        """S05. Only the sign-in and two content cards have the measured inset."""
+        from core.forms import ProductAuthenticationForm
+        from core.models import Identity
+
+        for invalid in (False, True):
+            form = ProductAuthenticationForm(data={"username": "", "password": ""}) if invalid else ProductAuthenticationForm()
+            if invalid:
+                form.add_error(None, "Check the sign-in details.")
+            request = RequestFactory().get(reverse("login"))
+            request.user = SimpleNamespace(is_authenticated=False)
+            page = Markup(render_to_string("core/login.html", {"form": form}, request))
+            box, = page.select("form", classes=("content-insets",))
+            children = [node for node in page.nodes if node["parents"] and node["parents"][-1] is box]
+            self.assertEqual(children[0]["attrs"].get("type"), "hidden")
+            self.assertIn("errors" if invalid else "field", children[1]["attrs"].get("class", "").split())
+            self.assertEqual(children[-1]["tag"], "button")
+        request = RequestFactory().get(reverse("f0-you"))
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        page = Markup(render_to_string("core/you.html", {"colour_choices": Identity.ColourMode.choices}, request))
+        cards = [node for node in page.nodes if "content-insets" in node["attrs"].get("class", "").split()]
+        self.assertEqual([page.select("h2", within=c)[0]["text"] for c in cards], ["Appearance", "Your activity"])
+        sheet = Path(finders.find("core/f0.css")).read_text()
+        self.assertEqual(declarations(sheet, ".content-insets").get("padding"), "24px")
+        first = declarations(sheet, ".content-insets>:nth-child(1 of :not([type=hidden]))")
+        self.assertEqual(first.get("margin-block-start"), "0", "The hidden CSRF field must not add space above the first label.")
+        self.assertEqual(declarations(sheet, ".content-insets>a:last-child>span").get("text-box-trim"), "trim-end")
+
+    def test_organisation_chip_top_gap(self):
+        """S06. The organisation strip has the same top inset for every routed consumer."""
+        org = {"organism_uuid": uuid4(), "short_label": "River", "full_name": "River Trust"}
+        request = RequestFactory().get(reverse("organisation_home", args=[org["organism_uuid"]]))
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        request.resolver_match = resolve(request.path)
+        for name, context in (
+            ("organisation_home", {"organisation": org, "organisation_chips": [org]}),
+            ("circle_page", {"organisation": org, "organisation_chips": [org], "circle": {"short_label": "Board"}}),
+            ("office_page", {"record": {"office": {"organisation_short_label": "River"}},
+                             "organisation_url": request.path}),
+        ):
+            with self.subTest(name=name):
+                markup = Markup(render_to_string("core/" + name + ".html", context, request))
+                strip, = markup.select("nav", classes=("org-strip",))
+                chip, = markup.select("a", within=strip, classes=("org-chip",))
+                self.assertEqual(chip["text"], org["short_label"])
+        sheet = Path(finders.find("core/f0.css")).read_text()
+        self.assertEqual(declarations(sheet, ".org-strip").get("padding-block"), "24px var(--space-sm)",
+                         "The chip's upper edge must be 24 px from the strip edge.")
+
     def test_header_uses_the_named_tree(self):
         """The shared header delivers both decorative trees, their intrinsic sizes and one wordmark."""
         response = self.client.get(reverse("login"))

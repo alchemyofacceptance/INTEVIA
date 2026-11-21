@@ -1,8 +1,8 @@
 {% extends 'core/base.html' %}
 {% block title %}You | INTEVIA{% endblock %}
 {% block content %}
-<h1>You</h1><p>Your account and activity.</p>
-<section class="card" aria-labelledby="appearance-heading">
+<h1 class="record-heading page-title">You</h1><p>Your account and activity.</p>
+<section class="card content-insets" aria-labelledby="appearance-heading">
   <h2 id="appearance-heading">Appearance</h2>
   <form method="post" action="{% url 'f0-you' %}">
     {% csrf_token %}
@@ -16,6 +16,6 @@
     {% include 'core/components/button.html' with type='submit' label='Save appearance' only %}
   </form>
 </section>
-<div class="card"><h2>Your activity</h2><p>Your cross-organisation activity view and subscriber personal space arrive in later website slices.</p><a href="{% url 'event-list' %}">Open Events in your view</a></div>
+<div class="card content-insets"><h2>Your activity</h2><p>Your cross-organisation activity view and subscriber personal space arrive in later website slices.</p><a href="{% url 'event-list' %}"><span>Open Events in your view</span></a></div>
 {% include 'core/components/signout.html' %}
 {% endblock %}

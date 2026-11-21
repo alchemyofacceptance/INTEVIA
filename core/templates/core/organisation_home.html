@@ -2,9 +2,9 @@
 {% load f0_ui %}
 {% block title %}{{ organisation.full_name }} | INTEVIA{% endblock %}
 {% block content %}
-<hgroup><p class="eyebrow">Organisation home</p><h1>{{ organisation.full_name }}</h1></hgroup>
-<section aria-labelledby="circle-list-heading">
-  <h2 id="circle-list-heading">Circles</h2>
+<h1 class="record-heading page-title">{{ organisation.full_name }}</h1>
+<section class="record-section" aria-labelledby="circle-list-heading">
+  <h2 class="record-heading" id="circle-list-heading">Circles</h2>
   {% if circles %}<ul class="circle-list">
     {% for item in circles %}<li><a href="{% url 'circle_page' organisation.organism_uuid item.circle_uuid %}">
       <span><strong>{{ item.short_label }}</strong><small>{{ item.kind|circle_kind_label }}</small></span><span aria-hidden="true">›</span>

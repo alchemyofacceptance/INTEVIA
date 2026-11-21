@@ -2,18 +2,12 @@
 {% load f0_ui %}
 {% block title %}{{ record.office.label|default:"Office record" }} | INTEVIA{% endblock %}
 {% block organisation_navigation %}
-{% if record.office.organism_uuid and record.office.organisation_short_label %}<nav class="org-strip" aria-label="Organisations"><a class="org-chip" aria-current="true" href="{% url 'organisation_home' record.office.organism_uuid %}">{{ record.office.organisation_short_label }}</a></nav>{% endif %}
+{% if organisation_url and record.office.organisation_short_label %}<nav class="org-strip" aria-label="Organisations"><a class="org-chip" aria-current="true" href="{{ organisation_url }}">{{ record.office.organisation_short_label }}</a></nav>{% endif %}
 {% endblock %}
 {% block content %}
 {% with office=record.office %}
-<nav aria-label="Breadcrumb">
-  <span>{{ office.organisation_short_label }}</span>{% if office.board_short_label %} <span aria-hidden="true">›</span> <span>{{ office.board_short_label }}</span>{% endif %}
-  <span aria-hidden="true">›</span> <span aria-current="page">{{ office.label|default:"Office record" }}</span>
-</nav>
-<hgroup>
-  <p class="eyebrow">{{ office.organisation_full_name }}{% if office.board_full_name %} · {{ office.board_full_name }}{% endif %}</p>
-  <h1>{{ office.label|default:"Office record" }}</h1>
-</hgroup>
+{% record_breadcrumb office.label|default:"Office record" office.organisation_short_label organisation_url office.board_short_label board_url %}
+<h1 class="record-heading page-title">{{ office.label|default:"Office record" }}</h1>
 <p>Office definition · Version {{ office.requested_version }}</p>
 {% if office.current_version and office.current_version != office.requested_version %}
 <p>Current office definition · Version {{ office.current_version }}</p>
@@ -60,8 +54,8 @@
 
 {% office_provisions record %}
 
-<section aria-labelledby="office-topics">
-  <h2 id="office-topics">Topics about this office</h2>
+<section class="record-section" aria-labelledby="office-topics">
+  <h2 class="record-heading" id="office-topics">Discussion topics about this office</h2>
   {% for topic in record.topics %}
     <article class="card office-topic">
       <h3>{{ topic.title }}</h3>
@@ -72,8 +66,8 @@
   {% endfor %}
 </section>
 
-<section aria-labelledby="office-decisions">
-  <h2 id="office-decisions">Decisions</h2>
+<section class="record-section" aria-labelledby="office-decisions">
+  <h2 class="record-heading" id="office-decisions">Decisions</h2>
   {% for decision in record.decisions %}
     <article class="card office-decision">
       {% if decision.purpose == "standing_adoption" %}<h3>Adoption of the standing Policy</h3>

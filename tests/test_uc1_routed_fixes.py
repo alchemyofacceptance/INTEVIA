@@ -6,6 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.staticfiles import finders
+from django.template.loader import render_to_string
 from django.test import RequestFactory, SimpleTestCase
 from django.urls import resolve, reverse
 
@@ -18,6 +19,100 @@ from tools import f0_theme_reference as theme
 
 
 class RoutedFixTests(SimpleTestCase):
+    def test_ancestors_obey_navigation_grants(self):
+        """S02. An office label alone never supplies a destination."""
+        from src.intevia.services import member_navigation
+        org, board, office = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().get(reverse("office_page", args=(org, office)))
+        request.resolver_match = resolve(request.path)
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        org_url = reverse("organisation_home", args=(org,))
+        board_url = reverse("circle_page", args=(org, board))
+        directory = {"organisation": {"organism_uuid": org},
+                     "circles": [{"kind": "GOVERNANCE", "circle_uuid": board}]}
+        for released, allowed, has_board in (
+            (directory, [org_url, board_url], True),
+            (directory | {"circles": []}, [org_url], True),
+            (None, [], True),
+            (directory, [org_url], False),
+        ):
+            facts = {"label": "Treasurer", "organisation_short_label": "Alder Beck", "organism_uuid": org}
+            if has_board:
+                facts["board_short_label"] = "Board"
+            with self.subTest(allowed=allowed, board=has_board), patch(
+                "src.intevia.services.office_record.office_record", return_value={"office": facts}
+            ), patch.object(member_navigation, "member_navigation", return_value=released,
+                            side_effect=member_navigation.NavigationUnavailable() if released is None else None):
+                result = request.resolver_match.func(request, **request.resolver_match.kwargs)
+                page = Markup(result.content.decode())
+                crumb, = page.select("nav", **{"aria-label": "Breadcrumb"})
+                wide, = page.select("span", within=crumb, classes=("wide-path",))
+                phone, = page.select("span", within=crumb, classes=("phone-path",))
+                self.assertEqual([a["attrs"]["href"] for a in page.select("a", within=wide)], allowed)
+                parent = board_url if has_board else org_url
+                self.assertEqual([a["attrs"]["href"] for a in page.select("a", within=phone)],
+                                 [parent] if parent in allowed else [])
+                chevrons = [n for n in page.select("span", within=phone) if n["text"].strip() == "‹"]
+                self.assertTrue(chevrons and all(n["attrs"].get("aria-hidden") == "true" for n in chevrons),
+                                "The phone chevron is decoration and must be hidden from screen readers.")
+                current, = page.select("span", within=wide, **{"aria-current": "page"})
+                self.assertEqual(current["text"], "Treasurer")
+                full, = page.select("span", within=phone, classes=("sr-only",))
+                path = "Alder Beck › Board › Treasurer" if has_board else "Alder Beck › Treasurer"
+                self.assertEqual(full["text"].strip(), "Full path: " + path + ".")
+                self.assertFalse(page.select("a", within=full))
+                self.assertEqual(bool(page.select("a", classes=("org-chip",))), bool(allowed))
+
+    def test_record_heading_preserves_governed_names(self):
+        """S03. Governed case, one teal page title and the history section's own name."""
+        owner = {"full_name": "Alder BeCk Trust", "short_label": "Alder", "organism_uuid": uuid4()}
+        circle = {"full_name": "Board of TruStees", "short_label": "Board", "kind": "GOVERNANCE"}
+        for template, context, expected in (
+            ("organisation_home", {"organisation": owner}, owner["full_name"]),
+            ("circle_page", {"organisation": owner, "circle": circle}, circle["full_name"]),
+            ("office_page", {"record": {"office": {"label": "TreasuRer"}}}, "TreasuRer"),
+        ):
+            with self.subTest(template=template):
+                path = reverse("f0-organisation")
+                request = RequestFactory().get(path)
+                request.resolver_match = resolve(path)
+                request.user = SimpleNamespace(is_authenticated=False)
+                page = Markup(render_to_string("core/" + template + ".html", context, request))
+                title, = page.select("h1")
+                self.assertEqual((title["text"], set(title["attrs"]["class"].split())),
+                                 (expected, {"page-title", "record-heading"}))
+                for card in page.select("section", classes=("card",)):
+                    self.assertFalse(page.select("h2", within=card, classes=("record-heading",)))
+                if template == "office_page":
+                    self.assertEqual([h["text"] for h in page.select("h2", classes=("record-heading",))],
+                                     ["Constitutional Law related to this office", "Discussion topics about this office",
+                                      "Decisions", "The path here"])
+                    self.assertFalse(any(n["text"].strip() == "Office history" for n in page.nodes))
+        sheet = Path(finders.find("core/f0.css")).read_text()
+        style = declarations(sheet, ".record-heading")
+        self.assertEqual(style.get("text-transform"), "none", "A governed name must retain its case.")
+        self.assertEqual(style.get("color"), "var(--color-accent)")
+        self.assertIn("24px", style["font"])
+        self.assertIn("var(--font-heading)", style["font"])
+        desktop = sheet.partition("@media (min-width:64rem){")[2].partition("@media ")[0]
+        self.assertTrue(desktop, "The desktop media block must be found before it is checked.")
+        self.assertNotIn("font-size", declarations(desktop, "h1"),
+                         "The unlayered desktop h1 rule must exclude governed record titles.")
+        self.assertEqual(declarations(sheet, ".page-title.record-heading").get("margin"), "22px 0 var(--space-sm)")
+        self.assertEqual(declarations(sheet, ".record-section").get("padding-block-start"), "22px")
+
+    def test_shared_action_buttons_keep_their_roles_and_spacing(self):
+        request = RequestFactory().get(reverse("f0-you"))
+        request.resolver_match = resolve(request.path)
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        page = Markup(render_to_string("core/you.html", {}, request))
+        buttons = {b["text"].strip(): b["attrs"]["class"].split() for b in page.select("button")}
+        self.assertIn("primary", buttons["Save appearance"])
+        self.assertIn("secondary", buttons["Confirm sign out"])
+        sheet = Path(finders.find("core/f0.css")).read_text()
+        self.assertIn(".button-row:has(>.button),.office-switch-actions:has(form+form){gap:2rem}", sheet)
+
+
     def read_card(self, *, enabled=True, chosen=False, coordinator=True):
         org, office = uuid4(), uuid4()
         request = RequestFactory().get(reverse("office_page", args=(org, office)))

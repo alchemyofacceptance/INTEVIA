@@ -59,8 +59,12 @@ def _board_offices(owner_id, cut):
         family = office_family(owner_id=owner_id, code=code, requested=definition, at=cut)
         if family is not None:
             current, _, tenure = family
-            offices.append({"office_definition_uuid": current, "label": _record_names.office_label(code),
-                            "vacant": any(term["state"] == "vacant" for term in tenure)})
+            row = {"office_definition_uuid": current, "label": _record_names.office_label(code),
+                   "vacant": any(term["state"] == "vacant" for term in tenure)}
+            ongoing = next((term for term in tenure if term["state"] == "ongoing"), {})
+            if ongoing.get("holder_name"):
+                row["holder_name"] = ongoing["holder_name"]
+            offices.append(row)
     return offices
 
 

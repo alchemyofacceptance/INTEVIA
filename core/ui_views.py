@@ -60,7 +60,21 @@ def office_page(request, org, office):
             forms.append(("off", "Turn assistance off", uuid4(), "text-command"))
         else:
             forms.append(("on", "Turn assistance on", uuid4(), "primary"))
+    organisation_url = board_url = None
+    facts = page["office"]
+    if facts.get("organisation_short_label"):
+        from src.intevia.services import member_navigation
+        try:
+            destinations = member_navigation.member_navigation(credential=request.user, organism_uuid=org)
+        except member_navigation.NavigationUnavailable:
+            pass  # A readable office does not itself grant a directory destination.
+        else:
+            organisation_url = reverse("organisation_home", args=(destinations["organisation"]["organism_uuid"],))
+            board = next((c for c in destinations["circles"] if c["kind"] == "GOVERNANCE"), None)
+            if facts.get("board_short_label") and board:
+                board_url = reverse("circle_page", args=(org, board["circle_uuid"]))
     return render(request, "core/office_page.html", {
+        "organisation_url": organisation_url, "board_url": board_url,
         "record": page, "switch_forms": forms,
         "switch_url": reverse("office_switch", args=(org, office)) if forms else None,
     })

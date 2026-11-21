@@ -138,13 +138,16 @@ class MemberNavigationTests(TransactionTestCase):
         service.transition_assignment(fixture._transition_command(appointment, "ASSIGN"))
         current = record_office(owner, founder, definition, prior=office)
         self.assertEqual(treasurer(office), [], "Only the current definition may be listed as the ordinary destination.")
-        self.assertEqual(treasurer(current), [{"office_definition_uuid": current, "label": "Treasurer", "vacant": False}],
-                         "An effective holder under the earlier definition must fill the amended office on the Board.")
+        self.assertEqual(treasurer(current), [{"office_definition_uuid": current, "label": "Treasurer", "vacant": False,
+                                               "holder_name": member.identity.display_name}],
+                         "The amended office must show the member awarded the earlier definition.")
         self.assertFalse(vacant(office), "The old office link must still resolve the ongoing tenure across the amendment.")
         membership_service = organism_membership_service.OrganismMembershipService(authority=authority(), clock=database_now)
         membership_service.leave_organism(test_c1b_departure.DepartureTests().command(member))
         self.assertTrue(treasurer(current)[0]["vacant"] and vacant(current),
                         "After the holder leaves, both reads must show an evidenced vacancy.")
+        self.assertNotIn("holder_name", treasurer(current)[0],
+                         "After the holder leaves, the Board list must no longer name them.")
 
     def test_board_uses_the_admitted_office_label(self):
         owner, founder, office, _, _, _ = approved_office()

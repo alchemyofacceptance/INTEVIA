@@ -70,12 +70,13 @@ class OfficePageTests(TransactionTestCase):
                       "The real provision must name its own organisation as the adopting body.")
         current_tab = page.select("a", href=reverse("f0-organisation"), **{"aria-current": "page"})
         self.assertEqual(len(current_tab), 1, "The member office must retain the organisation tab in the F0 shell.")
-        heading = page.select("hgroup")
-        self.assertTrue(len(heading) == 1 and "Board of Trustees" in heading[0]["text"],
-                        "The office heading must locate the Treasurer under the Board's full name.")
-        crumb = page.select("nav", **{"aria-label": "Breadcrumb"})
-        self.assertEqual([n["text"] for n in page.select("span", within=crumb[0]) if n["text"] == "Board"] if crumb else [],
-                         ["Board"], "The breadcrumb must use the Board's short label.")
+        self.assertFalse(page.select("hgroup"), "The repeated Board/organisation context line is removed.")
+        crumb, = page.select("nav", **{"aria-label": "Breadcrumb"})
+        wide, = page.select("span", within=crumb, classes=("wide-path",))
+        board_link, = [a for a in page.select("a", within=wide) if a["text"] == "Board"]
+        board_circle = models.Circle.objects.get(parent_organism=owner, kind="GOVERNANCE")
+        self.assertEqual(board_link["attrs"]["href"], reverse("circle_page", args=(owner.organism_id, board_circle.circle_uuid)),
+                         "The admitted Board's short label must lead to its own Circle.")
         self.assertContains(response, f"Office definition · Version {old_row.definition_version}",
                             msg_prefix="The independent cited office version must be visible.")
         self.assertContains(response, f"Current office definition · Version {current_row.definition_version}",
@@ -167,7 +168,7 @@ class OfficePageTests(TransactionTestCase):
         self.assertEqual(permitted.status_code, 200, "The exact visible Topic pin must admit the probationary reader.")
         self.assertNotContains(permitted, "Vacant", msg_prefix="A Topic pin must not disclose that the office is vacant.")
         self.assertNotContains(permitted, "Office tenure", msg_prefix="A pin must disclose no tenure block.")
-        self.assertContains(permitted, "<h1>Office record</h1>", html=True,
+        self.assertContains(permitted, '<h1 class="record-heading page-title">Office record</h1>', html=True,
                             msg_prefix="A pin without the office label must use the neutral heading.")
         self.assertContains(permitted, f"Office definition · Version {version}",
                             msg_prefix="The pin must identify its own definition version.")
@@ -203,5 +204,5 @@ class OfficeMarkupTests(SimpleTestCase):
         crumb = page.select("nav", **{"aria-label": "Breadcrumb"})
         self.assertTrue(len(crumb) == 1 and "RO" in crumb[0]["text"] and "River Organisation" not in crumb[0]["text"],
                         "The breadcrumb must keep the organisation short label in its own place.")
-        self.assertIn("River Organisation · Board of Trustees", paragraphs,
-                      "The heading group must use the full names supplied by the read.")
+        self.assertNotIn("River Organisation · Board of Trustees", paragraphs,
+                         "The organisation and Board must not be repeated below the breadcrumb.")

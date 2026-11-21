@@ -53,6 +53,26 @@ class OfficePartsTests(SimpleTestCase):
         self.assertEqual(len(keys), len(set(keys)), "A card must give one value per fact label.")
         return dict(zip(keys, values))
 
+    def test_current_law_precedes_collapsed_predecessor(self):
+        """S01. Keep open current law ahead of its closed predecessor within its own group."""
+        policy = {"tier": "Policy", "library_reference": "duties"}
+        bylaw = {"tier": "Bylaw", "library_reference": "constitution"}
+        rows = [self.earlier | policy, self.earlier | bylaw, self.current | policy,
+                self.current | bylaw, self.current | policy | {"clause": "Peer clause."}]
+        for part, expected in (
+            (rows, [(self.current["clause"], "article"), ("Peer clause.", "article"),
+                    (self.earlier["clause"], "details"), (self.current["clause"], "article"),
+                    (self.earlier["clause"], "details")]),
+            ([self.current | policy | {"status": "cited_and_in_force"}], [(self.current["clause"], "article")]),
+            ([self.earlier | policy], [(self.earlier["clause"], "details")]),
+        ):
+            with self.subTest(size=len(part), status=part[0]["status"]):
+                page = Markup(self.render(provisions=part))
+                cards = [n for n in page.nodes if "office-provision" in n["attrs"].get("class", "").split()]
+                self.assertEqual([(self.one(page, "blockquote", within=c)["text"], c["tag"]) for c in cards],
+                                 expected, "The current article must precede its collapsed predecessor.")
+                self.assertFalse(any("open" in c["attrs"] for c in cards if c["tag"] == "details"))
+
     def test_each_returned_part_reaches_only_its_own_markup(self):
         raw = self.render()
         page = Markup(raw)
@@ -164,7 +184,7 @@ class OfficePartsTests(SimpleTestCase):
         film = self.current | {"tier": "Policy", "library_reference": "alpha-treasurer-duties", "version": 1}
         page = Markup(self.render(provisions=[film], care={"enabled": False}))
         section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
-        self.assertEqual(self.one(page, "p", within=section, id="office-provisions")["text"],
+        self.assertEqual(self.one(page, "h2", within=section, id="office-provisions")["text"],
                          "Constitutional Law related to this office", "Use the ruled section heading.")
         self.assertEqual([n["text"] for n in page.select("h3", within=section)], ["Policy · Governance"],
                          "The film Policy must identify its Governance family.")
@@ -198,7 +218,8 @@ class OfficePartsTests(SimpleTestCase):
         section = self.one(mixed, "section", **{"aria-labelledby": "office-provisions"})
         self.assertEqual([n["text"] for n in mixed.select("h3", within=section)], ["Policy"],
                          "A shared tier heading must not assign the film family to an unmapped neighbour.")
-        self.assertEqual([n["text"] for n in mixed.select("h2", within=section)],
+        self.assertEqual([h["text"] for card in mixed.select("article", within=section, classes=("office-provision",))
+                          for h in mixed.select("h2", within=card)],
                          ["Treasurer office", "Establishes this office"], "Only the mapped law gets a title.")
 
     def test_later_reader_can_distinguish_the_two_results(self):

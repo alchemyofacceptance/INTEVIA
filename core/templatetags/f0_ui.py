@@ -107,7 +107,25 @@ def office_provisions(record):
             "title": display.get("title"),
             "observation": observation if provision is source else None,
         })
+    for group in groups.values():
+        # Keep each relationship's slots in tier order. Partition its peers stably.
+        positions = {}
+        rows = group["rows"]
+        for index, row in enumerate(rows):
+            positions.setdefault(row["provision"]["relationship"], []).append(index)
+        for slots in positions.values():
+            ordered = sorted((rows[index] for index in slots),
+                             key=lambda row: row["provision"]["status"] == "cited_at_definition")
+            for index, row in zip(slots, ordered):
+                rows[index] = row
     return {"office": record["office"], "groups": groups.values()}
+
+
+@register.inclusion_tag("core/components/record_breadcrumb.html")
+def record_breadcrumb(current, organisation, organisation_url=None, circle=None, circle_url=None):
+    ancestors = [(label, url) for label, url in ((organisation, organisation_url), (circle, circle_url)) if label]
+    parent, parent_url = ancestors[-1] if ancestors else (None, None)
+    return {"current": current, "ancestors": ancestors, "parent": parent, "parent_url": parent_url}
 
 
 _HISTORY_SIZES = (10, 20, 50, 100, 200)

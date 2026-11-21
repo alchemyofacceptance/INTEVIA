@@ -177,8 +177,8 @@ class TimelineTests(SimpleTestCase):
             elif (tag in ("a", "button", "input", "select", "textarea", "details", "summary", "iframe")
                   or (tag in ("audio", "video") and "controls" in attrs)):
                 outside_actions.append(tag)
-        self.assertCountEqual(outside_actions, [("select", "show"), ("button", "submit", "Show")],
-                              "Outside the entries, the history may offer only the size choice and its Show button.")
+        self.assertCountEqual(outside_actions, [("select", "show"), ("button", "submit", "Apply")],
+                              "Outside the entries, the history may offer only the size choice and its Apply button.")
         items = page.select("li")
         self.assertEqual(len(items), len(history), "Both permitted entries must have their own interim notice.")
         for item, entry in zip(items, history):
