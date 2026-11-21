@@ -1,0 +1,22 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}Discussion submission | INTEVIA{% endblock %}
+{% block content %}
+{% if board_org %}
+  {% url 'organisation_home' organisation.organism_uuid as organisation_url %}
+  {% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
+  {% record_breadcrumb "Discussion submission" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
+{% endif %}
+<h1 class="page-title record-heading">{{ title }}</h1>
+<div class="notice refusal" role="alert" id="discussion-error" tabindex="-1" autofocus>
+  <p>{{ why }}</p><p>{{ effect }}</p><p>{{ action }}</p><p>{{ help_text }}</p>
+</div>
+{% if correctable %}
+  {% if topic %}{% include "core/components/reply_form.html" %}{% else %}{% include "core/components/start_topic_form.html" %}{% endif %}
+{% elif entered.title or entered.markdown %}<section class="record-section">
+  <h2 class="record-heading">Your submitted text</h2>
+  {% if entered.title %}<p>{{ entered.title }}</p>{% endif %}
+  {% if entered.markdown %}{{ entered.markdown|linebreaks }}{% endif %}
+</section>{% endif %}
+{% if board_org %}<p class="discussion-actions">{% url 'board_discussion' board_org board_circle as back_url %}{% include 'core/components/button.html' with href=back_url variant='secondary' label='Back to Board discussion' only %}</p>{% endif %}
+{% endblock %}

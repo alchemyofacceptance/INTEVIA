@@ -1,0 +1,34 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}{{ topic.title }} | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as organisation_url %}
+{% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
+{% record_breadcrumb "Topic" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:'Board' circle_url %}
+<h1 class="page-title record-heading discussion-title">{{ topic.title }}</h1>
+<p class="meta">{{ topic.topic_type|topic_type_label }} · {{ category.name }}{% if topic.office_definition_version %} · Office definition · Version {{ topic.office_definition_version }}{% endif %}</p>
+{% with post=posts.0 %}
+<article class="card"{% if post.post_uuid %} id="post-{{ post.post_uuid }}"{% endif %}><h2>Opening post</h2>
+  {% include "core/components/discussion_post.html" %}
+  {% if office %}<p class="discussion-office"><a href="{% url 'office_page' board_org office.office_definition_uuid %}">{{ office.label }}</a></p>{% endif %}
+</article>
+{% endwith %}
+<section class="record-section" aria-labelledby="replies-heading">
+  <h2 class="record-heading" id="replies-heading">Replies</h2>
+  {% for post in posts|slice:"1:" %}
+    <article class="card"{% if post.post_uuid %} id="post-{{ post.post_uuid }}"{% endif %}><h3>Post {{ post.post_number }}</h3>
+      {% include "core/components/discussion_post.html" %}
+    </article>
+  {% empty %}<p>No replies yet.</p>{% endfor %}
+</section>
+{% if reply_command %}
+<section class="record-section" aria-labelledby="reply-heading">
+  <h2 id="reply-heading" class="record-heading">Reply to this Topic</h2>
+  {% include "core/components/reply_form.html" with command=reply_command %}
+</section>
+{% endif %}
+{% if category.retired %}<p>This category is retired. You can still read its Topics.</p>{% endif %}
+{% if topic.closed %}<p>This Topic is closed. You can still read its posts.</p>{% endif %}
+{% if not category.retired and not category.can_reply %}<p>This category is open to you for reading.</p>{% endif %}
+<p class="board-discussion-destination"><a href="{% url 'board_discussion' board_org board_circle %}">Back to Board discussion</a></p>
+{% endblock %}

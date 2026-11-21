@@ -1,0 +1,24 @@
+{% load f0_ui %}
+{% if office %}<p>About this office · {{ office.label }}</p>{% endif %}
+<form class="discussion-form"{% if correctable %} aria-describedby="discussion-error"{% endif %} method="post" action="{% url 'discussion_start' board_org board_circle %}">
+  {% csrf_token %}<input type="hidden" name="command" value="{{ command }}">
+  <label>Category<select name="category" required>
+    {% for row in categories %}<option value="{{ row.category_uuid }}"{% if row.category_uuid == category.category_uuid %} selected{% endif %}>{{ row.name }}</option>{% endfor %}
+  </select></label>
+  {% if office %}
+    <p>Type · {{ "TOPIC"|topic_type_label }}</p>
+    <input type="hidden" name="type" value="TOPIC">
+    <input type="hidden" name="office" value="{{ office.office_definition_uuid }}">
+  {% else %}
+    <label>Type<select name="type" required>
+      {% for value, label in types %}<option value="{{ value }}"{% if value == entered.type %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+  {% endif %}
+  <label>Title<input name="title" maxlength="90" value="{{ entered.title }}" required></label>
+  <label>Text<textarea name="markdown" rows="5" required>{{ entered.markdown }}</textarea></label>
+  <div class="discussion-actions">
+    {% include 'core/components/button.html' with type='submit' variant='primary' label='Start Topic' only %}
+    {% if office %}{% url 'office_page' board_org office.office_definition_uuid as cancel_url %}{% else %}{% url 'board_discussion' board_org board_circle as cancel_url %}{% endif %}
+    {% include 'core/components/button.html' with href=cancel_url variant='secondary' label='Cancel' only %}
+  </div>
+</form>

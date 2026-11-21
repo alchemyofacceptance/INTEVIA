@@ -1,0 +1,11 @@
+<form class="discussion-form"{% if correctable %} aria-describedby="discussion-error"{% endif %} method="post" action="{% url 'discussion_reply' board_org board_circle topic.thread_uuid %}">
+  {% csrf_token %}<input type="hidden" name="command" value="{{ command }}">
+  <label>Quote an earlier version (optional)
+    <select name="quote"><option value="">No quotation</option>
+    {% for post in posts %}{% if post.markdown != None %}
+      <option value="{{ post.version_uuid }}"{% if post.version_uuid|stringformat:"s" == entered.quote %} selected{% endif %}>Post {{ post.post_number }} · Version {{ post.version_number }}</option>
+    {% endif %}{% endfor %}</select>
+  </label>
+  <label>Your reply<textarea name="markdown" required rows="4">{{ entered.markdown }}</textarea></label>
+  <div>{% include 'core/components/button.html' with type='submit' variant='primary' label='Post reply' only %}</div>
+</form>

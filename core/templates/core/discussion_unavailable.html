@@ -1,0 +1,9 @@
+{% extends "core/base.html" %}
+{% block title %}Discussion unavailable | INTEVIA{% endblock %}
+{% block content %}
+<h1 class="page-title record-heading">Discussion unavailable</h1>
+<p>You tried to open a discussion that you are not authorised to view, or that does not exist. To protect privacy, INTEVIA does not say which. Nothing was changed.</p>
+<p>If you think you should have access, contact an Organisation Coordinator.</p>
+{% if back_organisation %}<p class="board-discussion-destination"><a href="{% url 'organisation_home' back_organisation.organism_uuid %}">Back to {{ back_organisation.full_name }}</a></p>
+{% else %}<p class="board-discussion-destination"><a href="{% url 'f0-organisation' %}">Your organisations in INTEVIA</a></p>{% endif %}
+{% endblock %}

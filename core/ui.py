@@ -55,3 +55,11 @@ def participation(members=(), *, counts=None, anonymous=False):
     return {"anonymous": anonymous, "mode": mode, "people": people, "total": total,
             "counts": [{"key": key, "label": label, "symbol": symbol, "count": safe_counts[key]}
                        for key, (label, symbol) in ANSWERS.items()], "labels": vote_labels()}
+
+
+TOPIC_TYPES = {"TOPIC": "Topic", "QUESTION": "Question", "SUGGESTION": "Suggestion"}
+
+
+def topic_type_label(value):
+    """Public label for a stored ordinary Topic type."""
+    return TOPIC_TYPES.get(value, "")

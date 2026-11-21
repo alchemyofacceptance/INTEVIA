@@ -255,3 +255,12 @@ html {
  .circle-description:has(details[open]) .description-excerpt { display:none }
 }
 .circle-description details[open] .read-less { display:inline }
+
+.discussion-topics { display:grid; gap:var(--space-xl); list-style:none; padding:0 }
+.discussion-topics a,.discussion-office a,.board-discussion-destination a { min-inline-size:var(--touch) }
+.board-discussion-destination { margin-block-start:var(--space-xl) }
+
+.discussion-form { display:grid; gap:32px; max-width:48rem; margin-block:24px; }
+.discussion-form label { display:grid; gap:8px; min-width:0; }
+.discussion-form :is(input:not([type=hidden]),textarea,select) { width:100%; min-height:44px; }
+.discussion-actions { display:flex; align-items:center; flex-wrap:wrap; gap:32px; margin-block:32px; }

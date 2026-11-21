@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from core import office_switch, organisation_pages, views, ui_views
+from core import discussion_forms, discussion_pages, office_switch, organisation_pages, views, ui_views
 
 urlpatterns = [
     path('explore/', ui_views.placeholder, {"section": "explore"}, name='f0-explore'),
@@ -26,6 +26,11 @@ urlpatterns = [
     path('intevia/<uuid:org>/circles/<uuid:circle>/', organisation_pages.circle_page, name='circle_page'),
     path('intevia/<uuid:org>/offices/<uuid:office>/', ui_views.office_page, name='office_page'),
     path('intevia/<uuid:org>/offices/<uuid:office>/assistance/', office_switch.change_assistance, name='office_switch'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/', discussion_pages.board_discussion, name='board_discussion'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/new/', discussion_forms.start_form, name='discussion_start_form'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/start/', discussion_forms.submit, name='discussion_start'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/reply/', discussion_forms.submit, name='discussion_reply'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/', discussion_pages.discussion_topic, name='discussion_topic'),
     path('history/', ui_views.placeholder, {"section": "history"}, name='f0-history'),
     path('you/', ui_views.you, name='f0-you'),
     path('spaces/<str:scope>/<str:domain>/', ui_views.domain, name='f0-domain'),

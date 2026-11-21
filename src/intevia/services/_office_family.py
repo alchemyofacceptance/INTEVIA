@@ -72,8 +72,8 @@ def _tenure(family_ids, owner_id, at):
     return tenure
 
 
-def office_family(*, owner_id, code, requested, at):
-    """Return the current definition, version and public tenure at the caller's cut."""
+def office_family_head(*, owner_id, code, requested, at):
+    """Find the one current definition whose predecessor chain contains the requested pin."""
     current = disc._rows("""
         WITH RECURSIVE family AS (
             SELECT id,role_uuid,definition_version,supersedes_id,active FROM public.core_organismroledefinition
@@ -89,7 +89,12 @@ def office_family(*, owner_id, code, requested, at):
           FROM lineage l JOIN family c ON c.id=l.current_id
          GROUP BY c.id,c.role_uuid,c.definition_version HAVING bool_or(l.role_uuid=%(requested)s)
     """, {"owner": owner_id, "code": code, "at": at, "requested": requested})
-    if len(current) != 1:
+    return current[0] if len(current) == 1 else None
+
+
+def office_family(*, owner_id, code, requested, at):
+    """Return the current definition, version and public tenure at the caller's cut."""
+    role = office_family_head(owner_id=owner_id, code=code, requested=requested, at=at)
+    if role is None:
         return None
-    role = current[0]
     return role["role_uuid"], role["definition_version"], _tenure(role["family_ids"], owner_id, at)

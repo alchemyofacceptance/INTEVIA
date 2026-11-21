@@ -58,12 +58,14 @@
   <h2 class="record-heading" id="office-topics">Discussion topics about this office</h2>
   {% for topic in record.topics %}
     <article class="card office-topic">
-      <h3>{{ topic.title }}</h3>
+      {% url 'discussion_topic' office_org topic.circle_uuid topic.thread_link as topic_url %}
+      <h3>{% if topic_url and topic.circle_uuid == office_board %}<a href="{{ topic_url }}">{{ topic.title }}</a>{% else %}{{ topic.title }}{% endif %}</h3>
       <p class="meta">Started {% include "core/components/office_time.html" with stamp=topic.created_at only %} · Office version {{ topic.office_version }}</p>
     </article>
   {% empty %}
     <p>No Topics to show here.</p>
   {% endfor %}
+  {% if start_topic_url %}<p class="discussion-actions">{% include 'core/components/button.html' with href=start_topic_url label="Start a Topic about this office" variant="primary" only %}</p>{% endif %}
 </section>
 
 <section class="record-section" aria-labelledby="office-decisions">

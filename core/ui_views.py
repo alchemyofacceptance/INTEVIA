@@ -60,7 +60,7 @@ def office_page(request, org, office):
             forms.append(("off", "Turn assistance off", uuid4(), "text-command"))
         else:
             forms.append(("on", "Turn assistance on", uuid4(), "primary"))
-    organisation_url = board_url = None
+    organisation_url = board_url = start_topic_url = office_board = None
     facts = page["office"]
     if facts.get("organisation_short_label"):
         from src.intevia.services import member_navigation
@@ -71,9 +71,16 @@ def office_page(request, org, office):
         else:
             organisation_url = reverse("organisation_home", args=(destinations["organisation"]["organism_uuid"],))
             board = next((c for c in destinations["circles"] if c["kind"] == "GOVERNANCE"), None)
-            if facts.get("board_short_label") and board:
-                board_url = reverse("circle_page", args=(org, board["circle_uuid"]))
+            if board:
+                office_board = board["circle_uuid"]
+                if facts.get("board_short_label"):
+                    board_url = reverse("circle_page", args=(org, office_board))
+                pin = facts.get("current_definition") or facts.get("requested_definition")
+                if pin and any(row["office_definition_uuid"] == pin for row in destinations["board_offices"]):
+                    from core.discussion_forms import office_start_url
+                    start_topic_url = office_start_url(request.user, org, office_board, pin)
     return render(request, "core/office_page.html", {
+        "office_org": org, "office_board": office_board, "start_topic_url": start_topic_url,
         "organisation_url": organisation_url, "board_url": board_url,
         "record": page, "switch_forms": forms,
         "switch_url": reverse("office_switch", args=(org, office)) if forms else None,

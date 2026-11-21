@@ -1,0 +1,35 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}Board discussion | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as organisation_url %}
+{% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
+{% record_breadcrumb "Board discussion" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:'Board' circle_url %}
+<h1 class="page-title record-heading">Board discussion</h1>
+<p>{{ circle.full_name|default:"Board" }}{% if organisation %} · {{ organisation.full_name }}{% endif %}</p>
+<section class="record-section" aria-labelledby="categories-heading">
+  <h2 id="categories-heading" class="record-heading">Categories</h2>
+  {% for category in categories %}
+    <article class="card">
+      <h3>{{ category.name }}</h3>
+      {% if category.description %}{{ category.description|linebreaks }}{% endif %}
+      {% if category.retired %}<p>Retired · This category is open for reading.</p>{% endif %}
+      <h4>Topics</h4>
+      {% if category.topic_count %}
+        <p class="meta">{{ category.topic_count }} Topic{{ category.topic_count|pluralize }}</p>
+        <ul class="discussion-topics">
+          {% for topic in category.topics %}
+            <li><a href="{% url 'discussion_topic' board_org board_circle topic.thread_uuid %}">{{ topic.title }}</a>
+              <div class="meta">{% if topic.pinned %}Pinned · {% endif %}{% if topic.closed %}Closed · {% endif %}{% if topic.hidden %}Hidden · {% endif %}<time datetime="{{ topic.created_at|date:'c' }}">{{ topic.created_at|date:"j F Y, H:i T" }}</time></div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}<p>No Topics to show here.</p>{% endif %}
+      {% if category.can_start_topic %}
+        {% url 'discussion_start_form' board_org board_circle as start_url %}
+        <p class="discussion-actions"><a class="button primary" href="{{ start_url }}?category={{ category.category_uuid }}">Start a Topic</a></p>
+      {% endif %}
+    </article>
+  {% empty %}<p>No categories to show here.</p>{% endfor %}
+</section>
+{% endblock %}

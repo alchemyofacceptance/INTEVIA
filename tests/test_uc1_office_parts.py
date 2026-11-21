@@ -294,7 +294,10 @@ class BoardTopicPageTests(TransactionTestCase):
             page = Markup(raw)
             sections = page.select("section", **{"aria-labelledby": "office-topics"})
             self.assertEqual(len(sections), 1, "The office page must have one Topics section.")
-            return sections[0]["text"].strip()
+            text = sections[0]["text"]
+            for action in page.select("p", within=sections[0], classes=("discussion-actions",)):
+                text = text.replace(action["text"], "")
+            return text.strip()
 
         baseline = topics(read(outside))
         self.assertIn("No Topics to show here.", baseline, "The no-Topic control must have the neutral empty state.")

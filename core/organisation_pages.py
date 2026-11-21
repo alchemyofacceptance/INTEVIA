@@ -77,7 +77,8 @@ def _member_page(request, org, circle=None):
     try:
         # Keep this owner's lock across the directory, participation and status reads.
         with transaction.atomic():
-            page = navigation.member_navigation(credential=request.user, organism_uuid=org, circle_uuid=circle)
+            page = navigation.member_navigation(credential=request.user, organism_uuid=org, circle_uuid=circle,
+                                                include_discussion=circle is not None)
             selected = page.get("selected_circle")
             status = _status(request.user, org, selected) if selected else None
     except navigation.NavigationUnavailable:
@@ -90,6 +91,7 @@ def _member_page(request, org, circle=None):
         return render(request, "core/organisation_home.html", context)
     if selected["kind"] == "GOVERNANCE":
         context["board_offices"] = page["board_offices"]
+        context["discussion_available"] = page.get("discussion_available", False)
     description = selected["description"]
     text = description["text"] if description else ""
     excerpt = _excerpt(text) if description and description["source"] == "birth_purpose" else ""

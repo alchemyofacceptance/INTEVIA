@@ -6,7 +6,7 @@ from django.db import transaction
 
 from core.models import CircleBirthDescription, CircleStateEvent, OrganismMembership, OrganismRoleDefinition
 from src.intevia.services import _record_names, discussion, discussion_posts
-from src.intevia.services._office_family import office_family
+from src.intevia.services._office_family import office_family, office_family_head
 from src.intevia.services.clock import database_now
 from src.intevia.services.organism_command_support import _lock_actor, _lock_registered_organism
 
@@ -116,7 +116,22 @@ def member_organisation_name(*, credential, organism_uuid):
         return _organisation_name(organism_uuid, owner_id, cut)
 
 
-def member_navigation(*, credential, organism_uuid, circle_uuid=None):
+def _linked_office(offices, owner_id, cut, pin):
+    """Select only from released destinations, retaining a directly admitted historical pin."""
+    by_definition = {row["office_definition_uuid"]: row for row in offices}
+    if pin in by_definition:
+        return by_definition[pin]
+    if not offices:
+        return None
+    code = OrganismRoleDefinition.objects.filter(living_organism_id=owner_id, role_uuid=pin,
+                                                kind="BOARD_OFFICE", scope="LIVING_ORGANISM").values_list("code", flat=True).first()
+    if code is None:
+        return None
+    head = office_family_head(owner_id=owner_id, code=code, requested=pin, at=cut)
+    return by_definition.get(head["role_uuid"]) if head else None
+
+
+def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_discussion=False, office_pin=None):
     """Read member destinations and the optional selected Circle's introduction at one cut."""
     with transaction.atomic():
         actor, owner_id, cut, state = _admitted_scope(credential, organism_uuid)
@@ -155,6 +170,17 @@ def member_navigation(*, credential, organism_uuid, circle_uuid=None):
         page = {"evaluated_at": cut,
                 "organisation": _organisation_name(organism_uuid, owner_id, cut),
                 "circles": circles, "board_offices": offices}
+        if office_pin is not None:
+            page["linked_office"] = _linked_office(offices, owner_id, cut, office_pin)
         if selected is not None:
             page["selected_circle"] = selected
+            if include_discussion and selected["kind"] == "GOVERNANCE":
+                try:
+                    destinations = discussion_posts.visible_boards(credential=credential)
+                except discussion.DiscussionUnavailable:
+                    destinations = ()
+                page["discussion_available"] = any(
+                    row["organism_uuid"] == organism_uuid and row["circle_uuid"] == circle_uuid
+                    for row in destinations
+                )
         return page

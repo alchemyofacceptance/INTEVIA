@@ -221,7 +221,7 @@ def _read_owner(organism_uuid, circle_uuid):
 # Shared with the office lookup. Filter each real board by the authenticated
 # person's present standing before using its office or its category permissions.
 _READABLE_BOARDS = """
-    SELECT b.*, circle.circle_uuid, clock.cut AS audience_at
+    SELECT b.*, circle.circle_uuid, circle.kind AS circle_kind, clock.cut AS audience_at
     FROM public.core_discboard b
     JOIN public.core_livingorganism lo ON lo.id=b.organism_id
     LEFT JOIN public.core_circle circle ON circle.id=b.circle_id
@@ -253,11 +253,13 @@ def _audience(actor, organism_uuid, circle_uuid, category_uuid=_NO_CATEGORY):
     return rows[0]
 
 
-def board_categories(*, credential, organism_uuid, circle_uuid=None):
+def board_categories(*, credential, organism_uuid, circle_uuid=None, governance_only=False):
     """Pure read, including retired categories; provision through ensure_board first."""
     with transaction.atomic():
         actor = _actor(credential)
         board = _audience(actor, organism_uuid, circle_uuid)
+        if governance_only and board["circle_kind"] != "GOVERNANCE":
+            raise DiscussionUnavailable()
         rows = _rows("""SELECT c.*,public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='ACTIVE'
               OR public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='PROBATIONARY' AS posting_state,
             public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) IS NOT NULL AS coordinator
