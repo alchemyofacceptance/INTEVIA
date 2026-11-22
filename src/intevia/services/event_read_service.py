@@ -59,6 +59,7 @@ ATTENDANCE_NONE = (
 
 @dataclass(frozen=True, slots=True)
 class EventSummary:
+    """One visible Event as listed: its id, title and stored state."""
     event_id: str
     title: str
     state: str
@@ -66,18 +67,35 @@ class EventSummary:
 
 @dataclass(frozen=True, slots=True)
 class RegistrationCurrentSummary:
+    """The viewer's registration on an Event, as a fixed message.
+
+    message is REGISTRATION_CURRENT, REGISTRATION_CANCELLED or
+    REGISTRATION_NONE. history_available is False only when the
+    viewer holds no registration for the Event.
+    """
     message: str
     history_available: bool
 
 
 @dataclass(frozen=True, slots=True)
 class AttendanceCompactSummary:
+    """The viewer's attendance on an Event, as a fixed message.
+
+    message is ATTENDANCE_PRESENT, ATTENDANCE_WITHDRAWN (a voided
+    record) or ATTENDANCE_NONE, which is not a record of absence.
+    history_available is False only when no record is held.
+    """
     message: str
     history_available: bool
 
 
 @dataclass(frozen=True, slots=True)
 class EventHomeSummary:
+    """One Event on the viewer's home page.
+
+    attendance is None when no attendance record is held for the
+    viewer; registration is always given.
+    """
     event_id: str
     title: str
     description: str
@@ -87,12 +105,18 @@ class EventHomeSummary:
 
 @dataclass(frozen=True, slots=True)
 class PersonalHome:
+    """The viewer's display name and the Events on their home page."""
     display_name: str
     events: tuple[EventHomeSummary, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class EventDetailPresentation:
+    """The viewer's page for one Event, with their records as messages.
+
+    registration and attendance are the viewer's own summaries.
+    resources is () unless present_event was given a resource reader.
+    """
     event_id: str
     title: str
     description: str
@@ -103,12 +127,22 @@ class EventDetailPresentation:
 
 @dataclass(frozen=True, slots=True)
 class RecordHistoryEntry:
+    """One history line: a fixed message and its time.
+
+    The time is a registration transition's occurred_at or an
+    attendance transition's recorded_at. No actor, authority or
+    reference is carried.
+    """
     message: str
     occurred_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
 class RecordHistory:
+    """The viewer's history of one kind of record on one Event.
+
+    heading names what is shown; entries may be empty.
+    """
     event_id: str
     event_title: str
     heading: str
@@ -117,6 +151,10 @@ class RecordHistory:
 
 @dataclass(frozen=True, slots=True)
 class RegistrationSummary:
+    """One of the viewer's registrations, with its stored codes.
+
+    state and origin are the stored values, not display text.
+    """
     registration_id: str
     state: str
     origin: str
@@ -125,12 +163,21 @@ class RegistrationSummary:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceSummary:
+    """A registration evidence reference's type and time only.
+
+    The reference itself and who supplied it are not carried.
+    """
     reference_type: str
     occurred_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
 class RegistrationTransitionSummary:
+    """One registration transition, its stored codes and evidence.
+
+    The actor, authority, idempotency key and any cancellation
+    basis are not carried.
+    """
     action_type: str
     from_state: str
     to_state: str
@@ -140,6 +187,11 @@ class RegistrationTransitionSummary:
 
 @dataclass(frozen=True, slots=True)
 class RegistrationInspection:
+    """One of the viewer's registrations with its transitions.
+
+    eligibility_basis_type is carried; the basis and policy
+    references and the predecessor are not.
+    """
     registration_id: str
     state: str
     origin: str
@@ -151,6 +203,11 @@ class RegistrationInspection:
 
 @dataclass(frozen=True, slots=True)
 class AttendanceSummary:
+    """The viewer's attendance on an Event, with its stored codes.
+
+    status is "unrecorded", and the other fields None, when no
+    attendance record is held; otherwise the stored status.
+    """
     status: str
     attendance_id: str | None
     origin: str | None
@@ -159,6 +216,11 @@ class AttendanceSummary:
 
 @dataclass(frozen=True, slots=True)
 class AttendanceEvidenceSummary:
+    """An attendance evidence reference's type, class and time.
+
+    The reference itself, its provenance and its supplier are not
+    carried.
+    """
     evidence_type: str
     classification: str
     supplied_at: datetime
@@ -166,6 +228,11 @@ class AttendanceEvidenceSummary:
 
 @dataclass(frozen=True, slots=True)
 class AttendanceTransitionSummary:
+    """One attendance transition, its stored codes and evidence.
+
+    The actor, authority, basis, rationale, and the observed times
+    and registrations before and after, are not carried.
+    """
     sequence: int
     action: str
     from_status: str
@@ -176,6 +243,12 @@ class AttendanceTransitionSummary:
 
 @dataclass(frozen=True, slots=True)
 class AttendanceInspection:
+    """The viewer's attendance on one Event, with its transitions.
+
+    Without a record, event_id is retained, status is "unrecorded"
+    and transitions is empty. attendance_id, origin and observed_at
+    are None.
+    """
     event_id: str
     status: str
     attendance_id: str | None
@@ -186,6 +259,10 @@ class AttendanceInspection:
 
 @dataclass(frozen=True, slots=True)
 class EventInspection:
+    """One visible Event with the viewer's records as stored.
+
+    registrations holds only the viewer's own registrations.
+    """
     event_id: str
     title: str
     description: str
@@ -199,6 +276,13 @@ class EventReadService:
 
     @staticmethod
     def _active(identity: Identity) -> Identity:
+        """Return the current ACTIVE Identity for the supplied viewer.
+
+        Read by primary key, identity ID and credential ID. A missing
+        match or a non-ACTIVE stored state raises EventNotVisible.
+        This reads no credential row and does not compare access epochs.
+        It starts no transaction and takes no explicit row lock.
+        """
         try:
             current = Identity.objects.get(
                 pk=identity.pk,
@@ -215,6 +299,21 @@ class EventReadService:
     def _registration_summary(
         registrations: list[EventRegistration],
     ) -> RegistrationCurrentSummary:
+        """Summarise one viewer's registrations for one Event.
+
+        The callers pass one participant's records for one Event. An
+        empty list gives REGISTRATION_NONE, without history. Otherwise
+        the records must form one chain: no repeated row; exactly one
+        without a predecessor; every other row's predecessor in the
+        list, CANCELLED, and for the same Event and participant; at most
+        one successor each; every row reached from the first. At most
+        one row may be REGISTERED, and it must be the last; otherwise
+        the last must be CANCELLED.
+
+        Gives REGISTRATION_CURRENT or REGISTRATION_CANCELLED, with
+        history. Any break raises EventNotVisible, which hides the
+        Event rather than reporting the fault. No database read.
+        """
         if not registrations:
             return RegistrationCurrentSummary(REGISTRATION_NONE, False)
 
@@ -272,6 +371,12 @@ class EventReadService:
     def _attendance_summary(
         attendance: EventAttendance | None,
     ) -> AttendanceCompactSummary:
+        """Summarise the viewer's attendance record, if any.
+
+        None gives ATTENDANCE_NONE, without history. PRESENT gives
+        ATTENDANCE_PRESENT and VOIDED gives ATTENDANCE_WITHDRAWN, both
+        with history. Any other status raises EventNotVisible.
+        """
         if attendance is None:
             return AttendanceCompactSummary(ATTENDANCE_NONE, False)
         if attendance.status == EventAttendance.Status.PRESENT:
@@ -282,6 +387,12 @@ class EventReadService:
 
     @staticmethod
     def _personal_events(identity: Identity) -> QuerySet[Event]:
+        """Return the visible Events with the viewer's own records.
+
+        Each Event carries personal_registrations (the viewer's, by
+        registered_at, then primary key) and personal_attendances (the
+        viewer's). The queryset is lazy and is not ordered here.
+        """
         registrations = EventRegistration.objects.filter(
             participant=identity
         ).order_by("registered_at", "pk")
@@ -301,6 +412,11 @@ class EventReadService:
 
     @classmethod
     def _present_event(cls, event: Event) -> EventDetailPresentation:
+        """Build the viewer's page from one _personal_events row.
+
+        Raises EventNotVisible if more than one attendance is held, or
+        if either summary refuses. resources is left empty.
+        """
         attendances = event.personal_attendances
         if len(attendances) > 1:
             raise EventNotVisible("resource is not visible")
@@ -315,6 +431,18 @@ class EventReadService:
 
     @classmethod
     def home(cls, identity: Identity) -> PersonalHome:
+        """Return PersonalHome for the viewer, in Event creation order.
+
+        Refresh the viewer with _active, then read visible Events in all
+        states by created_at and primary key. Prefetch the viewer's own
+        registrations and attendances.
+        Registration is always a message, including when none is held.
+        Attendance is a message only when a record is held; else None.
+
+        An _active refusal, duplicate attendance, invalid registration
+        chain or unknown attendance status raises EventNotVisible for
+        the whole home. No transaction or row lock is requested here.
+        """
         identity = cls._active(identity)
         events = cls._personal_events(identity).order_by("created_at", "pk")
         summaries = []
@@ -344,6 +472,22 @@ class EventReadService:
         resource_reader: "EventResourceRelationshipReadService | None" = None,
         evaluated_at: datetime | None = None,
     ) -> EventDetailPresentation:
+        """Return the viewer's presentation of one visible Event.
+
+        Refresh the viewer with _active. Fetch exactly one visible Event
+        with the viewer's registrations and attendance. An _active
+        refusal, zero or multiple Event matches, duplicate attendance,
+        a broken registration chain or an unknown attendance status
+        raises EventNotVisible.
+
+        Without a resource reader, resources is () and time is unused.
+        Otherwise pass the refreshed viewer, Event and supplied time
+        (default database_now(), the INTEVIA Clock on the default
+        database) to its present method. It may return ().
+        Errors escaping the reader propagate. This method starts no
+        transaction or row lock of its own. The resource reader can lock
+        the viewer in its own atomic block.
+        """
         identity = cls._active(identity)
         try:
             event = cls._personal_events(identity).get(event_id=event_id)
@@ -373,6 +517,25 @@ class EventReadService:
         event_id: str,
         registration_id: str | None = None,
     ) -> RecordHistory:
+        """Return the viewer's registration history for one Event.
+
+        Refresh with _active and require exactly one visible Event.
+        Read all the viewer's registrations there and prefetch their
+        transitions. Check the whole chain before selecting all rows or
+        the one matching registration_id. An _active refusal, zero or
+        multiple Event matches, a broken chain or an ID matching other
+        than one personal registration raises EventNotVisible.
+
+        Map self and third-party registration to the same creation
+        message. Cancellation and re-registration each have their own.
+        Unknown selected actions raise EventNotVisible. Order entries
+        by occurred_at.
+        No registrations and no registration_id give an empty history,
+        not a refusal. With a registration_id that call is refused.
+        Use "Registration record" when an ID was supplied and
+        "Registration record history" otherwise. No transaction or row
+        lock is requested here.
+        """
         identity = cls._active(identity)
         try:
             event = visible_event_queryset(identity).get(event_id=event_id)
@@ -437,6 +600,18 @@ class EventReadService:
     def attendance_history(
         cls, identity: Identity, event_id: str
     ) -> RecordHistory:
+        """Return the viewer's attendance history for one Event.
+
+        Refresh with _active and require exactly one visible Event.
+        An _active refusal or zero or multiple Event matches raises
+        EventNotVisible. Read the first attendance for this subject and
+        Event, with transitions in sequence order. No record gives an
+        empty history. The stored attendance status is not checked.
+
+        Map record, correct, void and reinstate to fixed messages at
+        each transition's recorded_at. An unknown action raises
+        EventNotVisible. No transaction or row lock is requested here.
+        """
         identity = cls._active(identity)
         try:
             event = visible_event_queryset(identity).get(event_id=event_id)
@@ -477,6 +652,15 @@ class EventReadService:
     @classmethod
     @transaction.atomic
     def list_visible(cls, identity: Identity) -> tuple[EventSummary, ...]:
+        """List visible Events by created_at and primary key.
+
+        In an atomic block, refresh the viewer with _active, which may
+        raise EventNotVisible. Query distinct Events through ownership,
+        registration, participation or attendance in any Event state.
+        Return a tuple of IDs, titles and states as EventSummary values.
+        No personal record is materialised or validated. No visible
+        Events gives an empty tuple. No explicit row lock is taken.
+        """
         identity = cls._active(identity)
         events = visible_event_queryset(identity).order_by("created_at", "pk")
         return tuple(
@@ -489,6 +673,16 @@ class EventReadService:
     def inspect_event(
         cls, identity: Identity, event_id: str
     ) -> EventInspection:
+        """Return one visible Event with the viewer's stored records.
+
+        In an atomic block, refresh with _active and fetch exactly one
+        visible Event. An _active refusal or zero or multiple matches
+        raises EventNotVisible. Read the first personal attendance and
+        the viewer's registrations ordered by registered_at, then pk.
+        Return EventInspection with stored codes and "unrecorded" for
+        missing attendance. No registration chain or attendance status
+        is validated and no explicit row lock is taken.
+        """
         identity = cls._active(identity)
         try:
             event = visible_event_queryset(identity).get(event_id=event_id)
@@ -534,6 +728,18 @@ class EventReadService:
         event_id: str,
         registration_id: str,
     ) -> RegistrationInspection:
+        """Inspect the viewer's own registration and its transitions.
+
+        In an atomic block, refresh with _active. Fetch the registration
+        by registration ID, Event ID and participant, joining the Event
+        and prefetching transitions and evidence. An _active refusal or
+        a missing registration raises EventNotVisible. Only the missing
+        row error is translated by the registration lookup.
+
+        Return RegistrationInspection with stored codes. Order both
+        transitions and their evidence by occurred_at, then primary key.
+        The chain and action codes are unchecked. No row lock is taken.
+        """
         identity = cls._active(identity)
         try:
             registration = EventRegistration.objects.select_related(
@@ -581,6 +787,20 @@ class EventReadService:
         identity: Identity,
         event_id: str,
     ) -> AttendanceInspection:
+        """Inspect the viewer's attendance and its transitions.
+
+        In an atomic block, refresh with _active and fetch exactly one
+        visible Event. An _active refusal or zero or multiple matches
+        raises EventNotVisible. Read the first attendance for the viewer
+        and Event, prefetching transitions and evidence. If absent,
+        retain the Event ID with status "unrecorded" and no transitions.
+
+        Otherwise return AttendanceInspection with the stored status,
+        ID, origin and observed time. Read transitions in sequence order
+        and their evidence by supplied_at, then primary key. Include its
+        type, classification and supply time. Status and action codes
+        are unchecked. No explicit row lock is taken.
+        """
         identity = cls._active(identity)
         try:
             event = visible_event_queryset(identity).get(event_id=event_id)

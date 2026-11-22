@@ -12,6 +12,11 @@ from src.intevia.services.organism_authority import authority_target_fingerprint
 
 
 def duration(lo, phase, at):
+    """Return the fixed recovery window of 720 hours (30 days).
+
+    Both phases use this interval. The LO, phase and instant
+    do not affect it on this version.
+    """
     # Neither window has an operative subscriber setting on this base.
     return timedelta(hours=720)
 
@@ -34,6 +39,18 @@ def head_at(alias, lo, at, known):
 
 
 def projected(head, at):
+    """Project the head's state at the given instant.
+
+    Return None for an absent head. For WITHOUT_COORDINATOR,
+    return DORMANT from its deadline and CLOSED from 720 hours
+    after that same deadline. For K2_DEACTIVATE, return CLOSED
+    from its deadline. Otherwise return the head's stored state.
+
+    Both actions require a comparable deadline. A missing or
+    incompatible deadline raises TypeError on comparison.
+    Adding 720 hours can raise OverflowError at the date limit.
+    The projection writes no event.
+    """
     if not head:
         return None
     if head.action == "WITHOUT_COORDINATOR" and at >= head.deadline:
@@ -44,6 +61,13 @@ def projected(head, at):
 
 
 def episode_origin(head):
+    """Return the event that opened the head's episode.
+
+    A WITHOUT_COORDINATOR head is its own origin. For a
+    K2_DEACTIVATE head whose opening event ``head_at`` found
+    (origin_uuid set), a namespace of that event's
+    event_uuid, recorded_at and effective_at. Otherwise None.
+    """
     if head and head.action == "WITHOUT_COORDINATOR":
         return head
     if head and head.action == "K2_DEACTIVATE" and head.origin_uuid:
@@ -53,11 +77,25 @@ def episode_origin(head):
 
 
 def episode_id(head):
+    """Return the episode origin's event UUID as text, or None."""
     origin = episode_origin(head)
     return str(origin.event_uuid) if origin else None
 
 
 def window_at_both_cuts(alias, lo, at, known):
+    """Return (first head, now) when the window is open twice.
+
+    Read at (at, known), sample the database clock, then read
+    at (now, now), even if the first read found no head.
+    Require two heads with the same event UUID. The first action
+    must be WITHOUT_COORDINATOR or K2_DEACTIVATE. Require at
+    before the first deadline and now before the second. Last,
+    exclude the platform root. A failed test returns (None, now).
+
+    This checks the window only. Clock and head-read errors
+    propagate. A missing or incompatible deadline raises
+    TypeError when its comparison is reached.
+    """
     first = head_at(alias, lo, at, known)
     now = database_now(alias)
     current = head_at(alias, lo, now, now)
@@ -68,6 +106,19 @@ def window_at_both_cuts(alias, lo, at, known):
 
 
 def live_episode(alias, lo, at, known):
+    """Return the window's first head if vacancy holds twice.
+
+    Obtain the two-cut window. If absent, return None before
+    assessing coverage. Assess at (at, known). Only if that
+    shows a Coordinator vacancy, assess again at (now, now).
+    Return the head if both show vacancy, otherwise None.
+
+    Vacancy requires an UNSATISFIED Coordinator result, no
+    occupied LO Coordinator seat, and the LO Coordinator
+    deficit. The overall result is immaterial. Window errors
+    propagate, as do database errors from assessment and
+    JSONDecodeError if its text deficits cannot be decoded.
+    """
     from src.intevia.services.organism_coverage import assess
 
     window, now = window_at_both_cuts(alias, lo, at, known)
@@ -78,6 +129,22 @@ def live_episode(alias, lo, at, known):
 
 
 def proposal_in_episode(alias, episode, proposal, nominee, actor_pk):
+    """Check the proposal against the origin and its decision.
+
+    Return None without an origin. An absent proposal returns
+    None. Any other falsy proposal is returned as supplied.
+    Require the proposal's actor to equal actor_pk, then its
+    recorded and effective times each to be at or after the
+    origin's corresponding time. A mismatch returns False.
+
+    Return whether a QUALIFIED TRANSITION_CONTEXTUAL_ROLE
+    decision exists for the proposal's authority decision
+    reference and actor, targeting PROPOSE, the nominee's
+    membership UUID and the origin UUID.
+    There is no check that the episode is still open.
+    TypeError from incomparable times and database errors from
+    the existence query propagate.
+    """
     from core.models import AuthorityDecision
 
     origin = episode_origin(episode)
@@ -91,12 +158,29 @@ def proposal_in_episode(alias, episode, proposal, nominee, actor_pk):
 
 
 def transition(alias, lo, cause, action, state, until=None):
+    """Append one K-2 event to the LO's chain; return its UUID.
+
+    The head passed to the writer is the LO's event of
+    highest sequence, read without a lock; this function
+    takes none. The event records ``action``, ``state`` and,
+    when given, ``until`` as its deadline, under the rule
+    HG:RC-1:K-2/H-4, with the cause's actor, basis, decision
+    reference, evidence, command, fingerprint and received
+    time (``Cause.append``).
+    """
     head = LivingOrganismEvent.objects.using(alias).filter(living_organism=lo).order_by("-sequence").first()
     return cause.append(alias, anchor=lo, head=head, action=action, state=state, until=until,
                         composing_rule="HG:RC-1:K-2/H-4")
 
 
 def start(alias, lo, cause):
+    """Start restricted continuity and return the event UUID.
+
+    For the platform root, raise ValueError before any write.
+    Otherwise append WITHOUT_COORDINATOR in RESTRICTED_CONTINUITY
+    with a deadline 720 hours after the command's effective time.
+    This helper does not assess the Coordinator vacancy.
+    """
     if lo.platform_root:
         raise ValueError("Root recovery requires its own qualified route.")
     return transition(alias, lo, cause, "WITHOUT_COORDINATOR", "RESTRICTED_CONTINUITY",
@@ -151,6 +235,13 @@ def advance(alias, organism_pk):
 
 
 def restore(alias, lo, cause, assessment_uuid):
+    """End a recovery episode: the LO is ACTIVE again.
+
+    Appends K2_RESTORED, state ACTIVE, with the cause's
+    evidence replaced by "coverage-assessment:" and the
+    assessment's UUID; the other cause fields are kept.
+    Returns None. It does not check that an episode is open.
+    """
     transition(alias, lo, replace(cause, evidence=f"coverage-assessment:{assessment_uuid}"),
                "K2_RESTORED", "ACTIVE")
 

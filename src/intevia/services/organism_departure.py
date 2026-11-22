@@ -20,6 +20,12 @@ from src.intevia.services.organism_role_service import OrganismRoleService
 
 
 def refuse(reason):
+    """Refuse a departure: raise, with the given reason.
+
+    Raises S015MembershipEdgeRefused whose message is "Leaving
+    was refused. ", then ``reason``, then " Membership, offices
+    and Circle places are unchanged." Never returns.
+    """
     raise S015MembershipEdgeRefused(
         f"Leaving was refused. {reason} Membership, offices and Circle places are unchanged."
     )
@@ -34,12 +40,36 @@ def pending_elected_successor(alias, event_uuid, membership_id, kind, effective_
 
 
 def coverage_assessment(alias, member, at, known):
+    """Return the LO's latest coverage assessment row, or None.
+
+    Passes the member's LO to ``roster_at``: of the assessments
+    effective by ``at`` and received and recorded by ``known``,
+    the one latest by effective, occurred, received and recorded
+    time, then sequence. Reads only; nothing is checked here.
+    """
     from src.intevia.services.organism_coverage import roster_at
 
     return roster_at(alias, member.living_organism, at, known)
 
 
 def _check_coverage(alias, member, assessment, at, known):
+    """Return whether the departure calls for opening recovery.
+
+    At (at, known), assess coverage first with all members, then
+    excluding this member. Raise S015MembershipEdgeRefused if
+    the supplied roster is missing, its version differs from the
+    second assessment's version, or that assessment's Coordinator
+    result is UNKNOWN. Only the supplied row's version is used.
+
+    Then read the head at the same cuts. If it projects CLOSED at
+    ``at``, raise S015MembershipEdgeRefused even if there is no
+    vacancy. Otherwise, with no remaining Coordinator vacancy, or a
+    WITHOUT_COORDINATOR or K2_DEACTIVATE head, return False.
+    Otherwise return True only if this member was the sole
+    qualified Coordinator and the head's recorded state is ACTIVE.
+    A missing head gives False. Read and projection errors escape.
+    This check writes nothing.
+    """
     from src.intevia.services.organism_coverage import assess
     from src.intevia.services.organism_recovery import head_at, projected
 
@@ -75,6 +105,20 @@ class Departure:
     membership_event_uuid: object
 
     def end_offices(self):
+        """Request END for each office prepared for this departure.
+
+        For a Circle office, pass END/ENDED, the departure decision
+        reference, rule CIRCLES:G2:U3 and evidence "lo-leave:"
+        followed by the membership event UUID. Derive the event UUID
+        with UUIDv5 from that UUID and the assignment UUID string.
+
+        For an LO office, pass ACTIVE to ENDED at the next sequence
+        after its head, under its own qualified decision and the
+        LO's founding basis. Only after that writer returns, request
+        the assignment's cache refresh at the command's effective
+        time, passing the database clock as the final SQL argument.
+        Decisions are supplied. Writer and SQL errors propagate.
+        """
         for assignment, qualified in self.offices:
             head = assignment.head_state_event
             if assignment.circle_id is not None:
@@ -116,6 +160,30 @@ class Departure:
                 )
 
     def finish(self, transition):
+        """Finish a prepared departure after its membership transition.
+
+        First request cancellation for each reserved office, using its
+        key and the transition UUID. Then call the relationship-ending
+        helper with this departure and transition.
+
+        With no closing head, call record_coverage. If recovery was
+        not planned, finish there. If planned, raise
+        S015MembershipEdgeRefused when the returned assessment lacks
+        a Coordinator vacancy. This refusal follows the coverage call.
+        With the vacancy confirmed, call start; it raises ValueError
+        for the platform root.
+
+        With a closing head, skip coverage and recovery. Request a
+        DISSOLVE event (CLOSED) after that head under C0:O-16:v1.2.
+        Both branches use the actor, transition basis, departure
+        decision reference, command, fingerprint and receipt time.
+        Evidence is "membership-ending:" plus the transition UUID.
+
+        It uses the prepared head and recovery flag as given. Neither
+        membership state nor the number of remaining members is checked
+        here. Return None on success. SQL, lookup and helper errors
+        escape; the caller owns the transaction.
+        """
         if self.reserved_offices:
             with connections[self.roles._alias].cursor() as cursor:
                 for office in self.reserved_offices:
