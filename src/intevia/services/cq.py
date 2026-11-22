@@ -784,3 +784,148 @@ def phase(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
             [board["board_uuid"], thread_uuid, board["thread_audience"]],
         )
         return state
+
+
+def _preparation_preview(board, thread, actor, owner):
+    """Read the PREPARED facts and the ordinary RULE_OPEN conditions at one cut.
+
+    The parent projection admits only Board Suggestions without an attachment.
+    Keep roster identities, the applied provisions and the authority source in SQL.
+    """
+    return disc._rows(
+        """WITH prep AS MATERIALIZED (
+               SELECT public.cq_phase_facts(b.organism_id,b.board_uuid,t.thread_uuid,'PREPARED',
+                          '{}'::jsonb,%s,public.intevia_clock_statement()) AS facts,
+                      (i.facts#>>'{settings,clarity_days}')::integer AS days,
+                      b.organism_id,b.board_uuid,t.thread_uuid,cat.access_level
+               FROM public.core_discboard b JOIN public.discp_threads t USING (board_uuid)
+               JOIN public.disc_categories cat ON cat.category_uuid=t.category_uuid
+               JOIN public.core_cqact i ON i.board_uuid=b.board_uuid AND i.thread_uuid=t.thread_uuid
+                    AND i.operation='INITIATE'
+               WHERE b.board_uuid=%s AND t.thread_uuid=%s
+           ), destination AS (
+               SELECT facts->>'version' AS version,days,
+                 CASE WHEN facts->>'phase'='CLARITY' THEN 'CLARITY'
+                      WHEN facts->>'rule_open' IS DISTINCT FROM 'true' THEN NULL
+                      WHEN EXISTS (
+                         SELECT FROM jsonb_array_elements((facts->'applied_provisions') ||
+                            public.cq_applicable(public.cq_settings_at(organism_id,public.intevia_clock_statement()),
+                              board_uuid,thread_uuid,'VOTE')) AS law
+                         WHERE NOT public.cq_law_current(%s,law,public.intevia_clock_statement())
+                      ) THEN 'NO_DECISION_PROVISION_ENDED'
+                      WHEN access_level='COORDINATORS' THEN 'NO_DECISION_MOTION_UNAVAILABLE'
+                      WHEN jsonb_array_length(public.cq_open_roster(facts,board_uuid,thread_uuid,
+                               public.intevia_clock_statement()))<3 THEN 'NO_DECISION_FEWER_THAN_THREE'
+                      ELSE 'VOTING' END AS destination
+               FROM prep
+           ) SELECT version,destination,CASE WHEN destination='CLARITY' THEN days END AS days FROM destination""",
+        [actor.pk, board["board_uuid"], thread, owner],
+    )[0]
+
+
+@transaction.atomic
+def confirm_prepared(*, confirmation, **scope):
+    """Record the existing command only if its durable effect matches the prompt.
+
+    A changed wording or outcome rolls back this request. A replay compares
+    the original receipt and its immediate consequence, even after later acts.
+    """
+    receipt = mark_prepared(**scope)
+    rows = disc._rows(
+        """SELECT p.facts->>'version' AS version,
+                  CASE WHEN p.facts->>'phase'='CLARITY' THEN 'CLARITY'
+                       WHEN child.operation='OPEN_VOTE' THEN 'VOTING'
+                       WHEN child.operation='NO_BALLOT' THEN child.facts#>>'{count,kind}' END AS destination,
+                  CASE WHEN p.facts->>'phase'='CLARITY'
+                       THEN (i.facts#>>'{settings,clarity_days}')::integer END AS days
+           FROM public.core_cqact p
+           JOIN public.core_cqact i ON i.thread_uuid=p.thread_uuid AND i.board_uuid=p.board_uuid AND i.operation='INITIATE'
+           LEFT JOIN public.core_cqact child ON child.thread_uuid=p.thread_uuid AND child.board_uuid=p.board_uuid
+                AND child.operation IN ('OPEN_VOTE','NO_BALLOT') AND child.request->>'trigger_act'=p.act_uuid::text
+           WHERE p.act_uuid=%s AND p.thread_uuid=%s AND p.operation='PREPARED'""",
+        [receipt, scope["thread_uuid"]],
+    )
+    if rows != [confirmation]:
+        raise disc.DiscussionRefused(code="preparation_changed")
+    return receipt
+
+
+@transaction.atomic
+def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, preview_prepared=False):
+    """Return the admitted Board reader's vote line, wording and available command.
+
+    A live draft follows the opening post. An opened ballot pins its own version;
+    a terminal act without a ballot supplies the wording at closure.
+    """
+    actor = disc._actor(credential)
+    board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid)
+    if not board["thread_audience"]:
+        return None
+    rows = disc._rows(
+        """SELECT opening.version_uuid, initiated.act_uuid, v.version_number, body.markdown,
+                  initiated.request ? 'attachment' AS attached,
+                  state.phase, state.deadline, state.response_deadline,
+                  public.intevia_clock_statement() AS read_at, head.effective_at,
+                  head.operation AS head_operation, head.facts#>>'{count,kind}' AS outcome,
+                  ballot.act_uuid AS ballot_uuid
+           FROM public.core_discboard b JOIN public.core_circle c ON c.id=b.circle_id
+           JOIN public.discp_threads t ON t.board_uuid=b.board_uuid
+           JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
+           LEFT JOIN public.core_cqact initiated ON initiated.thread_uuid=t.thread_uuid
+                AND initiated.board_uuid=b.board_uuid AND initiated.operation='INITIATE'
+           LEFT JOIN public.cq_phases state ON state.board_uuid=b.board_uuid AND state.thread_uuid=t.thread_uuid
+           LEFT JOIN public.core_cqact head ON head.act_uuid=state.act_uuid
+           LEFT JOIN public.core_cqact ballot ON ballot.act_uuid=(head.facts->>'ballot')::uuid
+                AND ballot.board_uuid=b.board_uuid AND ballot.thread_uuid=t.thread_uuid
+                AND ballot.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+           LEFT JOIN public.core_discpostversion v ON v.post_uuid=opening.post_uuid
+                AND v.version_uuid=CASE
+                    WHEN ballot.act_uuid IS NOT NULL THEN (ballot.facts->>'version')::uuid
+                    WHEN state.phase IN ('RESULT','CLOSED','WITHDRAWN') THEN (head.facts->>'version')::uuid
+                    ELSE opening.version_uuid END
+           LEFT JOIN public.core_discbody body ON body.version_uuid=v.version_uuid
+           WHERE b.board_uuid=%s AND t.thread_uuid=%s AND c.kind='GOVERNANCE'
+                AND t.topic_type='SUGGESTION' AND NOT (opening.author_hidden OR opening.coordinator_hidden)""",
+        [board["board_uuid"], thread_uuid],
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    panel = {}
+    if row["act_uuid"]:
+        panel.update({name: row[name] for name in (
+            "phase", "deadline", "response_deadline", "read_at", "effective_at",
+            "head_operation", "outcome", "ballot_uuid", "version_number", "markdown",
+        )})
+        if row["phase"] != "PREPARATION" or row["attached"]:
+            return panel
+        op, args = "PREPARED", {}
+    else:
+        op, args = "INITIATE", {"version": str(row["version_uuid"])}
+    # These are the writer's STABLE checks. Discard all returned authority and
+    # electorate data. A normal rule refusal means this reader has no command.
+    try:
+        with transaction.atomic():
+            if op == "PREPARED" and preview_prepared:
+                disc._rows("SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL",
+                           [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk])
+                preview = _preparation_preview(board, thread_uuid, actor, organism_uuid)
+                if preview["destination"] is None:
+                    return panel
+                panel["confirmation"] = preview
+            else:
+                disc._rows(
+                    """SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL,
+                              public.cq_phase_facts(%s,%s,%s,%s,%s::jsonb,%s,public.intevia_clock_statement()) IS NOT NULL""",
+                    [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk,
+                     board["organism_id"], board["board_uuid"], thread_uuid, op, json.dumps(args), actor.pk],
+                )
+    except IntegrityError as error:
+        code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
+        if code not in MESSAGES and code not in disc.MESSAGES:
+            raise
+        return panel
+    panel["operation"] = op
+    if op == "INITIATE":
+        panel["opening_version"] = row["version_uuid"]
+    return panel

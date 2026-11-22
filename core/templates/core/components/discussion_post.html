@@ -1,10 +1,22 @@
+{% load f0_ui %}
 {% if post.markdown == None %}
   <p>Post unavailable.</p>
 {% else %}
   {% if post.hidden %}<p class="meta">Hidden</p>{% endif %}
-  {% if post.version_number %}<p class="meta">Version {{ post.version_number }}</p>{% endif %}
-  <div class="post-text">{{ post.markdown|linebreaks }}</div>
+  {% if post.version_number >= 2 %}<p class="meta">Version {{ post.version_number }}</p>{% endif %}
   {% if post.quoted_markdown != None %}
-    <blockquote><p class="meta">Quoted text{% if post.quote_hidden %} · Hidden{% endif %}</p>{{ post.quoted_markdown|linebreaks }}</blockquote>
+    <blockquote class="post-quote">
+      <p class="meta">Quoted text{% if post.quoted_version_number >= 2 %} (Version {{ post.quoted_version_number }}){% endif %}{% if post.quote_hidden %} · Hidden{% endif %}</p>
+      {% with preview=post.quoted_markdown|quote_excerpt %}
+        {% if preview %}
+          <div class="quote-preview">{{ preview|linebreaks }}</div>
+          <details>
+            <summary><span class="quote-more">Show the whole quote</span><span class="quote-less">Show less</span></summary>
+            <div class="quote-full">{{ post.quoted_markdown|linebreaks }}</div>
+          </details>
+        {% else %}{{ post.quoted_markdown|linebreaks }}{% endif %}
+      {% endwith %}
+    </blockquote>
   {% elif post.quote_hidden %}<p>Quoted text unavailable.</p>{% endif %}
+  <div class="post-text">{{ post.markdown|linebreaks }}</div>
 {% endif %}

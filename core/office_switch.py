@@ -73,7 +73,7 @@ def _refusal(request, code, next_url=None, choice=None):
 def csrf_failure(request, reason=""):
     match = request.resolver_match
     # These two personal forms use the five-part refusal. Cache policy belongs to the middleware.
-    if match and match.url_name in ("discussion_start", "discussion_reply"):
+    if match and match.url_name in ("discussion_start", "discussion_reply", "discussion_put_forward", "discussion_prepare"):
         from core.discussion_forms import refusal
         return refusal(request, "csrf")
     if match and match.func in (you, change_assistance):

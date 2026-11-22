@@ -9,5 +9,5 @@
       <li>No record history is shown.</li>
     {% endfor %}
   </ol>
-  <p><a href="{% url 'event-detail' history.event_id %}">Return to {{ history.event_title }}</a></p>
+  <p class="link-row"><a href="{% url 'event-detail' history.event_id %}">Return to {{ history.event_title }}</a></p>
 {% endblock %}

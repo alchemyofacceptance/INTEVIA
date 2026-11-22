@@ -19,6 +19,6 @@
   <div class="discussion-actions">
     {% include 'core/components/button.html' with type='submit' variant='primary' label='Start Topic' only %}
     {% if office %}{% url 'office_page' board_org office.office_definition_uuid as cancel_url %}{% else %}{% url 'board_discussion' board_org board_circle as cancel_url %}{% endif %}
-    {% include 'core/components/button.html' with href=cancel_url variant='secondary' label='Cancel' only %}
+    {% if office or not correctable %}{% include 'core/components/button.html' with href=cancel_url variant='secondary' label='Cancel' only %}{% endif %}
   </div>
 </form>

@@ -80,21 +80,6 @@ class ScopeAndShellTests(TransactionTestCase):
         self.assertEqual([a["attrs"]["href"] for a in index.select("a", within=index_phone)], [parent_url],
                          "On a phone the Board discussion page must lead back to its parent, the Board (V1).")
 
-    def test_vote_results_stay_off_the_topic_page_until_box_6(self):
-        """Interim guard (item 201; capture AH): a vote-result row in the thread read is not shown as a post."""
-        org, circle, thread, category = uuid4(), uuid4(), uuid4(), uuid4()
-        opening = {"post_number": 1, "markdown": "Opening"}
-        result = {"post_number": 2, "markdown": None, "post_type": "GROUP_GAZE", "hidden": True}
-        reply = {"post_number": 3, "markdown": "Reply"}
-        read = {"topic": {"title": "Repair", "category_uuid": category}, "posts": [opening, result, reply]}
-        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
-             mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
-             mock.patch.object(discussion_pages.member_navigation, "member_navigation",
-                               side_effect=discussion_pages.member_navigation.NavigationUnavailable):
-            _, context = discussion_pages._read_page(AnonymousUser(), org, circle, thread)
-        self.assertEqual([post["post_number"] for post in context["posts"]], [1, 3],
-                         "Reading a Topic that holds a vote result must show the opening and the reply, and leave the result row off the page until plan box 6.")
-
     def test_private_responses_are_indistinguishable(self):
         owner, board, _, coordinator, trustee = seated_board()
         support = post_support.DiscussionPostTests()
@@ -391,3 +376,478 @@ class RefusalFixWitnessTests(SimpleTestCase):
             self.assertContains(stale, "&lt;i&gt;Kept &amp; typed&lt;/i&gt;", status_code=400,
                                 msg_prefix="The kept text must be shown as text, not markup.")
             self.assertNotContains(stale, "<i>Kept", status_code=400, msg_prefix="Typed markup must not become an HTML element.")
+
+
+class VoteTransportTests(SimpleTestCase):
+    def test_only_an_intentional_vote_post_reaches_the_command(self):
+        from core import discussion_vote
+        with projected_forms() as (client, org, circle, _, thread):
+            page = client.get(reverse("discussion_topic", args=(org, circle, thread)))
+            _, fields = command_form(page)
+            for name, op in (("discussion_put_forward", "INITIATE"), ("discussion_prepare", "PREPARED")):
+                url = reverse(name, args=(org, circle, thread))
+                token = discussion_forms.issue_form(page.wsgi_request, op, org, circle, thread=thread, version=uuid4())
+                data = {"csrfmiddlewaretoken": fields["csrfmiddlewaretoken"], "vote_command": token}
+                with self.subTest(operation=op), mock.patch.object(discussion_vote.cq, "_lock") as lock:
+                    self.assertEqual(client.get(url).status_code, 405, "A link cannot submit a vote action.")
+                    self.assertEqual(client.head(url).status_code, 405, "HEAD cannot submit a vote action.")
+                    self.assertEqual(client.post(url, data, HTTP_SEC_PURPOSE="prefetch").status_code, 400,
+                                     "A speculative POST cannot start a vote action.")
+                    self.assertEqual(client.post(url, data, HTTP_PURPOSE="prerender").status_code, 400,
+                                     "Prerendering cannot submit a vote action.")
+                    self.assertEqual(client.post(url, {"vote_command": token}).status_code, 403,
+                                     "The signed command still needs a CSRF token.")
+                    self.assertEqual(client.post(url, data | {"vote_command": fields["command"]}).status_code, 400,
+                                     "A genuine reply form cannot authorise a vote.")
+                    if op == "PREPARED":
+                        self.assertEqual(client.post(url, data).status_code, 400,
+                                         "A signed preparation form from before confirmation must be refused.")
+                    lock.assert_not_called()
+
+    def test_translated_unavailable_uses_the_private_response(self):
+        from django.db import IntegrityError
+        from core import discussion_vote
+
+        with projected_forms() as (client, org, circle, _, thread), mock.patch.object(discussion_forms, "_back_organisation", return_value=None):
+            page = client.get(reverse("discussion_topic", args=(org, circle, thread)))
+            _, fields = command_form(page)
+            token = discussion_forms.issue_form(page.wsgi_request, "INITIATE", org, circle,
+                                                thread=thread, version=uuid4())
+            url = reverse("discussion_put_forward", args=(org, circle, thread))
+            data = {"csrfmiddlewaretoken": fields["csrfmiddlewaretoken"], "vote_command": token}
+            refusal = discussion_vote.discussion.DiscussionRefused(code="DISC_UNAVAILABLE")
+            with mock.patch.object(discussion_forms, "_envelope", side_effect=refusal):
+                direct = client.post(url, data)
+            with mock.patch.object(discussion_forms, "_envelope", side_effect=IntegrityError), \
+                 mock.patch.object(discussion_vote.cq, "translate_refusal", side_effect=refusal):
+                translated = client.post(url, data)
+            self.assertEqual(direct.status_code, 404, "An unavailable Topic must have a private response.")
+            self.assertEqual(translated.status_code, direct.status_code, "Translated unavailability must also be private.")
+            self.assertEqual(Markup(translated.content.decode()).select("h1")[0]["text"],
+                             Markup(direct.content.decode()).select("h1")[0]["text"],
+                             "Both refusal paths must give the same heading.")
+
+
+class ResultCardProjectionTests(SimpleTestCase):
+    def test_hidden_result_keeps_its_number_and_has_no_link(self):
+        org, circle, thread, category, post = (uuid4() for _ in range(5))
+        request = RequestFactory().get(reverse("discussion_topic", args=(org, circle, thread)))
+        request.user = AnonymousUser()
+        request.resolver_match = resolve(request.path)
+        opening = {"post_number": 1, "markdown": "Opening"}
+        result = {"post_number": 2, "markdown": None, "post_type": "GROUP_GAZE", "hidden": True, "post_uuid": post}
+        reply = {"post_number": 3, "markdown": "Reply"}
+        read = {"topic": {"thread_uuid": thread, "title": "Repair", "category_uuid": category}, "posts": [opening, result, reply]}
+        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
+             mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
+             mock.patch.object(discussion_pages.member_navigation, "member_navigation", side_effect=discussion_pages.member_navigation.NavigationUnavailable), \
+             mock.patch.object(discussion_pages.cq_reads, "result_post", side_effect=discussion_pages.discussion.DiscussionUnavailable) as destination:
+            template, context = discussion_pages._read_page.__wrapped__(AnonymousUser(), org, circle, thread)
+            page = Markup(render_to_string(template, context, request=request))
+            self.assertEqual([n["text"] for n in page.select("h3")], ["Post 2", "Post 3"], "A withheld result must keep its place.")
+            self.assertIn("Post unavailable.", [n["text"] for n in page.select("p")])
+            self.assertNotIn(str(post), render_to_string(template, context, request=request), "No withheld result identity may appear in the page.")
+            destination.assert_not_called()
+            # A released summary still requires a separate grant for its destination.
+            result.update(hidden=False, markdown="Carried.")
+            template, context = discussion_pages._read_page.__wrapped__(AnonymousUser(), org, circle, thread)
+            html = render_to_string(template, context, request=request)
+            self.assertIn("Carried.", html)
+            self.assertNotIn("View vote result", html, "A denied result destination must have no link.")
+            destination.assert_called_once()
+
+
+class DiscussionNavigationTests(SimpleTestCase):
+    def test_board_back_is_the_same_secondary_button(self):
+        with projected_forms() as (client, org, circle, _, thread):
+            topic_url = reverse("discussion_topic", args=(org, circle, thread))
+            board_url = reverse("board_discussion", args=(org, circle))
+            detail = client.get(topic_url)
+            endpoint, fields = command_form(detail)
+            refusal = client.post(endpoint, fields | {"markdown": "", "quote": ""})
+            for response in (detail, refusal):
+                links = Markup(response.content.decode()).select("a", href=board_url, classes=("button", "secondary"))
+                self.assertEqual([a["text"] for a in links], ["Back to Board discussion"],
+                                 "Topic and refusal must have the same single secondary Board destination.")
+
+    def test_reply_refusal_returns_to_its_topic(self):
+        with projected_forms() as (client, org, circle, _, thread):
+            url = reverse("discussion_topic", args=(org, circle, thread))
+            action, fields = command_form(client.get(url))
+            response = client.post(action, fields | {"markdown": "", "quote": ""})
+            links = Markup(response.content.decode()).select("a", href=url)
+            self.assertEqual([a["text"] for a in links], ["Back to Topic"], "The refused reply must lead back to its own Topic.")
+
+    def test_unknown_start_returns_to_board_to_look_for_topic(self):
+        with projected_forms() as (client, org, circle, category, _):
+            form = client.get(reverse("discussion_start_form", args=(org, circle)), {"category": str(category)})
+            action, fields = command_form(form)
+            with mock.patch.object(discussion_forms.discussion_posts, "start_topic", side_effect=DatabaseError):
+                response = client.post(action, fields | {"title": "One payment", "type": "SUGGESTION",
+                                                         "markdown": "Please review.", "category": str(category)})
+            self.assertContains(response, "Check the Board discussion for your Topic before trying the same submission again.", status_code=503)
+            self.assertNotContains(response, "Check the Topic before", status_code=503)
+            self.assertNotContains(response, "Back to Topic", status_code=503)
+
+    def test_correctable_start_has_one_board_destination(self):
+        with projected_forms() as (client, org, circle, category, _):
+            form = client.get(reverse("discussion_start_form", args=(org, circle)), {"category": str(category)})
+            action, fields = command_form(form)
+            response = client.post(action, fields | {"title": "One payment", "type": "SUGGESTION",
+                                                     "markdown": "", "category": str(category)})
+            self.assertEqual(response.status_code, 400)
+            board = reverse("board_discussion", args=(org, circle))
+            links = Markup(response.content.decode()).select("a", href=board)
+            self.assertEqual([a["text"] for a in links], ["Back to Board discussion"], "A correctable start must offer one way back to this Board.")
+
+    def test_index_start_uses_shared_button_and_selected_category(self):
+        org, circle, category = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().get(reverse("board_discussion", args=(org, circle)))
+        request.user = AnonymousUser()
+        request.resolver_match = resolve(request.path)
+        ctx = dict(board_org=org, board_circle=circle,
+                   categories=[{"category_uuid": category, "name": "Discussion", "can_start_topic": True}])
+        from django.test.signals import template_rendered
+        used = []
+
+        def collect(sender, template, context, **kwargs):
+            if template.name == "core/components/button.html":
+                used.append(context.flatten())
+
+        template_rendered.connect(collect, weak=False)
+        self.addCleanup(template_rendered.disconnect, collect)
+        page = Markup(render_to_string("core/board_discussion.html", ctx, request=request))
+        self.assertEqual([row["label"] for row in used if row.get("label") == "Start a Topic"], ["Start a Topic"],
+                         "The permitted category must render Start a Topic through the shared button component.")
+        address = reverse("discussion_start_form", args=(org, circle)) + "?category=" + str(category)
+        self.assertEqual([n["text"] for n in page.select("a", href=address, classes=("button", "primary"))], ["Start a Topic"])
+
+    def test_vote_refusals_explain_the_actual_cause(self):
+        org, circle, thread = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().post(reverse("discussion_prepare", args=(org, circle, thread)))
+        request.user = AnonymousUser()
+        request.resolver_match = resolve(request.path)
+        context = {"board_org": org, "board_circle": circle, "circle": {"short_label": "Board"}}
+        for code, expected in (
+            ("CQ_INIT_VERSION", "The opening post has changed since you opened this form."),
+            ("CQ_PREPARE_OFFICE", "Only the current Board Coordinator can mark this Suggestion as prepared."),
+            ("CQ_PREPARATION", "The vote is no longer within its preparation period."),
+            ("CQ_FULL_AUDIENCE", "The Suggestion must be visible to everyone eligible for this Board vote."),
+            ("CQ_REQUEST", "This form already recorded a different vote action."),
+        ):
+            with self.subTest(reason=code):
+                page = Markup(discussion_forms.refusal(request, code, context).content.decode())
+                self.assertEqual([h["text"] for h in page.select("h1")], ["Your vote action could not be recorded."])
+                parts = [p["text"] for p in page.select("p", within=page.select("div", role="alert")[0])]
+                self.assertEqual(parts, [expected, "This request recorded no new vote action.",
+                                         "Reopen the page and check the current wording and available actions.",
+                                         "If you need help, contact a Board Coordinator."],
+                                 "Each vote refusal must identify its own cause, effect, next action and helper.")
+
+
+class VotePanelPresentationTests(SimpleTestCase):
+    def setUp(self):
+        from datetime import datetime, timedelta, timezone
+
+        self.when = datetime(2026, 11, 22, 15, tzinfo=timezone(timedelta(hours=2)))
+        self.later = self.when + timedelta(days=1)
+        self.request = RequestFactory().get("/")
+        self.request.user = AnonymousUser()
+
+    def vote_markup(self, **row):
+        from core import discussion_vote
+
+        with mock.patch.object(discussion_vote.cq, "board_topic_vote", return_value=row):
+            vote = discussion_vote.panel(self.request, uuid4(), uuid4(), uuid4())
+        return Markup(render_to_string("core/components/board_vote.html", {"vote": vote}))
+
+    def test_vote_line_names_each_state_in_plain_words(self):
+        stamp = "22 November 2026, 13:00 UTC"
+        rows = [
+            ("PREPARATION", "Preparation · Deadline " + stamp),
+            ("PREPARATION_DUE", "Preparation deadline passed · " + stamp),
+            ("CLARITY", "Clarity · Confirm by " + stamp),
+            ("CLARITY_GATE", "Clarity confirmations required"),
+            ("VOTING", "Voting open · Closes " + stamp),
+            ("RESPONSE_DUE", "Clarity response period ended"),
+            ("VOTES_CAST", "Votes cast"),
+            ("RESULT", "Decided · " + stamp + " · Carried"),
+            ("CLOSED", "Suggestion closed · " + stamp),
+            ("WITHDRAWN", "Suggestion withdrawn · " + stamp),
+            ("NO_BALLOT", "No vote opened · " + stamp),
+            ("AWAITING_SETTLEMENT", "Voting closed · Awaiting result"),
+            ("UNRECOGNISED", "Vote status unavailable"),
+        ]
+        for phase, expected in rows:
+            with self.subTest(phase=phase):
+                markup = self.vote_markup(phase=phase, deadline=self.when, effective_at=self.when,
+                                          outcome="QUALIFIED" if phase == "RESULT" else None)
+                self.assertEqual(markup.select("p")[0]["text"], expected)
+
+    def test_vote_line_uses_read_cut_and_terminal_act(self):
+        common = dict(deadline=self.when, response_deadline=self.later)
+        for phase, cut, line in [
+            ("PREPARATION", self.when, "Preparation deadline passed · 22 November 2026, 13:00 UTC"),
+            ("VOTING", self.when, "Voting closed · Awaiting result"),
+            ("CLARITY", self.when, "Clarity period ended · Respond by 23 November 2026, 13:00 UTC"),
+            ("CLARITY", self.later, "Clarity response period ended"),
+        ]:
+            with self.subTest(phase=phase, cut=cut):
+                self.assertEqual(self.vote_markup(phase=phase, read_at=cut, **common).select("p")[0]["text"], line)
+        settled = self.vote_markup(phase="RESULT", outcome="QUALIFIED", effective_at=self.when, deadline=self.later)
+        self.assertEqual(settled.select("p")[0]["text"], "Decided · 22 November 2026, 13:00 UTC · Carried")
+        refused = self.vote_markup(phase="RESULT", head_operation="NO_BALLOT", outcome="NO_DECISION_PROVISION_ENDED")
+        self.assertEqual(refused.select("p")[0]["text"], "No vote opened · A cited constitutional provision was no longer in force")
+
+    def test_decisions_and_no_decision_results(self):
+        rows = [
+            ("RESULT", "QUALIFIED", "Decided", "Carried"),
+            ("RESULT", "NOT_QUALIFIED_VOTE", "Decided", "Not carried"),
+            ("RESULT", "NOT_QUALIFIED_TIE", "Decided", "Not carried. The vote was tied."),
+            ("RESULT", "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION", "Vote ended", "Insufficient participation. No decision was reached."),
+            ("RESULT", "NO_DECISION_FEWER_THAN_THREE", "Vote ended", "Fewer than three eligible members remained. No decision was reached."),
+            ("RESULT", "NO_DECISION_SLATE_CHANGED", "Vote ended", "A candidate withdrew. A fresh election is required."),
+            ("CLOSED", "NO_DECISION_BOARD_ACTIVATED", "Vote ended", "The Board became active. No decision was reached."),
+        ]
+        for phase, kind, status, outcome in rows:
+            with self.subTest(kind=kind):
+                page = self.vote_markup(phase=phase, outcome=kind, effective_at=self.when)
+                self.assertEqual(page.select("p")[0]["text"], f"{status} · 22 November 2026, 13:00 UTC · {outcome}")
+        self.assertEqual(self.vote_markup(phase="PREPARATION_DUE").select("p")[0]["text"], "Preparation deadline passed")
+
+    def test_topic_opening_and_reply_version_labels(self):
+        org, circle, thread = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().get(reverse("discussion_topic", args=(org, circle, thread)))
+        request.user = AnonymousUser()
+        request.resolver_match = resolve(request.path)
+        for opening, reply in [(1, 2), (2, 1)]:
+            with self.subTest(opening=opening):
+                context = {"board_org": org, "board_circle": circle, "topic": {"thread_uuid": thread},
+                           "organisation": {"organism_uuid": org}, "circle": {"circle_uuid": circle},
+                           "posts": [{"post_number": 1, "markdown": "Opening words", "version_number": opening},
+                                     {"post_number": 2, "markdown": "Reply words", "version_number": reply}]}
+                page = Markup(render_to_string("core/discussion_topic.html", context, request=request))
+                for card, version in zip(page.select("article", classes=("card",)), (opening, reply), strict=True):
+                    labels = [p["text"] for p in page.select("p", within=card, classes=("meta",))]
+                    self.assertEqual(labels, [] if version == 1 else ["Version 2"])
+
+    def test_wording_heading_version_and_edit_hint(self):
+        for phase, ballot, version, title, editable in (
+            ("PREPARATION", None, 1, "Wording to be decided", True),
+            ("CLARITY", None, 2, "Wording to be decided · Version 2", True),
+            ("VOTING", uuid4(), 2, "Wording being voted on · Version 2", False),
+            ("RESULT", uuid4(), 2, "Wording decided · Version 2", False),
+            ("WITHDRAWN", None, 1, "Wording at closure", False),
+        ):
+            with self.subTest(phase=phase):
+                markup = self.vote_markup(phase=phase, ballot_uuid=ballot, version_number=version,
+                                          read_at=self.when, deadline=self.later,
+                                          outcome="QUALIFIED" if phase == "RESULT" else None)
+                self.assertEqual(markup.select("h3")[0]["text"], title)
+                self.assertEqual([p["text"] for p in markup.select("p", classes=("meta",))],
+                                 ["The wording can still change until voting opens."] if editable else [])
+                if editable:
+                    wording, = markup.select("div", classes=("motion-wording",))
+                    hint, = markup.select("p", classes=("meta",))
+                    self.assertLess(markup.nodes.index(wording), markup.nodes.index(hint))
+
+    def test_edit_note_tracks_clarity_deadline(self):
+        for phase, cut, expected in (
+            ("PREPARATION", self.later, True),
+            ("CLARITY", self.when, True),
+            ("CLARITY", self.later, False),
+            ("CLARITY", self.later + (self.later - self.when), False),
+        ):
+            with self.subTest(phase=phase, cut=cut):
+                page = self.vote_markup(phase=phase, read_at=cut, deadline=self.later)
+                self.assertEqual(page.select("h3")[0]["text"], "Wording to be decided")
+                notes = [node["text"] for node in page.select("p", classes=("meta",))]
+                self.assertEqual(notes, ["The wording can still change until voting opens."] if expected else [],
+                                 "The edit note must follow the edit window at the read time.")
+
+    def test_ballot_heading_tracks_status(self):
+        for phase, outcome, heading in (
+            ("VOTING", None, "Wording voted on"),
+            ("RESULT", "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION", "Wording voted on"),
+            ("CLOSED", "NO_DECISION_BOARD_ACTIVATED", "Wording voted on"),
+            ("RESULT", "QUALIFIED", "Wording decided"),
+            ("RESULT", "NOT_QUALIFIED_VOTE", "Wording decided"),
+            ("RESULT", "NOT_QUALIFIED_TIE", "Wording decided"),
+        ):
+            with self.subTest(phase=phase, outcome=outcome):
+                page = self.vote_markup(phase=phase, outcome=outcome, ballot_uuid=uuid4(),
+                                        deadline=self.when, read_at=self.when)
+                self.assertEqual(page.select("h3")[0]["text"], heading,
+                                 "Only a substantive ballot result can label the wording decided.")
+
+    def test_unlabelled_terminal_reason_checked_once(self):
+        from core import discussion_vote
+
+        with mock.patch.object(discussion_vote.cq_reads, "NO_BALLOT_LABELS", wraps={}) as labels:
+            labels.get.side_effect = {}.get
+            discussion_vote.vote_line({"phase": "NO_BALLOT", "outcome": "UNKNOWN"})
+            self.assertEqual(labels.get.call_count, 1, "Read an unknown terminal reason only once.")
+
+    def test_database_failure_withholds_panel_and_command(self):
+        from django.db import IntegrityError
+        from core import discussion_vote
+
+        for error in (DatabaseError(), IntegrityError()):
+            with self.subTest(error=type(error).__name__), mock.patch.object(
+                discussion_vote.cq, "board_topic_vote", side_effect=error
+            ), mock.patch.object(discussion_forms, "issue_form") as issue:
+                self.assertIsNone(discussion_vote.panel(self.request, uuid4(), uuid4(), uuid4()))
+                issue.assert_not_called()
+
+
+class PreparationPromptTests(SimpleTestCase):
+    def render_prompt(self, destination, days=None):
+        from core import discussion_vote
+
+        org, circle, thread = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().get("/", {"prepare": "1"})
+        request.user = AnonymousUser()
+        request.session = SimpleNamespace(session_key="fixture")
+        facts = {"destination": destination, "days": days, "version": str(uuid4())}
+        row = {"operation": "PREPARED", "phase": "PREPARATION", "confirmation": facts}
+        with mock.patch.object(discussion_vote.cq, "board_topic_vote", return_value=row) as read:
+            vote = discussion_vote.panel(request, org, circle, thread)
+        self.assertTrue(read.call_args.kwargs["preview_prepared"])
+        page = render_to_string("core/components/board_vote.html", {
+            "vote": vote, "board_org": org, "board_circle": circle, "topic": {"thread_uuid": thread},
+        }, request=request)
+        return Markup(page)
+
+    def test_clarity_and_direct_vote_explain_the_next_step(self):
+        for destination, days, label, paragraphs in (
+            ("CLARITY", 3, "Proceed to Clarity", [
+                "Board members will be asked to confirm they are clear on this wording. They have 3 days.",
+                "You can still edit the wording during Clarity. Each edit asks them to confirm again.",
+                "Voting opens when everyone is clear, or when Clarity ends.",
+            ]),
+            ("VOTING", None, "Proceed to vote", [
+                "Voting opens now, on this wording.", "After this, the wording can no longer be edited.",
+            ]),
+        ):
+            with self.subTest(destination=destination):
+                page = self.render_prompt(destination, days)
+                prompt, = page.select("article", classes=("card", "prompt"))
+                self.assertEqual([p["text"] for p in page.select("p", within=prompt)], paragraphs)
+                self.assertEqual(page.select("h3", within=prompt)[0]["text"], "Mark this Suggestion as prepared?")
+                form, = page.select("form", within=prompt, method="post", classes=("discussion-actions",))
+                self.assertEqual([n["text"] for n in page.select("button", within=form, type="submit", classes=("primary",))], [label])
+                cancels = page.select("a", within=form, classes=("button", "secondary"))
+                self.assertEqual([link["text"] for link in cancels], ["Cancel"])
+                self.assertTrue(cancels[0]["attrs"]["href"].endswith("/#vote"))
+
+    def test_no_ballot_prompt_names_the_actual_reason(self):
+        reasons = {
+            "UNLISTED_REASON": "The reason is unavailable.",
+            "NO_DECISION_PROVISION_ENDED": "A cited constitutional provision was no longer in force.",
+            "NO_DECISION_FEWER_THAN_THREE": "Fewer than three eligible voters remained.",
+            "NO_DECISION_MOTION_UNAVAILABLE": "The motion was unavailable to its full electorate.",
+        }
+        for kind, why in reasons.items():
+            with self.subTest(kind=kind):
+                page = self.render_prompt(kind)
+                prompt, = page.select("article", classes=("prompt",))
+                self.assertEqual([p["text"] for p in page.select("p", within=prompt)],
+                                 ["Marking this Suggestion as prepared will record that no vote opened.", why],
+                                 "Each no-vote prompt must show its reason or the plain fallback.")
+                self.assertEqual(page.select("button", within=prompt)[0]["text"], "Proceed without a vote")
+
+
+class QuotedPostPresentationTests(SimpleTestCase):
+    def quote_page(self, text, *, version=2, hidden=False):
+        row = {"markdown": "My own reply.", "quoted_markdown": text,
+               "quoted_version_number": version, "quote_hidden": hidden}
+        return Markup(render_to_string("core/components/discussion_post.html", {"post": row}))
+
+    def test_quote_picker_labels_and_exact_version_values(self):
+        version_ids = [uuid4() for _ in range(3)]
+        for opening_version, reply_version in [(1, 2), (3, 1)]:
+            with self.subTest(opening_version=opening_version):
+                posts = [
+                    {"post_number": 1, "version_number": opening_version, "version_uuid": version_ids[0], "markdown": "Opening"},
+                    {"post_number": 2, "version_number": reply_version, "version_uuid": version_ids[1], "markdown": "Reply"},
+                    {"post_number": 3, "version_number": 2, "version_uuid": version_ids[2], "markdown": None},
+                ]
+                page = Markup(render_to_string("core/components/reply_form.html", {
+                    "board_org": uuid4(), "board_circle": uuid4(), "topic": {"thread_uuid": uuid4()},
+                    "posts": posts, "entered": {"quote": str(version_ids[1])},
+                }, request=RequestFactory().get("/")))
+                label, = [label for label in page.select("label") if page.select("select", within=label, name="quote")]
+                self.assertEqual(label["text"].strip().splitlines()[0], "Quote an earlier post (optional)")
+                choices = [(n["attrs"]["value"], n["text"]) for n in page.select("option", within=label)]
+                self.assertEqual(choices, [("", "No quotation"),
+                                           (str(version_ids[0]), "Opening post" if opening_version == 1 else "Opening post · Version 3"),
+                                           (str(version_ids[1]), "Post 2" if reply_version == 1 else "Post 2 · Version 2")])
+                self.assertEqual([n["attrs"]["value"] for n in page.select("option") if "selected" in n["attrs"]],
+                                 [str(version_ids[1])])
+
+    def test_quote_precedes_reply_and_identifies_its_fixed_version(self):
+        for version, label in [(1, "Quoted text"), (2, "Quoted text (Version 2)")]:
+            with self.subTest(version=version):
+                page = self.quote_page("An earlier sentence.", version=version)
+                quote, = page.select("blockquote", classes=("post-quote",))
+                reply, = page.select("div", classes=("post-text",))
+                self.assertLess(page.nodes.index(quote), page.nodes.index(reply))
+                self.assertEqual(page.select("p", within=quote, classes=("meta",))[0]["text"], label)
+                self.assertEqual(reply["text"], "My own reply.")
+        hidden = self.quote_page(None, hidden=True)
+        self.assertFalse(hidden.select("blockquote"))
+        self.assertIn("Quoted text unavailable.", [p["text"] for p in hidden.select("p")])
+        permitted = self.quote_page("Visible to moderator", hidden=True)
+        self.assertEqual(permitted.select("p", classes=("meta",))[0]["text"], "Quoted text (Version 2) · Hidden")
+
+    def test_long_quote_folds_at_word_and_escapes_both_copies(self):
+        prefix = "<b>" + ("é " * 87).rstrip()
+        for text, preview in [(prefix + " elephant", prefix + "…"),
+                              ("a" * 179 + " b", "a" * 179 + "…"),
+                              ("b" * 180 + " c", "b" * 180 + "…"),
+                              ("é" * 181, "é" * 180 + "…")]:
+            with self.subTest(length=len(text)):
+                page = self.quote_page(text)
+                quote, = page.select("blockquote")
+                details, = page.select("details", within=quote)
+                self.assertNotIn("open", details["attrs"])
+                self.assertEqual(page.select("div", within=quote, classes=("quote-preview",))[0]["text"], preview)
+                summary, = page.select("summary", within=details)
+                self.assertIs(summary["parents"][-1], details)
+                self.assertEqual([n["text"] for n in page.select("span", within=summary)],
+                                 ["Show the whole quote", "Show less"])
+                self.assertEqual([p["text"] for p in page.select("p", within=details)], [text])
+                self.assertFalse(page.select("b"))
+
+    def test_short_quote_including_180_is_shown_whole(self):
+        for size in (1, 179, 180):
+            with self.subTest(size=size):
+                text = "é" * size
+                page = self.quote_page(text)
+                quote, = page.select("blockquote")
+                self.assertFalse(page.select("details", within=quote))
+                self.assertEqual([p["text"] for p in page.select("p", within=quote)], ["Quoted text (Version 2)", text])
+
+    def test_quote_preview_drops_punctuation_only_at_cut(self):
+        for end in (",", ".", ":", ";", ",;"):
+            with self.subTest(end=end):
+                short = "The community door" + end
+                text = short + " " + "w" * 180
+                page = self.quote_page(text)
+                self.assertEqual(page.select("div", classes=("quote-preview",))[0]["text"], "The community door…",
+                                 "Cut punctuation must not sit in front of the ellipsis.")
+                self.assertEqual(page.select("details")[0]["text"].strip().endswith(text), True,
+                                 "The expanded quote must retain its original punctuation.")
+                whole = self.quote_page(short)
+                self.assertEqual(whole.select("p", within=whole.select("blockquote")[0])[-1]["text"], short,
+                                 "A short quote must keep its final punctuation.")
+
+    def test_full_quote_has_one_container(self):
+        paragraphs = ["The board met. " * 12 + "The door closed.", "Second paragraph."]
+        page = self.quote_page("\n\n".join(paragraphs))
+        details, = page.select("details")
+        children = [n for n in page.nodes if n["parents"] and n["parents"][-1] is details]
+        self.assertEqual([n["tag"] for n in children], ["summary", "div"],
+                         "A folded quote needs one container for all of its paragraphs.")
+        self.assertEqual([p["text"] for p in page.select("p", within=children[1])], paragraphs,
+                         "Both paragraphs must come before the closing control on screen.")

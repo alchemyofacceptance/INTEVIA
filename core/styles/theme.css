@@ -41,6 +41,12 @@
  h1{font-size:var(--text-2xl);margin-block:0 var(--space-md)} h2{font-size:var(--text-xl);margin-block:var(--space-lg) var(--space-sm)} h3{font-size:var(--text-lg);margin-block:var(--space-md) var(--space-sm)}
  p{margin-block:var(--space-sm)} a{color:var(--color-primary);text-underline-offset:var(--space-xs)}
  main a:not(.button):not(.nav-item):not(.domain-item){display:inline-block;min-height:var(--touch);padding-block:var(--space-sm)}
+ /* A paragraph can contain just one anchor and still have words around it.
+    Use a link-row for a standalone action in prose; keep existing navigation rows. */
+ main :where(p, li, blockquote, dt, dd) a:not(.button):not(.nav-item):not(.domain-item):not(:where(
+   .link-row a,
+   .discussion-topics > li > a, .circle-list > li > a, .history-row > a, nav a
+ )){display:inline;min-height:0;padding-block:0;text-decoration-line:underline}
  button,input,select,textarea{font:inherit} button,a,summary,input,select,textarea{-webkit-tap-highlight-color:transparent}
  a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:var(--focus-width) solid var(--color-focus);outline-offset:var(--focus-offset)}
  input,select,textarea{width:100%;min-height:var(--touch);border:var(--stroke) solid var(--color-control);border-radius:var(--radius-sm);padding:var(--space-sm) var(--space-md);background:var(--color-surface);color:var(--color-text)}
@@ -256,6 +262,15 @@ html {
 }
 .circle-description details[open] .read-less { display:inline }
 
+.post-quote { margin:0 0 var(--space-md); border-inline-start:3px solid var(--color-line);
+ padding-inline-start:var(--space-md); overflow-wrap:anywhere }
+.post-quote details { display:grid }
+.post-quote summary { cursor:pointer; grid-row:2; display:flex; align-items:center; justify-self:start;
+ padding-inline:0; min-height:var(--touch); color:var(--color-primary); text-decoration:underline }
+.post-quote:has(> details[open]) > .quote-preview,
+.post-quote details[open] .quote-more,
+.post-quote details:not([open]) .quote-less { display:none }
+
 .discussion-topics { display:grid; gap:var(--space-xl); list-style:none; padding:0 }
 .discussion-topics a,.discussion-office a,.board-discussion-destination a { min-inline-size:var(--touch) }
 .board-discussion-destination { margin-block-start:var(--space-xl) }
@@ -263,4 +278,11 @@ html {
 .discussion-form { display:grid; gap:32px; max-width:48rem; margin-block:24px; }
 .discussion-form label { display:grid; gap:8px; min-width:0; }
 .discussion-form :is(input:not([type=hidden]),textarea,select) { width:100%; min-height:44px; }
+.card.prompt { border-left-color:var(--color-accent); background:var(--color-accent-soft); }
 .discussion-actions { display:flex; align-items:center; flex-wrap:wrap; gap:32px; margin-block:32px; }
+.card > .discussion-actions:last-child { margin-block-end:0; }
+
+/* Follow the final branch of each card. Earlier paragraphs keep their reading space. */
+@scope (.card) {
+ :is(p, blockquote):last-child:not(:where(:scope :not(:last-child) *)) { margin-block-end:0 }
+}

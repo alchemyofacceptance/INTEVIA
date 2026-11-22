@@ -161,15 +161,18 @@ POST_SELECT = """SELECT p.post_uuid,p.thread_uuid,p.author_id,p.post_number,
    THEN body.markdown END AS markdown,
  CASE WHEN q.post_uuid IS NULL THEN NULL ELSE
    (q.author_hidden OR q.coordinator_hidden OR first.coordinator_hidden) END AS quote_hidden,
- CASE WHEN %s OR NOT (p.author_hidden OR p.coordinator_hidden OR first.coordinator_hidden
-   OR q.author_hidden OR q.coordinator_hidden) THEN quoted.markdown END AS quoted_markdown
+ quoted.markdown AS quoted_markdown, quoted.version_number AS quoted_version_number
  FROM public.discp_posts p JOIN public.discp_posts first ON first.thread_uuid=p.thread_uuid AND first.post_number=1
  JOIN public.core_discpostversion v ON v.post_uuid=p.post_uuid
  JOIN public.core_discbody body ON body.version_uuid=v.version_uuid
  JOIN public.core_discpostact a ON a.act_uuid=v.act_uuid
  LEFT JOIN public.core_discpostversion qv ON qv.version_uuid=v.quote_version
  LEFT JOIN public.discp_posts q ON q.post_uuid=qv.post_uuid
- LEFT JOIN public.core_discbody quoted ON quoted.version_uuid=v.quote_version
+ LEFT JOIN LATERAL (
+   SELECT qb.markdown, qv.version_number FROM public.core_discbody qb
+   WHERE qb.version_uuid=qv.version_uuid AND (%s OR NOT (p.author_hidden OR p.coordinator_hidden
+     OR first.coordinator_hidden OR q.author_hidden OR q.coordinator_hidden))
+ ) quoted ON true
  """
 
 

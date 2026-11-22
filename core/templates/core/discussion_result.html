@@ -1,0 +1,13 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}Vote result | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as organisation_url %}
+{% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
+{% record_breadcrumb "Vote result" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
+<h1 class="page-title record-heading">Vote result</h1>
+<article class="card"><h2>Outcome</h2>
+  {% include "core/components/vote_result.html" %}
+</article>
+{% if topic_url %}<p class="discussion-actions link-row">{% include "core/components/button.html" with href=topic_url variant="secondary" label="Back to Topic" only %}</p>{% endif %}
+{% endblock %}

@@ -27,7 +27,11 @@
       {% else %}<p>No Topics to show here.</p>{% endif %}
       {% if category.can_start_topic %}
         {% url 'discussion_start_form' board_org board_circle as start_url %}
-        <p class="discussion-actions"><a class="button primary" href="{{ start_url }}?category={{ category.category_uuid }}">Start a Topic</a></p>
+        {% with category_id=category.category_uuid|stringformat:"s" %}
+          {% with category_url=start_url|add:"?category="|add:category_id %}
+            <p class="discussion-actions link-row">{% include "core/components/button.html" with href=category_url variant="primary" label="Start a Topic" only %}</p>
+          {% endwith %}
+        {% endwith %}
       {% endif %}
     </article>
   {% empty %}<p>No categories to show here.</p>{% endfor %}

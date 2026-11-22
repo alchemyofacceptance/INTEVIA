@@ -31,6 +31,7 @@ REASONS = {
     "method": (405, "This address accepts a submitted form only."),
     "preview": (400, "A preview cannot submit a discussion form."),
     "DISC_POST_INPUT": (400, "Enter a title of 1 to 90 characters for a new Topic, choose its type and enter your text."),
+    "preparation_changed": (409, "The wording or the next step has changed since you opened the confirmation."),
     "office_type": (400, "Only the Topic type can be linked to an office."),
     "DISC_POST_AUTHORITY": (403, "Your current role does not allow this contribution."),
     "DISC_CATEGORY_RETIRED": (403, "This category has been retired and is open for reading."),
@@ -42,15 +43,35 @@ REASONS = {
 }
 
 
+VOTE_REASONS = {
+    "DISC_CLOSED": "This Topic is closed.",
+    "CQ_DISABLED": "Voting is switched off for this organisation.",
+    "CQ_RESTRICTED": "Your membership permits reading only.",
+    "CQ_PROBATION": "A probationary member cannot take this vote action.",
+    "CQ_INITIATOR": "Only the author or a Coordinator permitted by this organisation can put this Suggestion forward.",
+    "CQ_EXISTS": "This Suggestion has already been put to a vote.",
+    "CQ_PREPARATION": "The vote is no longer within its preparation period.",
+    "CQ_PREPARE_OFFICE": "Only the current Board Coordinator can mark this Suggestion as prepared.",
+    "CQ_INIT_VERSION": "The opening post has changed since you opened this form.",
+    "CQ_FULL_AUDIENCE": "The Suggestion must be visible to everyone eligible for this Board vote.",
+    "CQ_SUGGESTION": "Only a Suggestion can be put to a Board vote.",
+    "CQ_REQUEST": "This form already recorded a different vote action.",
+    "CQ_INPUT": "The vote form is missing a valid reference.",
+    "CQ_COMPLETE": "The service could not record the vote action with its authority.",
+}
+
+
 def _binding(request, operation, org, circle, thread):
     session = salted_hmac(FORM_SALT, request.session.session_key or "").hexdigest()
     return [str(request.user.pk), session, operation, str(org), str(circle), str(thread or "")]
 
 
-def issue_form(request, operation, org, circle, *, thread=None, office=None):
+def issue_form(request, operation, org, circle, *, thread=None, office=None, version=None, confirmation=None):
     return signing.dumps({
         "binding": _binding(request, operation, org, circle, thread),
         "request": str(uuid4()), "thread": str(thread or uuid4()), "post": str(uuid4()),
+        **({"version": str(version)} if version is not None else {}),
+        **({"confirmation": confirmation} if confirmation is not None else {}),
         "office": str(office) if office is not None else None,
     }, salt=FORM_SALT)
 
@@ -74,16 +95,24 @@ def refusal(request, code, context=None, entered=None):
     context = dict(context or {})
     match = request.resolver_match
     noun = "reply" if match and match.url_name == "discussion_reply" else "Topic"
+    vote = match and match.url_name in ("discussion_put_forward", "discussion_prepare")
+    if vote:
+        noun = "vote action"
     title = f"Your {noun} could not be recorded."
     if code == "unknown":
         title = "Your change could not be confirmed."
         status, why = 503, "The service could not confirm the outcome. The cause is unknown."
-        effect = "A contribution may already be recorded."
-        action = "Check the Topic before trying the same submission again."
+        effect = "A vote action may already be recorded." if vote else "A contribution may already be recorded."
+        if match and match.url_name == "discussion_start":
+            action = "Check the Board discussion for your Topic before trying the same submission again."
+        else:
+            action = "Check the Topic before trying the same submission again."
     else:
-        default = (409, "The discussion service refused this contribution.")
+        default = (409, "The vote service refused this action." if vote else "The discussion service refused this contribution.")
         status, why = REASONS.get(code, default)
-        effect = "This request recorded no new contribution."
+        if vote:
+            why = VOTE_REASONS.get(code, why)
+        effect = "This request recorded no new vote action." if vote else "This request recorded no new contribution."
         action = "Reopen the page and check the current wording and available actions."
     if code in ("method", "csrf", "preview", "form"):
         title = "The form could not be submitted."

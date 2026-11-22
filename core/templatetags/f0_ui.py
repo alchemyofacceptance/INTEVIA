@@ -1,4 +1,6 @@
 """Small reusable renderers for F0's component kit."""
+import re
+
 from django import template
 from django.conf import settings
 from django.urls import reverse
@@ -8,6 +10,21 @@ register = template.Library()
 
 register.filter("initials", initials)
 register.filter("topic_type_label", topic_type_label)
+
+
+@register.filter
+def quote_excerpt(text):
+    """Return a folded preview only for quotes longer than 180 characters."""
+    limit = 180
+    if len(text) <= limit:
+        return ""
+    prefix = text[:limit]
+    if not prefix[-1].isspace() and not text[limit].isspace():
+        # Keep an unbroken first token recognisable when it exceeds the limit.
+        words = prefix.rsplit(None, 1)
+        if len(words) == 2:
+            prefix = words[0]
+    return re.sub(r"[\s,.:;]+$", "", prefix) + "…"
 
 
 @register.filter
@@ -25,7 +42,7 @@ def ui_frame(context):
     name = (getattr(identity, "display_name", "") or request.user.get_full_name()) if signed_in else ""
     you_url = reverse("restricted") + "#you" if restricted else reverse("f0-you")
     current = request.resolver_match.url_name if request.resolver_match else ""
-    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
+    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "discussion_put_forward":"organisation", "discussion_prepare":"organisation", "discussion_result":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
     restricted_page = current == "restricted"
     tabs = [
         {"id":"home", "label":"Home", "icon":"home", "url":reverse("shell")},
@@ -35,7 +52,7 @@ def ui_frame(context):
         {"id":"you", "label":"You" if signed_in else "Sign in", "icon":"you", "url":you_url if signed_in else reverse("login")},
     ]
     scope = "you" if current == "f0-you" else "organisation"
-    show_domains = current in {"f0-organisation", "f0-you", "office_page", "organisation_home", "circle_page", "board_discussion", "discussion_topic", "discussion_start_form", "discussion_start", "discussion_reply"} or current.startswith("event-") or current == "f0-domain" or context.get("catalogue_domains", False)
+    show_domains = current in {"f0-organisation", "f0-you", "office_page", "organisation_home", "circle_page", "board_discussion", "discussion_topic", "discussion_start_form", "discussion_start", "discussion_reply", "discussion_put_forward", "discussion_prepare", "discussion_result"} or current.startswith("event-") or current == "f0-domain" or context.get("catalogue_domains", False)
     if current == "f0-domain":
         scope = request.resolver_match.kwargs.get("scope", "organisation")
         active = "you" if scope == "you" else "organisation"

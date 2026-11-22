@@ -26,7 +26,7 @@ NO_BALLOT_LABELS = {
 
 def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
     """The existing thread and GOVERNANCE-result audience at the current cut."""
-    query = """SELECT b.board_uuid,b.organism_id,
+    query = """SELECT b.board_uuid,b.organism_id,circle.kind AS circle_kind,
         public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()) AS thread_audience
         FROM public.core_discboard b
         JOIN public.core_livingorganism lo ON lo.id=b.organism_id
@@ -69,7 +69,7 @@ def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
 
 # Explicit projection: the private opening roster, individual input acts and
 # commitment salts are never returned. Totals-only result facts contain no names.
-_RESULT = """SELECT a.act_uuid AS post_uuid,a.thread_uuid,(a.facts->>'post_number')::integer AS post_number,
+_RESULT = """SELECT a.act_uuid AS post_uuid,a.effective_at,a.thread_uuid,(a.facts->>'post_number')::integer AS post_number,
  a.facts->>'event_kind' AS event_kind, a.facts->'invalid_provisions' AS invalid_provisions, a.facts->'ballot' AS ballot,a.facts->'attempt' AS attempt,a.facts->'count' AS count,
  a.facts->'reporting_rule' AS reporting_rule,a.facts->'group_gaze' AS participants,
  a.facts->'opened_at' AS opened_at,a.facts->'deadline' AS deadline,a.facts->'closed_at' AS closed_at,
@@ -157,9 +157,11 @@ def _result(board, thread, post):
 
 @transaction.atomic
 def result_post(
-    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None
+    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None, governance_only=False
 ):
     board = _scope(disc._actor(credential), organism_uuid, circle_uuid, thread_uuid)
+    if governance_only and board["circle_kind"] != "GOVERNANCE":
+        raise disc.DiscussionUnavailable()
     return _result(board["board_uuid"], thread_uuid, result_uuid)
 
 

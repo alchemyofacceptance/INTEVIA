@@ -1,0 +1,44 @@
+<section class="record-section" id="vote" aria-labelledby="vote-heading">
+  <h2 class="record-heading" id="vote-heading">Board vote</h2>
+  {% if vote.phase %}
+    <p>{{ vote.line }}</p>
+    <article class="card"><h3>{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
+      <div class="motion-wording">{{ vote.markdown|linebreaks }}</div>
+      {% if vote.editable_wording %}<p class="meta">The wording can still change until voting opens.</p>{% endif %}
+    </article>
+  {% endif %}
+  {% if vote.confirmation %}
+    <article id="prepare" class="card prompt" aria-labelledby="prepare-heading">
+      <h3 id="prepare-heading">Mark this Suggestion as prepared?</h3>
+      {% if vote.confirmation.destination == "CLARITY" %}
+        <p>Board members will be asked to confirm they are clear on this wording. They have {{ vote.confirmation.days }} day{{ vote.confirmation.days|pluralize }}.</p>
+        <p>You can still edit the wording during Clarity. Each edit asks them to confirm again.</p>
+        <p>Voting opens when everyone is clear, or when Clarity ends.</p>
+      {% elif vote.confirmation.destination == "VOTING" %}
+        <p>Voting opens now, on this wording.</p>
+        <p>After this, the wording can no longer be edited.</p>
+      {% else %}
+        <p>Marking this Suggestion as prepared will record that no vote opened.</p>
+        <p>{{ vote.no_vote_reason }}</p>
+      {% endif %}
+      <form class="discussion-actions" method="post" action="{% url 'discussion_prepare' board_org board_circle topic.thread_uuid %}">
+        {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.command }}">
+        {% if vote.confirmation.destination == "CLARITY" %}
+          {% include "core/components/button.html" with type="submit" label="Proceed to Clarity" only %}
+        {% elif vote.confirmation.destination == "VOTING" %}
+          {% include "core/components/button.html" with type="submit" label="Proceed to vote" only %}
+        {% else %}
+          {% include "core/components/button.html" with type="submit" label="Proceed without a vote" only %}
+        {% endif %}
+        {% include "core/components/button.html" with href=vote.cancel_url variant="secondary" label="Cancel" only %}
+      </form>
+    </article>
+  {% elif vote.prepare_url %}
+    <p class="discussion-actions link-row">{% include "core/components/button.html" with href=vote.prepare_url label="Mark as prepared" only %}</p>
+  {% elif vote.command %}
+    <form method="post" class="discussion-actions" action="{% url vote.route board_org board_circle topic.thread_uuid %}">
+      {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.command }}">
+      {% include "core/components/button.html" with type="submit" label=vote.label only %}
+    </form>
+  {% endif %}
+</section>

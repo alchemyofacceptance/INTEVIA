@@ -18,5 +18,5 @@
   {% if entered.title %}<p>{{ entered.title }}</p>{% endif %}
   {% if entered.markdown %}{{ entered.markdown|linebreaks }}{% endif %}
 </section>{% endif %}
-{% if board_org %}<p class="discussion-actions">{% url 'board_discussion' board_org board_circle as back_url %}{% include 'core/components/button.html' with href=back_url variant='secondary' label='Back to Board discussion' only %}</p>{% endif %}
+{% if board_org %}<p class="discussion-actions link-row">{% if topic.thread_uuid %}{% url 'discussion_topic' board_org board_circle topic.thread_uuid as topic_url %}{% include 'core/components/button.html' with href=topic_url variant='secondary' label='Back to Topic' only %}{% endif %}{% url 'board_discussion' board_org board_circle as back_url %}{% include 'core/components/button.html' with href=back_url variant='secondary' label='Back to Board discussion' only %}</p>{% endif %}
 {% endblock %}

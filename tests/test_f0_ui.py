@@ -4,13 +4,15 @@ Real Django client dispatch/templates run. Authentication's existing middleware
 is supplied an explicit identity double; event reads/writes are service doubles.
 The unchanged governed paths still require the PostgreSQL rehearsal before peek 0.
 """
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
+from django.contrib.staticfiles import finders
 from django.template.loader import render_to_string
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import reverse
 from core.ui import participation
 from core import views
@@ -250,3 +252,186 @@ class F0PresentationTests(SimpleTestCase):
                       "A wide side rail alone must not reserve space below the viewport.")
         self.assertIn("html:has(.domain-nav){scroll-padding-bottom:calc(var(--domains) + var(--space-sm))}",
                       desktop, "Wide keyboard scrolling must reserve the domain bar and focus gap.")
+
+
+class LinkTargetTests(SimpleTestCase):
+    """C1-297. Read the served rule; the VC measures the rendered pixel positions."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+
+    def inline_rule(self):
+        # Match the complete selector. An added :only-child would also match
+        # the single anchor in "Read <a>the result</a> here".
+        pattern = (
+            r"(?:^|[{}])main :where\(([^()]*)\) "
+            r"a:not\(\.button\):not\(\.nav-item\):not\(\.domain-item\)"
+            r":not\(:where\(([^()]*)\)\)\{([^{}]*)\}"
+        )
+        match = re.search(pattern, self.sheet)
+        self.assertIsNotNone(match, "Expected the inline content rule in the served sheet.")
+        containers, standalone, body = match.groups()
+        return set(containers.split(",")), set(standalone.split(",")), dict(
+            declaration.split(":", 1) for declaration in body.split(";")
+        )
+
+    def test_fact_links_share_label_line(self):
+        containers, _, style = self.inline_rule()
+        self.assertTrue({"dt", "dd"} <= containers, "Fact labels and values must admit inline links.")
+        self.assertEqual(style.get("display"), "inline")
+        self.assertEqual(style.get("padding-block"), "0")
+        self.assertEqual(style.get("min-height"), "0")
+
+    def test_sentence_links_follow_the_text(self):
+        containers, _, style = self.inline_rule()
+        self.assertTrue({"p", "li", "blockquote"} <= containers, "Prose must admit inline links.")
+        self.assertEqual(style.get("display"), "inline")
+        self.assertEqual(style.get("padding-block"), "0")
+        self.assertEqual(style.get("text-decoration-line"), "underline")
+
+    def test_standalone_links_keep_the_touch_target(self):
+        _, standalone, _ = self.inline_rule()
+        self.assertSetEqual(standalone, {
+            ".link-row a",
+            ".discussion-topics>li>a", ".circle-list>li>a", ".history-row>a", "nav a",
+        }, "Only the standalone action and navigation rows are exempt from inline prose styling.")
+        self.assertIn(
+            "main a:not(.button):not(.nav-item):not(.domain-item)"
+            "{min-height:var(--touch);padding-block:var(--space-sm);display:inline-block}",
+            self.sheet,
+        )
+        self.assertIn("--touch:2.75rem", self.sheet)
+
+        request = RequestFactory().get("/")
+        request.user = AnonymousUser()
+        event = {"event_id": "event:sample", "attendance": {"history_available": True}}
+        history = {"event_id": event["event_id"]}
+        for template, context, routes in (
+            ("event_list", {}, [reverse("shell")]),
+            ("event_detail", {"event": event}, [reverse("event-list")]),
+            ("attendance_detail", {"event": event}, [
+                reverse("attendance-history", args=[event["event_id"]]),
+                reverse("event-detail", args=[event["event_id"]]),
+            ]),
+            ("record_history", {"history": history}, [reverse("event-detail", args=[event["event_id"]])]),
+        ):
+            with self.subTest(template=template):
+                page = Markup(render_to_string(f"core/{template}.html", context, request=request))
+                targets = [node["attrs"]["href"] for node in page.select("a")
+                           if "link-row" in node["parents"][-1]["attrs"].get("class", "").split()]
+                self.assertCountEqual(targets, routes, "Each standalone Event action needs its target.")
+
+    def test_link_only_paragraphs_have_action_containers(self):
+        root = Path(__file__).resolve().parents[1]
+        from os import walk
+        templates = []
+        for folder, directories, names in walk(root):
+            directory = Path(folder)
+            directories[:] = [name for name in directories if not name.startswith(".")
+                              and name not in {"node_modules", "__pycache__"}
+                              and not (directory / name / "pyvenv.cfg").is_file()]
+            if "templates" in directory.relative_to(root).parts:
+                templates.extend(directory / name for name in names if name.endswith(".html"))
+        templates.sort()
+        self.assertTrue(templates, "The check must discover project templates.")
+        by_name = {path.as_posix().split("/templates/", 1)[1]: path for path in templates}
+        include = re.compile(r"""{%\s*include\s+["']([^"']+)["']([^%]*)%}""")
+
+        def expand(path, parents=()):
+            source = path.read_text(encoding="utf-8")
+            source = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}|{#.*?#}",
+                            "", source, flags=re.DOTALL)
+
+            def fragment(match):
+                name, arguments = match.groups()
+                if name == "core/components/button.html":
+                    return "<a>action</a>" if re.search(r"\bhref=", arguments) else "<button>action</button>"
+                child = by_name.get(name)
+                if child and child not in (*parents, path):
+                    return expand(child, (*parents, path))
+                return ""
+
+            return include.sub(fragment, source)
+
+        def unmarked_rows(source):
+            page = Markup(source)
+            missing = []
+            for tag in ("p", "li"):
+                for row in page.select(tag):
+                    links = page.select("a", within=row)
+                    link_text = "".join(link["text"] for link in links)
+                    if not links or "".join(row["text"].split()) != "".join(link_text.split()):
+                        continue
+                    def protected(link):
+                        parents = link["parents"]
+                        if any(n["tag"] == "nav" or "link-row" in n["attrs"].get("class", "").split() for n in parents):
+                            return True
+                        if "history-row" in parents[-1]["attrs"].get("class", "").split():
+                            return True
+                        return (parents[-1]["tag"] == "li" and len(parents) >= 2
+                                and bool({"discussion-topics", "circle-list"} & set(parents[-2]["attrs"].get("class", "").split())))
+                    if not all(protected(link) for link in links):
+                        missing.append((tag, row["text"].strip()))
+            return missing
+
+        probe = '<p><a>First</a></p><li><a>Second</a></li><li>See <a>also</a>.</li>'
+        self.assertEqual(unmarked_rows(probe), [("p", "First"), ("li", "Second")])
+        missing = []
+        for path in templates:
+            source = re.sub(r"{%.*?%}", "", expand(path), flags=re.DOTALL)
+            missing.extend((str(path.relative_to(root)), tag, text) for tag, text in unmarked_rows(source))
+        self.assertEqual(missing, [], "Link-only paragraphs and list items need standalone action targets.")
+
+
+class PreparationPromptStyleTests(SimpleTestCase):
+    def test_prompt_has_teal_stripe_and_surface_in_served_css(self):
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        rule = re.search(r"\.card\.prompt\{([^}]+)\}", sheet)
+        self.assertIsNotNone(rule)
+        style = dict(item.split(":", 1) for item in rule[1].split(";"))
+        self.assertEqual(style.get("border-left-color"), "var(--color-accent)")
+        self.assertEqual(style.get("background"), "var(--color-accent-soft)")
+
+    def test_card_final_action_row_has_no_bottom_margin(self):
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        self.assertIn(".card>.discussion-actions:last-child{margin-block-end:0}", sheet)
+        rule = re.search(r"\.discussion-actions\{([^}]+)\}", sheet)
+        self.assertIn("margin-block:32px", rule[1])
+        self.assertIn("flex-wrap:wrap", rule[1])
+
+
+class PostQuoteStyleTests(SimpleTestCase):
+    def test_served_quote_rule_disclosure_and_touch_target(self):
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        def declarations(selector):
+            match = re.search(re.escape(selector) + r"\{([^}]+)\}", sheet)
+            self.assertIsNotNone(match, selector)
+            return dict(pair.split(":", 1) for pair in match[1].split(";"))
+
+        quote = declarations(".post-quote")
+        self.assertEqual(quote.get("border-inline-start"), "3px solid var(--color-line)")
+        self.assertEqual(quote.get("padding-inline-start"), "var(--space-md)")
+        self.assertEqual(declarations(".post-quote summary").get("min-height"), "var(--touch)")
+        self.assertIn("--touch:2.75rem", sheet)
+        self.assertEqual(declarations(".post-quote summary").get("grid-row"), "2")
+        hidden = ".post-quote:has(>details[open])>.quote-preview,.post-quote details[open] .quote-more,.post-quote details:not([open]) .quote-less"
+        self.assertIn(hidden + "{display:none}", sheet)
+
+    def test_quote_summary_uses_a_pointer(self):
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        rule = re.search(r"\.post-quote summary\{([^}]+)\}", sheet)
+        self.assertIsNotNone(rule, "The served stylesheet must style the quote control.")
+        declarations = dict(pair.split(":", 1) for pair in rule[1].split(";"))
+        self.assertEqual(declarations.get("cursor"), "pointer", "The quote control must show the pointer.")
+
+
+class CardFootStyleTests(SimpleTestCase):
+    def test_last_text_has_no_extra_margin_in_served_cards(self):
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        selector = "@scope(.card){:is(p,blockquote):last-child:not(:where(:scope :not(:last-child) *))"
+        rule = re.search(re.escape(selector) + r"\{([^}]+)\}", sheet)
+        self.assertIsNotNone(rule, "The served rule must reach only the final text branch of each card.")
+        declarations = dict(pair.split(":", 1) for pair in rule[1].split(";"))
+        self.assertEqual(declarations.get("margin-block-end"), "0", "Final text must end at the card padding.")

@@ -64,6 +64,26 @@ class DiscussionPostTests(TransactionTestCase):
         return posts.set_post_hidden(**args, thread_uuid=post["thread"], post_uuid=post["post"],
             request_uuid=uuid4(), hidden=hidden, as_coordinator=as_coordinator)
 
+    def test_quote_reads_the_referenced_version_with_its_body_permission(self):
+        lo, owner = fixtures.ordinary_birth()
+        board = self.board(lo, owner)
+        member = board | {"credential": fixtures.add_member(lo).credential}
+        topic = self.start(board)
+        source = self.reply(member, topic, markdown="First version.")
+        edit = dict(member, thread_uuid=topic["thread"], post_uuid=source["post"])
+        second = posts.edit_post(**edit, predecessor=source["version"], request_uuid=uuid4(), markdown="Second version.")
+        self.reply(board, topic, quote_version=second["version"])
+        posts.edit_post(**edit, predecessor=second["version"], request_uuid=uuid4(), markdown="Third version.")
+
+        def quotation(reader):
+            rows = posts.read_thread(**self.read_args(reader), thread_uuid=topic["thread"])["posts"]
+            return rows[-1]["quoted_version_number"], rows[-1]["quoted_markdown"]
+
+        self.assertEqual(quotation(member), (2, "Second version."))
+        self.hide(member, source, True)
+        self.assertEqual(quotation(member), (None, None))
+        self.assertEqual(quotation(board), (2, "Second version."))
+
     def test_topics_numbered_quotes_versions_order_and_closure(self):
         """DISC1-06. Typed topics, exact quotes, author versions, ordered pure reads and closure."""
         lo, owner = fixtures.ordinary_birth()

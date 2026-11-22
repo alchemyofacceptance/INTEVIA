@@ -1,4 +1,5 @@
 """Scene 4. Board and Topic reads with the reader's real, current standing."""
+from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -7,7 +8,7 @@ from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 
 from core.models import Circle, CircleStateEvent, OrganismMembership
-from src.intevia.services import circle_commands, cq, discussion, discussion_posts
+from src.intevia.services import circle_commands, cq, cq_reads, discussion, discussion_posts
 from tests import committee_support, election_support
 from tests import cq_authority_support as boards
 from tests import test_discussion_posts as post_support
@@ -24,15 +25,15 @@ from tests.test_uc1_office_page import assert_private, signed_in
 FIXTURE_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 
-def activate_trustees(scope, board):
-    cq.change_settings(**scope, predecessor=None, changes={"enabled": True, "clarity_stage": False}, request_uuid=uuid4())
+def activate_trustees(scope, board, *, clarity=False):
+    cq.change_settings(**scope, predecessor=None, changes={"enabled": True, "clarity_stage": clarity}, request_uuid=uuid4())
     circle_commands.activate(**scope, circle_uuid=board.circle_uuid, request_uuid=uuid4())
 
 
-def seated_board():
+def seated_board(*, clarity=False):
     owner, scope, trustees, board = boards.ordinary(3, board=True)
     founder, coordinator, trustee = trustees
-    activate_trustees(scope, board)
+    activate_trustees(scope, board, clarity=clarity)
     boards.appoint_board_coordinator(owner, board, founder, coordinator)
     return owner, board, founder, coordinator, trustee
 
@@ -54,6 +55,249 @@ def read_counts():
 
 @override_settings(ALLOWED_HOSTS=["testserver"], INTEVIA_TIMED_EVENTS_WAKE=True)
 class BoardVotePageTests(TransactionTestCase):
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_command_list_is_the_current_readers(self):
+        owner, board, _, coordinator, trustee = seated_board()
+        support = post_support.DiscussionPostTests()
+        args = support.board(owner, coordinator, board) | {"credential": trustee.credential}
+        topic = support.start(args, topic_type="SUGGESTION", markdown="Approve this payment.")
+        url = path(owner, board, topic["thread"])
+        author, chair = signed_in(trustee), signed_in(coordinator)
+        page = author.get(url)
+        self.assertContains(page, "Put to a Board vote", count=1)
+        forward, submitted = command_form(page, "vote_command")
+        for attempt in range(2):
+            response = author.post(forward, submitted)
+            self.assertEqual((response.status_code, response.get("Location")), (303, url + "#vote"),
+                             "Putting forward the same signed form must return to its vote.")
+        ordinary = author.get(url)
+        self.assertContains(ordinary, "Preparation")
+        self.assertContains(ordinary, "Deadline")
+        self.assertNotContains(ordinary, "Mark as prepared", msg_prefix="An ordinary trustee must have no preparation command.")
+        eligible = chair.get(url)
+        self.assertContains(eligible, "Mark as prepared", count=1)
+        eligible_markup = Markup(eligible.content.decode())
+        self.assertEqual(eligible_markup.select("input", name="vote_command"), [],
+                         "The initial page must not issue a PREPARED submission.")
+        link, = [a["attrs"]["href"] for a in eligible_markup.select("a") if a["text"] == "Mark as prepared"]
+        self.assertNotContains(author.get(link), "Proceed to vote", msg_prefix="A direct prompt URL must recheck the reader.")
+        preview = chair.get(link, HTTP_SEC_PURPOSE="prefetch")
+        self.assertContains(preview, "Voting opens now, on this wording.")
+        self.assertContains(preview, "After this, the wording can no longer be edited.")
+        self.assertContains(preview, "Proceed to vote", count=1)
+        cancel, = [a["attrs"]["href"] for a in Markup(preview.content.decode()).select("a") if a["text"] == "Cancel"]
+        self.assertEqual(cancel, url + "#vote")
+        self.assertNotContains(chair.get(cancel), "Proceed to vote")
+        seen = discussion._rows("SELECT operation FROM public.core_cqact WHERE thread_uuid=%s ORDER BY ordinal",
+                                [topic["thread"]])
+        self.assertEqual(seen, [{"operation": "INITIATE"}], "Displaying or cancelling the prompt must add no act.")
+        prepare, prepared = command_form(chair.get(link), "vote_command")
+        for attempt in range(2):
+            self.assertEqual(chair.post(prepare, prepared).status_code, 303,
+                             "The Coordinator can submit or replay the preparation form.")
+        acts = discussion._rows("""SELECT operation FROM public.core_cqact WHERE thread_uuid=%s
+            AND operation IN ('INITIATE','PREPARED') ORDER BY ordinal""", [topic["thread"]])
+        self.assertEqual([row["operation"] for row in acts], ["INITIATE", "PREPARED"],
+                         "Each genuine command and its replay must produce one act.")
+        self.assertNotContains(chair.get(url), "Mark as prepared", msg_prefix="Preparation has ended.")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_clarity_preview_matches_recorded_transition(self):
+        owner, board, _, coordinator, trustee = seated_board(clarity=True)
+        support = post_support.DiscussionPostTests()
+        args = support.board(owner, coordinator, board) | {"credential": trustee.credential}
+        topic = support.start(args, topic_type="SUGGESTION", markdown="Review this payment.")
+        scope = support.read_args(args) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, version_uuid=topic["version"], request_uuid=uuid4())
+        url = path(owner, board, topic["thread"])
+        chair = signed_in(coordinator)
+        initial = chair.get(url + "?prepare=1")
+        self.assertContains(initial, "Board members will be asked to confirm they are clear on this wording. They have 7 days.")
+        self.assertContains(initial, "Proceed to Clarity", count=1)
+        endpoint, fields = command_form(initial, "vote_command")
+        discussion_posts.edit_post(**args, thread_uuid=topic["thread"], post_uuid=topic["post"],
+                                   predecessor=topic["version"], request_uuid=uuid4(), markdown="Review the revised terms.")
+        stale = chair.post(endpoint, fields)
+        self.assertEqual(stale.status_code, 409, "New wording must require a new confirmation.")
+        self.assertContains(stale, "The wording or the next step has changed", status_code=409)
+        self.assertEqual(cq.phase(**scope)["phase"], "PREPARATION", "A stale confirmation must roll back its act.")
+        endpoint, current = command_form(chair.get(url + "?prepare=1"), "vote_command")
+        self.assertEqual(chair.post(endpoint, current).status_code, 303)
+        self.assertEqual(cq.phase(**scope)["phase"], "CLARITY", "Proceed must actually begin the stage the reader confirmed.")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_changed_electorate_requires_an_updated_prompt(self):
+        owner, board, founder, coordinator, trustee = seated_board()
+        support = post_support.DiscussionPostTests()
+        args = support.board(owner, coordinator, board) | {"credential": trustee.credential}
+        topic = support.start(args, topic_type="SUGGESTION", markdown="Approve the payment.")
+        scope = support.read_args(args) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, version_uuid=topic["version"], request_uuid=uuid4())
+        url = path(owner, board, topic["thread"]) + "?prepare=1"
+        chair = signed_in(coordinator)
+        before = chair.get(url)
+        self.assertContains(before, "Proceed to vote")
+        endpoint, earlier = command_form(before, "vote_command")
+        cq.declare_conflict(**(scope | {"credential": founder.credential}), request_uuid=uuid4(),
+                            basis="I supplied the estimate.")
+        self.assertEqual(chair.post(endpoint, earlier).status_code, 409)
+        self.assertEqual(cq.phase(**scope)["phase"], "PREPARATION", "An obsolete promise to open voting must record no act.")
+        after = chair.get(url)
+        self.assertContains(after, "Fewer than three eligible voters remained.")
+        self.assertContains(after, "Proceed without a vote", count=1)
+        endpoint, current = command_form(after, "vote_command")
+        self.assertEqual(chair.post(endpoint, current).status_code, 303)
+        status = cq_reads.vote_status(**scope)
+        self.assertIsNone(status["ballot"])
+        self.assertEqual(status["result"]["count"]["kind"], "NO_DECISION_FEWER_THAN_THREE")
+
+    def assert_no_vote_receipt(self, chair, preview, scope, expected):
+        self.assertContains(preview, "Proceed without a vote", count=1,
+                            msg_prefix="The confirmation must offer the no-vote action.")
+        endpoint, fields = command_form(preview, "vote_command")
+        self.assertEqual(chair.post(endpoint, fields).status_code, 303,
+                         "Proceed must accept the signed preview and persist its promised outcome.")
+        acts = discussion._rows(
+            """SELECT operation, facts#>>'{count,kind}' AS reason,
+                      request->>'trigger_act' AS parent, act_uuid::text AS key
+               FROM public.core_cqact WHERE thread_uuid=%s ORDER BY ordinal""", [scope["thread_uuid"]])
+        self.assertEqual([act["operation"] for act in acts], ["INITIATE", "PREPARED", "NO_BALLOT"],
+                         "Proceed must record one preparation and one no-ballot act.")
+        self.assertEqual((acts[-1]["parent"], acts[-1]["reason"]), (acts[1]["key"], expected),
+                         "The preparation receipt must own the no-ballot act with the reason shown.")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_restricted_motion_preview_matches_no_vote_act(self):
+        owner, board, _, coordinator, trustee = seated_board()
+        support = post_support.DiscussionPostTests()
+        board_scope = support.read_args(support.board(owner, coordinator, board))
+        category = uuid4()
+        discussion.create_category(**board_scope, category_uuid=category, name="Payments", request_uuid=uuid4())
+        author = board_scope | {"credential": trustee.credential, "category_uuid": category}
+        topic = support.start(author, topic_type="SUGGESTION", markdown="Approve this invoice.")
+        scope = support.read_args(author) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, version_uuid=topic["version"], request_uuid=uuid4())
+        chair = signed_in(coordinator)
+        url = path(owner, board, topic["thread"]) + "?prepare=1"
+        self.assertContains(chair.get(url), "Proceed to vote", count=1,
+                            msg_prefix="Members can read the proposed wording before the category changes.")
+        category_scope = board_scope | {"category_uuid": category}
+        current = discussion.category_history(**category_scope)[-1]["version_uuid"]
+        discussion.revise_category(**category_scope, predecessor=current, name="Payments", description="",
+                                   order=0, access="COORDINATORS", request_uuid=uuid4())
+        preview = chair.get(url)
+        self.assertContains(preview, "The motion was unavailable to its full electorate.", count=1,
+                            msg_prefix="Restricting the category must explain why the vote cannot open.")
+        self.assert_no_vote_receipt(chair, preview, scope, "NO_DECISION_MOTION_UNAVAILABLE")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_retired_vote_provision_preview_matches_no_vote_act(self):
+        # Adopt, cite and retire while the founder still holds sole-member LAW authority.
+        # The later Board's first preparation must still check its VOTE-stage citation.
+        owner, founder = laws.ordinary_birth(offering_choice="FREE", board_seats=3)
+        board = Circle.objects.get(parent_organism=owner, kind="GOVERNANCE")
+        document = laws.Document(founder, content="[#1] Board motions require three participants.")
+        article = laws.adoption(owner, document, "ARTICLE")
+        service = laws.law.OrganismLawService()
+        self.assertEqual(service.adopt_law(laws.command(founder, article)).status, "ADOPT",
+                         "The voting provision must first become law.")
+        citation = {"binding": str(article.proposal), "version": document.first.pk, "provision": "1",
+                    "body": str(board.circle_uuid), "decision": "ALL_DECISIONS", "stage": "VOTE",
+                    "denominator": "Eligible Board trustees", "setting": "CQPT",
+                    "value": {"quorum_form": "ABSOLUTE", "quorum_value": 3, "waive_minimum": False}}
+        local = {"credential": founder.credential, "organism_uuid": owner.organism_id}
+        cq.change_settings(**local, predecessor=None, request_uuid=uuid4(),
+                           changes={"enabled": True, "clarity_stage": False, "provisions": [citation]})
+        retirement = replace(article, proposal=uuid4(), predecessor=article.proposal, operation="RETIRE", intent="RETIRE")
+        self.assertEqual(service.adopt_law(laws.command(founder, retirement)).status, "RETIRE",
+                         "The cited voting provision must genuinely leave force.")
+        coordinator = boards.seat_trustee(owner, founder, board, 1)
+        trustee = boards.seat_trustee(owner, founder, board, 2)
+        circle_commands.activate(**local, circle_uuid=board.circle_uuid, request_uuid=uuid4())
+        boards.appoint_board_coordinator(owner, board, founder, coordinator)
+        support = post_support.DiscussionPostTests()
+        author = support.board(owner, coordinator, board) | {"credential": trustee.credential}
+        topic = support.start(author, topic_type="SUGGESTION", markdown="Approve this invoice.")
+        scope = support.read_args(author) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, version_uuid=topic["version"], request_uuid=uuid4())
+        chair = signed_in(coordinator)
+        preview = chair.get(path(owner, board, topic["thread"]) + "?prepare=1")
+        self.assertContains(preview, "A cited constitutional provision was no longer in force.", count=1,
+                            msg_prefix="The prompt must name the ended provision before the Board proceeds.")
+        self.assert_no_vote_receipt(chair, preview, scope, "NO_DECISION_PROVISION_ENDED")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_motion_text_is_scoped_to_version_and_reader(self):
+        owner, board, _, coordinator, trustee = seated_board()
+        support = post_support.DiscussionPostTests()
+        args = support.board(owner, coordinator, board) | {"credential": trustee.credential}
+        topic = support.start(args, topic_type="SUGGESTION", markdown="Approve one invoice.")
+        scope = support.read_args(args) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, version_uuid=topic["version"], request_uuid=uuid4())
+        discussion_posts.edit_post(**args, thread_uuid=topic["thread"], post_uuid=topic["post"],
+                                   predecessor=topic["version"], request_uuid=uuid4(), markdown="Revised opening.")
+        url = path(owner, board, topic["thread"])
+        page = Markup(signed_in(trustee).get(url).content.decode())
+        self.assertEqual([node["text"] for node in page.select("div", classes=("motion-wording",))], ["Revised opening."],
+                         "The vote must follow an edit during Preparation.")
+        self.assertIn("Wording to be decided · Version 2", [n["text"] for n in page.select("h3")])
+        self.assertIn("Revised opening.", [n["text"] for n in page.select("div", classes=("post-text",))])
+        cq.mark_prepared(**(scope | {"credential": coordinator.credential}), request_uuid=uuid4())
+        outsider = laws.add_member(owner)
+        other_scope = scope | {"credential": outsider.credential}
+        self.assertEqual(cq.phase(**other_scope)["phase"], "VOTING", "This member may read the released vote phase.")
+        self.assertIsNone(cq.board_topic_vote(**other_scope), "A result-only member must receive no motion text or command.")
+        self.assertEqual(signed_in(outsider).get(url).status_code, 404, "Result access must never open the private Topic.")
+
+    @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
+    def test_board_result_occupies_its_recorded_post_number(self):
+        owner, board, founder, coordinator, trustee = seated_board()
+        support = post_support.DiscussionPostTests()
+        args = support.board(owner, coordinator, board)
+        topic = support.start(args, topic_type="SUGGESTION", title="Private opening title", markdown="One payment.")
+        scope = support.read_args(args) | {"thread_uuid": topic["thread"]}
+        cq.put_forward(**scope, request_uuid=uuid4(), version_uuid=topic["version"])
+        discussion_posts.edit_post(**args, thread_uuid=topic["thread"], post_uuid=topic["post"],
+                                   predecessor=topic["version"], request_uuid=uuid4(), markdown="Revised payment terms.")
+        cq.mark_prepared(**scope, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**scope)["ballot"]
+        for voter in (founder, coordinator, trustee):
+            cq.answer(**(scope | {"credential": voter.credential}), ballot_uuid=ballot, choice="QUALIFIED", request_uuid=uuid4())
+        receipt = cq_reads.vote_status(**scope, ballot_uuid=ballot)["result_uuid"]
+        support.reply(args, topic, markdown="Thank you.")
+        client = signed_in(trustee)
+        url = path(owner, board, topic["thread"])
+        result_url = reverse("discussion_result", args=(owner.organism_id, board.circle_uuid, topic["thread"], receipt))
+        page = Markup(client.get(url).content.decode())
+        self.assertEqual([n["text"] for n in page.select("div", classes=("motion-wording",))], ["Revised payment terms."],
+                         "The result must display the version fixed by the ballot, including the pre-ballot edit.")
+        self.assertIn("Wording decided · Version 2", [n["text"] for n in page.select("h3")])
+        entries = [a for a in page.select("article") if page.select("h3", within=a) and page.select("h3", within=a)[0]["text"].startswith("Post ")]
+        self.assertEqual([page.select("h3", within=a)[0]["text"] for a in entries], ["Post 2 · Vote result", "Post 3"],
+                         "The result must occupy post 2 and the following reply must remain post 3.")
+        card = entries[0]
+        self.assertIn("Board of Trustees", card["text"])
+        self.assertIn("Carried.", card["text"])
+        effective = discussion._rows("SELECT effective_at FROM public.core_cqact WHERE act_uuid=%s", [receipt])[0]["effective_at"]
+        from django.utils.dateparse import parse_datetime
+        from datetime import timezone
+        decided = effective.astimezone(timezone.utc)
+        vote_section, = page.select("section", id="vote")
+        self.assertEqual(page.select("p", within=vote_section)[0]["text"],
+                         f"Decided · {decided.day} {decided:%B %Y, %H:%M} UTC · Carried")
+        self.assertEqual(parse_datetime(page.select("time", within=card)[0]["attrs"]["datetime"]), effective,
+                         "The result time must equal the stored act’s effective time.")
+        self.assertEqual([a["text"] for a in page.select("a", within=card, href=result_url)], ["View vote result"])
+        self.assertFalse(any("Post 2" in option["text"] for option in page.select("option")), "A result cannot be quoted as an editable post version.")
+        observer = signed_in(laws.add_member(owner))
+        permitted = observer.get(result_url)
+        self.assertContains(permitted, "Carried.", msg_prefix="A result-only member must be able to open the result itself.")
+        assert_private(self, permitted)
+        for withheld in ("Private opening title", "One payment.", "Back to Topic"):
+            self.assertNotContains(permitted, withheld, msg_prefix="The result page must withhold private Topic details.")
+        self.assertEqual(observer.get(url).status_code, 404)
+        self.assertEqual(observer.get(reverse("discussion_result", args=(owner.organism_id, board.circle_uuid, uuid4(), receipt))).status_code, 404)
+
     def test_board_lists_only_visible_topics(self):
         owner, board, _, coordinator, trustee = seated_board()
         reader, steward = signed_in(trustee), signed_in(coordinator)
@@ -333,10 +577,10 @@ class BoardVotePageTests(TransactionTestCase):
             self.assertFalse(start_service.called, "A concealed category must stop both form paths before the service.")
 
 
-def command_form(response):
+def command_form(response, field="command"):
     """Find the actual discussion form and carry its own hidden fields."""
     page = Markup(response.content.decode())
-    command, = page.select("input", name="command")
+    command, = page.select("input", name=field)
     form = next(parent for parent in command["parents"] if parent["tag"] == "form")
     return form["attrs"]["action"], {node["attrs"]["name"]: node["attrs"]["value"]
                                     for node in page.select("input", within=form, type="hidden")}

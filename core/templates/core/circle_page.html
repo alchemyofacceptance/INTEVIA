@@ -40,7 +40,7 @@
 </section>
 {% endif %}
 {% if discussion_available %}
-<p class="board-discussion-destination"><a href="{% url 'board_discussion' organisation.organism_uuid circle.circle_uuid %}">Board discussion</a></p>
+<p class="board-discussion-destination link-row"><a href="{% url 'board_discussion' organisation.organism_uuid circle.circle_uuid %}">Board discussion</a></p>
 {% endif %}
 {% if status %}<section class="card" aria-labelledby="status-heading">
   <h2 id="status-heading">Operating status</h2>

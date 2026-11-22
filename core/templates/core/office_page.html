@@ -65,7 +65,7 @@
   {% empty %}
     <p>No Topics to show here.</p>
   {% endfor %}
-  {% if start_topic_url %}<p class="discussion-actions">{% include 'core/components/button.html' with href=start_topic_url label="Start a Topic about this office" variant="primary" only %}</p>{% endif %}
+  {% if start_topic_url %}<p class="discussion-actions link-row">{% include 'core/components/button.html' with href=start_topic_url label="Start a Topic about this office" variant="primary" only %}</p>{% endif %}
 </section>
 
 <section class="record-section" aria-labelledby="office-decisions">
