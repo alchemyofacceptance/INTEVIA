@@ -367,7 +367,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
         """DISC4-04. Both the deciding ballot and an open peer keep their opening rule; a later vote uses the new one."""
         _, scope, people, original = self.setup_board(3)
         peer, _ = self.confirmed(scope, people)
-        peer_ballot = cq.finish_clarity(**peer, request_uuid=uuid4())
+        peer_ballot = cq_reads.vote_status(**peer)["ballot"]
         change, wording = motions.propose(self, scope, {"abstention": True}, original)
         change_ballot = motions.open_motion(change, wording, people)
         decided = motions.settle(change, change_ballot, people)
@@ -394,7 +394,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
             choice="ABSTAIN",
         )
         later, _ = self.confirmed(scope, people)
-        later_ballot = cq.finish_clarity(**later, request_uuid=uuid4())
+        later_ballot = cq_reads.vote_status(**later)["ballot"]
         self.assertEqual(
             self.facts(later_ballot)["facts"]["settings_version"], str(applied)
         )
@@ -593,6 +593,7 @@ class CQSettingsAuthorityTests(TransactionTestCase):
         voters = [founder] + [
             boards.seat_trustee(lo, founder, circle, n) for n in (1, 2)
         ]
+        boards.appoint_board_chairs(lo, founder, voters[1])
         self.configure(scope, {"enabled": True, "reporting": "TOTALS_ONLY"})
         local = scope | {"circle_uuid": circle.circle_uuid}
         circle_commands.activate(**local, request_uuid=uuid4())

@@ -162,7 +162,13 @@ class ElectionTests(TransactionTestCase):
                         fx.open_election(election)
                     self.assertEqual(str(refused.exception), cq.MESSAGES["ELECT_EMPTY"])
                     elections.consent(**(election | {"credential": second.credential}), request_uuid=uuid4(), nomination_uuid=nom)
-                ballot = fx.open_election(election)
+                if circle_scope:
+                    # The Board is electing its first Chair. No person holds the manual preparation command.
+                    with self.assertRaisesMessage(cq.CQRefused, cq.MESSAGES["CQ_PREPARE_OFFICE"]):
+                        fx.open_election(election)
+                    ballot = fx.end_preparation_by_rule(election)
+                else:
+                    ballot = fx.open_election(election)
                 self.assertEqual(cq_reads.vote_status(**election)["eligible"], len(voters))
                 for person in voters:
                     fx.cast(election, ballot, person)
@@ -624,7 +630,15 @@ class ElectionTests(TransactionTestCase):
         with connection.schema_editor(atomic=True) as editor:
             with connection.cursor() as check:
                 care_at_head = {sig: care.installed_definition(check, sig) for sig in (care.WRITER, care.GATEWAY)}
-            # 0114 is the newest CARE migration: it unwinds first and is reapplied last.
+            # Unwind the preparation rule, then the three CARE migrations, in reverse order.
+            preparer = import_module("core.migrations.0115_suggestion_preparer")
+            clarity_open = import_module("core.migrations.0116_clarity_full_participation")
+            chair_commands = import_module("core.migrations.0117_board_chair_commands")
+            author_clarity = import_module("core.migrations.0118_author_clarity_and_conflict")
+            author_clarity.uninstall(None, editor)
+            chair_commands.uninstall(None, editor)
+            clarity_open.uninstall(None, editor)
+            preparer.uninstall(None, editor)  # 0084 checks its own cq_source body on descent.
             board.uninstall(None, editor)
             account.uninstall(None, editor)
             care.uninstall(None, editor)
@@ -669,6 +683,10 @@ class ElectionTests(TransactionTestCase):
             care.install(None, editor)
             account.install_migration(None, editor)
             board.install(None, editor)
+            preparer.install(None, editor)
+            clarity_open.install(None, editor)
+            chair_commands.install(None, editor)
+            author_clarity.install(None, editor)
         self.assertEqual(str(populated.exception), "ELECT P3 retains recorded recognitions and Board notices.",
                          "Recorded recognition must reach and refuse the 0083 downgrade.")
         with connection.cursor() as record_check:

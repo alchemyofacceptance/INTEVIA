@@ -26,19 +26,23 @@ from tests import test_sr_office_actions as office
 class ElectionMandateTests(TransactionTestCase):
     topic = clarity.CQClarityTests.topic
 
-    def board(self, *, empty_seat=False):
+    def board(self, *, empty_seat=False, appoint_chair=False):
         lo, founder = law.ordinary_birth(
             offering_choice="COMPLIMENTARY_BETA",
             board_seats=4 if empty_seat else 3,
             elected=(3,) if empty_seat else (),
         )
-        return self.activate_board(lo, founder)
+        return self.activate_board(lo, founder, appoint_chair=appoint_chair)
 
-    def activate_board(self, lo, founder, activation_probe=None):
+    def activate_board(self, lo, founder, activation_probe=None, *, appoint_chair=False):
         circle = models.Circle.objects.get(parent_organism=lo, kind="GOVERNANCE")
         general = {"organism_uuid": lo.organism_id, "credential": founder.credential}
-        fx.enable_voting(general)
+        if not appoint_chair:
+            fx.enable_voting(general)
         chair = board.seat_trustee(lo, founder, circle, 1)
+        if appoint_chair:
+            board.appoint_board_chairs(lo, founder, chair)
+            fx.enable_voting(general)
         third = board.seat_trustee(lo, founder, circle, 2)
         activation = general | {"circle_uuid": circle.circle_uuid, "request_uuid": uuid4()}
         if activation_probe is None:
@@ -159,7 +163,7 @@ class ElectionMandateTests(TransactionTestCase):
         from tests import committee_support as c
 
         self.topic_category_ids = {}
-        lo, general, governed, trustees = self.board(empty_seat=True)
+        lo, general, governed, trustees = self.board(empty_seat=True, appoint_chair=True)
         founder, chair, _ = trustees
         candidate = law.add_member(lo)
         members = [*trustees, candidate]
@@ -225,6 +229,11 @@ class ElectionMandateTests(TransactionTestCase):
                           contest=str(journey["thread_uuid"]), administrator=str(founder.identity_id))
         self.decision(governed, stand_in, trustees)
         ballot = fx.open_election(journey | {"credential": founder.credential})
+        prep, = disc._rows("""SELECT actor_id, authority_source FROM public.core_cqact
+            WHERE thread_uuid=%s AND operation='PREPARED'""", [journey["thread_uuid"]])
+        self.assertEqual((prep["actor_id"], prep["authority_source"]["kind"], prep["authority_source"]["route"]),
+                         (founder.pk, "CQ_RESULT", "ELECTION_STAND_IN"),
+                         "The named stand-in must act on the election decision that displaced the recused officer.")
         self.assertEqual(cq_reads.vote_status(**journey)["eligible"], 4)
         for member in members:
             fx.cast(journey, ballot, member)
@@ -329,7 +338,7 @@ class ElectionMandateTests(TransactionTestCase):
         rule = fx.provision(founder, lo, terms, vacancies=vacancies)
         offices = {label: fx.define_office(lo, founder, label.upper(), "GOVERNANCE", label, rule,
                                           board_members=True) for label in terms}
-        _, general, governed, trustees = self.activate_board(lo, founder)
+        _, general, governed, trustees = self.activate_board(lo, founder, appoint_chair=True)
         _, chair, third = trustees
         roles = OrganismRoleService(authority=board.authority(), clock=support.database_now)
         helper = office.SROfficeActionTests()

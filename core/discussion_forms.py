@@ -26,6 +26,9 @@ def help_line(context):
     article = "an" if label[0].lower() in "aeiou" else "a"
     return f"If you need help, contact {article} {label} Coordinator."
 REASONS = {
+    "clarity_changed": (409, "The Clarity window or the wording has changed since you opened this form."),
+    "conflict_basis": (400, "Give the reason for your conflict of interest in your own words."),
+    "question_text": (400, "Enter the text of your question."),
     "form": (400, "The form no longer matches this session or discussion."),
     "csrf": (403, "The form's security check did not pass."),
     "method": (405, "This address accepts a submitted form only."),
@@ -51,7 +54,28 @@ VOTE_REASONS = {
     "CQ_INITIATOR": "Only the author or a Coordinator permitted by this organisation can put this Suggestion forward.",
     "CQ_EXISTS": "This Suggestion has already been put to a vote.",
     "CQ_PREPARATION": "The vote is no longer within its preparation period.",
-    "CQ_PREPARE_OFFICE": "Only the current Board Coordinator can mark this Suggestion as prepared.",
+    "CQ_PREPARE_SUGGESTION": "Only the author can mark this Suggestion as prepared.",
+    "CQ_PREPARE_OFFICE": "Only the officer or administrator authorised for this vote can mark it as prepared.",
+    "CQ_VERSION": "The wording has changed since you opened this form.",
+    "CQ_CLARITY_OFFICE": "Only the current Board Chair can take this action.",
+    "CQ_FINISH_OFFICE": "Only the current Board Chair can open this vote.",
+    "CQ_WITHDRAW_AUTHOR": "Only the author can withdraw this Suggestion.",
+    "CQ_WITHDRAW_PHASE": "This Suggestion can no longer be withdrawn.",
+    "CQ_CONFLICT_BASIS": "Give the reason for your conflict of interest in your own words.",
+    "CQ_CONFLICT_REPEAT": "You have already stepped out of this decision.",
+    "CQ_AUTHOR_CLEAR": "You are already clear as the author. You can edit the wording or reply to the discussion.",
+    "CQ_CONFLICT_PERIOD": "This stage no longer accepts a conflict declaration.",
+    "CQ_CLARITY_PERIOD": "This Suggestion is no longer in Clarity.",
+    "CQ_ELECTORATE": "You are outside the eligible membership for this decision.",
+    "CQ_WINDOW": "The Clarity period is still open and the conditions for this action have not been met.",
+    "CQ_RESPONSE_DUE": "The time for responding to Clarity has ended.",
+    "CQ_CDPT": "Too few eligible members have confirmed this wording.",
+    "CQ_THREE": "At least three eligible members are needed to open the vote.",
+    "CQ_LAW": "A provision on which this vote relies is no longer in force.",
+    "CQ_CONFIRM_PERIOD": "This vote is no longer accepting Clarity responses.",
+    "CQ_CONFIRM_ELIGIBLE": "You are not eligible to respond to this wording.",
+    "CQ_RESPONSE_REPEAT": "You already said you were clear on this wording.",
+    "CQ_QUESTION_REPEAT": "You already recorded a question about this wording.",
     "CQ_INIT_VERSION": "The opening post has changed since you opened this form.",
     "CQ_FULL_AUDIENCE": "The Suggestion must be visible to everyone eligible for this Board vote.",
     "CQ_SUGGESTION": "Only a Suggestion can be put to a Board vote.",
@@ -66,11 +90,12 @@ def _binding(request, operation, org, circle, thread):
     return [str(request.user.pk), session, operation, str(org), str(circle), str(thread or "")]
 
 
-def issue_form(request, operation, org, circle, *, thread=None, office=None, version=None, confirmation=None):
+def issue_form(request, operation, org, circle, *, thread=None, office=None, version=None, confirmation=None, window=None):
     return signing.dumps({
         "binding": _binding(request, operation, org, circle, thread),
         "request": str(uuid4()), "thread": str(thread or uuid4()), "post": str(uuid4()),
         **({"version": str(version)} if version is not None else {}),
+        **({"window": str(window)} if window is not None else {}),
         **({"confirmation": confirmation} if confirmation is not None else {}),
         "office": str(office) if office is not None else None,
     }, salt=FORM_SALT)
@@ -95,7 +120,8 @@ def refusal(request, code, context=None, entered=None):
     context = dict(context or {})
     match = request.resolver_match
     noun = "reply" if match and match.url_name == "discussion_reply" else "Topic"
-    vote = match and match.url_name in ("discussion_put_forward", "discussion_prepare")
+    vote = match and (match.url_name in ("discussion_put_forward", "discussion_prepare", "discussion_confirm_clarity")
+                      or (match.url_name or "").startswith("discussion_clarity_"))
     if vote:
         noun = "vote action"
     title = f"Your {noun} could not be recorded."
@@ -112,6 +138,8 @@ def refusal(request, code, context=None, entered=None):
         status, why = REASONS.get(code, default)
         if vote:
             why = VOTE_REASONS.get(code, why)
+            if code == "CQ_PREPARE_SUGGESTION" and context.get("governance_board"):
+                why = "Only the author or the current Board Chair can mark this Suggestion as prepared."
         effect = "This request recorded no new vote action." if vote else "This request recorded no new contribution."
         action = "Reopen the page and check the current wording and available actions."
     if code in ("method", "csrf", "preview", "form"):
@@ -123,10 +151,16 @@ def refusal(request, code, context=None, entered=None):
     if code in ("DISC_QUOTE", "DISC_POST_INPUT", "office_type") and context.get("command"):
         action = "Correct the form below and submit it again."
         context["correctable"] = True
+    if code == "CQ_VERSION" and vote and context.get("topic"):
+        action = "Review the current wording before you respond again."
+        context["wording_url"] = reverse("discussion_topic", args=(
+            context["board_org"], context["board_circle"], context["topic"]["thread_uuid"])) + "#vote"
     if code == "office_type":
         action = "Submit the Topic below to keep the office link."
     if code == "DISC_POST_INPUT":
-        if noun == "reply":
+        if match and match.url_name == "discussion_clarity_question":
+            why = "Enter your question as plain text."
+        elif noun == "reply":
             why = "Enter the text of your reply."
         elif context.get("office"):
             why = "Enter a title of 1 to 90 characters and the text of your Topic."

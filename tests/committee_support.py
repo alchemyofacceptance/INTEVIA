@@ -142,7 +142,13 @@ def decide_instrument(case, scope, attachment, voters):
     """Commit each public command; read only the ballot key and linked result needed here."""
     journey = start(case, scope, attachment)
     thread = journey["thread_uuid"]
-    cq.mark_prepared(**journey, request_uuid=uuid4())
+    if attachment["kind"] == "COMMITTEE" and models.Circle.objects.filter(
+        circle_uuid=scope.get("circle_uuid"), kind="GOVERNANCE"
+    ).exists():
+        from tests.election_support import end_preparation_by_rule
+        end_preparation_by_rule(journey)
+    else:
+        cq.mark_prepared(**journey, request_uuid=uuid4())
     opened = disc._rows(
         """SELECT act_uuid FROM public.core_cqact WHERE thread_uuid=%s
            AND operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')""",

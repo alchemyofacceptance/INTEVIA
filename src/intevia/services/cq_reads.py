@@ -19,7 +19,7 @@ NO_BALLOT_LABELS = {
     "NO_DECISION_COORDINATOR_CLOSED": "The Coordinator closed the Suggestion during Clarity.",
     "NO_DECISION_FEWER_THAN_THREE": "Fewer than three eligible voters remained.",
     "NO_DECISION_PROVISION_ENDED": "A cited constitutional provision was no longer in force.",
-    "NO_DECISION_CLARITY_THRESHOLD": "Too few eligible members confirmed the final wording.",
+    "NO_DECISION_CLARITY_THRESHOLD": "Too few eligible members were clear on the final wording.",
     "NO_DECISION_MOTION_UNAVAILABLE": "The motion was unavailable to its full electorate.",
 }
 
@@ -109,8 +109,8 @@ def _present(row):
         )
         if count["kind"] == "NO_DECISION_CLARITY_THRESHOLD":
             row["markdown"] += (
-                f" {count['clarity_confirmed']} of {count['clarity_eligible']} confirmed clarity."
-                f" {count['clarity_required']} confirmations were required."
+                f" The stage required {count['clarity_required']} of {count['clarity_eligible']} eligible members to be clear."
+                f" It counted {count['clarity_confirmed']}."
             )
         row["reporting_link_label"] = "Election ballot privacy" if row["event_kind"] == "ELECTION" else "View reporting decision"
         return row

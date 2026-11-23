@@ -13,7 +13,7 @@ from src.intevia.services import cq_reads, discussion, discussion_posts, member_
 def _read_page(credential, org, circle, thread):
     scope = {"credential": credential, "organism_uuid": org, "circle_uuid": circle}
     categories = discussion.board_categories(**scope, governance_only=True)["categories"]
-    context = {"board_org": org, "board_circle": circle}
+    context = {"board_org": org, "board_circle": circle, "governance_board": True}
     pinned_office = None
     if thread is None:
         for category in categories:

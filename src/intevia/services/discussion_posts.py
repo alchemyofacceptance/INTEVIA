@@ -36,7 +36,7 @@ def _command(*, credential, organism_uuid, category_uuid, thread_uuid, request_u
                                [json.dumps(payload), markdown, actor.pk, actor.access_epoch, stamp])[0]["result"]
             receipt = {key: UUID(value) if value is not None else None for key, value in result.items()}
             if operation == "EDIT" and _edited_during_clarity(receipt):
-                receipt["clarity_notice"] = "The wording has changed. Clarity must be confirmed again on this version."
+                receipt["clarity_notice"] = "The wording has changed. An eligible author stays clear. Other members can respond to the new wording."
             return receipt
     except IntegrityError as exc:
         disc.translate_refusal(exc)

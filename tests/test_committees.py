@@ -103,6 +103,14 @@ class CommitteeTests(TransactionTestCase):
         self.refusal(board, override, "CMT_TIER")
 
         receipt = c.decide_instrument(self, board, forming, voters)
+        # Formation is a LAW attachment. The later BIND_WORK command is a COMMITTEE attachment.
+        author = voters[1]
+        law_source, = disc._rows("""SELECT p.actor_id, p.authority_source FROM public.core_cqact a
+            JOIN public.core_cqact p ON p.thread_uuid=a.thread_uuid
+            WHERE a.act_uuid=%s AND p.operation='PREPARED'""", [receipt["result"]])
+        self.assertEqual(law_source, {"actor_id": author.pk, "authority_source": {
+            "kind": "MEMBER", "reference": author.pk, "route": "PREPARED"}},
+            "The Board Coordinator prepares their own proposed law through membership.")
         proof = receipt["plan"]["committee"]
         finding = proof["officer_finding"]
         self.assertEqual(
@@ -130,6 +138,11 @@ class CommitteeTests(TransactionTestCase):
         bound = c.decide_instrument(
             self, local, c.step(local, binding, "BIND_WORK", activity=str(activity_id)), voters
         )
+        source, = disc._rows("""SELECT p.actor_id, p.authority_source->>'kind' AS kind
+            FROM public.core_cqact a JOIN public.core_cqact p ON p.thread_uuid=a.thread_uuid
+            WHERE a.act_uuid=%s AND p.operation='PREPARED'""", [bound["result"]])
+        self.assertEqual(source, {"actor_id": founder.pk, "kind": "OFFICE"},
+                         "The committee instrument's opening author must still prepare it through the office.")
         activity = models.ServiceActivity.objects.get(activity_id=activity_id)
         original = models.ServiceActivityAssignment.objects.get(activity=activity)
         self.assertEqual(committees.work_holder(activity, original, "default"), founder.pk)

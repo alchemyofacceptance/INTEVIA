@@ -200,6 +200,30 @@ def turn_off_birth_choice(lo, founder):
     )
 
 
+def appoint_board_chairs(lo, founder, *holders):
+    """Define one constitutional office and obtain each nominee's consent before activation."""
+    if not holders:
+        return
+    from src.intevia.services import organism_role_definition_service as definitions
+    from tests import election_support, test_sr_office_actions
+    from tests.test_discussion_office_links import record_office
+
+    document = law.Document(founder, content="[#1] The organisation has a Board Chair.")
+    adoption = law.law.OrganismLawService().adopt_law(law.command(founder, law.adoption(lo, document)))
+    if adoption.status != "ADOPT":
+        raise AssertionError("The Chair appointment needs an adopted office provision.")
+    provision = definitions.DefinitionProvision("OFFICE_BASIS", f"law-ref:{document.name}#1",
+                                               str(document.first.version_number))
+    role_uuid = record_office(lo, founder, definitions.DefinitionContent(code="CHAIR", provisions=(provision,)))
+    role = models.OrganismRoleDefinition.objects.get(role_uuid=role_uuid)
+    fixture = test_sr_office_actions.SROfficeActionTests()
+    fixture.actor, fixture.organism = founder, lo
+    service = OrganismRoleService(authority=authority(), clock=support.database_now)
+    for holder in holders:
+        assignment = election_support.office_proposal(lo, founder, holder, role, self_proposed=False)
+        service.transition_assignment(fixture._transition_command(assignment, "ASSIGN"))
+
+
 def ordinary(size, *, board=False):
     lo, founder = law.ordinary_birth(
         offering_choice="FREE", board_seats=size if board else 0

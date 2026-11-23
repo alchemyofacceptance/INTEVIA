@@ -42,16 +42,30 @@ def propose(case, scope, changes, predecessor, *, reporting_effective_from=None)
     return journey, topic["version"]
 
 
+def response_members(thread, people):
+    """Only eligible peers respond explicitly; the preparer may differ from the author."""
+    author, = disc._rows("SELECT author_id FROM public.discp_posts WHERE thread_uuid=%s AND post_number=1",
+                         [thread])
+    return [person for person in people if person.pk != author["author_id"]]
+
+
 def open_motion(scope, wording, people):
     cq.mark_prepared(**scope, request_uuid=uuid4())
     if cq.phase(**scope)["phase"] == "CLARITY":
-        for person in people:
+        for person in response_members(scope["thread_uuid"], people):
             cq.confirm_clarity(
                 **(scope | {"credential": person.credential}),
                 request_uuid=uuid4(),
                 version_uuid=wording,
             )
-        return cq.finish_clarity(**scope, request_uuid=uuid4())
+    return cq_reads.vote_status(**scope)["ballot"]
+
+
+def confirm_last(scope, person):
+    """Make the final Clarity response at the caller's cut and return the rule's ballot."""
+    wording = cq.phase(**scope)["version"]
+    cq.confirm_clarity(**(scope | {"credential": person.credential}),
+                       version_uuid=wording, request_uuid=uuid4())
     return cq_reads.vote_status(**scope)["ballot"]
 
 

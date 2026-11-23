@@ -4,6 +4,8 @@ import json
 from dataclasses import replace
 from uuid import uuid4
 
+from django.db import connection
+
 from core import models
 from src.intevia.services import cq, cq_reads, elections
 from src.intevia.services import organism_recovery
@@ -98,6 +100,24 @@ def nominate(journey, nominee, *, by=None, assignment=None):
 
 def open_election(journey):
     cq.mark_prepared(**journey, request_uuid=uuid4())
+    return cq_reads.vote_status(**journey)["ballot"]
+
+
+def end_preparation_by_rule(journey):
+    """Use the preparation deadline for a Board specialist motion, including one with a vacant Chair."""
+    from tests.test_cq_clarity import elapsed_clarity
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT act_uuid FROM public.cq_phases WHERE thread_uuid=%s AND phase='PREPARATION'",
+                       [journey["thread_uuid"]])
+        window, = cursor.fetchone()
+    with elapsed_clarity(window, response_due=False):
+        cq.catch_up(credential=journey["credential"])
+    with connection.cursor() as cursor:
+        cursor.execute("""SELECT authority_source->>'kind' FROM public.core_cqact
+            WHERE thread_uuid=%s AND operation='PREPARATION_DUE'""", [journey["thread_uuid"]])
+        if cursor.fetchall() != [("RULE",)]:
+            raise AssertionError("The deadline must have ended preparation once, on the authority of the rule.")
     return cq_reads.vote_status(**journey)["ballot"]
 
 

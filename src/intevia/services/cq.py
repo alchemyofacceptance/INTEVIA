@@ -7,7 +7,7 @@ All effective times are sampled by PostgreSQL. No client can supply a phase cloc
 import json
 import re
 from datetime import datetime
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from django.db import IntegrityError, connections, transaction
 
@@ -132,9 +132,10 @@ MESSAGES = {
     "CQ_FULL_AUDIENCE": "This category does not give the full board electorate access to the Suggestion.",
     "CQ_INIT_VERSION": "Choose the current opening-post version before putting this Suggestion forward.",
     "CQ_VERSION": "Choose the current wording before recording your Clarity response.",
-    "CQ_PREPARE_OFFICE": "Only this board's effective Coordinator may prepare this Suggestion.",
-    "CQ_CLARITY_OFFICE": "Only this board's effective Coordinator may extend or close clarity.",
-    "CQ_FINISH_OFFICE": "Only this board's effective Coordinator may finish clarity.",
+    "CQ_PREPARE_SUGGESTION": "Only the author can mark this Suggestion as prepared. In the Board, the Board Chair can also do this.",
+    "CQ_PREPARE_OFFICE": "Only the officer or administrator authorised for this vote can mark it as prepared.",
+    "CQ_CLARITY_OFFICE": "Only the officer authorised for this board can extend or close Clarity.",
+    "CQ_FINISH_OFFICE": "Only the officer authorised for this board can open the vote from Clarity.",
     "CQ_OPEN_OFFICE": "Only this board's effective Coordinator may open this vote.",
     "CQ_PREPARATION": "This CQ is no longer in preparation.",
     "CQ_CONFIRM_PERIOD": "This CQ is not accepting clarity confirmations.",
@@ -147,6 +148,7 @@ MESSAGES = {
     "CQ_CDPT": "The required clarity confirmations have not been reached.",
     "CQ_WITHDRAW_AUTHOR": "Only this Suggestion's eligible author may withdraw it.",
     "CQ_WITHDRAW_PHASE": "A Suggestion can be withdrawn only during preparation or clarity.",
+    "CQ_AUTHOR_CLEAR": "You are already clear as the author. You can edit the wording or reply to the discussion.",
     "CQ_CONFLICT_PERIOD": "The conflict-declaration period has ended; this CQ cannot accept another declaration.",
     "CQ_CONFLICT_REPEAT": "You have already declared a conflict for this proposal.",
     "CQ_CONFLICT_BASIS": "Supply the basis of your declared conflict.",
@@ -850,6 +852,119 @@ def confirm_prepared(*, confirmation, **scope):
     return receipt
 
 
+def _vote_command_allowed(board, thread, actor, operation, args, at):
+    """Test the same two stable predicates the writer checks at submission."""
+    scope = [board["organism_id"], board["board_uuid"], thread, operation]
+    try:
+        with transaction.atomic():
+            if operation == "PROCEED":
+                # Opening a ballot checks more than the ordinary Clarity phase predicate.
+                facts = "public.cq_ballot_facts(%s,%s,%s,%s,%s,%s::jsonb,%s,%s)"
+                params = scope + [uuid4(), json.dumps(args), actor.pk, at]
+            else:
+                facts = "public.cq_phase_facts(%s,%s,%s,%s,%s::jsonb,%s,%s)"
+                params = scope + [json.dumps(args), actor.pk, at]
+            rows = disc._rows(
+                "SELECT public.cq_source(%s,%s,%s,%s,%s,%s) IS NOT NULL AND "
+                + facts + " IS NOT NULL AS allowed",
+                scope + [actor.pk, at] + params,
+            )
+    except IntegrityError as error:
+        code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
+        if code not in MESSAGES and code not in disc.MESSAGES:
+            raise
+        return False
+    return bool(rows and rows[0]["allowed"])
+
+
+def check_clarity_action(*, credential, organism_uuid, circle_uuid, thread_uuid, request_uuid,
+                         operation, window, version):
+    """Recheck this Board form under the submission lock before using the ordinary writer.
+
+    A receipt for the same command may go to the writer's normal replay check.
+    A fresh Clarity conflict must never become a ballot conflict. The writer
+    checks cq_source under this lock before either replaying a receipt or writing.
+    """
+    actor = disc._actor(credential)
+    board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid)
+    if not board["thread_audience"] or board["circle_kind"] != "GOVERNANCE":
+        raise disc.DiscussionUnavailable()
+    rows = disc._rows(
+        """SELECT EXISTS (SELECT FROM public.core_cqact a WHERE a.act_uuid=%s AND a.operation=%s
+                          AND a.actor_id=%s AND a.actor_epoch=%s AND a.board_uuid=h.board_uuid
+                          AND a.thread_uuid=h.thread_uuid AND a.organism_id=h.organism_id) AS replay,
+                  h.phase='CLARITY' AND h.act_uuid=%s AND p.version_uuid=%s AS current_form,
+                  p.author_id=%s AS is_author,
+                  EXISTS (SELECT FROM jsonb_array_elements(public.cq_roster(h.board_uuid,h.thread_uuid,
+                             public.intevia_clock_statement())) m WHERE (m->>'person')::bigint=%s) AS eligible
+           FROM public.cq_phases h
+           JOIN public.discp_posts p ON p.thread_uuid=h.thread_uuid AND p.post_number=1
+           WHERE h.organism_id=%s AND h.board_uuid=%s AND h.thread_uuid=%s""",
+        [request_uuid, operation, actor.pk, actor.access_epoch, window, version, actor.pk, actor.pk,
+         board["organism_id"], board["board_uuid"], thread_uuid],
+    )
+    if not rows or (not rows[0]["replay"] and not rows[0]["current_form"]):
+        raise disc.DiscussionRefused(code="clarity_changed")
+    if operation == "WITHDRAW" and not rows[0]["is_author"]:
+        raise CQRefused("CQ_WITHDRAW_AUTHOR")
+    if operation == "CONFLICT" and not rows[0]["replay"] and not rows[0]["eligible"]:
+        raise CQRefused("CQ_ELECTORATE")
+
+
+def _clarity_responses(board, thread, actor, row):
+    """Project totals for the live wording and reader-specific response permissions."""
+    at = row["read_at"]
+    counts = disc._rows(
+        """SELECT first.version_uuid, count(m.entry)::int AS eligible,
+                  count(m.entry) FILTER (
+                      WHERE (m.entry->>'person')::bigint=first.author_id OR last.is_clear
+                  )::int AS confirmed,
+                  coalesce(bool_or(last.is_clear) FILTER (WHERE (m.entry->>'person')::bigint=%s),
+                           false) AS own_clear,
+                  count(m.entry) FILTER (WHERE (m.entry->>'person')::bigint=%s)>0 AS in_roster
+           FROM public.cq_phases h
+           JOIN public.discp_posts first ON first.thread_uuid=h.thread_uuid AND first.post_number=1
+           LEFT JOIN LATERAL jsonb_array_elements(public.cq_roster(h.board_uuid,h.thread_uuid,%s)) m(entry) ON true
+           LEFT JOIN LATERAL (
+               SELECT a.operation='CONFIRM' AND a.facts->>'version'=first.version_uuid::text AS is_clear
+               FROM public.core_cqact a WHERE a.thread_uuid=h.thread_uuid
+                 AND a.facts->'member'=m.entry AND a.operation IN ('CONFIRM','QUESTION')
+                 AND a.effective_at<=least(h.deadline,%s)
+               ORDER BY a.ordinal DESC LIMIT 1
+           ) last ON true
+           WHERE h.organism_id=%s AND h.board_uuid=%s AND h.thread_uuid=%s AND h.phase='CLARITY'
+             AND NOT first.author_hidden AND NOT first.coordinator_hidden
+           GROUP BY first.version_uuid""",
+        [actor.pk, actor.pk, at, at,
+         board["organism_id"], board["board_uuid"], thread],
+    )
+    if not counts:
+        return {}
+    count = counts[0]
+    version = count.pop("version_uuid")
+    own_clear = count.pop("own_clear") and not row["is_author"]
+    in_roster = count.pop("in_roster")
+    # Use the real writer predicates. The basis here is only for the read probe.
+    actions = []
+    if in_roster and _vote_command_allowed(board, thread, actor, "CONFLICT", {"basis": "Declared by member"}, at):
+        actions.append("CONFLICT")
+    for operation in ("PROCEED", "EXTEND", "CLOSE"):
+        if _vote_command_allowed(board, thread, actor, operation, {}, at):
+            actions.append(operation)
+    if row["is_author"] and _vote_command_allowed(board, thread, actor, "WITHDRAW", {}, at):
+        actions.append("WITHDRAW")
+    result = {"count": count, "own_clear": own_clear,
+              "clarity_actions": actions, "clarity_window": row["clarity_window"], "clarity_version": version}
+    if count["confirmed"] == count["eligible"] and count["eligible"] >= 3 and at < row["response_deadline"]:
+        result["stepped_out"] = True
+        result["can_proceed"] = "PROCEED" in actions
+    if not row["is_author"] and at < row["deadline"]:
+        for operation in ("CONFIRM", "QUESTION"):
+            if _vote_command_allowed(board, thread, actor, operation, {"version": str(version)}, at):
+                result[operation.lower() + "_version"] = version
+    return result
+
+
 @transaction.atomic
 def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, preview_prepared=False):
     """Return the admitted Board reader's vote line, wording and available command.
@@ -862,12 +977,23 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     if not board["thread_audience"]:
         return None
     rows = disc._rows(
-        """SELECT opening.version_uuid, initiated.act_uuid, v.version_number, body.markdown,
+        """SELECT opening.version_uuid, opening.author_id=%s AS is_author, initiated.act_uuid, v.version_number, body.markdown,
                   initiated.request ? 'attachment' AS attached,
-                  state.phase, state.deadline, state.response_deadline,
+                  initiated.request->'attachment'->>'kind' AS attachment_kind,
+                  state.act_uuid AS clarity_window, state.phase, state.deadline, state.response_deadline,
                   public.intevia_clock_statement() AS read_at, head.effective_at,
                   head.operation AS head_operation, head.facts#>>'{count,kind}' AS outcome,
-                  ballot.act_uuid AS ballot_uuid
+                  ballot.act_uuid AS ballot_uuid,
+                  CASE WHEN c.kind='GOVERNANCE' THEN 'BOARD'
+                       WHEN public.cmt_live((public.cmt_current(c.id,public.intevia_clock_statement(),
+                              public.intevia_clock_statement())).binding,public.intevia_clock_statement(),
+                              public.intevia_clock_statement()) THEN 'COMMITTEE'
+                       ELSE 'CIRCLE' END AS body_kind,
+                  public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())
+                    IN ('ACTIVE','PROBATIONARY') AS clarity_reader,
+                  CASE WHEN ballot.authority_source @>
+                      '{"kind":"RULE","reference":"HG:BR2","route":"CLARITY_FULL_PARTICIPATION"}'::jsonb
+                    THEN jsonb_array_length(ballot.facts->'roster') END AS opening_count
            FROM public.core_discboard b JOIN public.core_circle c ON c.id=b.circle_id
            JOIN public.discp_threads t ON t.board_uuid=b.board_uuid
            JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
@@ -886,7 +1012,7 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
            LEFT JOIN public.core_discbody body ON body.version_uuid=v.version_uuid
            WHERE b.board_uuid=%s AND t.thread_uuid=%s AND c.kind='GOVERNANCE'
                 AND t.topic_type='SUGGESTION' AND NOT (opening.author_hidden OR opening.coordinator_hidden)""",
-        [board["board_uuid"], thread_uuid],
+        [actor.pk, actor.pk, board["board_uuid"], thread_uuid],
     )
     if not rows:
         return None
@@ -897,6 +1023,27 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
             "phase", "deadline", "response_deadline", "read_at", "effective_at",
             "head_operation", "outcome", "ballot_uuid", "version_number", "markdown",
         )})
+        panel["specialist_preparation"] = row["attachment_kind"] in ("ELECTION", "COMMITTEE")
+        if row["clarity_reader"]:
+            if row["phase"] == "CLARITY":
+                panel.update(_clarity_responses(board, thread_uuid, actor, row))
+            live_ballot = (row["phase"] == "VOTING" and row["deadline"] is not None
+                           and row["read_at"] < row["deadline"])
+            if live_ballot and row["opening_count"] is not None:
+                panel["opening_count"] = row["opening_count"]
+            if panel.get("count") or live_ballot:
+                # Only the admitted reader's declaration, at the same cut as their status.
+                own = disc._rows(
+                    """SELECT a.facts->>'basis' AS basis FROM public.core_cqact a
+                       WHERE a.board_uuid=%s AND a.thread_uuid=%s AND a.actor_id=%s
+                         AND a.operation='CONFLICT' AND a.recorded_at<=%s""",
+                    [board["board_uuid"], thread_uuid, actor.pk, row["read_at"]],
+                )
+                panel["own_conflict"] = bool(own)
+                if own:
+                    panel["own_conflict_reason"] = own[0]["basis"]
+        panel["body_kind"] = row["body_kind"]
+        panel["election"] = row["attachment_kind"] == "ELECTION"
         if row["phase"] != "PREPARATION" or row["attached"]:
             return panel
         op, args = "PREPARED", {}
@@ -904,26 +1051,22 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
         op, args = "INITIATE", {"version": str(row["version_uuid"])}
     # These are the writer's STABLE checks. Discard all returned authority and
     # electorate data. A normal rule refusal means this reader has no command.
-    try:
-        with transaction.atomic():
-            if op == "PREPARED" and preview_prepared:
+    if op == "PREPARED" and preview_prepared:
+        try:
+            with transaction.atomic():
                 disc._rows("SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL",
                            [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk])
                 preview = _preparation_preview(board, thread_uuid, actor, organism_uuid)
-                if preview["destination"] is None:
-                    return panel
-                panel["confirmation"] = preview
-            else:
-                disc._rows(
-                    """SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL,
-                              public.cq_phase_facts(%s,%s,%s,%s,%s::jsonb,%s,public.intevia_clock_statement()) IS NOT NULL""",
-                    [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk,
-                     board["organism_id"], board["board_uuid"], thread_uuid, op, json.dumps(args), actor.pk],
-                )
-    except IntegrityError as error:
-        code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
-        if code not in MESSAGES and code not in disc.MESSAGES:
-            raise
+        except IntegrityError as error:
+            code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
+            if code not in MESSAGES and code not in disc.MESSAGES:
+                raise
+            return panel
+        if preview["destination"] is None:
+            return panel
+        panel["confirmation"] = preview
+        panel["is_author"] = row["is_author"]
+    elif not _vote_command_allowed(board, thread_uuid, actor, op, args, row["read_at"]):
         return panel
     panel["operation"] = op
     if op == "INITIATE":

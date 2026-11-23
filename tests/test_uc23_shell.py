@@ -384,9 +384,16 @@ class VoteTransportTests(SimpleTestCase):
         with projected_forms() as (client, org, circle, _, thread):
             page = client.get(reverse("discussion_topic", args=(org, circle, thread)))
             _, fields = command_form(page)
-            for name, op in (("discussion_put_forward", "INITIATE"), ("discussion_prepare", "PREPARED")):
+            for name, op in (("discussion_put_forward", "INITIATE"), ("discussion_prepare", "PREPARED"),
+                             ("discussion_confirm_clarity", "CONFIRM"), ("discussion_clarity_question", "QUESTION"),
+                             ("discussion_clarity_conflict", "CONFLICT"), ("discussion_clarity_proceed", "PROCEED"),
+                             ("discussion_clarity_extend", "EXTEND"), ("discussion_clarity_close", "CLOSE"),
+                             ("discussion_clarity_withdraw", "WITHDRAW")):
                 url = reverse(name, args=(org, circle, thread))
-                token = discussion_forms.issue_form(page.wsgi_request, op, org, circle, thread=thread, version=uuid4())
+                # Include the window and confirmation required by the five Clarity commands.
+                confirmation = op if op in ("CLOSE", "WITHDRAW") else None
+                token = discussion_forms.issue_form(page.wsgi_request, op, org, circle, thread=thread,
+                    version=uuid4(), window=uuid4(), confirmation=confirmation)
                 data = {"csrfmiddlewaretoken": fields["csrfmiddlewaretoken"], "vote_command": token}
                 with self.subTest(operation=op), mock.patch.object(discussion_vote.cq, "_lock") as lock:
                     self.assertEqual(client.get(url).status_code, 405, "A link cannot submit a vote action.")
@@ -527,10 +534,11 @@ class DiscussionNavigationTests(SimpleTestCase):
         request = RequestFactory().post(reverse("discussion_prepare", args=(org, circle, thread)))
         request.user = AnonymousUser()
         request.resolver_match = resolve(request.path)
-        context = {"board_org": org, "board_circle": circle, "circle": {"short_label": "Board"}}
+        context = {"board_org": org, "board_circle": circle, "governance_board": True, "circle": {"short_label": "Board"}}
         for code, expected in (
             ("CQ_INIT_VERSION", "The opening post has changed since you opened this form."),
-            ("CQ_PREPARE_OFFICE", "Only the current Board Coordinator can mark this Suggestion as prepared."),
+            ("CQ_PREPARE_SUGGESTION", "Only the author or the current Board Chair can mark this Suggestion as prepared."),
+            ("CQ_PREPARE_OFFICE", "Only the officer or administrator authorised for this vote can mark it as prepared."),
             ("CQ_PREPARATION", "The vote is no longer within its preparation period."),
             ("CQ_FULL_AUDIENCE", "The Suggestion must be visible to everyone eligible for this Board vote."),
             ("CQ_REQUEST", "This form already recorded a different vote action."),
@@ -543,6 +551,16 @@ class DiscussionNavigationTests(SimpleTestCase):
                                          "Reopen the page and check the current wording and available actions.",
                                          "If you need help, contact a Board Coordinator."],
                                  "Each vote refusal must identify its own cause, effect, next action and helper.")
+
+
+    def test_preparation_refusal_outside_board_names_only_the_author(self):
+        org, circle, thread = uuid4(), uuid4(), uuid4()
+        request = RequestFactory().post(reverse("discussion_prepare", args=(org, circle, thread)))
+        request.user = AnonymousUser()
+        request.resolver_match = resolve(request.path)
+        response = discussion_forms.refusal(request, "CQ_PREPARE_SUGGESTION")
+        self.assertContains(response, "Only the author can mark this Suggestion as prepared.", status_code=409)
+        self.assertNotContains(response, "Board Coordinator", status_code=409)
 
 
 class VotePanelPresentationTests(SimpleTestCase):
@@ -560,6 +578,211 @@ class VotePanelPresentationTests(SimpleTestCase):
         with mock.patch.object(discussion_vote.cq, "board_topic_vote", return_value=row):
             vote = discussion_vote.panel(self.request, uuid4(), uuid4(), uuid4())
         return Markup(render_to_string("core/components/board_vote.html", {"vote": vote}))
+
+    def test_preparation_help_describes_the_readers_context(self):
+        expected = ("Discuss the Suggestion here first. Its author can mark it prepared for Clarity or voting; "
+                    "if the preparation deadline passes first, it moves on as unprepared.")
+        markup = self.vote_markup(phase="PREPARATION", read_at=self.when, deadline=self.later)
+        notice, = markup.select("div", classes=("notice", "vote-feedback"))
+        self.assertEqual([p["text"] for p in markup.select("p", within=notice)],
+                         [expected, "The wording can still change until voting opens."],
+                         "Outside the Board only the author should be named in the preparation help.")
+        for row in ({"phase": "PREPARATION", "specialist_preparation": True}, {"phase": "VOTING"}):
+            with self.subTest(row=row):
+                self.assertNotIn(expected, self.vote_markup(**row).select("section")[0]["text"],
+                                 "The author instruction belongs only to ordinary Suggestion preparation.")
+
+    def test_clarity_wording_uses_the_deciding_body(self):
+        for body, election, noun, office in (
+            ("BOARD", False, "Board members", "Board Chair"),
+            ("CIRCLE", False, "Circle members", "Circle Coordinator"),
+            ("COMMITTEE", False, "committee members", "Circle Coordinator"),
+            ("BOARD", True, "voters", "Board Chair"),
+        ):
+            with self.subTest(body=body, election=election):
+                data = dict(body_kind=body, election=election, read_at=self.when, deadline=self.later)
+                opened = self.vote_markup(phase="VOTING", opening_count=5, **data)
+                self.assertEqual(opened.select("p")[1]["text"],
+                                 f"All 5 eligible {noun} were clear, so voting opened on this wording.")
+                waiting = self.vote_markup(phase="CLARITY", count={"eligible": 3, "confirmed": 3},
+                                           stepped_out=True, can_proceed=False, **data)
+                self.assertEqual(waiting.select("p")[1]["text"], "3 of 3 are clear.")
+                self.assertEqual(waiting.select("p")[2]["text"],
+                                 f"A member has stepped out of this decision, and all 3 remaining {noun} are clear. "
+                                 f"Voting opens automatically after Clarity ends, or sooner if the {office} opens it.")
+
+    def test_vote_feedback_groups_each_sections_messages_by_speaker(self):
+        confirmed = "You said you're clear on this wording."
+        question = " If something becomes unclear, you can still ask a question."
+        conflict = "You have declared a conflict and stepped out of this decision."
+        opening = "All 3 eligible Board members were clear, so voting opened on this wording."
+        step = ("A member has stepped out of this decision, and all 3 remaining Board members are clear. "
+                "Voting opens automatically after Clarity ends, or ")
+        early = {"read_at": self.when, "deadline": self.later}
+        count = {"count": {"eligible": 3, "confirmed": 3}}
+        states = [
+            ("unconfirmed trustee", "CLARITY", early, [], True),
+            ("author clear by authoring", "CLARITY", early | {"is_author": True}, [], True),
+            ("read-only trustee", "CLARITY", early, [], True),
+            ("confirmed trustee", "CLARITY", early | {"own_clear": True}, [confirmed + question], True),
+            ("at the deadline", "CLARITY", {"own_clear": True, "read_at": self.later, "deadline": self.later}, [confirmed], False),
+            ("response period", "CLARITY", {"own_clear": True, "read_at": self.later, "deadline": self.when}, [confirmed], False),
+            ("declarer", "CLARITY", early | {"own_conflict": True}, [conflict], True),
+            ("Chair", "CLARITY", early | count | {"stepped_out": True, "can_proceed": True, "own_clear": True},
+             [step + "you can open it now."], True),
+            ("declarer sees both facts", "CLARITY", early | count | {"stepped_out": True, "own_conflict": True},
+             [step + "sooner if the Board Chair opens it.", conflict], True),
+            ("opened by rule", "VOTING", early | {"opening_count": 3}, [opening], False),
+            ("ordinary opening", "VOTING", early, [], False),
+            ("awaiting result", "VOTING", {"read_at": self.later, "deadline": self.when}, [], False),
+            ("specialist preparation", "PREPARATION", early | {"specialist_preparation": True}, [], True),
+        ]
+        for reader, phase, facts, expected, editable in states:
+            with self.subTest(reader=reader):
+                page = self.vote_markup(phase=phase, markdown="Member's words.", version_number=2, **facts)
+                if editable:
+                    expected = [*expected, "The wording can still change until voting opens."]
+                feedback = page.select("div", classes=("notice", "vote-glass", "vote-feedback"))
+                self.assertEqual(len(feedback), int(bool(expected)), "Use one feedback bubble when the stage has something to say.")
+                if feedback:
+                    self.assertEqual([p["text"] for p in page.select("p", within=feedback[0])], expected,
+                                     "Put the reader's applicable messages together, in their own paragraphs.")
+                wording, = page.select("div", classes=("motion-wording", "card", "vote-glass"))
+                self.assertEqual(wording["text"].strip(), "Member's words.", "Only the human wording belongs in its glass.")
+                notices = [n for n in page.nodes if "notice" in n["attrs"].get("class", "").split()]
+                self.assertEqual(notices, feedback, "The edit note must not create a second notice.")
+                section, = page.select("article", **{"aria-labelledby": "vote-wording-heading"})
+                self.assertIs(wording["parents"][-1], section, "The human wording belongs to its labelled section.")
+                if feedback:
+                    self.assertLess(page.nodes.index(feedback[0]), page.nodes.index(section),
+                                    "INTEVIA speaks before the wording heading.")
+                paragraphs = page.select("p")
+                status = paragraphs[:2] if "count" in facts else paragraphs[:1]
+                for placed in [*page.select("h2"), *page.select("h3"), *status]:
+                    self.assertFalse(any("vote-glass" in n["attrs"].get("class", "").split() for n in (*placed["parents"], placed)),
+                                     "Headings, version, phase, date and count sit outside the glass.")
+
+    def test_response_row_orders_only_the_available_controls(self):
+        context = {"board_org": uuid4(), "board_circle": uuid4(), "topic": {"thread_uuid": uuid4()}}
+        for confirm, question, reply, expected in (
+            (True, True, True, ["I'm clear", "Ask a question"]),
+            (False, True, True, ["Ask a question"]),
+            (True, True, False, ["I'm clear"]),
+            (False, True, False, []),
+            (False, False, True, []),
+        ):
+            with self.subTest(confirm=confirm, question=question, reply=reply):
+                vote = {"confirm_command": confirm, "question_url": "/?clarity=question" if question else None}
+                page = Markup(render_to_string("core/components/board_vote.html", context | {"vote": vote, "reply_command": reply}, request=self.request))
+                rows = page.select("div", classes=("clarity-responses",))
+                self.assertEqual(len(rows), int(bool(expected)), "Render the row only for actionable responses.")
+                if rows:
+                    children = [node for node in page.nodes if node["parents"] and node["parents"][-1] is rows[0]]
+                    labels = []
+                    for child in children:
+                        if child["tag"] == "form":
+                            action, = page.select("button", within=child, classes=("primary",), type="submit")
+                        else:
+                            self.assertEqual(child["tag"], "a", "The question opens a separate form on the Topic.")
+                            self.assertIn("secondary", child["attrs"]["class"].split())
+                            action = child
+                        labels.append(action["text"].strip())
+                    self.assertEqual(labels, expected, "Put the primary confirmation first, followed by the secondary question.")
+
+    def test_focus_and_stop_colours_follow_the_selected_vote_form(self):
+        from core import discussion_vote
+
+        ids = (uuid4(), uuid4(), uuid4())
+        topic = reverse("discussion_topic", args=ids)
+        version = uuid4()
+        base = {"phase": "CLARITY", "confirm_version": version, "question_version": version,
+                "clarity_actions": ["CONFLICT", "PROCEED", "EXTEND", "CLOSE", "WITHDRAW"],
+                "clarity_window": uuid4(), "clarity_version": version}
+
+        def render(query, *, can_reply=True):
+            request = RequestFactory().get(topic, query)
+            request.user = AnonymousUser()
+            request.session = SimpleNamespace(session_key="fixture")
+            with mock.patch.object(discussion_vote.cq, "board_topic_vote", return_value=base.copy()):
+                vote = discussion_vote.panel(request, *ids)
+            return Markup(render_to_string("core/components/board_vote.html", {
+                "vote": vote, "board_org": ids[0], "board_circle": ids[1],
+                "topic": {"thread_uuid": ids[2]}, "reply_command": can_reply,
+            }, request=request))
+
+        choices = render({})
+        red = choices.select("a", classes=("button", "danger"))
+        self.assertEqual([a["text"] for a in red], ["Declare a conflict", "Close without a vote", "Withdraw Suggestion"],
+                         "Each stop opens its own form with a red button.")
+        self.assertFalse(choices.select("textarea"), "The choice of commands must show no entry field.")
+        for slug, submit, variant, field in (
+            ("question", "Submit question", "primary", "markdown"),
+            ("conflict", "Declare conflict", "primary", "basis"),
+            ("close", "Close without a vote", "danger", None),
+            ("withdraw", "Withdraw Suggestion", "danger", None),
+        ):
+            with self.subTest(form=slug):
+                anchor = "clarity-input" if field else "clarity-confirmation"
+                self.assertEqual(len(choices.select("a", href=f"{topic}?clarity={slug}#{anchor}")), 1)
+                page = render({"clarity": slug})
+                buttons = page.select("button")
+                self.assertEqual([b["text"] for b in buttons], [submit], "Show only the selected vote submit.")
+                self.assertIn(variant, buttons[0]["attrs"]["class"].split(), "Use the ruled submit colour.")
+                links = page.select("a")
+                self.assertEqual([(a["text"], a["attrs"]["href"]) for a in links], [("Cancel", topic + "#vote")],
+                                 "Cancel alone returns to the choices on this Topic.")
+                self.assertIn("secondary", links[0]["attrs"]["class"].split())
+                form, = page.select("form")
+                self.assertEqual((form["attrs"]["method"], form["attrs"]["action"]),
+                                 ("post", reverse("discussion_clarity_" + slug, args=ids)))
+                if field:
+                    box, = page.select("textarea", within=form, name=field)
+                    self.assertIn("required", box["attrs"], "A question or conflict needs the member's own words.")
+                else:
+                    self.assertEqual(len(page.select("div", classes=("card", "refusal", "vote-glass"))), 1)
+        withheld = render({"clarity": "question"}, can_reply=False)
+        self.assertFalse(withheld.select("textarea"), "A direct preview cannot bypass the ordinary reply gate.")
+        self.assertTrue(withheld.select("form", action=reverse("discussion_confirm_clarity", args=ids)),
+                        "An unavailable question must not hide an admitted confirmation.")
+
+    def test_private_reason_sits_between_system_feedback_and_wording(self):
+        reason = "My business quoted <b>for this work</b>."
+        for phase in ("CLARITY", "VOTING"):
+            with self.subTest(phase=phase):
+                page = self.vote_markup(phase=phase, own_conflict=True, own_conflict_reason=reason)
+                feedback, = page.select("div", classes=("notice", "vote-feedback"))
+                own, = page.select("div", classes=("card", "vote-glass", "vote-reason"))
+                title, = page.select("h3", id="vote-wording-heading")
+                self.assertEqual(own["text"].strip(), reason, "The declarer's words must be escaped as text.")
+                self.assertFalse(page.select("b", within=own))
+                self.assertLess(page.nodes.index(feedback), page.nodes.index(own), "INTEVIA speaks first.")
+                self.assertLess(page.nodes.index(own), page.nodes.index(title), "The private reason precedes the wording.")
+                self.assertFalse(self.vote_markup(phase=phase).select("div", classes=("vote-reason",)),
+                                 "An empty or withheld reason creates no bubble.")
+
+    def test_initial_command_and_stop_previews_keep_their_own_sections(self):
+        context = {"board_org": uuid4(), "board_circle": uuid4(), "topic": {"thread_uuid": uuid4()}}
+        template = "core/components/board_vote.html"
+        initial = {"command": "test-command", "label": "Put to a Board vote", "route": "discussion_put_forward"}
+        page = Markup(render_to_string(template, context | {"vote": initial}, request=self.request))
+        self.assertEqual([n["text"].strip() for n in page.select("button")], ["Put to a Board vote"])
+        self.assertFalse(page.select("article") or page.select("div", classes=("vote-glass",)),
+                         "Before initiation there is no stage message or wording card.")
+        for heading, effect in (
+            ("Close without a vote?", "Clarity will end. No ballot will open on this Suggestion."),
+            ("Withdraw this Suggestion?", "Your Suggestion will be recorded as withdrawn. No ballot will open."),
+        ):
+            with self.subTest(heading=heading):
+                preview = {"heading": heading, "effect": effect, "token": "test-command", "cancel": "#vote"}
+                vote = {"phase": "CLARITY", "line": "Clarity period ended", "clarity_prompt": preview}
+                page = Markup(render_to_string(template, context | {"vote": vote}, request=self.request))
+                article, = page.select("article", id="clarity-confirmation")
+                bubble, = page.select("div", within=article, classes=("card", "notice", "refusal", "vote-glass"))
+                self.assertEqual([p["text"] for p in page.select("p", within=bubble)], [effect])
+                self.assertEqual([h["text"] for h in page.select("h3", within=article)], [heading])
+                self.assertFalse(page.select("h3", within=bubble), "The prompt title sits outside the glass.")
+                self.assertEqual(len(page.select("form", within=bubble, method="post")), 1,
+                                 "The confirmation keeps its own action row with its consequence.")
 
     def test_vote_line_names_each_state_in_plain_words(self):
         stamp = "22 November 2026, 13:00 UTC"
@@ -583,6 +806,10 @@ class VotePanelPresentationTests(SimpleTestCase):
                 markup = self.vote_markup(phase=phase, deadline=self.when, effective_at=self.when,
                                           outcome="QUALIFIED" if phase == "RESULT" else None)
                 self.assertEqual(markup.select("p")[0]["text"], expected)
+                notices = markup.select("div", classes=("notice", "vote-feedback"))
+                self.assertEqual([n["text"].strip() for n in notices],
+                                 ["The wording can still change until voting opens."] if phase == "PREPARATION" else [],
+                                 "The plain stage line alone never needs a notice.")
 
     def test_vote_line_uses_read_cut_and_terminal_act(self):
         common = dict(deadline=self.when, response_deadline=self.later)
@@ -644,12 +871,12 @@ class VotePanelPresentationTests(SimpleTestCase):
                                           read_at=self.when, deadline=self.later,
                                           outcome="QUALIFIED" if phase == "RESULT" else None)
                 self.assertEqual(markup.select("h3")[0]["text"], title)
-                self.assertEqual([p["text"] for p in markup.select("p", classes=("meta",))],
+                self.assertEqual([p["text"] for p in markup.select("p", classes=("vote-edit-note",))],
                                  ["The wording can still change until voting opens."] if editable else [])
                 if editable:
                     wording, = markup.select("div", classes=("motion-wording",))
-                    hint, = markup.select("p", classes=("meta",))
-                    self.assertLess(markup.nodes.index(wording), markup.nodes.index(hint))
+                    hint, = markup.select("p", classes=("vote-edit-note",))
+                    self.assertLess(markup.nodes.index(hint), markup.nodes.index(wording))
 
     def test_edit_note_tracks_clarity_deadline(self):
         for phase, cut, expected in (
@@ -661,7 +888,7 @@ class VotePanelPresentationTests(SimpleTestCase):
             with self.subTest(phase=phase, cut=cut):
                 page = self.vote_markup(phase=phase, read_at=cut, deadline=self.later)
                 self.assertEqual(page.select("h3")[0]["text"], "Wording to be decided")
-                notes = [node["text"] for node in page.select("p", classes=("meta",))]
+                notes = [node["text"] for node in page.select("p", classes=("vote-edit-note",))]
                 self.assertEqual(notes, ["The wording can still change until voting opens."] if expected else [],
                                  "The edit note must follow the edit window at the read time.")
 
@@ -716,13 +943,17 @@ class PreparationPromptTests(SimpleTestCase):
         page = render_to_string("core/components/board_vote.html", {
             "vote": vote, "board_org": org, "board_circle": circle, "topic": {"thread_uuid": thread},
         }, request=request)
-        return Markup(page)
+        markup = Markup(page)
+        self.assertEqual(len(markup.select("form")), 1, "Only the Prepare confirmation form may be offered.")
+        self.assertEqual(len(markup.select("button")), 1, "Only the selected Proceed submit may be offered.")
+        self.assertEqual([a["text"] for a in markup.select("a")], ["Cancel"])
+        return markup
 
     def test_clarity_and_direct_vote_explain_the_next_step(self):
         for destination, days, label, paragraphs in (
             ("CLARITY", 3, "Proceed to Clarity", [
                 "Board members will be asked to confirm they are clear on this wording. They have 3 days.",
-                "You can still edit the wording during Clarity. Each edit asks them to confirm again.",
+                "The author can still edit the wording during Clarity. Each edit asks them to confirm again.",
                 "Voting opens when everyone is clear, or when Clarity ends.",
             ]),
             ("VOTING", None, "Proceed to vote", [
@@ -731,10 +962,12 @@ class PreparationPromptTests(SimpleTestCase):
         ):
             with self.subTest(destination=destination):
                 page = self.render_prompt(destination, days)
-                prompt, = page.select("article", classes=("card", "prompt"))
-                self.assertEqual([p["text"] for p in page.select("p", within=prompt)], paragraphs)
+                prompt, = page.select("article", id="prepare")
+                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice", "vote-glass"))
+                self.assertFalse(page.select("h3", within=bubble), "The prompt heading belongs outside the glass.")
+                self.assertEqual([p["text"] for p in page.select("p", within=bubble)], paragraphs)
                 self.assertEqual(page.select("h3", within=prompt)[0]["text"], "Mark this Suggestion as prepared?")
-                form, = page.select("form", within=prompt, method="post", classes=("discussion-actions",))
+                form, = page.select("form", within=bubble, method="post", classes=("discussion-actions",))
                 self.assertEqual([n["text"] for n in page.select("button", within=form, type="submit", classes=("primary",))], [label])
                 cancels = page.select("a", within=form, classes=("button", "secondary"))
                 self.assertEqual([link["text"] for link in cancels], ["Cancel"])
@@ -750,8 +983,10 @@ class PreparationPromptTests(SimpleTestCase):
         for kind, why in reasons.items():
             with self.subTest(kind=kind):
                 page = self.render_prompt(kind)
-                prompt, = page.select("article", classes=("prompt",))
-                self.assertEqual([p["text"] for p in page.select("p", within=prompt)],
+                prompt, = page.select("article", id="prepare")
+                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice", "vote-glass"))
+                self.assertFalse(page.select("h3", within=bubble), "The prompt heading belongs outside the glass.")
+                self.assertEqual([p["text"] for p in page.select("p", within=bubble)],
                                  ["Marking this Suggestion as prepared will record that no vote opened.", why],
                                  "Each no-vote prompt must show its reason or the plain fallback.")
                 self.assertEqual(page.select("button", within=prompt)[0]["text"], "Proceed without a vote")
@@ -851,3 +1086,90 @@ class QuotedPostPresentationTests(SimpleTestCase):
                          "A folded quote needs one container for all of its paragraphs.")
         self.assertEqual([p["text"] for p in page.select("p", within=children[1])], paragraphs,
                          "Both paragraphs must come before the closing control on screen.")
+
+
+class TopicClarityFocusTests(SimpleTestCase):
+    """Render the full Topic GET with supplied reader facts and real form links."""
+
+    def setUp(self):
+        self.ids = (uuid4(), uuid4(), uuid4())
+        self.topic_url = reverse("discussion_topic", args=self.ids)
+        self.reply_url = reverse("discussion_reply", args=self.ids)
+        self.version = uuid4()
+        self.window = uuid4()
+
+    def open_topic(self, address, *, actions=(), question=False, can_reply=True):
+        from core import discussion_vote
+
+        org, circle, thread = self.ids
+        context = {
+            "board_org": org, "board_circle": circle,
+            "organisation": {"organism_uuid": org}, "circle": {"circle_uuid": circle},
+            "category": {"can_reply": can_reply, "retired": False},
+            "topic": {"thread_uuid": thread, "title": "Ordinary payments", "topic_type": "SUGGESTION", "closed": False},
+            "posts": [{"post_number": 1, "markdown": "Approve ordinary payments."},
+                      {"post_number": 2, "markdown": "Please record the review date."}],
+        }
+        facts = {"phase": "CLARITY", "clarity_actions": actions, "clarity_version": self.version,
+                 "clarity_window": self.window, "question_version": self.version if question else None}
+        request = RequestFactory().get(address)
+        request.resolver_match = resolve(self.topic_url)
+        request.user = AnonymousUser()
+        request.session = SimpleNamespace(session_key="fixture")
+        with mock.patch.object(discussion_pages, "_read_page", return_value=("core/discussion_topic.html", context)), \
+             mock.patch.object(discussion_vote.cq, "board_topic_vote", return_value=facts):
+            response = discussion_pages._page(request, *self.ids)
+        return Markup(response.content.decode())
+
+    def test_reply_is_default_and_cancel_restores_it_for_each_clarity_form(self):
+        for state, opener, operation in (
+            ("question", "Ask a question", None),
+            ("conflict", "Declare a conflict", "CONFLICT"),
+            ("withdraw", "Withdraw Suggestion", "WITHDRAW"),
+            ("close", "Close without a vote", "CLOSE"),
+        ):
+            with self.subTest(state=state):
+                facts = {"actions": (operation,) if operation else (), "question": state == "question"}
+                default = self.open_topic(self.topic_url, **facts)
+                self.assertEqual(len(default.select("form", method="post", action=self.reply_url)), 1)
+                link, = [a for a in default.select("a") if a["text"] == opener]
+                selected = self.open_topic(link["attrs"]["href"], **facts)
+                action = reverse("discussion_clarity_" + state, args=self.ids)
+                self.assertEqual(len(selected.select("form", method="post", action=action)), 1)
+                self.assertFalse(selected.select("form", action=self.reply_url), "The open state owns the composer.")
+                self.assertFalse(selected.select("h2", id="reply-heading"))
+                history, = selected.select("section", **{"aria-labelledby": "replies-heading"})
+                self.assertIn("Please record the review date.", history["text"])
+                cancel, = [a for a in selected.select("a") if a["text"] == "Cancel"]
+                self.assertEqual(cancel["attrs"]["href"], self.topic_url + "#vote")
+                restored = self.open_topic(cancel["attrs"]["href"], **facts)
+                reply, = restored.select("form", action=self.reply_url)
+                self.assertEqual([b["text"] for b in restored.select("button", within=reply)], ["Post reply"])
+                self.assertFalse(restored.select("form", action=action))
+
+    def test_unavailable_state_keeps_the_ordinary_reply_permission(self):
+        for can_reply in (True, False):
+            with self.subTest(can_reply=can_reply):
+                page = self.open_topic(self.topic_url + "?clarity=close", can_reply=can_reply)
+                self.assertEqual(len(page.select("form", action=self.reply_url)), int(can_reply))
+                self.assertFalse(page.select("article", id="clarity-confirmation"))
+
+    def test_chairs_admitted_buttons_follow_the_ruled_order_and_variants(self):
+        for actions, expected in (
+            (("CONFLICT", "PROCEED", "EXTEND", "CLOSE"),
+             ["Proceed to vote", "Extend Clarity", "Declare a conflict", "Close without a vote"]),
+            (("CLOSE", "EXTEND"), ["Extend Clarity", "Close without a vote"]),
+        ):
+            with self.subTest(actions=actions):
+                page = self.open_topic(self.topic_url, actions=actions)
+                panel, = page.select("section", id="vote")
+                buttons = [n for n in page.nodes if any(p is panel for p in n["parents"])
+                           and n["tag"] in ("a", "button")]
+                self.assertEqual([b["text"] for b in buttons], expected)
+                variants = {"Proceed to vote": "primary", "Extend Clarity": "secondary",
+                            "Declare a conflict": "danger", "Close without a vote": "danger"}
+                for button in buttons:
+                    with self.subTest(label=button["text"]):
+                        classes = set(button["attrs"]["class"].split())
+                        self.assertEqual(classes & {"primary", "secondary", "success", "danger"},
+                                         {variants[button["text"]]})

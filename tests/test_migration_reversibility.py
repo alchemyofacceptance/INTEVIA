@@ -392,6 +392,11 @@ class MigrationReversibilityTests(TransactionTestCase):
             self.assertTrue(colour_mode_present(schema_reader), "The personal colour preference must exist before reversing 0112.")
         care_parent = []
         care_before = care_edge(care) if care_key in ledger_before else None
+        if ("core", "0116_clarity_full_participation") in received:
+            _, triggers, non_core = care_before
+            self.assertEqual(len(triggers) - non_core, 739, "0116 adds one core trigger and no seed rows.")
+            self.assertEqual(triggers[("core_cqact", "cq_br2_confirm")][:4], ("O", 5, False, False),
+                             "The BR2 follow-up must be an enabled after-insert row trigger at head.")
         linked_names = [("care", "care", "CARE", "care", "CARE")]
         if account_key in received:
             pins, triplet, counts, member_pin = account_edge(care, care_before)

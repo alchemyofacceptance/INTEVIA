@@ -32,7 +32,7 @@
     {% endif %}
   {% empty %}<p>No replies yet.</p>{% endfor %}
 </section>
-{% if reply_command %}
+{% if reply_command and not vote.member_form and not vote.clarity_prompt %}
 <section class="record-section" aria-labelledby="reply-heading">
   <h2 id="reply-heading" class="record-heading">Reply to this Topic</h2>
   {% include "core/components/reply_form.html" with command=reply_command %}

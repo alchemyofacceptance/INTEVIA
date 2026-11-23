@@ -402,6 +402,25 @@ class PreparationPromptStyleTests(SimpleTestCase):
         self.assertIn("flex-wrap:wrap", rule[1])
 
 
+class BoardVoteStyleTests(SimpleTestCase):
+    def test_speech_glass_and_response_row_in_the_served_theme(self):
+        from tests.test_uc1_render import declarations
+
+        sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+        glass = declarations(sheet, "#vote .vote-glass")
+        self.assertEqual(glass.get("border-radius"), "var(--radius-sm)", "Vote speech uses the button's small corner.")
+        self.assertIn("linear-gradient", glass.get("background-image", ""), "The glass needs a face highlight.")
+        self.assertIn("inset", glass.get("box-shadow", ""), "The glass needs a rim and shadow.")
+        self.assertEqual(glass.get("--vote-ink"), "var(--color-primary)")
+        self.assertEqual(declarations(sheet, "#vote .vote-glass:is(.notice,.prompt)").get("--vote-ink"), "var(--color-accent)")
+        row = declarations(sheet, ".clarity-responses")
+        self.assertEqual((row.get("display"), row.get("flex-wrap")), ("flex", "wrap"), "The closed controls share a wrapping row.")
+        self.assertEqual(declarations(sheet, "#vote .vote-glass.refusal").get("--vote-ink"), "var(--color-danger)",
+                         "Stop confirmations use the danger colour in both themes.")
+        self.assertEqual(declarations(sheet, "#vote .vote-reason").get("background-color"), "var(--color-primary-soft)",
+                         "A member's declaration uses the violet surface.")
+
+
 class PostQuoteStyleTests(SimpleTestCase):
     def test_served_quote_rule_disclosure_and_touch_target(self):
         sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")

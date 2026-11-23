@@ -32,6 +32,13 @@ urlpatterns = [
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/reply/', discussion_forms.submit, name='discussion_reply'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/put-forward/', discussion_vote.submit, {"operation": "INITIATE"}, name='discussion_put_forward'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/prepare/', discussion_vote.submit, {"operation": "PREPARED"}, name='discussion_prepare'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/clarity/confirm/', discussion_vote.submit, {"operation": "CONFIRM"}, name='discussion_confirm_clarity'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/clarity/question/', discussion_vote.submit, {"operation": "QUESTION"}, name='discussion_clarity_question'),
+    *[
+        path(f'intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/clarity/{slug}/',
+             discussion_vote.submit, {"operation": slug.upper()}, name=f'discussion_clarity_{slug}')
+        for slug in ("conflict", "proceed", "extend", "close", "withdraw")
+    ],
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/', discussion_pages.discussion_topic, name='discussion_topic'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/results/<uuid:result>/', discussion_pages.discussion_result, name='discussion_result'),
     path('history/', ui_views.placeholder, {"section": "history"}, name='f0-history'),

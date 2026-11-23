@@ -58,7 +58,7 @@ class CQDecisionTests(TransactionTestCase):
         journey, category_id, topic = self.topic(scope, category=category)
         cq.put_forward(**journey, request_uuid=uuid4(), version_uuid=topic["version"])
         cq.mark_prepared(**journey, request_uuid=uuid4())
-        for person in people:
+        for person in cq_settings_support.response_members(journey["thread_uuid"], people):
             cq.confirm_clarity(
                 **(journey | {"credential": person.credential}),
                 request_uuid=uuid4(),
@@ -108,9 +108,9 @@ class CQDecisionTests(TransactionTestCase):
         )[0]["tally"]
 
     def test_riverside_and_default_quorum_boundaries(self):
-        """DISC2-09. Seven understand, six remain eligible, four carry at full turnout."""
+        """DISC2-09. Six are clear, the seventh declares a conflict; six remain eligible, four carry at full turnout."""
         _, scope, people, _ = self.setup_board(7)
-        journey, _ = self.confirmed(scope, people)
+        journey, _ = self.confirmed(scope, people[:-1])
         conflicted = journey | {"credential": people[-1].credential}
         recusal = cq.declare_conflict(
             **conflicted, basis="I supply this service.", request_uuid=uuid4()
@@ -125,7 +125,10 @@ class CQDecisionTests(TransactionTestCase):
             **(journey | {"credential": people[1].credential}),
             request_uuid=uuid4(),
         )
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**journey)["ballot"]
+        self.assertEqual(self.facts(ballot)["authority_source"],
+                         {"kind": "RULE", "reference": "HG:BR2", "route": "CLARITY_FULL_PARTICIPATION",
+                          "cause": str(recusal)}, "The seventh member's declaration must cause the six-member ballot.")
         for index, member in enumerate(people[:-1]):
             self.cast(
                 journey, ballot, member, "QUALIFIED" if index < 4 else "NOT_QUALIFIED"
@@ -160,7 +163,7 @@ class CQDecisionTests(TransactionTestCase):
     def test_ballot_conflict_duplicate_abstention_and_eligible_period(self):
         """DISC2-10. One answer, own conflict, late membership and exact refusals."""
         lo, scope, people, _ = self.setup_board(4)
-        journey, _ = self.confirmed(scope, people)
+        journey, _ = self.confirmed(scope, people[:-1])
 
         def unknown_ballot(scope, member):
             with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
@@ -168,7 +171,7 @@ class CQDecisionTests(TransactionTestCase):
 
         key = uuid4()
         unknown_ballot(journey, people[0])
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_settings_support.confirm_last(journey, people[-1])
         unknown_ballot(journey, people[0])
         self.assertEqual(self.cast(journey, ballot, people[1], key=key), key)
         self.assertEqual(self.cast(journey, ballot, people[1], key=key), key)
@@ -250,10 +253,10 @@ class CQDecisionTests(TransactionTestCase):
         # ballot's earlier deadline must retain its five-person historical cut.
         pool = [*people, late]
         live, _ = self.confirmed(scope, pool)
-        elapsed, _ = self.confirmed(scope, pool)
-        live_id = cq.finish_clarity(**live, request_uuid=uuid4())
+        elapsed, _ = self.confirmed(scope, pool[:-1])
+        live_id = cq_reads.vote_status(**live)["ballot"]
         with clarity.due_at_phase_start():
-            elapsed_id = cq.finish_clarity(**elapsed, request_uuid=uuid4())
+            elapsed_id = cq_settings_support.confirm_last(elapsed, pool[-1])
         for member in people:
             self.cast(live, live_id, member)
         self.leave(lo, late)
@@ -330,9 +333,9 @@ class CQDecisionTests(TransactionTestCase):
     def test_low_turnout_and_distinct_no_decision_results(self):
         """DISC2-12. Deadline, below-floor closure and loss of minimum are distinct."""
         lo, scope, people, _ = self.setup_board(3)
-        journey, _ = self.confirmed(scope, people)
+        journey, _ = self.confirmed(scope, people[:-1])
         with clarity.due_at_phase_start():
-            ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+            ballot = cq_settings_support.confirm_last(journey, people[-1])
         self.assertEqual(
             cq_reads.vote_status(**journey)["phase"], "AWAITING_SETTLEMENT"
         )
@@ -368,7 +371,7 @@ class CQDecisionTests(TransactionTestCase):
             cq.catch_up(credential=people[1].credential), "Nothing is due."
         )
         other, _ = self.confirmed(scope, people)
-        ballot = cq.finish_clarity(**other, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**other)["ballot"]
         self.cast(other, ballot, people[0])
         cq.declare_conflict(
             **(other | {"credential": people[2].credential}),
@@ -385,8 +388,11 @@ class CQDecisionTests(TransactionTestCase):
             ),
             (2, 1, "NO_DECISION_FEWER_THAN_THREE", False),
         )
-        pending, _ = self.confirmed(scope, people)
+        pending, _ = self.confirmed(scope, [])
         cq.declare_conflict(**pending, basis="Financial interest", request_uuid=uuid4())
+        wording = cq.phase(**pending)["version"]
+        for peer in people[1:]:
+            cq.confirm_clarity(**(pending | {"credential": peer.credential}), version_uuid=wording, request_uuid=uuid4())
         self.refused(
             "CQ_THREE",
             "Fewer than three eligible members remain. A CQ vote cannot open.",
@@ -434,9 +440,9 @@ class CQDecisionTests(TransactionTestCase):
         self.configure(
             scope, {"low_turnout": "NEW_CQ"}, cq.settings(**scope)["version"]
         )
-        elapsed, _ = self.confirmed(scope, people)
+        elapsed, _ = self.confirmed(scope, people[:-1])
         with clarity.due_at_phase_start():
-            expired = cq.finish_clarity(**elapsed, request_uuid=uuid4())
+            expired = cq_settings_support.confirm_last(elapsed, people[-1])
         self.leave(lo, people[2])
         self.assertEqual(
             cq.catch_up(credential=people[0].credential), "Due work recorded."
@@ -458,7 +464,7 @@ class CQDecisionTests(TransactionTestCase):
     def test_concurrent_settings_and_opening_snapshot(self):
         """DISC2-13. A waiting opener sees both parts of a committed settings change."""
         _, scope, people, current = self.setup_board(3, beta=True)
-        journey, _ = self.confirmed(scope, people)
+        journey, _ = self.confirmed(scope, people[:-1])
         proposal, wording = cq_settings_support.propose(
             self, scope, {"reporting": "TOTALS_ONLY", "abstention": True}, current
         )
@@ -471,7 +477,7 @@ class CQDecisionTests(TransactionTestCase):
             return cq.settings(**scope)["version"]
 
         version, waiting = self.contended_commands(
-            decide_settings, lambda: cq.finish_clarity(**journey, request_uuid=uuid4())
+            decide_settings, lambda: cq_settings_support.confirm_last(journey, people[-1])
         )
         ballot = waiting.result(timeout=5)
         self.assertEqual(
@@ -518,7 +524,7 @@ class CQDecisionTests(TransactionTestCase):
                     **reader, version_uuid=topic["version"], request_uuid=uuid4()
                 )
             hide(False, coordinator)
-        for member in people:
+        for member in cq_settings_support.response_members(journey["thread_uuid"], people[:-1]):
             cq.confirm_clarity(
                 **(journey | {"credential": member.credential}),
                 version_uuid=topic["version"],
@@ -534,7 +540,7 @@ class CQDecisionTests(TransactionTestCase):
                 request_uuid=uuid4(),
             )
             hide(False, coordinator)
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_settings_support.confirm_last(journey, people[-1])
         self.cast(journey, ballot, people[1], "NOT_QUALIFIED")
         status = cq_reads.vote_status(**journey)
         self.assertEqual(
@@ -623,7 +629,7 @@ class CQDecisionTests(TransactionTestCase):
             },
         )
         journey, _ = self.confirmed(scope, people)
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**journey)["ballot"]
         # The four original voters cannot change an absolute floor of five.
         # The fifth member can join the settings motion; the first roster is frozen.
         fixtures.add_member(lo)
@@ -785,10 +791,10 @@ class CQDecisionTests(TransactionTestCase):
         """DISC2-17. Two simultaneous ballots flank the change and preserve independent reporting."""
         _, scope, people, setting = self.setup_board(3, beta=True)
         march, _ = self.confirmed(scope, people)
-        july, _ = self.confirmed(scope, people)
-        first = cq.finish_clarity(**march, request_uuid=uuid4())
+        july, _ = self.confirmed(scope, people[:-1])
+        first = cq_reads.vote_status(**march)["ballot"]
         changed = self.configure(scope, {"reporting": "TOTALS_ONLY"}, setting)
-        second = cq.finish_clarity(**july, request_uuid=uuid4())
+        second = cq_settings_support.confirm_last(july, people[-1])
         self.cast(july, second, people[0], "NOT_QUALIFIED")
         status = cq_reads.vote_status(**july)
         self.assertEqual((status["participated"], status["eligible"]), (1, 3))
@@ -866,7 +872,7 @@ class CQDecisionTests(TransactionTestCase):
         disc.ensure_board(**local, request_uuid=uuid4())
         disc.open_circle_welcome(**local, request_uuid=uuid4())
         journey, category = self.confirmed(local, people, category="WELCOME")
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**journey)["ballot"]
         reader = journey | {"credential": probation.credential}
         posts.reply(
             **reader,
@@ -911,7 +917,7 @@ class CQDecisionTests(TransactionTestCase):
         # Ending a Circle place can also settle the vote. The person remains an
         # active member of the LO but is no longer counted on the Circle ballot.
         live, _ = self.confirmed(local, people, category="WELCOME")
-        second = cq.finish_clarity(**live, request_uuid=uuid4())
+        second = cq_reads.vote_status(**live)["ballot"]
         self.cast(live, second, people[0])
         leaving = people[2]
         departed_answer = self.cast(live, second, leaving, "NOT_QUALIFIED")
@@ -952,7 +958,7 @@ class CQDecisionTests(TransactionTestCase):
         """
         _, scope, people, settings_version = self.setup_board(3)
         journey, category_id = self.confirmed(scope, people)
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**journey)["ballot"]
         for member in people[:2]:
             self.cast(journey, ballot, member)
         key = uuid4()
@@ -1040,7 +1046,15 @@ class CQDecisionTests(TransactionTestCase):
             care = import_module("core.migrations.0111_care_office_record")
             account = import_module("core.migrations.0113_care_system_account")
             board = import_module("core.migrations.0114_alpha_treasurer_board_clause")
-            # 0114 is the newest CARE migration: it unwinds first and is reapplied last.
+            # Unwind the preparation rule, then the three CARE migrations, in reverse order.
+            preparer = import_module("core.migrations.0115_suggestion_preparer")
+            clarity_open = import_module("core.migrations.0116_clarity_full_participation")
+            chair_commands = import_module("core.migrations.0117_board_chair_commands")
+            author_clarity = import_module("core.migrations.0118_author_clarity_and_conflict")
+            author_clarity.uninstall(None, editor)
+            chair_commands.uninstall(None, editor)
+            clarity_open.uninstall(None, editor)
+            preparer.uninstall(None, editor)  # 0084 checks its own cq_source body on descent.
             board.uninstall(None, editor)
             account.uninstall(None, editor)
             care.uninstall(None, editor)
@@ -1104,6 +1118,10 @@ class CQDecisionTests(TransactionTestCase):
             care.install(None, editor)
             account.install_migration(None, editor)
             board.install(None, editor)
+            preparer.install(None, editor)
+            clarity_open.install(None, editor)
+            chair_commands.install(None, editor)
+            author_clarity.install(None, editor)
             self.assertEqual(records.trigger(cursor, "zz_te_origin"), records.ORIGIN_TRIGGER)
             cursor.execute("SELECT to_regprocedure(%s)", ["public.circle_episode(bigint,timestamptz,timestamptz)"])
             self.assertIsNotNone(cursor.fetchone()[0], "DISC2-19 must restore the episode reading at head.")
@@ -1115,6 +1133,7 @@ class CQDecisionTests(TransactionTestCase):
         """DISC2-20. An LO member without a seat can follow a GOVERNANCE result and its rule."""
         lo, scope, people, circle = board_support.ordinary(3, board=True)
         viewer = fixtures.add_member(lo)
+        board_support.appoint_board_chairs(lo, people[0], people[1])
         self.configure(scope, {"enabled": True})
         board = scope | {"circle_uuid": circle.circle_uuid}
         circle_commands.activate(**board, request_uuid=uuid4())
@@ -1145,13 +1164,13 @@ class CQDecisionTests(TransactionTestCase):
         for read in (posts.read_thread, cq_reads.vote_status):
             with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
                 read(**reader)
-        for trustee in people:
+        for trustee in cq_settings_support.response_members(journey["thread_uuid"], people):
             cq.confirm_clarity(
                 **(journey | {"credential": trustee.credential}),
                 version_uuid=wording,
                 request_uuid=uuid4(),
             )
-        ballot = cq.finish_clarity(**journey, request_uuid=uuid4())
+        ballot = cq_reads.vote_status(**journey)["ballot"]
         self.assertEqual(cq_reads.vote_status(**reader)["phase"], "VOTING")
         for trustee, choice in zip(
             people, ("QUALIFIED", "QUALIFIED", "NOT_QUALIFIED"), strict=True
@@ -1195,7 +1214,7 @@ class CQDecisionTests(TransactionTestCase):
                     basis="Related party",
                     request_uuid=uuid4(),
                 )
-                for trustee in people[:2]:
+                for trustee in cq_settings_support.response_members(motion["thread_uuid"], people[:2]):
                     cq.confirm_clarity(
                         **(motion | {"credential": trustee.credential}),
                         version_uuid=version,

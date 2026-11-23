@@ -1,0 +1,9 @@
+<div class="notice vote-glass vote-feedback">
+  {% if rule_opened %}<p>All {{ vote.opening_count }} eligible {{ vote.electorate_label }} were clear, so voting opened on this wording.</p>{% endif %}
+  {% if vote.phase == "PREPARATION" and not vote.specialist_preparation and vote.read_at < vote.deadline %}
+    <p>Discuss the Suggestion here first. Its author{% if governance_board %} or the Board Chair{% endif %} can mark it prepared for Clarity or voting; if the preparation deadline passes first, it moves on as unprepared.</p>
+  {% elif vote.stepped_out %}<p>A member has stepped out of this decision, and all {{ vote.count.eligible }} remaining {{ vote.electorate_label }} are clear. Voting opens automatically after Clarity ends, or {% if vote.can_proceed %}you can open it now{% else %}sooner if the {{ vote.office_label }} opens it{% endif %}.</p>
+  {% elif vote.own_clear %}<p>You said you're clear on this wording.{% if vote.read_at < vote.deadline %} If something becomes unclear, you can still ask a question.{% endif %}</p>{% endif %}
+  {% if vote.own_conflict %}<p>You have declared a conflict and stepped out of this decision.</p>{% endif %}
+  {% if vote.editable_wording %}<p class="vote-edit-note">The wording can still change until voting opens.</p>{% endif %}
+</div>

@@ -11,6 +11,7 @@
 <div class="notice refusal" role="alert" id="discussion-error" tabindex="-1" autofocus>
   <p>{{ why }}</p><p>{{ effect }}</p><p>{{ action }}</p><p>{{ help_text }}</p>
 </div>
+{% if wording_url %}<p class="discussion-actions link-row">{% include 'core/components/button.html' with href=wording_url label='Review current wording' only %}</p>{% endif %}
 {% if correctable %}
   {% if topic %}{% include "core/components/reply_form.html" %}{% else %}{% include "core/components/start_topic_form.html" %}{% endif %}
 {% elif entered.title or entered.markdown %}<section class="record-section">

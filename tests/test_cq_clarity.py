@@ -75,18 +75,21 @@ def due_shortly(seconds):
 def elapsed_clarity(window, *, response_due):
     """Present one stored window as elapsed. No member, act, response or event time is fabricated."""
     with transaction.atomic(), connection.cursor() as cur:
-        cur.execute("SELECT pg_get_viewdef('public.cq_phases'::regclass)")
-        original = cur.fetchone()[0].strip().rstrip(";")
+        cur.execute("SELECT pg_get_viewdef('public.cq_phases'::regclass), public.intevia_clock_statement()")
+        original, entered = cur.fetchone()
+        original = original.strip().rstrip(";")
+        # One fixed instant, so every later read and write sees the window as already elapsed.
+        cut = f"'{entered.isoformat()}'::timestamptz"
         target = f"act_uuid='{window.hex}'::uuid"
         response = (
-            f"CASE WHEN {target} THEN least(response_deadline,statement_timestamp()) "
+            f"CASE WHEN {target} THEN least(response_deadline,{cut}) "
             "ELSE response_deadline END"
             if response_due
             else "response_deadline"
         )
         cur.execute(
             "CREATE OR REPLACE VIEW public.cq_phases AS SELECT thread_uuid,organism_id,board_uuid,"
-            f"act_uuid,phase,CASE WHEN {target} THEN least(deadline,statement_timestamp()) "
+            f"act_uuid,phase,CASE WHEN {target} THEN least(deadline,{cut}) "
             f"ELSE deadline END AS deadline,ordinal,{response} AS response_deadline FROM ({original}) history",
             params=None,
         )
@@ -339,6 +342,12 @@ class CQClarityTests(TransactionTestCase):
                 ),
                 (coordinator.pk, author.pk, "OFFICE"),
             )
+            with self.assertRaises(cq.CQRefused, msg="Initiating for an author gives no preparation right in an ordinary Circle.") as refused:
+                cq.mark_prepared(**coord, request_uuid=uuid4())
+            self.assertEqual(refused.exception.code, "CQ_PREPARE_SUGGESTION")
+            prepared = cq.mark_prepared(**own, request_uuid=uuid4())
+            self.assertEqual(self.facts(prepared)["authority_source"], {"kind": "MEMBER", "reference": author.pk, "route": "PREPARED"},
+                             "The Circle's opening author must retain their own preparation right.")
             self.assertEqual(
                 posts.read_thread(**own)["topic"]["record_kind"], "GOVERNANCE"
             )
@@ -421,6 +430,8 @@ class CQClarityTests(TransactionTestCase):
             ),
             ("RULE", caller.pk, False),
         )
+        self.assertFalse(disc._rows("SELECT act_uuid FROM public.core_cqact WHERE thread_uuid=%s AND operation='PREPARED'",
+                                    [other["thread_uuid"]]), "The deadline must never invent a human preparation.")
         new = cq.phase(**other)
         self.assertEqual(new["deadline"] - new["effective_at"], timedelta(days=7))
         with self.subTest(timed_events="engine second"):
@@ -437,7 +448,8 @@ class CQClarityTests(TransactionTestCase):
                  cq.catch_up(credential=owner.credential)), (1, 0, "Nothing is due."),
                 "DISC2-03 engine second: a rule act the landed route made gains no second act and no receipt.")
         prepared = cq.mark_prepared(**journey, request_uuid=uuid4())
-        self.assertEqual(self.facts(prepared)["authority_source"]["kind"], "OFFICE")
+        self.assertEqual(self.facts(prepared)["authority_source"], {"kind": "MEMBER", "reference": owner.pk, "route": "PREPARED"},
+                         "Even an Organisation Coordinator prepares their own Suggestion as its author.")
         self.assertTrue(cq.phase(**journey)["prepared"])
         self.assertLess(self.facts(entered)["ordinal"], self.facts(prepared)["ordinal"])
         cq.withdraw(**journey, request_uuid=uuid4())
@@ -453,14 +465,13 @@ class CQClarityTests(TransactionTestCase):
         journey, category, topic = self.topic(scope)
         cq.put_forward(**journey, version_uuid=topic["version"], request_uuid=uuid4())
         cq.mark_prepared(**journey, request_uuid=uuid4())
-        cq.confirm_clarity(
-            **journey, version_uuid=topic["version"], request_uuid=uuid4()
-        )
+        peer = journey | {"credential": people[1].credential}
+        cq.confirm_clarity(**peer, version_uuid=topic["version"], request_uuid=uuid4())
         self.refused(
             "CQ_RESPONSE_REPEAT",
             "You have already confirmed clarity for this CQ.",
             cq.confirm_clarity,
-            **journey,
+            **peer,
             version_uuid=topic["version"],
             request_uuid=uuid4(),
         )
@@ -474,23 +485,21 @@ class CQClarityTests(TransactionTestCase):
         revised = posts.edit_post(**edit_args)
         self.assertEqual(
             revised["clarity_notice"],
-            "The wording has changed. Clarity must be confirmed again on this version.",
+            "The wording has changed. An eligible author stays clear. Other members can respond to the new wording.",
         )
         self.assertEqual(cq.phase(**journey)["version"], revised["version"])
         self.refused(
             "CQ_VERSION",
             "Choose the current wording before recording your Clarity response.",
             cq.confirm_clarity,
-            **journey,
+            **peer,
             version_uuid=topic["version"],
             request_uuid=uuid4(),
         )
-        for person in people[1:]:
-            cq.confirm_clarity(
-                **(journey | {"credential": person.credential}),
-                version_uuid=revised["version"],
-                request_uuid=uuid4(),
-            )
+        cq.confirm_clarity(**(journey | {"credential": people[2].credential}),
+                           version_uuid=revised["version"], request_uuid=uuid4())
+        self.assertEqual(cq.phase(**journey)["phase"], "CLARITY",
+                         "The peer's earlier confirmation cannot complete Clarity on the revised text.")
         self.refused(
             "CQ_WINDOW",
             "The clarity period has not ended and not everyone is clear.",
@@ -498,16 +507,15 @@ class CQClarityTests(TransactionTestCase):
             **journey,
             request_uuid=uuid4(),
         )
-        cq.confirm_clarity(
-            **journey, version_uuid=revised["version"], request_uuid=uuid4()
-        )
-        opening = uuid4()
+        confirmation = uuid4()
         before = models.LivingOrganismEvent.objects.count()
-        self.assertEqual(cq.finish_clarity(**journey, request_uuid=opening), opening)
-        self.assertEqual(cq.finish_clarity(**journey, request_uuid=opening), opening)
-        self.assertEqual(models.LivingOrganismEvent.objects.count(), before + 1)
-        self.assertEqual(cq_reads.vote_status(**journey)["ballot"], opening)
-        self.assertEqual(self.facts(opening)["operation"], "PROCEED")
+        for _ in range(2):
+            self.assertEqual(cq.confirm_clarity(**peer, version_uuid=revised["version"],
+                                                request_uuid=confirmation), confirmation)
+        self.assertEqual(models.LivingOrganismEvent.objects.count(), before + 2,
+                         "A retried last confirmation records one member response and one rule opening.")
+        opening = cq_reads.vote_status(**journey)["ballot"]
+        self.assertEqual(self.facts(opening)["operation"], "OPEN_VOTE")
         self.refused(
             "CQ_NOT_READY",
             cq.MESSAGES["CQ_NOT_READY"],
@@ -515,10 +523,10 @@ class CQClarityTests(TransactionTestCase):
             **journey,
             request_uuid=uuid4(),
         )
-        ready = self.facts(opening)["facts"]
+        ready = self.facts(confirmation)["facts"]
         self.assertEqual(
             (
-                ready["phase"],
+                self.facts(opening)["facts"]["phase"],
                 ready["version"],
                 len(ready["voting_pool"]),
                 ready["required"],
@@ -526,8 +534,8 @@ class CQClarityTests(TransactionTestCase):
             ("VOTING", str(revised["version"]), 3, 2),
         )
         self.refused(
-            "CQ_LOCKED",
-            "This wording is locked because clarity was reached on it. Start a new Suggestion to change it.",
+            "CQ_VOTE_LOCKED",
+            disc.MESSAGES["CQ_VOTE_LOCKED"],
             posts.edit_post,
             **(
                 edit_args | {"request_uuid": uuid4(), "predecessor": revised["version"]}
@@ -565,7 +573,7 @@ class CQClarityTests(TransactionTestCase):
         unknown_ballot(journey)
         prepared = cq.mark_prepared(**journey, request_uuid=uuid4())
         unknown_ballot(journey)
-        for person in people[:3]:
+        for person in people[1:3]:
             cq.confirm_clarity(
                 **(journey | {"credential": person.credential}),
                 version_uuid=topic["version"],
@@ -759,7 +767,7 @@ class CQClarityTests(TransactionTestCase):
             outcome["result"]["count"]["kind"], "NO_DECISION_CLARITY_THRESHOLD"
         )
         self.assertIn(
-            "0 of 4 confirmed clarity. 3 confirmations were required.",
+            "The stage required 3 of 4 eligible members to be clear. It counted 1.",
             outcome["result"]["markdown"],
         )
         self.assertEqual(outcome["result"]["post_number"], 2)
@@ -856,7 +864,7 @@ class CQClarityTests(TransactionTestCase):
             "CQ_CONFIRM_PERIOD",
             cq.MESSAGES["CQ_CONFIRM_PERIOD"],
             cq.confirm_clarity,
-            **other,
+            **(other | {"credential": people[1].credential}),
             version_uuid=revised["version"],
             request_uuid=uuid4(),
         )
@@ -1145,9 +1153,6 @@ class CQClarityTests(TransactionTestCase):
         )
         prepared = cq.mark_prepared(**special, request_uuid=uuid4())
         self.assertEqual(cq.phase(**special)["phase"], "CLARITY")
-        cq.confirm_clarity(
-            **special, request_uuid=uuid4(), version_uuid=target["version"]
-        )
         cq.raise_clarity_question(
             **(special | {"credential": member.credential}),
             request_uuid=uuid4(),
@@ -1211,13 +1216,13 @@ class CQClarityTests(TransactionTestCase):
             (0, 1, 2, "QUALIFIED"),
         )
         cq.mark_prepared(**other, request_uuid=uuid4())
-        for voter in (owner, member, departing):
+        for voter in (member, departing):
             cq.confirm_clarity(
                 **(other | {"credential": voter.credential}),
                 version_uuid=ordinary["version"],
                 request_uuid=uuid4(),
             )
-        normal = self.facts(cq.finish_clarity(**other, request_uuid=uuid4()))["facts"][
+        normal = self.facts(cq_reads.vote_status(**other)["ballot"])["facts"][
             "rules"
         ]
         self.assertEqual(
@@ -1332,7 +1337,9 @@ class CQClarityTests(TransactionTestCase):
             (inert_open["clarity_provisions"], len(inert_open["roster"])), ([], 3)
         )
 
-        for voter in (owner, member, replacement):
+        # Three of four leave a lawful manual decision at the deadline.
+        fixtures.add_member(lo)
+        for voter in (member, replacement):
             cq.confirm_clarity(
                 **(interactive | {"credential": voter.credential}),
                 request_uuid=uuid4(),
@@ -1439,7 +1446,7 @@ class CQClarityTests(TransactionTestCase):
         return committed, waiting
 
     def test_competing_wording_completion_and_due_catch_up(self):
-        """DISC2-08. Both revision/finish orders and two catch-up callers contend on real connections."""
+        """DISC2-08. Both revision/last-confirmation orders and two catch-up callers contend on real connections."""
         lo, owner, scope = self.owner()
         author, observer = fixtures.add_member(lo), fixtures.add_member(lo)
         people = (owner, author, observer)
@@ -1447,21 +1454,16 @@ class CQClarityTests(TransactionTestCase):
         journey, category, topic = self.topic(scope | {"credential": author.credential})
         coord = journey | {"credential": owner.credential}
         cq.put_forward(**journey, version_uuid=topic["version"], request_uuid=uuid4())
-        cq.mark_prepared(**coord, request_uuid=uuid4())
+        cq.mark_prepared(**journey, request_uuid=uuid4())
 
-        def confirm_everyone(version):
-            for person in people:
-                cq.confirm_clarity(
-                    **(journey | {"credential": person.credential}),
-                    version_uuid=version,
-                    request_uuid=uuid4(),
-                )
+        def confirm_first_two(version):
+            cq.confirm_clarity(**coord, version_uuid=version, request_uuid=uuid4())
 
-        confirm_everyone(topic["version"])
+        confirm_first_two(topic["version"])
         edit = partial(
             posts.edit_post, **journey, category_uuid=category, post_uuid=topic["post"]
         )
-        finish = partial(cq.finish_clarity, **coord)
+        last = partial(cq.confirm_clarity, **(journey | {"credential": observer.credential}))
         lost_finish = uuid4()
         revised, loser = self.contended_commands(
             partial(
@@ -1470,11 +1472,11 @@ class CQClarityTests(TransactionTestCase):
                 request_uuid=uuid4(),
                 markdown="Open on Sundays",
             ),
-            partial(finish, request_uuid=lost_finish),
+            partial(last, version_uuid=topic["version"], request_uuid=lost_finish),
         )
         self.refused(
-            "CQ_WINDOW",
-            "The clarity period has not ended and not everyone is clear.",
+            "CQ_VERSION",
+            cq.MESSAGES["CQ_VERSION"],
             loser.result,
         )
         after = cq.phase(**coord)
@@ -1482,10 +1484,10 @@ class CQClarityTests(TransactionTestCase):
             (after["phase"], after["version"]), ("CLARITY", revised["version"])
         )
 
-        confirm_everyone(revised["version"])
+        confirm_first_two(revised["version"])
         lost_edit = uuid4()
         finished, loser = self.contended_commands(
-            partial(finish, request_uuid=uuid4()),
+            partial(last, version_uuid=revised["version"], request_uuid=uuid4()),
             partial(
                 edit,
                 predecessor=revised["version"],
@@ -1494,9 +1496,8 @@ class CQClarityTests(TransactionTestCase):
             ),
         )
         self.refused(
-            "CQ_LOCKED",
-            "This wording is locked because clarity was reached on it. "
-            "Start a new Suggestion to change it.",
+            "CQ_VOTE_LOCKED",
+            disc.MESSAGES["CQ_VOTE_LOCKED"],
             loser.result,
         )
         current = posts.read_thread(**journey)["posts"][0]
@@ -1506,7 +1507,7 @@ class CQClarityTests(TransactionTestCase):
             (revised["version"], 2, "Open on Sundays"),
         )
         self.assertEqual(
-            (ready["phase"], ready["version"], ready["wording_fingerprint"]),
+            (cq.phase(**coord)["phase"], ready["version"], ready["wording_fingerprint"]),
             ("VOTING", str(current["version_uuid"]), current["body_fingerprint"]),
         )
         self.assertEqual(

@@ -79,7 +79,7 @@ class CQAuthorityTests(TransactionTestCase):
             journey if officer is None else journey | {"credential": officer.credential}
         )
         cq.mark_prepared(**managed, request_uuid=uuid4())
-        for member in people:
+        for member in motions.response_members(journey["thread_uuid"], people):
             cq.confirm_clarity(
                 **(journey | {"credential": member.credential}),
                 request_uuid=uuid4(),
@@ -413,9 +413,9 @@ class CQAuthorityTests(TransactionTestCase):
         self.assertEqual(self.closed(tied, tie)["count"]["kind"], "NOT_QUALIFIED_TIE")
         self.assertEqual(self.binding_count(attachment), 0)
         quiet, version, _ = self.motion(scope, attachment)
-        self.ready(quiet, version, people)
+        self.ready(quiet, version, people[:-1])
         with clarity.due_at_phase_start():
-            expired = cq.finish_clarity(**quiet, request_uuid=uuid4())
+            expired = motions.confirm_last(quiet, people[-1])
         cq.catch_up(credential=people[0].credential)
         self.assertEqual(
             self.closed(quiet, expired)["count"]["kind"],
@@ -552,6 +552,7 @@ class CQAuthorityTests(TransactionTestCase):
         """DISC3-04. Five seated trustees vote 4–1 and a member follows the adoption of Policy v2."""
         lo, scope, people, circle = self.ordinary(5, board=True)
         founder, officer = people[:2]
+        board_support.appoint_board_chairs(lo, founder, officer)
         viewer = law.add_member(lo)
         name = "safeguarding-" + uuid4().hex
         policy_args = dict(
@@ -967,7 +968,7 @@ class CQAuthorityTests(TransactionTestCase):
         original, board_category, topic = self.topic(board)
         cq.put_forward(**original, version_uuid=topic["version"], request_uuid=uuid4())
         self.ready(original, topic["version"], people)
-        opened = cq.finish_clarity(**original, request_uuid=uuid4())
+        opened = cq_reads.vote_status(**original)["ballot"]
         self.cast(original, opened, founder)
         cq.declare_conflict(
             **(original | {"credential": recused.credential}),
@@ -1012,7 +1013,7 @@ class CQAuthorityTests(TransactionTestCase):
                 version_uuid=copy["version"],
                 referral_result=origin,
             )
-        self.ready(next_motion, next_topic["version"], [founder, officer, fourth])
+        self.ready(next_motion, next_topic["version"], [founder, officer])
         with self.exact_refusal(
             cq.CQRefused,
             "Only an eligible member of this board may confirm clarity for this CQ.",
@@ -1022,7 +1023,7 @@ class CQAuthorityTests(TransactionTestCase):
                 request_uuid=uuid4(),
                 version_uuid=next_topic["version"],
             )
-        new_vote = cq.finish_clarity(**next_motion, request_uuid=uuid4())
+        new_vote = motions.confirm_last(next_motion, fourth)
         with self.exact_refusal(
             cq.CQRefused,
             "You declared a conflict for this proposal and cannot vote on it.",
