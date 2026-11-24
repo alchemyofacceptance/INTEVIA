@@ -1,0 +1,13 @@
+<div class="participation-ring" role="img" aria-label="{{ ring.text }}">
+  <svg class="ring-chart" viewBox="0 0 140 140" aria-hidden="true" focusable="false">
+    <circle class="ring-track" cx="70" cy="70" r="56"/>
+    {% for segment in ring.segments %}{% if segment.shown %}
+    <circle class="ring-segment {{ segment.key }}{% if segment.glass %} glass{% endif %}" cx="70" cy="70" r="56" pathLength="100" stroke-dasharray="{{ segment.length }} {{ segment.rest }}" stroke-dashoffset="{{ segment.offset }}" transform="rotate(-90 70 70)"/>
+    {% if segment.glass %}
+    <circle class="ring-shine" cx="70" cy="70" r="59.5" pathLength="100" stroke-dasharray="{{ segment.length }} {{ segment.rest }}" stroke-dashoffset="{{ segment.offset }}" transform="rotate(-90 70 70)"/>
+    <circle class="ring-shade" cx="70" cy="70" r="50.5" pathLength="100" stroke-dasharray="{{ segment.length }} {{ segment.rest }}" stroke-dashoffset="{{ segment.offset }}" transform="rotate(-90 70 70)"/>
+    {% endif %}
+    {% endif %}{% endfor %}
+  </svg>
+  <div class="ring-centre">{% include 'core/components/icon.html' with name='you' only %}<strong>{{ ring.total }}</strong><span>{{ ring.label }}</span></div>
+</div>

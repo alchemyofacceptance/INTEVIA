@@ -6,7 +6,8 @@ from django.urls import reverse
 from django.views.decorators.http import require_safe
 
 from core.cache import personal_response
-from src.intevia.services import cq_reads, discussion, discussion_posts, member_navigation
+from core.ui import vote_status_line
+from src.intevia.services import cq, cq_reads, discussion, discussion_posts, member_navigation
 
 
 @transaction.atomic
@@ -16,9 +17,15 @@ def _read_page(credential, org, circle, thread):
     context = {"board_org": org, "board_circle": circle, "governance_board": True}
     pinned_office = None
     if thread is None:
+        # Count only, for every open vote on this Board, in one statement.
+        open_votes = cq.board_open_vote_counts(**scope)
         for category in categories:
             rows = discussion_posts.category_topics(**scope, category_uuid=category["category_uuid"])
             category["topics"] = [row for row in rows if row["title"] is not None]
+            for row in category["topics"]:
+                count = open_votes.get(row["thread_uuid"])
+                if count:
+                    row["vote_status"] = vote_status_line(count["answered"], count["eligible"])
             category["topic_count"] = len(category["topics"])
         context["categories"] = categories
         template = "core/board_discussion.html"

@@ -58,12 +58,12 @@
     {
       "name": "color-success",
       "value": "#186448",
-      "dark_value": "#2FC4CD"
+      "dark_value": "#186448"
     },
     {
       "name": "color-success-bg",
       "value": "#E6F4EA",
-      "dark_value": "#0C2A2E"
+      "dark_value": "#0F2A1C"
     },
     {
       "name": "color-warning",
@@ -78,12 +78,22 @@
     {
       "name": "color-danger",
       "value": "#A3192B",
-      "dark_value": "#F2867E"
+      "dark_value": "#F0545E"
     },
     {
       "name": "color-danger-bg",
       "value": "#FDECEE",
       "dark_value": "#3A1618"
+    },
+    {
+      "name": "color-for",
+      "value": "#186448",
+      "dark_value": "#186448"
+    },
+    {
+      "name": "color-against",
+      "value": "#A3192B",
+      "dark_value": "#B0182C"
     },
     {
       "name": "color-pending",
@@ -375,7 +385,7 @@
     {
       "pair": "danger / page",
       "ratio": 7.16,
-      "dark_ratio": 8.17,
+      "dark_ratio": 5.91,
       "use": "Text"
     },
     {
@@ -411,7 +421,7 @@
     {
       "pair": "danger / surface",
       "ratio": 7.69,
-      "dark_ratio": 7.7,
+      "dark_ratio": 5.57,
       "use": "Text"
     },
     {
@@ -447,7 +457,7 @@
     {
       "pair": "danger / band",
       "ratio": 7.69,
-      "dark_ratio": 7.96,
+      "dark_ratio": 5.76,
       "use": "Text"
     },
     {
@@ -465,7 +475,7 @@
     {
       "pair": "success / success-bg",
       "ratio": 6.26,
-      "dark_ratio": 7.14,
+      "dark_ratio": 2.16,
       "use": "Text and status symbol"
     },
     {
@@ -477,7 +487,7 @@
     {
       "pair": "danger / danger-bg",
       "ratio": 6.74,
-      "dark_ratio": 6.49,
+      "dark_ratio": 4.69,
       "use": "Text and status symbol"
     },
     {
@@ -495,13 +505,13 @@
     {
       "pair": "surface / success",
       "ratio": 7.11,
-      "dark_ratio": 8.98,
+      "dark_ratio": 2.68,
       "use": "Flat button label"
     },
     {
       "pair": "surface / danger",
       "ratio": 7.69,
-      "dark_ratio": 7.7,
+      "dark_ratio": 5.57,
       "use": "Flat button label"
     },
     {
@@ -579,13 +589,13 @@
     {
       "pair": "control / success-bg",
       "ratio": 3.59,
-      "dark_ratio": 4.25,
+      "dark_ratio": 4.3,
       "use": "Control boundary"
     },
     {
       "pair": "focus / success-bg",
       "ratio": 4.5,
-      "dark_ratio": 7.14,
+      "dark_ratio": 7.23,
       "use": "Focus outline"
     },
     {

@@ -5,9 +5,17 @@
     {% if vote.count %}<p>{{ vote.count.confirmed }} of {{ vote.count.eligible }} are clear.</p>{% endif %}
     {% if vote.opening_count %}
       {% include 'core/components/vote_feedback.html' with rule_opened=True %}
-    {% elif vote.editable_wording or vote.stepped_out or vote.own_clear or vote.own_conflict %}
-      {% include 'core/components/vote_feedback.html' %}
     {% endif %}
+    {% if vote.ring %}
+      <div class="participation-summary">
+        {% include 'core/components/participation_ring.html' with ring=vote.ring only %}
+        <div class="counts">{% for item in vote.ring.counts %}<p><span class="answer {{ item.key }}">{{ item.symbol }} {{ item.label }}</span> <strong>{{ item.count }}</strong></p>{% endfor %}</div>
+        {# Owed row C1-401: where a subscribing organisation turns names on, who has answered is listed here. Until then nothing is rendered. #}
+      </div>
+    {% endif %}
+    {% if not vote.opening_count %}{% if vote.editable_wording or vote.stepped_out or vote.own_clear or vote.own_conflict or vote.ballot_form or vote.own_answer_label or vote.ballot_note or vote.result_due %}
+      {% include 'core/components/vote_feedback.html' %}
+    {% endif %}{% endif %}
     {% if vote.own_conflict_reason %}
       <div class="card vote-reason">{{ vote.own_conflict_reason|linebreaks }}</div>
     {% endif %}
@@ -15,6 +23,7 @@
       <h3 id="vote-wording-heading">{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
       <div class="card motion-wording">{{ vote.markdown|linebreaks }}</div>
     </article>
+    {% if vote.own_answer_label %}<div class="card vote-reason" id="own-answer"><p>You answered {{ vote.own_answer_label }}.</p></div>{% endif %}
   {% endif %}
   {% if vote.confirmation %}
     <article id="prepare" aria-labelledby="prepare-heading">
@@ -65,7 +74,30 @@
         {% include "core/components/button.html" with href=vote.member_form.cancel variant="secondary" label="Cancel" only %}
       </div>
     </form>
+  {% elif vote.ballot_form %}
+    <form id="ballot-form" tabindex="-1" method="post" action="{{ vote.ballot_form.url }}">
+      {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.ballot_form.token }}">
+      <fieldset class="appearance-options">
+        <legend>Your answer</legend>
+        {% for value, label in vote.ballot_form.options %}
+        <label class="button-row"><input type="radio" name="choice" value="{{ value }}" required> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      <div class="discussion-actions">
+        {% include "core/components/button.html" with type="submit" label="Submit answer" only %}
+        {% include "core/components/button.html" with href=vote.ballot_form.cancel variant="secondary" label="Cancel" only %}
+      </div>
+    </form>
   {% else %}
+    {% if vote.answer_url %}
+      <p class="discussion-actions link-row">{% include "core/components/button.html" with href=vote.answer_url label="Answer this vote" only %}</p>
+    {% endif %}
+    {% if vote.due_command %}
+      <form method="post" class="discussion-actions" id="record-result" action="{{ vote.due_url }}">
+        {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.due_command }}">
+        {% include "core/components/button.html" with type="submit" label="Record the result" only %}
+      </form>
+    {% endif %}
     {% if vote.confirm_command or vote.question_url and reply_command %}
       <div class="clarity-responses">
         {% if vote.confirm_command %}

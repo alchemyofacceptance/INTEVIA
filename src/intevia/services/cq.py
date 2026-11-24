@@ -965,12 +965,122 @@ def _clarity_responses(board, thread, actor, row):
     return result
 
 
+# The answers a ballot can offer, in the order shown. A ballot offers ABSTAIN
+# only when the rules it captured at opening allow abstention.
+BALLOT_OPTIONS = ("QUALIFIED", "NOT_QUALIFIED", "ABSTAIN")
+
+
+def _answer_refusal(board, thread, actor, ballot, at):
+    """Ask the writer's own STABLE checks whether this reader may answer this ballot now.
+
+    Return None when an answer would be admitted, otherwise the governed refusal
+    code. The probe names the one choice every ballot offers and writes nothing.
+    """
+    scope = [board["organism_id"], board["board_uuid"], thread, "ANSWER"]
+    args = json.dumps({"ballot": str(ballot), "choice": "QUALIFIED"})
+    try:
+        with transaction.atomic():
+            disc._rows(
+                "SELECT public.cq_source(%s,%s,%s,%s,%s,%s) IS NOT NULL AND "
+                "public.cq_ballot_facts(%s,%s,%s,%s,%s,%s::jsonb,%s,%s) IS NOT NULL AS allowed",
+                scope + [actor.pk, at] + scope + [uuid4(), args, actor.pk, at],
+            )
+    except IntegrityError as error:
+        code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
+        if code not in MESSAGES and code not in disc.MESSAGES:
+            raise
+        return code
+    return None
+
+
+def _open_ballot(board, thread, actor, row):
+    """Project the open ordinary ballot for this one reader: the count, and only their own answer.
+
+    Interim, by the Human Governor's ruling of 24 Nov 2026 (capture E; owed row
+    C1-401): while a vote is open no participant's name or identity is selected
+    here, whatever reporting rule the ballot captured. Results follow that rule.
+    An election's ballot is never projected here.
+    """
+    at = row["read_at"]
+    rows = disc._rows(
+        """SELECT (o.facts->>'attempt')::int AS attempt,
+                  coalesce((o.facts->'rules'->>'abstention')::boolean,false) AS abstention,
+                  c.eligible, c.answered,
+                  CASE WHEN %s THEN (SELECT a.request->>'choice' FROM public.core_cqact a
+                       WHERE a.operation='ANSWER' AND a.request->>'ballot'=o.act_uuid::text
+                         AND a.actor_id=%s AND a.recorded_at<=%s
+                       ORDER BY a.ordinal LIMIT 1) END AS own_answer
+           FROM public.core_cqact o
+           CROSS JOIN LATERAL (SELECT count(*)::int AS eligible, count(e.choice)::int AS answered
+                FROM public.cq_ballot_entries(o.act_uuid,
+                       least(%s,(o.facts->>'deadline')::timestamptz)) e) c
+           WHERE o.act_uuid=%s AND o.board_uuid=%s AND o.thread_uuid=%s
+             AND o.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+             AND o.facts->>'event_kind'='DECISION'""",
+        [row["clarity_reader"], actor.pk, at, at, row["ballot_uuid"], board["board_uuid"], thread],
+    )
+    if not rows:
+        return None
+    facts = rows[0]
+    ballot = {"ballot_uuid": row["ballot_uuid"], "attempt": facts["attempt"],
+              "options": [option for option in BALLOT_OPTIONS if option != "ABSTAIN" or facts["abstention"]],
+              "eligible": facts["eligible"], "answered": facts["answered"]}
+    if row["clarity_reader"]:
+        # Only an active or probationary member receives their own state, as with their own conflict.
+        refusal = _answer_refusal(board, thread, actor, row["ballot_uuid"], at)
+        ballot.update(own_answer=facts["own_answer"], may_answer=refusal is None, answer_refusal=refusal)
+    return ballot
+
+
+@transaction.atomic
+def board_open_vote_counts(*, credential, organism_uuid, circle_uuid):
+    """Count the answers on every open ordinary ballot of this Board that the reader may see.
+
+    One statement for the whole Board: thread → eligible, answered. As in
+    ``_open_ballot`` (the Human Governor's ruling of 24 Nov 2026, capture E; owed
+    row C1-401), no participant's name, identity or choice is selected. A ballot
+    past its deadline, an election ballot and a Topic the reader may not open are
+    left out. A Board-confirmation election (a vacancy filled by Board vote) opens a
+    DECISION ballot, so it is counted here though the Topic does not project it:
+    owed in full to row C1-289 (capture Q of 24 Nov 2026, D3).
+    """
+    actor = disc._actor(credential)
+    disc._read_owner(organism_uuid, circle_uuid)
+    rows = disc._rows(
+        """SELECT h.thread_uuid, c.eligible, c.answered
+           FROM public.cq_phases h
+           JOIN public.core_cqact o ON o.act_uuid=h.act_uuid
+           JOIN public.core_discboard b ON b.board_uuid=h.board_uuid
+           JOIN public.core_livingorganism lo ON lo.id=b.organism_id
+           JOIN public.core_circle circle ON circle.id=b.circle_id
+           JOIN public.discp_threads t ON t.thread_uuid=h.thread_uuid AND t.board_uuid=b.board_uuid
+           JOIN public.disc_categories cat ON cat.category_uuid=t.category_uuid
+           JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
+           CROSS JOIN LATERAL (SELECT count(*)::int AS eligible, count(e.choice)::int AS answered
+                FROM public.cq_ballot_entries(o.act_uuid, public.intevia_clock_statement()) e) c
+           WHERE lo.organism_id=%s AND circle.circle_uuid=%s AND circle.kind='GOVERNANCE'
+             AND h.phase='VOTING' AND o.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+             AND o.facts->>'event_kind'='DECISION'
+             AND public.intevia_clock_statement()<(o.facts->>'deadline')::timestamptz
+             AND t.topic_type='SUGGESTION' AND NOT (opening.author_hidden OR opening.coordinator_hidden)
+             AND public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,
+                                      public.intevia_clock_statement())""",
+        [organism_uuid, circle_uuid, actor.pk],
+    )
+    return {row["thread_uuid"]: {"eligible": row["eligible"], "answered": row["answered"]} for row in rows}
+
+
 @transaction.atomic
 def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, preview_prepared=False):
     """Return the admitted Board reader's vote line, wording and available command.
 
     A live draft follows the opening post. An opened ballot pins its own version;
-    a terminal act without a ballot supplies the wording at closure.
+    a terminal act without a ballot supplies the wording at closure. While an
+    ordinary ballot is the Topic's head, ``ballot`` carries the count and, for an
+    active or probationary member, their own answer and whether they may answer.
+    ``result_due`` tells an active member that the deadline has passed with no result.
+    Once a result is recorded, ``decided_own_answer`` gives an active or probationary
+    member their own answer on the decided ballot, and nobody else's (capture N).
     """
     actor = disc._actor(credential)
     board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid)
@@ -1042,6 +1152,30 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
                 panel["own_conflict"] = bool(own)
                 if own:
                     panel["own_conflict_reason"] = own[0]["basis"]
+        if (row["phase"] == "VOTING" and row["ballot_uuid"] is not None
+                and row["attachment_kind"] != "ELECTION"):
+            ballot = _open_ballot(board, thread_uuid, actor, row)
+            if ballot is not None:
+                panel["ballot"] = ballot
+                if row["read_at"] >= row["deadline"]:
+                    # Past its deadline with no result. Only an active member's catch-up would record it.
+                    active = disc._rows(
+                        "SELECT public.disc_member_state(%s,%s,%s)='ACTIVE' AS active",
+                        [board["organism_id"], actor.pk, row["read_at"]],
+                    )[0]["active"]
+                    if active:
+                        panel["result_due"] = True
+        elif (row["phase"] == "RESULT" and row["ballot_uuid"] is not None
+              and row["attachment_kind"] != "ELECTION" and row["clarity_reader"]):
+            # Capture N: only the reader's own answer on the ballot this result decided.
+            own = disc._rows(
+                """SELECT a.request->>'choice' AS choice FROM public.core_cqact a
+                   WHERE a.operation='ANSWER' AND a.request->>'ballot'=%s
+                     AND a.actor_id=%s AND a.recorded_at<=%s ORDER BY a.ordinal LIMIT 1""",
+                [str(row["ballot_uuid"]), actor.pk, row["read_at"]],
+            )
+            if own:
+                panel["decided_own_answer"] = own[0]["choice"]
         panel["body_kind"] = row["body_kind"]
         panel["election"] = row["attachment_kind"] == "ELECTION"
         if row["phase"] != "PREPARATION" or row["attached"]:

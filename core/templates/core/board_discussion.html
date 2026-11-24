@@ -21,6 +21,7 @@
           {% for topic in category.topics %}
             <li><a href="{% url 'discussion_topic' board_org board_circle topic.thread_uuid %}">{{ topic.title }}</a>
               <div class="meta">{% if topic.pinned %}Pinned · {% endif %}{% if topic.closed %}Closed · {% endif %}{% if topic.hidden %}Hidden · {% endif %}<time datetime="{{ topic.created_at|date:'c' }}">{{ topic.created_at|date:"j F Y, H:i T" }}</time></div>
+              {% if topic.vote_status %}<div class="meta vote-status-line">{{ topic.vote_status }}</div>{% endif %}
             </li>
           {% endfor %}
         </ul>

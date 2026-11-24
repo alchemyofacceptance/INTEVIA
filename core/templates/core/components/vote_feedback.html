@@ -5,5 +5,9 @@
   {% elif vote.stepped_out %}<p>A member has stepped out of this decision, and all {{ vote.count.eligible }} remaining {{ vote.electorate_label }} are clear. Voting opens automatically after Clarity ends, or {% if vote.can_proceed %}you can open it now{% else %}sooner if the {{ vote.office_label }} opens it{% endif %}.</p>
   {% elif vote.own_clear %}<p>You said you're clear on this wording.{% if vote.read_at < vote.deadline %} If something becomes unclear, you can still ask a question.{% endif %}</p>{% endif %}
   {% if vote.own_conflict %}<p>You have declared a conflict and stepped out of this decision.</p>{% endif %}
+  {% if vote.ballot_form %}<p>Your answer is recorded once and cannot be changed.</p>{% endif %}
+  {% if vote.own_answer_label %}<p>Your answer is recorded.</p>{% endif %}
+  {% if vote.ballot_note %}<p>{{ vote.ballot_note }}</p>{% endif %}
+  {% if vote.result_due %}<p>Voting has closed. The result has not been recorded yet.</p>{% if vote.due_command %}<p>Recording it also records any other result or deadline that is due in your organisations.</p>{% endif %}{% endif %}
   {% if vote.editable_wording %}<p class="vote-edit-note">The wording can still change until voting opens.</p>{% endif %}
 </div>
