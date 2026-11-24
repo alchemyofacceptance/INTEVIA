@@ -930,7 +930,7 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_
             }
             raise CircleAccessRefused(reasons.get(problem) or cq.MESSAGES[problem])
         try:
-            return write_event(alias, circle, actor, "ACTIVATE", "ACTIVE", decision, ref, request_uuid, at)
+            event = write_event(alias, circle, actor, "ACTIVATE", "ACTIVE", decision, ref, request_uuid, at)
         except IntegrityError as error:
             diagnostic = getattr(error.__cause__, "diag", None)
             code = getattr(diagnostic, "message_primary", None)
@@ -942,3 +942,38 @@ def activate(*, credential, organism_uuid, circle_uuid, request_uuid, committee_
             if code in _BOARD_MAKEUP_REFUSALS:
                 raise CircleAccessRefused(_BOARD_MAKEUP_REFUSALS[code]) from error
             raise
+        if circle.kind == "GOVERNANCE":
+            _open_board_discussion(credential, lo, circle, request_uuid)
+        return event
+
+
+_BOARD_DISCUSSION_REFUSAL = (
+    "The Board was not activated. Its discussion could not be opened with it. Nothing was "
+    "recorded, and the Board remains inactive. Check that you hold a current seat on this "
+    "Board and that your membership is active, then activate the Board again. Your "
+    "Organisation Coordinator can help with the seat records."
+)
+
+
+def _open_board_discussion(credential, lo, circle, activation_uuid):
+    """Open a Board's discussion as part of its activation (HG capture CX, 23 Nov 2026).
+
+    Runs inside the activation's transaction, after the ACTIVATE event is written,
+    through discussion.ensure_board. The person activating has just been checked as an
+    ACTIVE member with a current place in the Circle (CIRCLE_G4_PLACE), which is what
+    the discussion's PROVISION act requires, so the act is recorded under its existing
+    rule with that person as its actor. The request key is derived from the activation's
+    own request. A replayed activation returns before this step; a later activation of a
+    Board that already has its discussion gets the existing discussion back and records
+    nothing. A refusal here raises CircleAccessRefused, which rolls the activation back.
+
+    The discussion service reads and writes on the default database connection only.
+    """
+    from src.intevia.services import discussion
+
+    try:
+        discussion.ensure_board(credential=credential, organism_uuid=lo.organism_id,
+                                circle_uuid=circle.circle_uuid,
+                                request_uuid=uuid5(activation_uuid, "board"))
+    except (discussion.DiscussionRefused, discussion.DiscussionUnavailable) as error:
+        raise CircleAccessRefused(_BOARD_DISCUSSION_REFUSAL) from error

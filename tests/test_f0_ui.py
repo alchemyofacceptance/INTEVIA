@@ -388,11 +388,14 @@ class LinkTargetTests(SimpleTestCase):
 class PreparationPromptStyleTests(SimpleTestCase):
     def test_prompt_has_teal_stripe_and_surface_in_served_css(self):
         sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
-        rule = re.search(r"\.card\.prompt\{([^}]+)\}", sheet)
-        self.assertIsNotNone(rule)
-        style = dict(item.split(":", 1) for item in rule[1].split(";"))
-        self.assertEqual(style.get("border-left-color"), "var(--color-accent)")
-        self.assertEqual(style.get("background"), "var(--color-accent-soft)")
+        from tests.test_uc1_render import declarations
+
+        style = declarations(sheet, ".card.prompt")
+        self.assertEqual(style.get("border-left-color"), "var(--color-accent)",
+                         "The prompt must keep INTEVIA's teal edge.")
+        self.assertEqual(style.get("background-color"), "var(--color-accent-soft)",
+                         "The prompt must set its teal surface as a colour only, so the shared glass stays on it.")
+        self.assertNotIn("background", style, "A background shorthand on the prompt would remove the shared glass.")
 
     def test_card_final_action_row_has_no_bottom_margin(self):
         sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
@@ -407,18 +410,139 @@ class BoardVoteStyleTests(SimpleTestCase):
         from tests.test_uc1_render import declarations
 
         sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
-        glass = declarations(sheet, "#vote .vote-glass")
-        self.assertEqual(glass.get("border-radius"), "var(--radius-sm)", "Vote speech uses the button's small corner.")
-        self.assertIn("linear-gradient", glass.get("background-image", ""), "The glass needs a face highlight.")
-        self.assertIn("inset", glass.get("box-shadow", ""), "The glass needs a rim and shadow.")
-        self.assertEqual(glass.get("--vote-ink"), "var(--color-primary)")
-        self.assertEqual(declarations(sheet, "#vote .vote-glass:is(.notice,.prompt)").get("--vote-ink"), "var(--color-accent)")
+        glass = declarations(sheet, ".panel,.event-item,.card,.notice")
+        self.assertIn("linear-gradient", glass.get("background-image", ""), "The shared glass needs a face highlight.")
+        self.assertIn("inset", glass.get("box-shadow", ""), "The shared glass needs a rim and shadow.")
+        self.assertEqual(glass.get("--glass-ink"), "var(--color-primary)", "A card's glass is tinted with the human's purple.")
+        self.assertEqual(declarations(sheet, ".card.prompt,.notice").get("--glass-ink"), "var(--color-accent)",
+                         "INTEVIA's and CARE's voice box is tinted with teal.")
         row = declarations(sheet, ".clarity-responses")
         self.assertEqual((row.get("display"), row.get("flex-wrap")), ("flex", "wrap"), "The closed controls share a wrapping row.")
-        self.assertEqual(declarations(sheet, "#vote .vote-glass.refusal").get("--vote-ink"), "var(--color-danger)",
+        self.assertEqual(declarations(sheet, ".notice.refusal,.notice.error").get("--glass-ink"), "var(--color-danger)",
                          "Stop confirmations use the danger colour in both themes.")
         self.assertEqual(declarations(sheet, "#vote .vote-reason").get("background-color"), "var(--color-primary-soft)",
                          "A member's declaration uses the violet surface.")
+
+
+class DesignLanguageStyleTests(SimpleTestCase):
+    """C1-378. One corner, one glass and one voice box, all from the shared styles (HG captures CC, CB, CA, CT, CY)."""
+
+    def sheet(self):
+        return Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
+
+    def template(self, name):
+        root = Path(__file__).resolve().parents[1] / "core/templates/core"
+        return (root / name).read_text(encoding="utf-8")
+
+    def rules_naming(self, selector):
+        """Read the declarations of every rule whose selector list names this selector.
+
+        The pinned compiler may write one rule alone or merge it into a list with others
+        that share its declarations; a comma inside brackets, as in :is(a,b), does not split a list.
+        """
+        found = {}
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", self.sheet()):
+            names, depth, start = [], 0, 0
+            for index, char in enumerate(match[1]):
+                depth += (char == "(") - (char == ")")
+                if char == "," and depth == 0:
+                    names.append(match[1][start:index].strip())
+                    start = index + 1
+            names.append(match[1][start:].strip())
+            if selector in names:
+                for declaration in match[2].split(";"):
+                    name, sep, value = declaration.partition(":")
+                    if sep:
+                        found[name.strip()] = value.strip()
+        return found
+
+    def test_dl_01_cards_lists_and_voice_boxes_share_the_one_corner(self):
+        from tests.test_uc1_render import declarations
+
+        sheet = self.sheet()
+        for selector, what in ((".panel,.event-item,.card", "Cards and panels"), (".notice", "INTEVIA's voice box"),
+                               (".circle-list", "The Circle and office lists")):
+            self.assertEqual(declarations(sheet, selector).get("border-radius"), "var(--radius-sm)",
+                             what + " must take the one 8 px corner.")
+        self.assertNotIn("--radius-card", sheet, "The 20 px corner token must be gone, so one corner remains.")
+
+    def test_dl_02_the_glass_is_shared_and_no_vote_only_copy_remains(self):
+        sheet = self.sheet()
+        self.assertNotIn("vote-glass", sheet, "The vote section must have no glass rule of its own.")
+        self.assertNotIn("--vote-", sheet, "The vote section must have no glass variables of its own.")
+        self.assertIn("--glass-shine:#ffffff18", sheet, "Dark mode must set the shared glass's softer shine.")
+        root = Path(__file__).resolve().parents[1] / "core/templates/core"
+        users = sorted(str(path.relative_to(root)) for path in root.rglob("*.html")
+                       if "vote-glass" in path.read_text(encoding="utf-8"))
+        self.assertEqual(users, [], "No template may still ask for the vote-only glass class.")
+
+    def test_dl_03_a_notice_kind_keeps_the_shared_glass(self):
+        from tests.test_uc1_render import declarations
+
+        sheet = self.sheet()
+        for selector in (".notice.success", ".notice.warning", ".notice.refusal,.notice.error", ".notice.pending"):
+            style = declarations(sheet, selector)
+            self.assertNotIn("background", style,
+                             selector + " must not use the background shorthand: it would remove the shared glass.")
+            self.assertTrue(style.get("background-color"), selector + " must still set its own surface colour.")
+
+    def test_dl_04_cares_observation_and_condition_boxes_are_the_voice_box(self):
+        from tests.test_uc1_render import declarations
+
+        self.assertIn('<aside class="notice care office-observation" aria-label="CARE observation">',
+                      self.template("components/office_provision.html"),
+                      "CARE's observation must be the teal voice box, marked as CARE's voice.")
+        self.assertIn('<section class="notice care" aria-labelledby="office-assistance">', self.template("office_page.html"),
+                      "The CARE assistance box must be the teal voice box, marked as CARE's voice.")
+        self.assertIn('<section class="notice" aria-labelledby="status-heading">', self.template("circle_page.html"),
+                      "The Operating status box states a condition, so it must be the teal voice box.")
+        own = declarations(self.sheet(), ".office-observation")
+        self.assertEqual(set(own), {"overflow-wrap"},
+                         "The observation must take its box from .notice and keep only its own wrapping.")
+        self.assertEqual(self.rules_naming(".notice :is(h3,.meta,.help,.lede,dt)").get("color"), "inherit",
+                         "Every word in the voice box must take the box's ink, whichever rule list the compiler writes it in.")
+
+    def test_dl_05_cares_headings_are_sans_and_other_box_headings_keep_the_serif(self):
+        care = self.rules_naming(".notice.care :is(h2,h3)")
+        self.assertEqual((care.get("font-family"), care.get("font-size"), care.get("font-weight")),
+                         ("var(--font-sans)", "var(--text-base)", "var(--weight)"),
+                         "Where CARE speaks, the box heading must be bold sans at body size.")
+        self.assertNotIn("color", care, "CARE's heading must take the box's teal ink, not a colour of its own.")
+        plain = self.rules_naming(".notice h2")
+        self.assertEqual(plain.get("color"), "inherit", "A heading in any INTEVIA box must take the box's ink.")
+        for own in ("font-family", "font-size", "font-weight"):
+            self.assertNotIn(own, plain, "Outside CARE's boxes a box heading must keep the page's serif heading: no " + own + ".")
+
+    def test_dl_06_unavailable_pages_speak_in_the_red_refusal_box(self):
+        from uuid import uuid4
+
+        request = RequestFactory().get("/")
+        request.user = AnonymousUser()
+        owner = {"full_name": "Alder Beck Trust", "organism_uuid": uuid4()}
+        for template, context, way_back in (
+            ("discussion_unavailable", {"back_organisation": owner}, "Back to Alder Beck Trust"),
+            ("discussion_unavailable", {}, "Your organisations in INTEVIA"),
+            ("office_unavailable", {}, None),
+            ("organisation_unavailable", {}, None),
+        ):
+            with self.subTest(template=template, way_back=way_back):
+                page = Markup(render_to_string(f"core/{template}.html", context, request=request))
+                main, = page.select("main")
+                boxes = page.select("div", within=main, classes=("notice", "refusal"), role="alert")
+                self.assertEqual(len(boxes), 1, "An unavailable page must say its words in one red refusal box.")
+                said = [p for p in page.select("p", within=main) if "link-row" not in p["attrs"].get("class", "").split()]
+                self.assertTrue(said, "The page must still say why it is unavailable.")
+                for paragraph in said:
+                    self.assertTrue(any(parent is boxes[0] for parent in paragraph["parents"]),
+                                    "INTEVIA's words must sit inside the refusal box: " + paragraph["text"].strip())
+                links = page.select("a", within=main)
+                ways = [(a["text"].strip(), a["attrs"].get("class")) for a in links]
+                self.assertEqual(ways, [(way_back, "button secondary")] if way_back else [],
+                                 "The way back must be one secondary button, and absent where the page offers none.")
+                for link in links:
+                    self.assertFalse(any(parent is boxes[0] for parent in link["parents"]),
+                                     "The way back is the member's action, so it must sit outside the refusal box: "
+                                     + link["text"].strip())
 
 
 class PostQuoteStyleTests(SimpleTestCase):

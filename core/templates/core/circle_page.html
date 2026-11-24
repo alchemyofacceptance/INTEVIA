@@ -42,7 +42,7 @@
 {% if discussion_available %}
 <p class="board-discussion-destination link-row"><a href="{% url 'board_discussion' organisation.organism_uuid circle.circle_uuid %}">Board discussion</a></p>
 {% endif %}
-{% if status %}<section class="card" aria-labelledby="status-heading">
+{% if status %}<section class="notice" aria-labelledby="status-heading">
   <h2 id="status-heading">Operating status</h2>
   <p>{{ status.state }}</p>
   {% if status.deadline %}<p>Deadline · <time datetime="{{ status.deadline|date:'c' }}">{{ status.deadline|date:"j F Y, H:i T" }}</time></p>{% endif %}

@@ -191,11 +191,6 @@
       "dark_value": "0.5rem"
     },
     {
-      "name": "radius-card",
-      "value": "1.25rem",
-      "dark_value": "1.25rem"
-    },
-    {
       "name": "radius-pill",
       "value": "999px",
       "dark_value": "999px"

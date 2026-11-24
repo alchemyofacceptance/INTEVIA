@@ -642,12 +642,12 @@ class VotePanelPresentationTests(SimpleTestCase):
                 page = self.vote_markup(phase=phase, markdown="Member's words.", version_number=2, **facts)
                 if editable:
                     expected = [*expected, "The wording can still change until voting opens."]
-                feedback = page.select("div", classes=("notice", "vote-glass", "vote-feedback"))
+                feedback = page.select("div", classes=("notice", "vote-feedback"))
                 self.assertEqual(len(feedback), int(bool(expected)), "Use one feedback bubble when the stage has something to say.")
                 if feedback:
                     self.assertEqual([p["text"] for p in page.select("p", within=feedback[0])], expected,
                                      "Put the reader's applicable messages together, in their own paragraphs.")
-                wording, = page.select("div", classes=("motion-wording", "card", "vote-glass"))
+                wording, = page.select("div", classes=("motion-wording", "card"))
                 self.assertEqual(wording["text"].strip(), "Member's words.", "Only the human wording belongs in its glass.")
                 notices = [n for n in page.nodes if "notice" in n["attrs"].get("class", "").split()]
                 self.assertEqual(notices, feedback, "The edit note must not create a second notice.")
@@ -659,7 +659,7 @@ class VotePanelPresentationTests(SimpleTestCase):
                 paragraphs = page.select("p")
                 status = paragraphs[:2] if "count" in facts else paragraphs[:1]
                 for placed in [*page.select("h2"), *page.select("h3"), *status]:
-                    self.assertFalse(any("vote-glass" in n["attrs"].get("class", "").split() for n in (*placed["parents"], placed)),
+                    self.assertFalse(any({"card", "notice"} & set(n["attrs"].get("class", "").split()) for n in (*placed["parents"], placed)),
                                      "Headings, version, phase, date and count sit outside the glass.")
 
     def test_response_row_orders_only_the_available_controls(self):
@@ -739,7 +739,7 @@ class VotePanelPresentationTests(SimpleTestCase):
                     box, = page.select("textarea", within=form, name=field)
                     self.assertIn("required", box["attrs"], "A question or conflict needs the member's own words.")
                 else:
-                    self.assertEqual(len(page.select("div", classes=("card", "refusal", "vote-glass"))), 1)
+                    self.assertEqual(len(page.select("div", classes=("card", "notice", "refusal"))), 1)
         withheld = render({"clarity": "question"}, can_reply=False)
         self.assertFalse(withheld.select("textarea"), "A direct preview cannot bypass the ordinary reply gate.")
         self.assertTrue(withheld.select("form", action=reverse("discussion_confirm_clarity", args=ids)),
@@ -751,7 +751,7 @@ class VotePanelPresentationTests(SimpleTestCase):
             with self.subTest(phase=phase):
                 page = self.vote_markup(phase=phase, own_conflict=True, own_conflict_reason=reason)
                 feedback, = page.select("div", classes=("notice", "vote-feedback"))
-                own, = page.select("div", classes=("card", "vote-glass", "vote-reason"))
+                own, = page.select("div", classes=("card", "vote-reason"))
                 title, = page.select("h3", id="vote-wording-heading")
                 self.assertEqual(own["text"].strip(), reason, "The declarer's words must be escaped as text.")
                 self.assertFalse(page.select("b", within=own))
@@ -766,7 +766,7 @@ class VotePanelPresentationTests(SimpleTestCase):
         initial = {"command": "test-command", "label": "Put to a Board vote", "route": "discussion_put_forward"}
         page = Markup(render_to_string(template, context | {"vote": initial}, request=self.request))
         self.assertEqual([n["text"].strip() for n in page.select("button")], ["Put to a Board vote"])
-        self.assertFalse(page.select("article") or page.select("div", classes=("vote-glass",)),
+        self.assertFalse(page.select("article") or page.select("div", classes=("card",)) or page.select("div", classes=("notice",)),
                          "Before initiation there is no stage message or wording card.")
         for heading, effect in (
             ("Close without a vote?", "Clarity will end. No ballot will open on this Suggestion."),
@@ -777,7 +777,7 @@ class VotePanelPresentationTests(SimpleTestCase):
                 vote = {"phase": "CLARITY", "line": "Clarity period ended", "clarity_prompt": preview}
                 page = Markup(render_to_string(template, context | {"vote": vote}, request=self.request))
                 article, = page.select("article", id="clarity-confirmation")
-                bubble, = page.select("div", within=article, classes=("card", "notice", "refusal", "vote-glass"))
+                bubble, = page.select("div", within=article, classes=("card", "notice", "refusal"))
                 self.assertEqual([p["text"] for p in page.select("p", within=bubble)], [effect])
                 self.assertEqual([h["text"] for h in page.select("h3", within=article)], [heading])
                 self.assertFalse(page.select("h3", within=bubble), "The prompt title sits outside the glass.")
@@ -963,7 +963,7 @@ class PreparationPromptTests(SimpleTestCase):
             with self.subTest(destination=destination):
                 page = self.render_prompt(destination, days)
                 prompt, = page.select("article", id="prepare")
-                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice", "vote-glass"))
+                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice"))
                 self.assertFalse(page.select("h3", within=bubble), "The prompt heading belongs outside the glass.")
                 self.assertEqual([p["text"] for p in page.select("p", within=bubble)], paragraphs)
                 self.assertEqual(page.select("h3", within=prompt)[0]["text"], "Mark this Suggestion as prepared?")
@@ -984,7 +984,7 @@ class PreparationPromptTests(SimpleTestCase):
             with self.subTest(kind=kind):
                 page = self.render_prompt(kind)
                 prompt, = page.select("article", id="prepare")
-                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice", "vote-glass"))
+                bubble, = page.select("div", within=prompt, classes=("card", "prompt", "notice"))
                 self.assertFalse(page.select("h3", within=bubble), "The prompt heading belongs outside the glass.")
                 self.assertEqual([p["text"] for p in page.select("p", within=bubble)],
                                  ["Marking this Suggestion as prepared will record that no vote opened.", why],

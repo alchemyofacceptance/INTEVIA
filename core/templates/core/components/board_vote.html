@@ -9,17 +9,17 @@
       {% include 'core/components/vote_feedback.html' %}
     {% endif %}
     {% if vote.own_conflict_reason %}
-      <div class="card vote-glass vote-reason">{{ vote.own_conflict_reason|linebreaks }}</div>
+      <div class="card vote-reason">{{ vote.own_conflict_reason|linebreaks }}</div>
     {% endif %}
     <article aria-labelledby="vote-wording-heading">
       <h3 id="vote-wording-heading">{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
-      <div class="card vote-glass motion-wording">{{ vote.markdown|linebreaks }}</div>
+      <div class="card motion-wording">{{ vote.markdown|linebreaks }}</div>
     </article>
   {% endif %}
   {% if vote.confirmation %}
     <article id="prepare" aria-labelledby="prepare-heading">
       <h3 id="prepare-heading">Mark this Suggestion as prepared?</h3>
-      <div class="card prompt notice vote-glass">
+      <div class="card prompt notice">
         {% if vote.confirmation.destination == "CLARITY" %}
           <p>Board members will be asked to confirm they are clear on this wording. They have {{ vote.confirmation.days }} day{{ vote.confirmation.days|pluralize }}.</p>
           <p>{% if vote.is_author %}You{% else %}The author{% endif %} can still edit the wording during Clarity. Each edit asks them to confirm again.</p>
@@ -47,7 +47,7 @@
   {% elif vote.clarity_prompt %}
     <article id="clarity-confirmation" aria-labelledby="clarity-confirmation-heading">
       <h3 id="clarity-confirmation-heading">{{ vote.clarity_prompt.heading }}</h3>
-      <div class="card notice refusal vote-glass">
+      <div class="card notice refusal">
         <p>{{ vote.clarity_prompt.effect }}</p>
         <form class="discussion-actions" method="post" action="{{ vote.clarity_prompt.url }}">
           {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.clarity_prompt.token }}">

@@ -29,7 +29,7 @@
 {% endif %}
 
 {% if record.care %}
-<section class="card" aria-labelledby="office-assistance">
+<section class="notice care" aria-labelledby="office-assistance">
   <h2 id="office-assistance">CARE assistance</h2>
   <p><span class="tag {% if record.care.enabled %}ok{% else %}neutral{% endif %}">{% if record.care.enabled %}On{% else %}Off{% endif %}</span>{% if record.care.choice_source == "default" %} · On by default{% elif record.care.choice_source == "chosen" %} · Organisation choice{% endif %}</p>
   {% if record.care.switched_by and record.care.switched_by_name %}

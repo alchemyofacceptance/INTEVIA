@@ -1,4 +1,4 @@
-<div class="notice vote-glass vote-feedback">
+<div class="notice vote-feedback">
   {% if rule_opened %}<p>All {{ vote.opening_count }} eligible {{ vote.electorate_label }} were clear, so voting opened on this wording.</p>{% endif %}
   {% if vote.phase == "PREPARATION" and not vote.specialist_preparation and vote.read_at < vote.deadline %}
     <p>Discuss the Suggestion here first. Its author{% if governance_board %} or the Board Chair{% endif %} can mark it prepared for Clarity or voting; if the preparation deadline passes first, it moves on as unprepared.</p>

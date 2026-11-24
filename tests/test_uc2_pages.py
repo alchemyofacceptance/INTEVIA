@@ -457,13 +457,11 @@ class BoardVotePageTests(TransactionTestCase):
         support = post_support.DiscussionPostTests()
         with patch("src.intevia.services.timed_events.run") as wake:
             before = read_counts()
-            self.assertEqual(reader.get(index).status_code, 404, "An unprovisioned Board must use the unavailable page.")
-            self.assertNotContains(reader.get(parent), index, msg_prefix="An unprovisioned Board must have no discussion link.")
-            self.assertEqual(read_counts(), before, "Reading the unprovisioned Board must leave every counted record unchanged.")
-            args = support.board(owner, coordinator, board)
             empty = reader.get(index)
-            self.assertContains(empty, "No Topics to show here.", msg_prefix="The newly provisioned Board must show an empty category.")
-            self.assertContains(reader.get(parent), index, msg_prefix="A seated reader must be able to enter the released Board discussion.")
+            self.assertContains(empty, "No Topics to show here.", msg_prefix="An activated Board's discussion must open with an empty category.")
+            self.assertContains(reader.get(parent), index, msg_prefix="A seated reader must be able to enter the activated Board's discussion.")
+            self.assertEqual(read_counts(), before, "Reading the activated Board's discussion must leave every counted record unchanged.")
+            args = support.board(owner, coordinator, board)
             first = support.start(args, title="Pinned public question")
             second = support.start(args, title="Ordinary public question")
             concealed = support.start(args, title="Withheld opening")
@@ -490,7 +488,7 @@ class BoardVotePageTests(TransactionTestCase):
             self.assertContains(permitted, "Withheld opening", msg_prefix="The moderating Coordinator must see the hidden opening.")
             self.assertContains(permitted, "Private coordination", msg_prefix="The Coordinator must see the private category's Topic.")
             self.assertEqual(read_counts(), before, "Repeated reads with different grants must create no forum or lineage rows.")
-            self.assertFalse(wake.called, "The Board index, its parent and the unavailable page must never wake due decisions.")
+            self.assertFalse(wake.called, "The Board index and its parent page must never wake due decisions.")
 
     def test_topic_permission_and_unavailable_reason(self):
         owner, board, founder, coordinator, trustee = seated_board()

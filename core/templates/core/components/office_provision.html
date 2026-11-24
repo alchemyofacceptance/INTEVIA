@@ -5,7 +5,7 @@
 <div{% if observation %} class="office-source-pair"{% endif %}>
   <blockquote class="office-clause">{{ provision.clause }}</blockquote>
   {% if observation %}
-    <aside class="office-observation" aria-label="CARE observation">
+    <aside class="notice care office-observation" aria-label="CARE observation">
       <p class="eyebrow">{{ observation.label }}</p>
       <h3>Observation</h3>
       <p>{{ observation.words }}</p>

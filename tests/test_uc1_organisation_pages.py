@@ -145,6 +145,8 @@ class OrganisationRouteTests(TransactionTestCase):
         block = markup(inside).select("section", **{"aria-labelledby": "status-heading"})
         self.assertTrue(len(block) == 1 and "Active" in block[0]["text"],
                         "A current Circle participant must see its admitted operating state.")
+        self.assertEqual(block[0]["attrs"].get("class"), "notice",
+                         "Operating status states a condition, so it must render as the teal voice box.")
         self.assertNotContains(inside, "Deadline", msg_prefix="An absent deadline must produce no deadline label.")
         assert_private(self, inside)
 

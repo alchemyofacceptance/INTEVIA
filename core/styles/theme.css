@@ -23,7 +23,7 @@
  --font-sans:Inter,Arial,sans-serif; --font-heading:"EB Garamond",Georgia,serif;
  --spacing:0.25rem; --text-xs:0.75rem; --text-sm:0.875rem; --text-base:1rem;
  --text-lg:1.125rem; --text-xl:1.5rem; --text-2xl:2rem; --text-3xl:2.75rem;
- --radius-sm:0.5rem; --radius-card:1.25rem; --radius-pill:999px;
+ --radius-sm:0.5rem; --radius-pill:999px;
  --breakpoint-desktop:64rem;
 }
 :root {
@@ -77,7 +77,7 @@
  .text-command{appearance:none;background:none;border:0;border-radius:0;box-shadow:none;color:var(--color-primary);cursor:pointer;font:inherit;min-height:var(--touch);padding:0;text-decoration-line:underline;text-underline-offset:var(--space-xs)}
  .office-switch-actions{display:flex;flex-wrap:wrap;gap:var(--space-sm)}
  .office-switch-actions form{max-width:100%;min-width:0}
- .panel,.event-item,.card{background:var(--color-surface);border:var(--stroke) solid var(--color-line);border-left:var(--stripe) solid var(--color-primary);border-radius:var(--radius-card);padding:var(--space-lg);margin-block:var(--space-md)}
+ .panel,.event-item,.card{background:var(--color-surface);border:var(--stroke) solid var(--color-line);border-left:var(--stripe) solid var(--color-primary);border-radius:var(--radius-sm);padding:var(--space-lg);margin-block:var(--space-md)}
  /* Take back the 5px of type space above the first line and below the last. */
  .card>:first-child,.panel>:first-child,.event-item>:first-child{margin-top:0}.card>:last-child,.panel>:last-child,.event-item>:last-child{margin-bottom:0}.card>details:last-child{margin-bottom:calc(-1 * var(--space-sm))}.card,.panel{padding-block:calc(var(--space-lg) - 5px)}
  /* Measure these three cards from the inner border to their first and last visible content. */
@@ -126,8 +126,25 @@
  .button:disabled,.button.primary[aria-disabled=true]{background:var(--color-pending-bg);color:var(--color-pending);border-color:var(--color-control);cursor:not-allowed}.button[aria-busy=true]{border-style:dashed}
  .field{margin-block:var(--space-md)}.errors,.errorlist{color:var(--color-danger)}.errorlist{margin-block:var(--space-xs);padding-left:var(--space-lg)}
  .notice{border:var(--stroke) solid currentColor;border-left:var(--stripe) solid currentColor;border-radius:var(--radius-sm);padding:var(--space-md);margin-block:var(--space-md);background:var(--color-accent-soft);color:var(--color-accent)}
- .notice.success{background:var(--color-success-bg);color:var(--color-success)}.notice.warning{background:var(--color-warning-bg);color:var(--color-warning)}.notice.refusal,.notice.error{background:var(--color-danger-bg);color:var(--color-danger)}.notice.pending{background:var(--color-pending-bg);color:var(--color-pending)}
- .notice h2{color:inherit;font-family:var(--font-sans);font-size:var(--text-base);font-weight:var(--weight);margin-top:0}.notice a{color:inherit}
+ /* A kind changes the box's colours only; the shared glass below stays on every kind. */
+ .notice.success{background-color:var(--color-success-bg);color:var(--color-success);--glass-ink:var(--color-success)}.notice.warning{background-color:var(--color-warning-bg);color:var(--color-warning);--glass-ink:var(--color-warning)}.notice.refusal,.notice.error{background-color:var(--color-danger-bg);color:var(--color-danger);--glass-ink:var(--color-danger)}.notice.pending{background-color:var(--color-pending-bg);color:var(--color-pending);--glass-ink:var(--color-pending)}
+ .notice h2{color:inherit;margin-top:0}.notice a{color:inherit}
+ /* Where CARE speaks (.notice.care), the box heading is CARE's own: bold sans in the box's ink (HG capture CZ).
+    Every other INTEVIA box heading keeps the page's serif heading face. */
+ .notice.care :is(h2,h3){font-family:var(--font-sans);font-size:var(--text-base);font-weight:var(--weight)}
+ /* Every word INTEVIA or CARE says in its box takes the box's ink (HG capture CY, Q-B4). Pills and buttons keep their own. */
+ .notice :is(h3,.meta,.help,.lede,dt){color:inherit}
+ .notice>:first-child{margin-block-start:0}.notice>:last-child{margin-block-end:0}
+ /* One glass for every card and every voice box (HG captures CB, CT and CY; practice item 278).
+    Ink: purple for cards; the box's own colour where INTEVIA or CARE speaks. */
+ .panel,.event-item,.card,.notice{
+  --glass-ink:var(--color-primary);
+  background-image:linear-gradient(in srgb, var(--glass-shine, #ffffff75), transparent 54%),
+                   linear-gradient(in srgb, transparent 60%, var(--glass-tint, color-mix(in srgb, var(--glass-ink) 6%, transparent)));
+  box-shadow:inset 0 1px 0 var(--glass-shine, #ffffff75),
+             0 2px 7px color-mix(in srgb, var(--glass-ink) 18%, transparent);
+ }
+ .card.prompt,.notice{--glass-ink:var(--color-accent);--glass-tint:transparent}
  .record-heading{font:var(--heading-weight) 24px/var(--heading-leading) var(--font-heading);color:var(--color-accent);letter-spacing:normal;text-transform:none;text-box-trim:trim-start;text-box-edge:cap alphabetic}
  main:has(>.page-title){display:flow-root}
  main:has(>.page-title:first-child){padding-block-start:0}
@@ -155,7 +172,7 @@
  .office-history-size select{width:auto}
  .office-history-size .text-command{min-inline-size:var(--touch)}
  @media(max-width:40rem){.office-history-size{gap:2rem}}
- .office-history-size select{font:inherit;padding:4px 8px;border-radius:8px;border:1px solid var(--color-line);background:transparent;color:inherit}
+ .office-history-size select{font:inherit;padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--color-line);background:transparent;color:inherit}
  .office-history-pages{display:flex;gap:16px;align-items:baseline;justify-content:center;margin-top:8px;margin-inline-start:36px;font-size:.875rem;line-height:1.5}
  .office-history-pages a{color:var(--color-primary)}
  .office-history-limit{color:var(--color-muted)}
@@ -171,7 +188,8 @@
  .office-care-label { display:inline-block; margin-inline-end:.22rem; padding:.05rem .45rem; border-radius:var(--radius-pill); color:var(--color-accent); background:var(--color-accent-soft) }
  .office-clause { margin:var(--space-md) 0; white-space:pre-wrap; overflow-wrap:anywhere }
  .office-source-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr)); gap:var(--space-md); align-items:start }
- .office-observation { background:var(--color-surface); border:var(--stroke) solid var(--color-line); border-inline-start:var(--stripe) solid var(--color-accent); border-radius:var(--radius-sm); padding:var(--space-md); overflow-wrap:anywhere }
+ /* CARE's observation is a .notice, INTEVIA's and CARE's one voice box; only its wrapping is its own. */
+ .office-observation { overflow-wrap:anywhere }
  .office-observation h3 { margin-block-start:0 }
  .office-adoption { margin-block-start:var(--space-md) }
  .office-provision summary { cursor:pointer; padding-block:var(--space-sm); color:var(--color-primary) }
@@ -217,6 +235,7 @@ html {
   --color-pending:#A7A9C4; --color-pending-bg:#24223A;
   --color-button:#7027E4; --color-on-button:#FFFFFF;
   --primary-outline:var(--color-violet);
+  --glass-shine:#ffffff18;
   --light-tree-display:none; --dark-tree-display:block;
  }
 }
@@ -234,7 +253,7 @@ html {
 .org-strip:has(+main>.page-title:first-child){padding-block-end:0}
 .org-chip[aria-current=true] { background:var(--color-primary-soft); font-weight:var(--weight) }
 .circle-list { list-style:none; padding:0; margin:0; border:var(--stroke) solid var(--color-line);
- border-radius:var(--radius-card); background:var(--color-surface) }
+ border-radius:var(--radius-sm); background:var(--color-surface) }
 .circle-list li + li { border-block-start:var(--stroke) solid var(--color-line) }
 .circle-list a { display:flex; align-items:center; justify-content:space-between; gap:var(--space-md);
  padding:var(--space-md); min-block-size:var(--touch); overflow-wrap:anywhere; text-decoration:none }
@@ -283,26 +302,14 @@ html {
 }
 .discussion-form label { display:grid; gap:8px; min-width:0; }
 .discussion-form :is(input:not([type=hidden]),textarea,select) { width:100%; min-height:44px; }
-.card.prompt { border-left-color:var(--color-accent); background:var(--color-accent-soft); }
+.card.prompt { border-left-color:var(--color-accent); background-color:var(--color-accent-soft); }
 .discussion-actions { display:flex; align-items:center; flex-wrap:wrap; gap:32px; margin-block:32px; }
 .card > .discussion-actions:last-child { margin-block-end:0; }
 
-/* Board vote speech only. Status lines and labels sit on the page surface. */
-#vote .vote-glass {
- --vote-ink:var(--color-primary);
- border-radius:var(--radius-sm);
- background-image:linear-gradient(in srgb, var(--vote-shine, #ffffff75), transparent 54%),
-                  linear-gradient(in srgb, transparent 60%, var(--vote-foot, color-mix(in srgb, var(--vote-ink) 6%, transparent)));
- box-shadow:inset 0 1px 0 var(--vote-shine, #ffffff75),
-            0 2px 7px color-mix(in srgb, var(--vote-ink) 18%, transparent);
-}
-#vote .vote-glass:is(.notice,.prompt) { --vote-ink:var(--color-accent); --vote-foot:transparent; }
-#vote .vote-glass.refusal { --vote-ink:var(--color-danger); }
+/* Particular to the Board vote: a member's own declared reason, and the Clarity input row.
+   Corners, glass and the voice box come from the shared components. */
 #vote .vote-reason { background-color:var(--color-primary-soft); overflow-wrap:anywhere; }
 #clarity-input > .discussion-actions { margin-block:0; }
-#vote .notice > :first-child { margin-block-start:0; }
-#vote .notice > :last-child { margin-block-end:0; }
-html { @variant dark-page { & #vote { --vote-shine:#ffffff18; } } }
 
 /* Follow the final branch of each card. Earlier paragraphs keep their reading space. */
 @scope (.card) {

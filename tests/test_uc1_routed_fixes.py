@@ -135,6 +135,8 @@ class RoutedFixTests(SimpleTestCase):
         ):
             with self.subTest(word=word, source=source):
                 page, card = self.read_card(enabled=enabled, chosen=chosen)
+                self.assertEqual(set(card["attrs"].get("class", "").split()), {"notice", "care"},
+                                 "The CARE assistance box must render as the teal voice box, marked as CARE's voice.")
                 pills = page.select("span", within=card, classes=("tag", tone))
                 self.assertEqual([pill["text"] for pill in pills], [word],
                                  "On must have one green pill and Off one neutral pill.")
