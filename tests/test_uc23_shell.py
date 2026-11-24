@@ -388,13 +388,17 @@ class VoteTransportTests(SimpleTestCase):
                              ("discussion_confirm_clarity", "CONFIRM"), ("discussion_clarity_question", "QUESTION"),
                              ("discussion_clarity_conflict", "CONFLICT"), ("discussion_clarity_proceed", "PROCEED"),
                              ("discussion_clarity_extend", "EXTEND"), ("discussion_clarity_close", "CLOSE"),
-                             ("discussion_clarity_withdraw", "WITHDRAW")):
+                             ("discussion_clarity_withdraw", "WITHDRAW"), ("discussion_answer", "ANSWER")):
                 url = reverse(name, args=(org, circle, thread))
                 # Include the window and confirmation required by the five Clarity commands.
                 confirmation = op if op in ("CLOSE", "WITHDRAW") else None
                 token = discussion_forms.issue_form(page.wsgi_request, op, org, circle, thread=thread,
-                    version=uuid4(), window=uuid4(), confirmation=confirmation)
+                    version=uuid4(), window=uuid4(), confirmation=confirmation,
+                    ballot=uuid4() if op == "ANSWER" else None)
                 data = {"csrfmiddlewaretoken": fields["csrfmiddlewaretoken"], "vote_command": token}
+                if op == "ANSWER":
+                    # A valid choice, so that malformed input cannot mask a broken gate.
+                    data["choice"] = "QUALIFIED"
                 with self.subTest(operation=op), mock.patch.object(discussion_vote.cq, "_lock") as lock:
                     self.assertEqual(client.get(url).status_code, 405, "A link cannot submit a vote action.")
                     self.assertEqual(client.head(url).status_code, 405, "HEAD cannot submit a vote action.")
@@ -815,7 +819,7 @@ class VotePanelPresentationTests(SimpleTestCase):
         common = dict(deadline=self.when, response_deadline=self.later)
         for phase, cut, line in [
             ("PREPARATION", self.when, "Preparation deadline passed · 22 November 2026, 13:00 UTC"),
-            ("VOTING", self.when, "Voting closed · Awaiting result"),
+            ("VOTING", self.when, "Voting closed · Closed 22 November 2026, 13:00 UTC"),
             ("CLARITY", self.when, "Clarity period ended · Respond by 23 November 2026, 13:00 UTC"),
             ("CLARITY", self.later, "Clarity response period ended"),
         ]:

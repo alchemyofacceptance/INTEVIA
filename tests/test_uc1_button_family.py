@@ -12,7 +12,7 @@ from tests.test_f0_ui import Markup
 from tests.test_uc1_render import declarations, ink_value
 
 
-REFERENCE = "REF_U_C1_GLASS_BUTTON_FAMILY_v1_1.html"
+REFERENCE = "REF_U_C1_GLASS_BUTTON_FAMILY_v1_2.html"
 LIVE = ":not(:disabled,[aria-disabled=true],[aria-busy=true])"
 FAMILY = ".button:is(.secondary,.success,.danger)" + LIVE
 VARIANTS = ("primary", "secondary", "success", "danger")
@@ -139,7 +139,7 @@ def contrast_samples(css):
                 paint = declarations(css, FAMILY)["background"]
                 a, b = face["--glass-face"], face["--glass-foot"]
                 label = (declarations(css, sel + LIVE) if variant == "secondary"
-                         else declarations(css, ".button.success,.button.danger"))
+                         else declarations(css, sel))
                 override = declarations(css, prefix + sel + LIVE)
                 paint = override.get("background", paint)
                 ink = resolve_colour(override.get("color", label["color"]))

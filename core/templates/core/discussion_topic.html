@@ -6,7 +6,7 @@
 {% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
 {% record_breadcrumb "Topic" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:'Board' circle_url %}
 <h1 class="page-title record-heading discussion-title">{{ topic.title }}</h1>
-<p class="meta">{{ topic.topic_type|topic_type_label }} · {{ category.name }}{% if topic.office_definition_version %} · Office definition · Version {{ topic.office_definition_version }}{% endif %}</p>
+<p class="meta">{{ topic.topic_type|topic_type_label }} · {{ category.name }}{% if topic.office_definition_version %} · Office definition · Version {{ topic.office_definition_version }}{% endif %}{% if vote.status_line %} · {{ vote.status_line }}{% endif %}</p>
 {% with post=posts.0 %}
 <article class="card"{% if post.post_uuid %} id="post-{{ post.post_uuid }}"{% endif %}><h2>Opening post</h2>
   {% include "core/components/discussion_post.html" %}
@@ -32,7 +32,7 @@
     {% endif %}
   {% empty %}<p>No replies yet.</p>{% endfor %}
 </section>
-{% if reply_command and not vote.member_form and not vote.clarity_prompt %}
+{% if reply_command and not vote.member_form and not vote.clarity_prompt and not vote.ballot_form %}
 <section class="record-section" aria-labelledby="reply-heading">
   <h2 id="reply-heading" class="record-heading">Reply to this Topic</h2>
   {% include "core/components/reply_form.html" with command=reply_command %}

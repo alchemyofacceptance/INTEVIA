@@ -2,6 +2,7 @@
 from datetime import timezone
 from uuid import UUID, uuid5
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import DatabaseError, IntegrityError, transaction
 from django.http import HttpResponseRedirect
@@ -10,6 +11,7 @@ from django.utils.formats import date_format
 
 from core.cache import personal_response
 from core import discussion_forms as forms
+from core.ui import ballot_choice_labels, count_ring, vote_status_line
 from core.ui_views import is_prefetch
 from src.intevia.services import cq, cq_reads, discussion, discussion_posts
 
@@ -42,7 +44,8 @@ def _vote_card(vote):
         return line, draft, deadline is not None and read_at is not None
     if phase == "VOTING":
         if deadline_passed:
-            return "Voting closed · Awaiting result", "Wording voted on", False
+            # The ruled render's words (HG capture H, 2b): say when voting closed.
+            return "Voting closed" + (" · Closed " + _utc(deadline) if deadline else " · Awaiting result"), "Wording voted on", False
         line = "Voting open" + (" · Closes " + _utc(deadline) if deadline else "")
         return line, "Wording being voted on", False
     if phase in ("RESULT", "CLOSED", "WITHDRAWN", "NO_BALLOT"):
@@ -130,6 +133,81 @@ def _clarity_forms(vote, request, org, circle, thread):
     vote["clarity_controls"] = controls
 
 
+# INTEVIA's line for a member who reads an open vote they cannot answer. A declared
+# conflict already has its own line in the same box.
+BALLOT_NOTES = {
+    "CQ_SAT_OUT": "You did not confirm that you were clear on this wording, so you sit out this vote.",
+    "CQ_PROBATION_VOTE": "Probationary members can discuss this Suggestion but cannot vote.",
+}
+
+
+def _ballot_state(vote, request, org, circle, thread):
+    """Add the count-only status, then one of: the member's own answer, the ballot form or its button.
+
+    The form is signed for the one ballot the page read, so an answer can never
+    move to a later attempt. A member who cannot answer receives no button.
+    """
+    ballot = vote["ballot"]
+    live = vote["read_at"] < vote["deadline"]
+    if live:
+        vote["status_line"] = vote_status_line(ballot["answered"], ballot["eligible"])
+        vote["ring"] = count_ring(ballot["answered"], ballot["eligible"], vote["electorate_label"])
+    labels = ballot_choice_labels()
+    if ballot.get("own_answer"):
+        vote["own_answer_label"] = labels[ballot["own_answer"]]
+    elif live and ballot.get("may_answer"):
+        topic = reverse("discussion_topic", args=(org, circle, thread))
+        if request.GET.get("ballot") == "answer":
+            vote["ballot_form"] = {
+                "url": reverse("discussion_answer", args=(org, circle, thread)),
+                "token": forms.issue_form(request, "ANSWER", org, circle, thread=thread, ballot=ballot["ballot_uuid"]),
+                "options": [(option, labels[option]) for option in ballot["options"]],
+                "cancel": topic + "#vote",
+            }
+        else:
+            vote["answer_url"] = topic + "?ballot=answer#ballot-form"
+    elif live:
+        vote["ballot_note"] = BALLOT_NOTES.get(ballot.get("answer_refusal"))
+    if vote.get("result_due"):
+        vote["due_url"] = reverse("discussion_record_result", args=(org, circle, thread))
+        vote["due_command"] = forms.issue_form(request, "RECORD_DUE", org, circle, thread=thread)
+
+
+# INTEVIA's words after "Record the result". The rule's catch-up works across all of
+# the person's organisations, so the page says so. Interim until the Clock's wake
+# is qualified (owed row C1-228); then due results record themselves.
+DUE_RECORDED = ("Due results are now recorded. This covered every vote and deadline that was due "
+                "in all the organisations you belong to, not only this Topic.")
+DUE_NOTHING = "Nothing was due. The result may already have been recorded."
+
+
+def _record_due(request, org, circle, thread, context):
+    """Record what is due, only for a reader of this Topic and only from a submitted form.
+
+    The rule's own catch-up decides what is due and commits each journey itself,
+    so it runs outside this view's transaction. Reading a page never calls it.
+    """
+    _, released = forms._read_page(request.user, org, circle, thread)
+    context.update(released)
+    if context["topic"]["topic_type"] != "SUGGESTION" or context["posts"][0]["hidden"]:
+        raise discussion.DiscussionUnavailable()
+    try:
+        recorded = cq.catch_up(credential=request.user) == "Due work recorded."
+    except discussion.DiscussionRefused as exc:
+        if exc.code == "DISC_UNAVAILABLE":
+            raise
+        # Capture O: the sweep records each piece of due work in its own transaction, so a refusal
+        # from here on may follow work already recorded. The receipt must not say nothing was recorded.
+        return forms.refusal(request, exc.code, context, swept=True)
+    except DatabaseError:
+        # Capture Q (D2): an unknown outcome after the sweep began takes capture O's form, with the unknown reason.
+        return forms.refusal(request, "unknown", context, swept=True)
+    messages.info(request, DUE_RECORDED if recorded else DUE_NOTHING)
+    response = HttpResponseRedirect(reverse("discussion_topic", args=(org, circle, thread)) + "#vote")
+    response.status_code = 303
+    return response
+
+
 def panel(request, org, circle, thread):
     """Return the admitted Suggestion reader's panel and any permitted command.
 
@@ -154,6 +232,11 @@ def panel(request, org, circle, thread):
         vote["office_label"] = office
         if vote.get("clarity_actions"):
             _clarity_forms(vote, request, org, circle, thread)
+        if vote.get("ballot"):
+            _ballot_state(vote, request, org, circle, thread)
+        elif vote.get("decided_own_answer"):
+            # Capture N: after the result, the member's own answer stays on their page.
+            vote["own_answer_label"] = ballot_choice_labels()[vote["decided_own_answer"]]
         if vote.get("confirm_version") is not None:
             vote["confirm_command"] = forms.issue_form(
                 request, "CONFIRM", org, circle, thread=thread, version=vote["confirm_version"])
@@ -204,11 +287,15 @@ def submit(request, org, circle, thread, operation):
                                operation, org, circle, thread)
         if operation == "PREPARED" and not data.get("confirmation"):
             raise discussion.DiscussionRefused(code="form")
+        if operation == "ANSWER" and not data.get("ballot"):
+            raise discussion.DiscussionRefused(code="form")
         if operation in CLARITY_LABELS:
             if not data.get("window") or not data.get("version"):
                 raise discussion.DiscussionRefused(code="form")
             if operation in CLARITY_PROMPTS and data.get("confirmation") != operation:
                 raise discussion.DiscussionRefused(code="form")
+        if operation == "RECORD_DUE":
+            return _record_due(request, org, circle, thread, context)
         key = UUID(data["request"])
         with transaction.atomic():
             # Take the writer's identity, request and organisation locks in its order.
@@ -236,6 +323,21 @@ def submit(request, org, circle, thread, operation):
                     post_uuid=UUID(data["post"]), markdown=markdown,
                     category_uuid=context["category"]["category_uuid"],
                 )
+            elif operation == "ANSWER":
+                choice = forms._one(request.POST, "choice", "")
+                if choice not in cq.BALLOT_OPTIONS:
+                    raise discussion.DiscussionRefused(code="CQ_CHOICE")
+                signed = UUID(data["ballot"])
+                # Capture N: under the submission lock, a form for a ballot the Topic has since
+                # replaced is refused, even when it would replay its own earlier receipt.
+                current = cq.board_topic_vote(credential=request.user, organism_uuid=org,
+                                              circle_uuid=circle, thread_uuid=thread)
+                if current is None:
+                    raise discussion.DiscussionUnavailable()
+                if current.get("ballot_uuid") != signed:
+                    raise discussion.DiscussionRefused(code="CQ_VOTE_CLOSED")
+                # The ballot the form was signed for, never the Topic's latest one.
+                cq.answer(**args, ballot_uuid=signed, choice=choice)
             elif operation in CLARITY_LABELS:
                 cq.check_clarity_action(**args, operation=operation, window=UUID(data["window"]),
                                         version=UUID(data["version"]))

@@ -32,6 +32,8 @@ urlpatterns = [
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/reply/', discussion_forms.submit, name='discussion_reply'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/put-forward/', discussion_vote.submit, {"operation": "INITIATE"}, name='discussion_put_forward'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/prepare/', discussion_vote.submit, {"operation": "PREPARED"}, name='discussion_prepare'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/record-result/', discussion_vote.submit, {"operation": "RECORD_DUE"}, name='discussion_record_result'),
+    path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/answer/', discussion_vote.submit, {"operation": "ANSWER"}, name='discussion_answer'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/clarity/confirm/', discussion_vote.submit, {"operation": "CONFIRM"}, name='discussion_confirm_clarity'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/topics/<uuid:thread>/clarity/question/', discussion_vote.submit, {"operation": "QUESTION"}, name='discussion_clarity_question'),
     *[

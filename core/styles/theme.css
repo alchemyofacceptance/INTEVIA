@@ -16,6 +16,7 @@
  --color-success:#186448; --color-success-bg:#E6F4EA;
  --color-warning:#805300; --color-warning-bg:#FFF6E5;
  --color-danger:#A3192B; --color-danger-bg:#FDECEE;
+ --color-for:#186448; --color-against:#A3192B;
  --color-pending:#665C70; --color-pending-bg:#EFEDF3;
  --color-heading:#21152F; --color-band:#FFFFFF;
  --color-button:#4B0082; --color-on-button:#FFFFFF;
@@ -103,7 +104,7 @@
   }
  }}
  .button.secondary{background:var(--color-surface);color:var(--color-primary);border-color:var(--color-control)}.button.success{background:var(--color-success)}.button.danger{background:var(--color-danger)}
- .button.success,.button.danger{color:var(--color-surface)}
+ .button.danger{color:var(--color-surface)}.button.success{color:var(--color-on-button)}
  /* The three supporting actions share one half-face highlight and bevel. */
  .button.secondary{--glass-face:var(--color-surface);--glass-foot:color-mix(in srgb,var(--color-surface) 92%,var(--color-primary))}
  .button.success{--glass-face:#124D36;--glass-foot:#10432F}
@@ -115,7 +116,17 @@
  .button.secondary:not(:disabled,[aria-disabled=true],[aria-busy=true]){border-color:var(--color-primary);color:var(--color-primary)}
  html{@variant dark-page {
   & .button.secondary{--glass-foot:var(--color-surface)}
-  & .button.success{--glass-face:#64C79B;--glass-foot:#42A67D}
+  /* The dark green button, drawn as the dark red button is (HG 24 Nov 12:07, option G), in the closest green
+     whose white label reaches 4.5:1 under the highlight (HG 24 Nov 13:05, capture P). */
+  & .button.success{--glass-face:#165C41;--glass-foot:#10432F}
+  /* No mint on dark (HG 24 Nov 12:11): green words sit on the dark green, white text; the green is the fill or the edge. */
+  & .notice.success{color:var(--color-on-button);border-color:var(--color-success)}
+  /* A dark refusal keeps its red words at full contrast: almost no top highlight (Advisor box 8 part 2, finding 2). */
+  & :is(.notice.refusal,.notice.error){--glass-shine:#ffffff03}
+  & .button.success:not(:disabled,[aria-disabled=true],[aria-busy=true]){
+   color:var(--color-on-button);
+   box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -2px 4px rgba(0,0,0,.3),0 0 0 1px #6FD3A0,0 2px 10px rgba(24,100,72,.45)
+  }
   & .button.danger{--glass-face:#B0182C;--glass-foot:#8F1B28}
   & .button.danger:not(:disabled,[aria-disabled=true],[aria-busy=true]){
    color:var(--color-on-button);
@@ -198,8 +209,30 @@
  .office-facts dd { margin:0; overflow-wrap:anywhere }
  .history-row{border-left:var(--stripe) solid var(--color-primary)}.history-row dt{color:var(--color-muted);font-size:var(--text-sm)}.history-row dd{margin:0 0 var(--space-sm)}
  .badge{display:inline-flex;align-items:center;justify-content:center;border:var(--stroke) solid var(--color-control);border-radius:var(--radius-pill);min-height:var(--touch);min-width:var(--touch);background:var(--color-surface);color:var(--color-primary)}
- .answer{display:inline-flex;align-items:center;gap:var(--space-xs);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-sm);font-size:var(--text-sm);background:var(--color-pending-bg);color:var(--color-pending)}.answer.consented{color:var(--color-success);background:var(--color-success-bg)}.answer.declined{color:var(--color-danger);background:var(--color-danger-bg)}.answer.abstained{color:var(--color-warning);background:var(--color-warning-bg)}
- .participation-ring{width:var(--ring);height:var(--ring);border:var(--space-md) solid var(--color-primary);border-radius:var(--radius-pill);display:grid;place-content:center;text-align:center;margin:var(--space-md) auto}.participation-ring strong{font-size:var(--text-2xl)}
+ .answer{display:inline-flex;align-items:center;gap:var(--space-xs);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-sm);font-size:var(--text-sm);background:var(--color-pending-bg);color:var(--color-pending)}.answer.consented{color:var(--color-success);background:var(--color-success-bg)}.answer.declined{color:var(--color-danger);background:var(--color-danger-bg)}
+ html{@variant dark-page {
+  /* On dark, the answer chips are filled in the For and Against colours, white text, so the legend matches the ring. */
+  & .answer.consented{color:var(--color-on-button);background:var(--color-for)}
+  & .answer.declined{color:var(--color-on-button);background:var(--color-against)}
+ }}.answer.abstained{color:var(--color-warning);background:var(--color-warning-bg)}
+ /* The participation ring (front-end foundation v0.6): arcs on a flat track, people in the centre.
+    A recorded share takes the shared glass (highlight, bevel and glow, as the buttons); a share still to come stays flat. */
+ .participation-ring{position:relative;inline-size:var(--ring);aspect-ratio:1;flex:none;display:grid;place-items:center;text-align:center;margin:var(--space-md) auto}
+ .participation-ring .ring-chart{position:absolute;inset:0;inline-size:100%;block-size:100%;overflow:visible;stroke:none;stroke-linecap:butt}
+ .ring-track,.ring-segment,.ring-shine,.ring-shade{fill:none}
+ .ring-track{stroke:var(--color-pending-bg);stroke-width:14}
+ .ring-segment{stroke:var(--color-pending);stroke-width:14}
+ .ring-segment.answered{stroke:var(--color-button)}.ring-segment.consented{stroke:var(--color-for)}.ring-segment.declined{stroke:var(--color-against)}.ring-segment.abstained{stroke:var(--color-warning)}.ring-segment.pending{stroke:var(--color-pending-bg)}
+ .ring-segment.glass{filter:drop-shadow(0 2px 3px rgba(75,0,130,.35))}
+ html{@variant dark-page { & .ring-segment.glass{filter:drop-shadow(0 2px 5px rgba(138,63,252,.45))} }}
+ .ring-shine{stroke:#fff;stroke-opacity:.3;stroke-width:5}.ring-shade{stroke:#000;stroke-opacity:.22;stroke-width:3}
+ .ring-centre{position:relative;display:grid;justify-items:center;inline-size:64%;line-height:1.2;font-size:var(--text-xs);color:var(--color-muted);overflow-wrap:normal}
+ .ring-centre strong{font-size:var(--text-xl);font-weight:var(--heading-weight);color:var(--color-primary)}.ring-centre svg{color:var(--color-primary)}
+ .participation-summary{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-lg);margin-block:var(--space-md)}
+ .participation-summary .participation-ring{inline-size:8.75rem;margin:0}
+ .participation-summary .counts{grid-template-columns:1fr;flex:1;min-inline-size:9rem}
+ .participation-summary .counts p{display:flex;justify-content:space-between;align-items:center;margin:0}
+ .answer.answered{color:var(--color-primary);background:var(--color-primary-soft)}
  .counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-sm)}.counts p{padding:var(--space-sm);border:var(--stroke) solid var(--color-line);border-radius:var(--radius-sm)}
  .orbit{position:relative;min-height:calc(var(--orbit-radius) * 2 + var(--touch) * 2);margin-block:var(--space-md)}.orbit-centre{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center}.orbit-centre strong{display:block;font-size:var(--text-xl)}
  .orbit-node{position:absolute;left:50%;top:50%;transform:translate(calc(-50% + var(--x)),calc(-50% + var(--y)));display:flex;align-items:center;flex-direction:column;font-size:var(--text-xs)}
@@ -229,9 +262,12 @@ html {
   --color-line:#24223A; --color-control:#88859D;
   --color-primary:#C9B2FF; --color-primary-soft:#24223A;
   --color-accent:#2FC4CD; --color-accent-soft:#0C2A2E; --color-focus:#2FC4CD;
-  --color-success:#2FC4CD; --color-success-bg:#0C2A2E;
+  /* Dark red and green match the dark buttons and the answer chips, style-wide (HG 24 Nov, capture J). */
+  --color-success:#186448; --color-success-bg:#0F2A1C;
   --color-warning:#F0A53A; --color-warning-bg:#33240F;
-  --color-danger:#F2867E; --color-danger-bg:#3A1618;
+  --color-danger:#F0545E; --color-danger-bg:#3A1618;
+  /* A vote's For and Against take the green and red buttons' own colours (HG 24 Nov, 11:56). */
+  --color-for:#186448; --color-against:#B0182C;
   --color-pending:#A7A9C4; --color-pending-bg:#24223A;
   --color-button:#7027E4; --color-on-button:#FFFFFF;
   --primary-outline:var(--color-violet);
@@ -241,6 +277,9 @@ html {
 }
 .appearance-options label{align-items:center}
 .appearance-options input{width:auto}
+/* Every radio button, on any form: the size of the ruled ballot render, on a row a finger can hit. */
+input[type=radio]{inline-size:22px;block-size:22px;min-block-size:0;flex:none;margin:0;padding:0;accent-color:var(--color-primary)}
+label:has(>input[type=radio]){display:flex;align-items:center;gap:var(--space-md);min-block-size:var(--touch)}
 
 .org-strip {
  display:flex; flex-wrap:wrap; gap:var(--space-sm); padding-block:24px var(--space-sm);
@@ -265,6 +304,11 @@ html {
 .board-office-state { display:inline-block; padding:.05rem .45rem; border-radius:var(--radius-pill);
  color:var(--color-success); background:var(--color-success-bg) }
 .board-office-state.vacant { color:var(--color-warning); background:var(--color-warning-bg) }
+/* No mint on dark (HG 24 Nov 12:11, capture M): white words on the For green. Unlayered beside the pill rules
+   above, so that it wins over them (Advisor box 8 part 2, finding 1). */
+html{@variant dark-page {
+ & :is(.tag.ok,.board-office-state:not(.vacant)){color:var(--color-on-button);background:var(--color-success)}
+}}
 .board-office-holder {
  margin:0; padding:var(--space-md) var(--space-md) var(--space-lg); font-size:var(--text-sm);
  color:var(--color-muted); overflow-wrap:anywhere;

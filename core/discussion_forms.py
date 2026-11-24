@@ -82,6 +82,20 @@ VOTE_REASONS = {
     "CQ_REQUEST": "This form already recorded a different vote action.",
     "CQ_INPUT": "The vote form is missing a valid reference.",
     "CQ_COMPLETE": "The service could not record the vote action with its authority.",
+    "CQ_NOT_OPEN": "Voting on this Suggestion has not opened.",
+    "CQ_VOTE_CLOSED": "This vote has closed, or a new vote has replaced the one this form was for.",
+    "CQ_DUPLICATE": "You have already answered this vote. An answer is recorded once and cannot be changed.",
+    "CQ_CHOICE": "Choose one of the answers offered.",
+    "CQ_ABSTAIN_OFF": "Abstaining is not available for this vote.",
+    "CQ_SAT_OUT": "You did not confirm that you were clear on this wording, so you sit out this vote.",
+    "CQ_CONFLICTED": "You declared a conflict of interest on this Suggestion, so you cannot vote on it.",
+    "CQ_PROBATION_VOTE": "Probationary members can discuss this Suggestion but cannot vote.",
+}
+# What the member can do next after a refused answer (the fourth of the five parts).
+ANSWER_ACTIONS = {
+    "CQ_VOTE_CLOSED": "Go back to the Topic to see where the vote stands. If a new vote has opened, you can answer it there.",
+    "CQ_DUPLICATE": "Go back to the Topic to see your recorded answer.",
+    "CQ_CHOICE": "Go back to the Topic, choose one answer and submit it again.",
 }
 
 
@@ -90,12 +104,14 @@ def _binding(request, operation, org, circle, thread):
     return [str(request.user.pk), session, operation, str(org), str(circle), str(thread or "")]
 
 
-def issue_form(request, operation, org, circle, *, thread=None, office=None, version=None, confirmation=None, window=None):
+def issue_form(request, operation, org, circle, *, thread=None, office=None, version=None, confirmation=None, window=None,
+               ballot=None):
     return signing.dumps({
         "binding": _binding(request, operation, org, circle, thread),
         "request": str(uuid4()), "thread": str(thread or uuid4()), "post": str(uuid4()),
         **({"version": str(version)} if version is not None else {}),
         **({"window": str(window)} if window is not None else {}),
+        **({"ballot": str(ballot)} if ballot is not None else {}),
         **({"confirmation": confirmation} if confirmation is not None else {}),
         "office": str(office) if office is not None else None,
     }, salt=FORM_SALT)
@@ -116,19 +132,23 @@ def _unavailable(request, org):
                   {"back_organisation": _back_organisation(request.user, org)}, status=404)
 
 
-def refusal(request, code, context=None, entered=None):
+def refusal(request, code, context=None, entered=None, swept=False):
     context = dict(context or {})
     match = request.resolver_match
     noun = "reply" if match and match.url_name == "discussion_reply" else "Topic"
-    vote = match and (match.url_name in ("discussion_put_forward", "discussion_prepare", "discussion_confirm_clarity")
+    answer = bool(match and match.url_name == "discussion_answer")
+    vote = match and (match.url_name in ("discussion_put_forward", "discussion_prepare", "discussion_confirm_clarity",
+                                         "discussion_answer", "discussion_record_result")
                       or (match.url_name or "").startswith("discussion_clarity_"))
     if vote:
-        noun = "vote action"
+        noun = "answer" if answer else "vote action"
     title = f"Your {noun} could not be recorded."
     if code == "unknown":
         title = "Your change could not be confirmed."
         status, why = 503, "The service could not confirm the outcome. The cause is unknown."
         effect = "A vote action may already be recorded." if vote else "A contribution may already be recorded."
+        if answer:
+            effect = "Your answer may already be recorded."
         if match and match.url_name == "discussion_start":
             action = "Check the Board discussion for your Topic before trying the same submission again."
         else:
@@ -142,6 +162,9 @@ def refusal(request, code, context=None, entered=None):
                 why = "Only the author or the current Board Chair can mark this Suggestion as prepared."
         effect = "This request recorded no new vote action." if vote else "This request recorded no new contribution."
         action = "Reopen the page and check the current wording and available actions."
+        if answer:
+            effect = "This request recorded no answer."
+            action = ANSWER_ACTIONS.get(code, action)
     if code in ("method", "csrf", "preview", "form"):
         title = "The form could not be submitted."
     if code == "DISC_POST_AUTHORITY" and context.get("category"):
@@ -165,6 +188,11 @@ def refusal(request, code, context=None, entered=None):
         elif context.get("office"):
             why = "Enter a title of 1 to 90 characters and the text of your Topic."
 
+    if swept:
+        # Capture O: refused after the due sweep began, when earlier due work may already be recorded.
+        title = "Not all due work could be recorded."
+        effect = "Some due work may already have been recorded before this stopped."
+        action = "Reopen the Topic to check where the vote stands."
     context.update(title=title, why=why, effect=effect, action=action, help_text=help_line(context), entered=entered or {})
     response = render(request, "core/discussion_refusal.html", context, status=status)
     if code == "method":

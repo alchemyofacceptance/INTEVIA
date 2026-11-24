@@ -162,8 +162,10 @@ class RenderedScreenTests(SimpleTestCase):
         text_pairs = [(ink, ground) for ink in ("text", "heading", "muted", "primary", "accent", "danger")
                       for ground in grounds]
         text_pairs += [("primary", "primary-soft"), ("pending", "pending-bg"), ("accent", "accent-soft"),
-                       ("warning", "warning-bg"), ("danger", "danger-bg"), ("success", "success-bg"),
-                       ("surface", "success"), ("surface", "danger"), ("on-button", "button")]
+                       ("warning", "warning-bg"), ("danger", "danger-bg"), ("surface", "danger"), ("on-button", "button")]
+        # On dark the green is a fill or an edge, never words: white words sit on it (HG 24 Nov, captures J and M).
+        success_pairs = {"light": [("success", "success-bg"), ("surface", "success")],
+                         "dark": [("on-button", "success"), ("on-button", "success-bg")]}
         edges = [(ink, ground) for ink in ("focus", "control") for ground in grounds + soft]
         for mode, palette in (("light", base), ("dark", dark)):
             # The primary control has its own reference witness. Its flat fallback remains in the token inventory.
@@ -182,7 +184,7 @@ class RenderedScreenTests(SimpleTestCase):
                                             f"The {mode} {variant} button label must reach 4.5 to one.")
             boundary = "button" if mode == "light" else "violet"
             edge_pairs = edges + [(boundary, "page"), (boundary, "surface")]
-            for threshold, pairs in ((4.5, text_pairs), (3.0, edge_pairs)):
+            for threshold, pairs in ((4.5, text_pairs + success_pairs[mode]), (3.0, edge_pairs)):
                 for ink, ground in pairs:
                     with self.subTest(mode=mode, ink=ink, ground=ground):
                         self.assertGreaterEqual(contrast(palette[f"--color-{ink}"], palette[f"--color-{ground}"]),
