@@ -429,13 +429,21 @@ class BoardVotePageTests(TransactionTestCase):
         card = entries[0]
         self.assertIn("Board of Trustees", card["text"])
         self.assertIn("Carried.", card["text"])
-        effective = discussion._rows("SELECT effective_at FROM public.core_cqact WHERE act_uuid=%s", [receipt])[0]["effective_at"]
+        stored = discussion._rows("""SELECT effective_at, (facts->>'closed_at')::timestamptz AS closed_at
+            FROM public.core_cqact WHERE act_uuid=%s""", [receipt])[0]
+        effective = stored["effective_at"]
         from django.utils.dateparse import parse_datetime
         from datetime import timezone
         decided = effective.astimezone(timezone.utc)
         vote_section, = page.select("section", id="vote")
-        self.assertEqual(page.select("p", within=vote_section)[0]["text"],
-                         f"Decided · {decided.day} {decided:%B %Y, %H:%M} UTC · Carried")
+        # Capture Z, Q2 (C1-403): the line names when voting closed, and the recording only in another minute.
+        closed = stored["closed_at"].astimezone(timezone.utc)
+        line = f"Decided · Carried · Voting closed {closed.day} {closed:%B %Y, %H:%M} UTC"
+        if decided.replace(second=0, microsecond=0) != closed.replace(second=0, microsecond=0):
+            line += f" · Result recorded {decided.day} {decided:%B %Y, %H:%M} UTC"
+        self.assertEqual(page.select("p", within=vote_section)[0]["text"], line)
+        self.assertIn("Took effect", card["text"], "The Topic's result card names its time as the result page does (capture AC, Q7).")
+        self.assertNotIn("Effective", card["text"], "The card's old label must be gone.")
         self.assertEqual(parse_datetime(page.select("time", within=card)[0]["attrs"]["datetime"]), effective,
                          "The result time must equal the stored act’s effective time.")
         self.assertEqual([a["text"] for a in page.select("a", within=card, href=result_url)], ["View vote result"])
@@ -443,9 +451,12 @@ class BoardVotePageTests(TransactionTestCase):
         observer = signed_in(laws.add_member(owner))
         permitted = observer.get(result_url)
         self.assertContains(permitted, "Carried.", msg_prefix="A result-only member must be able to open the result itself.")
+        self.assertContains(permitted, "Revised payment terms.",
+                            msg_prefix="A result-only member must see the wording that was decided (HG capture Z, Q1).")
         assert_private(self, permitted)
-        for withheld in ("Private opening title", "One payment.", "Back to Topic"):
-            self.assertNotContains(permitted, withheld, msg_prefix="The result page must withhold private Topic details.")
+        for withheld in ("Private opening title", "One payment.", "Back to Topic", "Thank you."):
+            self.assertNotContains(permitted, withheld,
+                                   msg_prefix="The result page must withhold the Topic's title, its earlier wording and the way back.")
         self.assertEqual(observer.get(url).status_code, 404)
         self.assertEqual(observer.get(reverse("discussion_result", args=(owner.organism_id, board.circle_uuid, uuid4(), receipt))).status_code, 404)
 

@@ -1281,6 +1281,23 @@ class OfficeRecordTests(TransactionTestCase):
         version, current_binding, published, adopted = adopt("  " + str(paid[3]["post_uuid"]) + "  ", label="repair duties")
         self.assertEqual(len({paid[3]["post_uuid"], published[3]["post_uuid"], adopted[3]["post_uuid"]}), 3,
                          "The payment, publication and adoption must have three distinct result receipts.")
+        if case == "visible":
+            # Plan box 9, Q4 (capture Z), on real records (Advisor, box 9 part 1): the result page's own read, with its
+            # real attachment test, gives the no-action words to the plain payment and never to the applied publication.
+            from core import discussion_pages
+
+            def result_page_record(result):
+                return cq_reads.result_post(**result[0], result_uuid=result[3]["post_uuid"], governance_only=True, detail=True)
+
+            plain, attached = result_page_record(paid), result_page_record(published)
+            self.assertEqual((plain["wording"], attached["wording"]),
+                             ("Approve the £84 repair to the community room door.", "Publish repair duties"),
+                             "Each result page must read its own decided wording.")
+            self.assertEqual((plain["carried_no_attached_act"], attached["carried_no_attached_act"]), (True, False),
+                             "Only the plain payment had no act attached; the publication carried one and applied it.")
+            self.assertIsNotNone(discussion_pages._result_context(plain)["no_action"], "The control: the payment shows the words.")
+            self.assertIsNone(discussion_pages._result_context(attached)["no_action"],
+                              "The publication's result page must not say no action was attached.")
 
         def expected(result, purpose, label, *, binding=None, version=None):
             event = models.LivingOrganismEvent.objects.get(living_organism=owner, event_uuid=result["post_uuid"])

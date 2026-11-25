@@ -1,3 +1,3 @@
 <p>{{ circle.full_name|default:"Board" }}{% if organisation %} · {{ organisation.full_name }}{% endif %}</p>
 <p>{{ result.markdown }}</p>
-<p class="meta">Effective <time datetime="{{ result.effective_at|date:'c' }}">{{ result.effective_at|date:"j F Y, H:i T" }}</time></p>
+<p class="meta">Took effect <time datetime="{{ result.effective_at|date:'c' }}">{{ result.effective_at|date:"j F Y, H:i T" }}</time></p>

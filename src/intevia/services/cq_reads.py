@@ -155,14 +155,78 @@ def _result(board, thread, post):
     return _present(rows[0])
 
 
+# The opened result's own detail (HG capture Z of 24 Nov 2026, Q1 to Q4). The wording is the one
+# version the ballot fixed: never the Topic's title, another version or a reply. no_attached_act
+# is the record's own test, as office_record._decision_result reads it.
+_RESULT_DETAIL = """SELECT a.recorded_at,v.version_number AS wording_version_number,body.markdown AS wording,
+ a.operation='SETTLE' AND NOT EXISTS (SELECT FROM public.core_cqact i
+     WHERE i.organism_id=a.organism_id AND i.thread_uuid=a.thread_uuid
+       AND i.operation='INITIATE' AND i.request ? 'attachment') AS no_attached_act
+ FROM public.core_cqact a
+ LEFT JOIN public.core_cqact ballot ON ballot.act_uuid=(a.facts->>'ballot')::uuid
+      AND ballot.board_uuid=a.board_uuid AND ballot.thread_uuid=a.thread_uuid
+      AND ballot.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+ LEFT JOIN public.discp_posts opening ON opening.thread_uuid=a.thread_uuid AND opening.post_number=1
+ LEFT JOIN public.core_discpostversion v ON v.post_uuid=opening.post_uuid
+      AND v.version_uuid=(ballot.facts->>'version')::uuid
+ LEFT JOIN public.core_discbody body ON body.version_uuid=v.version_uuid
+ WHERE a.operation IN ('SETTLE','CLOSE','NO_BALLOT') AND a.board_uuid=%s AND a.thread_uuid=%s AND a.act_uuid=%s"""
+
+
+def _result_detail(board, circle_uuid, thread, record):
+    """Add what the result page shows beyond the summary, to a reader ``_scope`` already admitted.
+
+    ``recorded_at`` is the act's own stamp. ``wording`` and ``wording_version_number`` are the
+    version an ordinary decision's ballot fixed, and None for an election or a result with no
+    ballot. ``carried_no_attached_act`` is true only for a carried, not restarted, ordinary
+    decision whose Suggestion had no act attached. ``deciding_body`` is the body's name at the
+    later of the result's effective and recorded times.
+    """
+    from core.models import Circle
+    from src.intevia.services import _record_names
+
+    rows = disc._rows(_RESULT_DETAIL, [board["board_uuid"], thread, record["post_uuid"]])
+    if not rows:
+        raise disc.DiscussionUnavailable()
+    row = rows[0]
+    decided = record["event_kind"] == "DECISION" and record["ballot"] is not None
+    record["recorded_at"] = row["recorded_at"]
+    record["wording"] = row["wording"] if decided else None
+    record["wording_version_number"] = row["wording_version_number"] if decided else None
+    record["carried_no_attached_act"] = bool(
+        decided and row["no_attached_act"] and record["count"]["kind"] == "QUALIFIED"
+        and not record.get("restarted")
+    )
+    circle = None
+    if circle_uuid is not None:
+        circle = Circle.objects.filter(
+            circle_uuid=circle_uuid, parent_organism_id=board["organism_id"]
+        ).only("circle_uuid", "kind", "parent_organism_id").first()
+        if circle is None:
+            raise disc.DiscussionUnavailable()
+    full, short = _record_names.full_name_and_short_label(
+        owner_id=board["organism_id"], cut=max(record["effective_at"], row["recorded_at"]), circle=circle
+    )
+    record["deciding_body"] = {"full_name": full, "short_label": short}
+    return record
+
+
 @transaction.atomic
 def result_post(
-    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None, governance_only=False
+    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None, governance_only=False, detail=False
 ):
+    """Return one released result to a reader admitted to it, who need not be admitted to its Topic.
+
+    With ``detail`` the result also carries ``_result_detail``'s fields for the result page. The
+    default leaves the summary exactly as its other callers read it.
+    """
     board = _scope(disc._actor(credential), organism_uuid, circle_uuid, thread_uuid)
     if governance_only and board["circle_kind"] != "GOVERNANCE":
         raise disc.DiscussionUnavailable()
-    return _result(board["board_uuid"], thread_uuid, result_uuid)
+    record = _result(board["board_uuid"], thread_uuid, result_uuid)
+    if detail:
+        _result_detail(board, circle_uuid, thread_uuid, record)
+    return record
 
 
 def _permitted_versions(rows, actor, organism_uuid):

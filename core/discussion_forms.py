@@ -230,7 +230,8 @@ def _start_context(request, org, circle, category_id, office_id, allow_prior=Fal
         raise discussion.DiscussionUnavailable() from None
     try:
         directory = member_navigation.member_navigation(credential=request.user, organism_uuid=org, circle_uuid=circle,
-                                                        office_pin=pin if allow_prior else None)
+                                                        office_pin=pin if allow_prior else None,
+                                                        include_offices=pin is not None)
     except member_navigation.NavigationUnavailable:
         directory = {"board_offices": [], "organisation": None, "circles": []}
     office = next((row for row in directory["board_offices"] if str(row["office_definition_uuid"]) == office_id), None)
@@ -243,7 +244,7 @@ def _start_context(request, org, circle, category_id, office_id, allow_prior=Fal
     return {
         "board_org": org, "board_circle": circle, "organisation": directory["organisation"],
         "circle": next((row for row in directory["circles"] if row["circle_uuid"] == circle), None),
-        "category": selected, "office": office, "offices": directory["board_offices"], "types": TOPIC_TYPES.items(),
+        "category": selected, "office": office, "types": TOPIC_TYPES.items(),
         "categories": [row for row in categories if row["can_start_topic"]],
     }
 

@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import DatabaseError, IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from django.urls import reverse
+from django.utils.dateparse import parse_datetime
 from django.utils.formats import date_format
 
 from core.cache import personal_response
@@ -18,6 +19,10 @@ from src.intevia.services import cq, cq_reads, discussion, discussion_posts
 
 def _utc(value):
     return date_format(value.astimezone(timezone.utc), "j F Y, H:i") + " UTC"
+
+
+def _minute(value):
+    return value.astimezone(timezone.utc).replace(second=0, microsecond=0)
 
 
 def _vote_card(vote):
@@ -67,7 +72,19 @@ def _vote_card(vote):
         if outcome and ". " not in outcome:
             outcome = outcome.removesuffix(".")
         date = vote.get("effective_at")
-        line = " · ".join(part for part in (status, _utc(date) if date else None, outcome) if part)
+        if vote.get("ballot_uuid") and status in ("Decided", "Vote ended"):
+            # HG capture Z of 24 Nov 2026, Q2 (C1-403): a vote was held, so each time is named.
+            # The result's stamp is when it was recorded; that is shown only when its minute
+            # differs from the close of voting.
+            closed = vote.get("closed_at")
+            if isinstance(closed, str):
+                closed = parse_datetime(closed)
+            times = ["Voting closed " + _utc(closed)] if closed else []
+            if date and (closed is None or _minute(date) != _minute(closed)):
+                times.append("Result recorded " + _utc(date))
+            line = " · ".join([part for part in (status, outcome) if part] + times)
+        else:
+            line = " · ".join(part for part in (status, _utc(date) if date else None, outcome) if part)
         heading = "Wording at closure"
         if vote.get("ballot_uuid"):
             heading = "Wording decided" if status == "Decided" else "Wording voted on"

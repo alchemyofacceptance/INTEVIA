@@ -280,16 +280,12 @@ class OfficeTypeFormTests(SimpleTestCase):
             start = reverse("discussion_start_form", args=(org, circle))
             board_page = client.get(start, {"category": str(category)})
             board_action, board_fields = command_form(board_page)
-            board = Markup(board_page.content.decode())
-            chooser, = board.select("form", method="get")
-            choice, = board.select("select", within=chooser, name="office")
-            treasurer, = [n for n in board.select("option", within=choice) if n["text"] == "Treasurer"]
-            get_fields = {n["attrs"]["name"]: n["attrs"]["value"] for n in board.select("input", within=chooser)}
-            get_fields["office"] = treasurer["attrs"]["value"]
-            picked = client.get(chooser["attrs"]["action"], get_fields)
+            # HG capture AA of 24 Nov 2026 (Q5): the Board's office chooser is removed. A member now reaches the
+            # office-pinned form from the office page, at the address discussion_forms.office_start_url builds.
+            picked = client.get(start, {"category": str(category), "office": str(office_id)})
             action, fixed = command_form(picked)
             self.assertEqual((action, fixed["office"], fixed["type"]), (board_action, str(office_id), "TOPIC"),
-                             "Choosing the Treasurer from the Board must open its fixed-type form.")
+                             "Starting from the Treasurer's office page must open its fixed-type form.")
             self.assertFalse(Markup(picked.content.decode()).select("select", name="type"),
                              "An office start must not offer alternative types.")
             draft = {"category": str(category), "title": "Who approves payments?", "markdown": "Keep my <draft>."}
@@ -798,7 +794,7 @@ class VotePanelPresentationTests(SimpleTestCase):
             ("VOTING", "Voting open · Closes " + stamp),
             ("RESPONSE_DUE", "Clarity response period ended"),
             ("VOTES_CAST", "Votes cast"),
-            ("RESULT", "Decided · " + stamp + " · Carried"),
+            ("RESULT", "Decided · Carried · Voting closed " + stamp),
             ("CLOSED", "Suggestion closed · " + stamp),
             ("WITHDRAWN", "Suggestion withdrawn · " + stamp),
             ("NO_BALLOT", "No vote opened · " + stamp),
@@ -807,8 +803,10 @@ class VotePanelPresentationTests(SimpleTestCase):
         ]
         for phase, expected in rows:
             with self.subTest(phase=phase):
+                # A recorded result of a held vote has a ballot and a closing time (capture Z, Q2).
+                held = {"ballot_uuid": uuid4(), "closed_at": self.when} if phase == "RESULT" else {}
                 markup = self.vote_markup(phase=phase, deadline=self.when, effective_at=self.when,
-                                          outcome="QUALIFIED" if phase == "RESULT" else None)
+                                          outcome="QUALIFIED" if phase == "RESULT" else None, **held)
                 self.assertEqual(markup.select("p")[0]["text"], expected)
                 notices = markup.select("div", classes=("notice", "vote-feedback"))
                 self.assertEqual([n["text"].strip() for n in notices],
@@ -825,8 +823,9 @@ class VotePanelPresentationTests(SimpleTestCase):
         ]:
             with self.subTest(phase=phase, cut=cut):
                 self.assertEqual(self.vote_markup(phase=phase, read_at=cut, **common).select("p")[0]["text"], line)
-        settled = self.vote_markup(phase="RESULT", outcome="QUALIFIED", effective_at=self.when, deadline=self.later)
-        self.assertEqual(settled.select("p")[0]["text"], "Decided · 22 November 2026, 13:00 UTC · Carried")
+        settled = self.vote_markup(phase="RESULT", outcome="QUALIFIED", effective_at=self.when, deadline=self.later,
+                                   ballot_uuid=uuid4(), closed_at=self.when)
+        self.assertEqual(settled.select("p")[0]["text"], "Decided · Carried · Voting closed 22 November 2026, 13:00 UTC")
         refused = self.vote_markup(phase="RESULT", head_operation="NO_BALLOT", outcome="NO_DECISION_PROVISION_ENDED")
         self.assertEqual(refused.select("p")[0]["text"], "No vote opened · A cited constitutional provision was no longer in force")
 
@@ -842,8 +841,16 @@ class VotePanelPresentationTests(SimpleTestCase):
         ]
         for phase, kind, status, outcome in rows:
             with self.subTest(kind=kind):
-                page = self.vote_markup(phase=phase, outcome=kind, effective_at=self.when)
-                self.assertEqual(page.select("p")[0]["text"], f"{status} · 22 November 2026, 13:00 UTC · {outcome}")
+                if kind == "NO_DECISION_BOARD_ACTIVATED":
+                    # No ballot was held, so the line keeps its one time.
+                    page = self.vote_markup(phase=phase, outcome=kind, effective_at=self.when)
+                    expected = f"{status} · 22 November 2026, 13:00 UTC · {outcome}"
+                else:
+                    # A held vote names when voting closed (capture Z, Q2; C1-403).
+                    page = self.vote_markup(phase=phase, outcome=kind, effective_at=self.when,
+                                            ballot_uuid=uuid4(), closed_at=self.when)
+                    expected = f"{status} · {outcome} · Voting closed 22 November 2026, 13:00 UTC"
+                self.assertEqual(page.select("p")[0]["text"], expected)
         self.assertEqual(self.vote_markup(phase="PREPARATION_DUE").select("p")[0]["text"], "Preparation deadline passed")
 
     def test_topic_opening_and_reply_version_labels(self):

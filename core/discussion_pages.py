@@ -1,8 +1,11 @@
 """Read the Board's discussion with the grants of the signed-in reader."""
+from datetime import timezone
+
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_safe
 
 from core.cache import personal_response
@@ -52,7 +55,8 @@ def _read_page(credential, org, circle, thread):
 
     # A Board crumb has its own grant. Losing the parent link does not erase a released Topic.
     try:
-        directory = member_navigation.member_navigation(credential=credential, organism_uuid=org, office_pin=pinned_office)
+        directory = member_navigation.member_navigation(credential=credential, organism_uuid=org, office_pin=pinned_office,
+                                                        include_offices=False)
     except member_navigation.NavigationUnavailable:
         pass
     else:
@@ -107,6 +111,37 @@ def discussion_topic(request, org, circle, thread):
     return _page(request, org, circle, thread)
 
 
+# INTEVIA's words on a carried decision with no act attached (HG capture Z of 24 Nov 2026, Q4).
+NO_ACTION = ("This vote had no action attached. INTEVIA recorded the Board's decision and carried out "
+             "nothing further. INTEVIA does not move money.")
+# The outcomes in which the body decided the wording; in any other, the wording was only voted on.
+_DECIDED = ("QUALIFIED", "NOT_QUALIFIED_VOTE", "NOT_QUALIFIED_TIE")
+
+
+def _minute(stamp):
+    return stamp.astimezone(timezone.utc).replace(second=0, microsecond=0)
+
+
+def _result_context(record):
+    """Give the result page its times, its wording heading and INTEVIA's no-action words.
+
+    The act's facts hold the closing time as ISO 8601 text, while its stamps are datetimes, so
+    the text is parsed before it is shown or compared. "Result recorded" is given only when its
+    minute differs from the closing time's (capture Z, Q2). A result with no ballot had no voting
+    to close, so it has neither row.
+    """
+    closed = record.get("closed_at") if record.get("ballot") is not None else None
+    if isinstance(closed, str):
+        closed = parse_datetime(closed)
+    recorded = record.get("recorded_at")
+    differs = closed is not None and recorded is not None and _minute(recorded) != _minute(closed)
+    return {
+        "times": {"took_effect": record["effective_at"], "voting_closed": closed,
+                  "result_recorded": recorded if differs else None},
+        "wording_heading": "Wording decided" if record["count"]["kind"] in _DECIDED else "Wording voted on",
+        "no_action": NO_ACTION if record.get("carried_no_attached_act") else None,
+    }
+
 
 @personal_response
 @login_required(login_url="login")
@@ -116,13 +151,14 @@ def discussion_result(request, org, circle, thread, result):
     """Open the released result directly, including for an unseated organisation member."""
     scope = dict(credential=request.user, organism_uuid=org, circle_uuid=circle)
     try:
-        record = cq_reads.result_post(**scope, thread_uuid=thread, result_uuid=result, governance_only=True)
+        record = cq_reads.result_post(**scope, thread_uuid=thread, result_uuid=result, governance_only=True,
+                                      detail=True)
     except discussion.DiscussionUnavailable:
         return render(request, "core/discussion_unavailable.html",
                       {"back_organisation": _back_organisation(request.user, org)}, status=404)
-    context = {"result": record}
+    context = {"result": record, **_result_context(record)}
     try:
-        nav = member_navigation.member_navigation(**scope)
+        nav = member_navigation.member_navigation(**scope, include_offices=False)
         context.update(organisation=nav["organisation"],
                        circle=next((row for row in nav["circles"] if row["circle_uuid"] == circle), None))
     except member_navigation.NavigationUnavailable:

@@ -131,8 +131,13 @@ def _linked_office(offices, owner_id, cut, pin):
     return by_definition.get(head["role_uuid"]) if head else None
 
 
-def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_discussion=False, office_pin=None):
-    """Read member destinations and the optional selected Circle's introduction at one cut."""
+def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_discussion=False, office_pin=None,
+                      include_offices=True):
+    """Read member destinations and the optional selected Circle's introduction at one cut.
+
+    include_offices=False skips the Board's office list for a page that shows none (box 9 Advisor, part 2,
+    finding 1); a pinned office still reads it, so the pin is validated as before.
+    """
     with transaction.atomic():
         actor, owner_id, cut, state = _admitted_scope(credential, organism_uuid)
         births = CircleStateEvent.objects.filter(
@@ -159,7 +164,9 @@ def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_di
             if circle.circle_uuid == circle_uuid:
                 selected = {**destination, "description": _circle_description(birth, full, cut)}
 
-        if state == "PROBATIONARY":
+        if not include_offices and office_pin is None:
+            offices = []
+        elif state == "PROBATIONARY":
             pins = {pin for birth in births for pin in reachable[birth.circle_id]}
             offices = [{"office_definition_uuid": pin, "label": "Office record"} for pin in sorted(pins)]
         elif any(circle["kind"] == "GOVERNANCE" for circle in circles):

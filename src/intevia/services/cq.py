@@ -1092,6 +1092,7 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
                   initiated.request->'attachment'->>'kind' AS attachment_kind,
                   state.act_uuid AS clarity_window, state.phase, state.deadline, state.response_deadline,
                   public.intevia_clock_statement() AS read_at, head.effective_at,
+                  (head.facts->>'closed_at')::timestamptz AS closed_at,
                   head.operation AS head_operation, head.facts#>>'{count,kind}' AS outcome,
                   ballot.act_uuid AS ballot_uuid,
                   CASE WHEN c.kind='GOVERNANCE' THEN 'BOARD'
@@ -1130,7 +1131,7 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     panel = {}
     if row["act_uuid"]:
         panel.update({name: row[name] for name in (
-            "phase", "deadline", "response_deadline", "read_at", "effective_at",
+            "phase", "deadline", "response_deadline", "read_at", "effective_at", "closed_at",
             "head_operation", "outcome", "ballot_uuid", "version_number", "markdown",
         )})
         panel["specialist_preparation"] = row["attachment_kind"] in ("ELECTION", "COMMITTEE")

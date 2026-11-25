@@ -6,16 +6,5 @@
 {% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
 {% record_breadcrumb "Start a Topic" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
 <h1 class="page-title record-heading">Start a Topic</h1>
-{% if offices and not office %}
-<form class="discussion-form" method="get" action="{% url 'discussion_start_form' board_org board_circle %}">
-  {% if category %}<input type="hidden" name="category" value="{{ category.category_uuid }}">{% endif %}
-  <label>Start about an office<select name="office" required>
-    <option value="">Choose an office</option>
-    {% for row in offices %}<option value="{{ row.office_definition_uuid }}">{{ row.label }}</option>{% endfor %}
-  </select></label>
-  <div>{% include 'core/components/button.html' with type='submit' variant='secondary' label='Continue with this office' only %}</div>
-</form>
-<h2 class="record-heading">Start without an office</h2>
-{% endif %}
 {% include "core/components/start_topic_form.html" %}
 {% endblock %}

@@ -6,8 +6,19 @@
 {% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
 {% record_breadcrumb "Vote result" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
 <h1 class="page-title record-heading">Vote result</h1>
-<article class="card"><h2>Outcome</h2>
-  {% include "core/components/vote_result.html" %}
+<article class="card"><h2>Decision</h2>
+  <dl class="office-facts">
+    <dt>Deciding body</dt><dd>{{ result.deciding_body.full_name }}{% if organisation %} · {{ organisation.full_name }}{% endif %}</dd>
+    <dt>Outcome</dt><dd>{{ result.markdown }}</dd>
+    <dt>Took effect</dt><dd>{% include "core/components/office_time.html" with stamp=times.took_effect only %}</dd>
+    {% if times.voting_closed %}<dt>Voting closed</dt><dd>{% include "core/components/office_time.html" with stamp=times.voting_closed only %}</dd>{% endif %}
+    {% if times.result_recorded %}<dt>Result recorded</dt><dd>{% include "core/components/office_time.html" with stamp=times.result_recorded only %}</dd>{% endif %}
+  </dl>
 </article>
+{% if result.wording is not None %}<article class="card" aria-labelledby="result-wording">
+  <h2 id="result-wording">{{ wording_heading }}{% if result.wording_version_number >= 2 %} · Version {{ result.wording_version_number }}{% endif %}</h2>
+  <div class="card motion-wording">{{ result.wording|linebreaks }}</div>
+</article>{% endif %}
+{% if no_action %}{% include "core/components/notice.html" with kind="info" message=no_action only %}{% endif %}
 {% if topic_url %}<p class="discussion-actions link-row">{% include "core/components/button.html" with href=topic_url variant="secondary" label="Back to Topic" only %}</p>{% endif %}
 {% endblock %}
