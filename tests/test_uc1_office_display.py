@@ -145,11 +145,11 @@ class OfficeDisplayTests(TransactionTestCase):
                               f'version {self.source["library_version_number"]}'],
                              "The observation must name its own source clause in quotation marks, and its own version.")
             provision = pairs[0]["parents"][-1]
-            self.assertEqual([n["text"] for n in page.select("h2", within=provision)], ["Establishes this office"],
+            self.assertEqual([n["text"] for n in page.select("h4", within=provision, classes=("card-heading",))], ["Establishes this office"],
                              "The unmapped provision must show its human relationship.")
             self.assertEqual([n["text"] for n in page.select("p", within=provision, classes=("meta",))
                               if n["parents"][-1] is provision],
-                             [f'Clause “{self.source["locator"]}” · Version {self.source["library_version_number"]}'],
+                             [f'{self.source["resource_reference"]} · Clause “{self.source["locator"]}” · Version {self.source["library_version_number"]}'],
                              "The provision must name its own quoted locator and source version.")
             self.assertNotIn(str(self.reader.identity_id).encode(), response.content,
                              "The office page must not expose the first requester's identity reference.")

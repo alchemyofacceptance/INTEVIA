@@ -6,14 +6,20 @@
 {% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
 {% record_breadcrumb "Vote result" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
 <h1 class="page-title record-heading">Vote result</h1>
+{% if topic_url and topic_title %}<p class="lede discussion-office" id="result-topic">Topic: <a href="{{ topic_url }}">{{ topic_title }}</a></p>{% endif %}
+{% if danger %}<div class="notice refusal" id="vote-danger" role="status"><p><strong>{{ danger.lead }}</strong> {{ danger.rest }}</p>{% if danger.counts %}<p>{{ danger.counts }}</p>{% endif %}</div>{% endif %}
 <article class="card"><h2>Decision</h2>
   <dl class="office-facts">
     <dt>Deciding body</dt><dd>{{ result.deciding_body.full_name }}{% if organisation %} · {{ organisation.full_name }}{% endif %}</dd>
-    <dt>Outcome</dt><dd>{{ result.markdown }}</dd>
-    <dt>Took effect</dt><dd>{% include "core/components/office_time.html" with stamp=times.took_effect only %}</dd>
+    <dt>Outcome</dt><dd>{% if outcome_word %}{{ outcome_word }}{% elif danger %}No decision{% else %}{{ result.markdown }}{% endif %}</dd>
+    <dt>{{ time_word }}</dt><dd>{% include "core/components/office_time.html" with stamp=times.took_effect only %}</dd>
     {% if times.voting_closed %}<dt>Voting closed</dt><dd>{% include "core/components/office_time.html" with stamp=times.voting_closed only %}</dd>{% endif %}
     {% if times.result_recorded %}<dt>Result recorded</dt><dd>{% include "core/components/office_time.html" with stamp=times.result_recorded only %}</dd>{% endif %}
   </dl>
+  {% if tests %}<h3 id="result-tests-heading">How this result was reached</h3>
+  {% include "core/components/vote_tests.html" with tests=tests heading="result-tests-heading" only %}{% endif %}
+  {% if ring %}{% include "core/components/vote_ring.html" with ring=ring only %}{% endif %}
+  {% if own_answer_card %}<div class="notice {{ own_answer_card.kind }}" id="own-answer" role="status"><p>{{ own_answer_card.text }}</p></div>{% endif %}
 </article>
 {% if result.wording is not None %}<article class="card" aria-labelledby="result-wording">
   <h2 id="result-wording">{{ wording_heading }}{% if result.wording_version_number >= 2 %} · Version {{ result.wording_version_number }}{% endif %}</h2>

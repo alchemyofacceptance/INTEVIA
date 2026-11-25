@@ -92,6 +92,7 @@ def _member_page(request, org, circle=None):
     if selected["kind"] == "GOVERNANCE":
         context["board_offices"] = page["board_offices"]
         context["discussion_available"] = page.get("discussion_available", False)
+        context["discussion_topic_count"] = page.get("discussion_topic_count")
     description = selected["description"]
     text = description["text"] if description else ""
     excerpt = _excerpt(text) if description and description["source"] == "birth_purpose" else ""

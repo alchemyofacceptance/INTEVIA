@@ -42,7 +42,7 @@ def ui_frame(context):
     name = (getattr(identity, "display_name", "") or request.user.get_full_name()) if signed_in else ""
     you_url = reverse("restricted") + "#you" if restricted else reverse("f0-you")
     current = request.resolver_match.url_name if request.resolver_match else ""
-    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "discussion_put_forward":"organisation", "discussion_prepare":"organisation", "discussion_confirm_clarity":"organisation", "discussion_clarity_question":"organisation", "discussion_result":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
+    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "organisation_laws":"organisation", "organisation_law_version":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "discussion_edit_form":"organisation", "discussion_edit":"organisation", "discussion_put_forward":"organisation", "discussion_prepare":"organisation", "discussion_confirm_clarity":"organisation", "discussion_clarity_question":"organisation", "discussion_result":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
     restricted_page = current == "restricted"
     tabs = [
         {"id":"home", "label":"Home", "icon":"home", "url":reverse("shell")},
@@ -54,7 +54,7 @@ def ui_frame(context):
     scope = "you" if current == "f0-you" else "organisation"
     if current.startswith("discussion_clarity_"):
         active = "organisation"
-    show_domains = current.startswith("discussion_clarity_") or current in {"f0-organisation", "f0-you", "office_page", "organisation_home", "circle_page", "board_discussion", "discussion_topic", "discussion_start_form", "discussion_start", "discussion_reply", "discussion_put_forward", "discussion_prepare", "discussion_confirm_clarity", "discussion_clarity_question", "discussion_result"} or current.startswith("event-") or current == "f0-domain" or context.get("catalogue_domains", False)
+    show_domains = current.startswith("discussion_clarity_") or current in {"f0-organisation", "f0-you", "office_page", "organisation_home", "circle_page", "board_discussion", "discussion_topic", "discussion_start_form", "discussion_start", "discussion_reply", "discussion_edit_form", "discussion_edit", "discussion_put_forward", "discussion_prepare", "discussion_confirm_clarity", "discussion_clarity_question", "discussion_result"} or current.startswith("event-") or current == "f0-domain" or context.get("catalogue_domains", False)
     if current == "f0-domain":
         scope = request.resolver_match.kwargs.get("scope", "organisation")
         active = "you" if scope == "you" else "organisation"
@@ -88,13 +88,6 @@ _PROVISION_LABELS = {
 }
 
 
-# PLACEHOLDER (Human Governor, 20 Nov 2026): replace with LAW family and title
-# when the records carry them. This map is for the film's display only.
-_FILM_LAW_DISPLAY = {
-    "alpha-treasurer-duties": {"family": "Governance", "title": "Treasurer office"},
-}
-
-
 @register.inclusion_tag("core/components/office_provisions.html")
 def office_provisions(record):
     """Place released text beside its unique current source in this office payload."""
@@ -114,11 +107,11 @@ def office_provisions(record):
 
     groups = {}
     for index, provision in enumerate(provisions):
-        tier = provision.get("tier")
-        display = _FILM_LAW_DISPLAY.get(provision.get("library_reference"), {})
-        family = display.get("family") if tier == "Policy" else None
-        # Unclassified rows stand alone at their arrival position. LAW tiers are text.
-        key = tier or index
+        tier = (provision.get("tier") or "").strip()
+        law_class = provision.get("class_name")
+        family = provision.get("film_family") if law_class == "POLICY" else None
+        # Unclassified or unlabelled rows keep their own slot.
+        key = law_class if tier and law_class else index
         group = groups.setdefault(key, {"tier": tier, "family": family, "rows": []})
         # A tier heading can name a family only when it applies to every row.
         if group["family"] != family:
@@ -126,7 +119,7 @@ def office_provisions(record):
         group["rows"].append({
             "provision": provision,
             "label": _PROVISION_LABELS[provision["relationship"]],
-            "title": display.get("title"),
+            "title": provision.get("film_title"),
             "observation": observation if provision is source else None,
         })
     for group in groups.values():

@@ -158,8 +158,13 @@ class VoteRingPageTests(TransactionTestCase):
         self.assertEqual([(p["text"].split()[1:-1], p["text"].split()[-1]) for p in page.select("p", within=summary)],
                          [(["Answered"], "1"), (["Not", "yet"], "2")],
                          "Beside the ring the count must read in words: Answered 1, Not yet 2.")
-        self.assertEqual([p["text"] for p in page.select("p", within=section) if "have answered" in p["text"]], [],
+        # Part PB-6d (capture AY3) adds the ruled line of how many more are needed (``#vote-progress``); the old plain count line stays gone.
+        self.assertEqual([p["text"] for p in page.select("p", within=section)
+                          if "have answered" in p["text"] and p["attrs"].get("id") != "vote-progress"], [],
                          "The plain count line must be gone: the ring replaces it.")
+        self.assertEqual([p["text"] for p in page.select("p", within=section, id="vote-progress")],
+                         ["So far 1 has answered. 2 more are needed for the vote to count."],
+                         "A Board of three needs three to take part; one has answered.")
         names = [person.display_name for person in case.people]
         self.assertTrue(all(names), "Each fixture trustee needs a display name for this witness to mean anything.")
         self.assertEqual([name for name in names if name in section["text"] or name in rings[0]["attrs"]["aria-label"]],

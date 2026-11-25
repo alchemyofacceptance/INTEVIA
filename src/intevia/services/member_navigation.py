@@ -131,6 +131,20 @@ def _linked_office(offices, owner_id, cut, pin):
     return by_definition.get(head["role_uuid"]) if head else None
 
 
+def _board_topic_count(credential, organism_uuid, circle_uuid):
+    """Count the Topics this reader may open in the Board's discussion (HG capture AG of 24 Nov 2026, AG1).
+
+    The same reads as the Board discussion list: the categories this reader's audience admits, then each
+    category's Topics, counting only those whose title this reader may see. A count only; no title, name
+    or text leaves this function. Raises DiscussionUnavailable when the reader may not see the discussion.
+    """
+    scope = {"credential": credential, "organism_uuid": organism_uuid, "circle_uuid": circle_uuid}
+    categories = discussion.board_categories(**scope, governance_only=True)["categories"]
+    return sum(1 for category in categories
+               for row in discussion_posts.category_topics(**scope, category_uuid=category["category_uuid"])
+               if row["title"] is not None)
+
+
 def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_discussion=False, office_pin=None,
                       include_offices=True):
     """Read member destinations and the optional selected Circle's introduction at one cut.
@@ -190,4 +204,10 @@ def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_di
                     row["organism_uuid"] == organism_uuid and row["circle_uuid"] == circle_uuid
                     for row in destinations
                 )
+                if page["discussion_available"]:
+                    try:
+                        page["discussion_topic_count"] = _board_topic_count(credential, organism_uuid, circle_uuid)
+                    except discussion.DiscussionUnavailable:
+                        # The discussion closed to this reader between the two reads: no row and no count.
+                        page["discussion_available"] = False
         return page

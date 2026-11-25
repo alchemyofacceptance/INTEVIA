@@ -28,6 +28,43 @@ def ballot_choice_labels():
     """
     return {"QUALIFIED": "For", "NOT_QUALIFIED": "Against", "ABSTAIN": "Abstain"}
 
+
+# The member's own answer card (HG captures AH Q18 and AP2 of 24 Nov 2026): INTEVIA's shared notice
+# in the kind that matches the answer: green for For, red for Against, amber for Abstain.
+ANSWER_NOTICE_KINDS = {"QUALIFIED": "success", "NOT_QUALIFIED": "refusal", "ABSTAIN": "warning"}
+
+
+# Insufficient participation is a danger signal (HG captures AH Q19 and AQ4 of 24 Nov 2026): INTEVIA's red
+# card, for this outcome only. Every other result with no decision keeps its plain look.
+INSUFFICIENT_PARTICIPATION = "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION"
+
+
+def danger_card(count=None, label="Board members"):
+    """The red card's words. The second sentence is given only from a result's own counts.
+
+    The stored result keeps its own sentence; these fuller words are the card's alone (capture AQ4).
+    """
+    card = {"lead": "Insufficient participation.", "rest": "No decision was reached.", "counts": None}
+    if count and all(key in count for key in ("participated", "eligible", "required")):
+        # The same words as the result page's participation row, abstentions included (capture AX2).
+        from core.vote_tests import participation_sentence
+        card["counts"] = participation_sentence(count, label)
+    return card
+
+
+def own_answer_card(choice, *, voting_open):
+    """The words and colour of the member's own answer card, or None for a choice the ballot does not offer.
+
+    While voting is open the card also carries INTEVIA's confirmation, so the member reads one card
+    (capture AQ2): "Your answer is recorded. You answered For." After the vote closes it reads
+    "You answered For." alone.
+    """
+    label = ballot_choice_labels().get(choice)
+    if label is None:
+        return None
+    return {"label": label, "kind": ANSWER_NOTICE_KINDS[choice],
+            "text": ("Your answer is recorded. " if voting_open else "") + f"You answered {label}."}
+
 def vote_status_line(answered, eligible):
     """The count-only status of an open vote, for the line under a Topic's title and the Board's list."""
     return f"Voting open · {answered} of {eligible} answered"
@@ -97,6 +134,35 @@ def count_ring(answered, eligible, label):
             "segments": ring_segments([("answered", answered), ("pending", waiting)], eligible),
             "counts": [{"key": "answered", "symbol": "✓", "label": "Answered", "count": answered},
                        {"key": "pending", "symbol": "…", "label": "Not yet", "count": waiting}]}
+
+
+# The closed vote's ring (HG captures AF, AK4 and AO1 of 24 Nov 2026). The keys are the shared answer
+# classes, as the shared participation component already draws them: "consented" is the For green,
+# "declined" the Against red and "abstained" the Abstain amber. "pending" is the share that did not
+# answer, drawn flat.
+NO_ANSWER_LABEL = "Did not answer"
+
+
+def result_ring(tally, label):
+    """The ring, the counts and, where the record names them, who answered what on a closed vote.
+
+    ``tally`` is ``cq_reads``'s own count of the recorded result. Abstain has a row only where the
+    vote allowed it. ``names`` is present only under NAMED reporting; a row with no one is left out.
+    """
+    words = ballot_choice_labels()
+    rows = [("consented", "✓", words["QUALIFIED"], tally["for"], "QUALIFIED"),
+            ("declined", "✕", words["NOT_QUALIFIED"], tally["against"], "NOT_QUALIFIED")]
+    if tally["abstain_allowed"] or tally["abstain"]:
+        rows.append(("abstained", "—", words["ABSTAIN"], tally["abstain"], "ABSTAIN"))
+    rows.append(("pending", "…", NO_ANSWER_LABEL, tally["no_answer"], "NO_ANSWER"))
+    summary = ", ".join(f"{count} {word}" for _, _, word, count, _ in rows)
+    ring = {"total": tally["eligible"], "label": label, "text": f"{tally['eligible']} {label}: {summary}",
+            "segments": ring_segments([(key, count) for key, _, _, count, _ in rows], tally["eligible"]),
+            "counts": [{"key": key, "symbol": symbol, "label": word, "count": count} for key, symbol, word, count, _ in rows]}
+    if tally.get("names") is not None:
+        ring["names"] = [{"label": word, "names": tally["names"][answer]}
+                         for _, _, word, _, answer in rows if tally["names"].get(answer)]
+    return ring
 
 
 TOPIC_TYPES = {"TOPIC": "Topic", "QUESTION": "Question", "SUGGESTION": "Suggestion"}

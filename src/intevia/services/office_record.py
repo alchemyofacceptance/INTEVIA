@@ -5,7 +5,6 @@ from django.db import DatabaseError, connection, transaction
 from psycopg import Cursor
 
 from core.care_identity import CARE_ID
-from core.models import CircleStateEvent
 from src.intevia.services._office_family import office_family
 from src.intevia.services._record_names import full_name_and_short_label, office_label
 from src.intevia.services import care_assistance as care
@@ -52,11 +51,7 @@ def _office_facts(params, access, setting):
     code = access["code"]
     office.update(code=code, label=office_label(code))
     # This office belongs to the organisation. Its Board may not have been formed at the read cut.
-    birth = CircleStateEvent.objects.filter(
-        circle__parent_organism_id=owner_id, circle__kind="GOVERNANCE", sequence=1,
-        effective_at__lte=at, received_at__lte=at, recorded_at__lte=at,
-    ).select_related("circle").only("circle__parent_organism_id", "circle__kind").first()
-    board_names = full_name_and_short_label(owner_id=owner_id, circle=birth.circle, cut=at) if birth else (None, None)
+    board_names = library_laws.governance_board_names(params["owner"], at)
     office["board_full_name"], office["board_short_label"] = board_names
     family = office_family(owner_id=owner_id, code=code, requested=params["office"], at=at)
     if family is not None:
@@ -89,7 +84,7 @@ def _provision_at(citation, binding, allowed, status):
     if not law or law["act"] != binding["adoption_act"] or law["library_reference"] != citation["resource_reference"]:
         return None
     result = {"relationship": citation["relationship"], "status": status, "binding": law["binding"],
-              "tier": law["display_class"], "library_reference": law["library_reference"],
+              "tier": law["display_class"], "class_name": law["class_name"], "library_reference": law["library_reference"],
               "version": law["version_number"], "adoption_record": law["act"], "adopting_body": law["issuer"],
               "in_force_from": law["in_force_from"], "recorded_at": law["adoption_recorded_at"]}
     locator = citation["locator"]
@@ -165,7 +160,27 @@ def _provisions(credential, owner, definition):
                 provisions.append(historical)
             if current:
                 provisions.append(current)
+    _label_citations(credential, owner, provisions)
     return provisions, policies
+
+
+def _label_citations(credential, owner, provisions):
+    """Name released citations and test each distinct destination under the current member grant."""
+    titles = library_laws.film_law_titles(owner, provisions)
+    destinations = {}
+    for row in provisions:
+        row["film_title"] = titles.get(row["binding"])
+        row["film_family"] = library_laws.film_law_family(row["film_title"], row["class_name"])
+        key = (row["binding"], row["version"])
+        if key not in destinations:
+            try:
+                released, _ = library_laws.our_law_version(
+                    credential=credential, organism_uuid=owner, binding=key[0], version_number=key[1])
+            except library_laws.LawReadUnavailable:
+                destinations[key] = None
+            else:
+                destinations[key] = (released["act"], released["library_reference"])
+        row["version_link"] = destinations[key] == (row["adoption_record"], row["library_reference"])
 
 
 def _topics(rows):

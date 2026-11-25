@@ -10,7 +10,7 @@
 {% with post=posts.0 %}
 <article class="card"{% if post.post_uuid %} id="post-{{ post.post_uuid }}"{% endif %}><h2>Opening post</h2>
   {% include "core/components/discussion_post.html" %}
-  {% if office %}<p class="discussion-office link-row"><a href="{% url 'office_page' board_org office.office_definition_uuid %}">{{ office.label }}</a></p>{% endif %}
+  {% if office %}<p class="discussion-office">Office: <a href="{% url 'office_page' board_org office.office_definition_uuid %}">{{ office.label }}</a></p>{% endif %}
 </article>
 {% endwith %}
 {% if vote %}{% include 'core/components/board_vote.html' %}{% endif %}

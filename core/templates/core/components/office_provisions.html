@@ -9,11 +9,11 @@
       {% if row.provision.status == "cited_at_definition" %}
         <details class="card office-provision">
           <summary>Cited when the office was defined · Version {{ row.provision.version }}</summary>
-          {% include "core/components/office_provision.html" with row=row office=office only %}
+          {% include "core/components/office_provision.html" with row=row office=office grouped=group.tier only %}
         </details>
       {% else %}
         <article class="card office-provision">
-          {% include "core/components/office_provision.html" with row=row office=office only %}
+          {% include "core/components/office_provision.html" with row=row office=office grouped=group.tier only %}
         </article>
       {% endif %}
     {% endfor %}

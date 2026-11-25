@@ -1,0 +1,19 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}{{ edit.heading }} | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as organisation_url %}
+{% url 'circle_page' organisation.organism_uuid circle.circle_uuid as circle_url %}
+{% record_breadcrumb edit.heading organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:"Board" circle_url %}
+<h1 class="page-title record-heading">{{ edit.heading }}</h1>
+<p class="meta">{{ topic.title }} · {{ edit.place }}</p>
+{% include "core/components/notice.html" with message=edit.terms effect=edit.clarity only %}
+<form class="discussion-form" method="post" action="{{ edit.save_url }}">
+  {% csrf_token %}<input type="hidden" name="command" value="{{ edit.command }}">
+  <label>{{ edit.field_label }}<textarea name="markdown" required rows="6">{{ edit.markdown }}</textarea></label>
+  <div class="discussion-actions">
+    {% include "core/components/button.html" with type="submit" variant="primary" label="Save new version" only %}
+    {% include "core/components/button.html" with href=edit.cancel_url variant="secondary" label="Cancel" only %}
+  </div>
+</form>
+{% endblock %}

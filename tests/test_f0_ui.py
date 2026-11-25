@@ -410,7 +410,7 @@ class BoardVoteStyleTests(SimpleTestCase):
         from tests.test_uc1_render import declarations
 
         sheet = Path(finders.find("core/f0.css")).read_text(encoding="utf-8")
-        glass = declarations(sheet, ".panel,.event-item,.card,.notice")
+        glass = declarations(sheet, ".panel,.event-item,.card,.notice,.circle-list,.org-chip")
         self.assertIn("linear-gradient", glass.get("background-image", ""), "The shared glass needs a face highlight.")
         self.assertIn("inset", glass.get("box-shadow", ""), "The shared glass needs a rim and shadow.")
         self.assertEqual(glass.get("--glass-ink"), "var(--color-primary)", "A card's glass is tinted with the human's purple.")

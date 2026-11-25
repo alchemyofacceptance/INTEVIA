@@ -1,5 +1,7 @@
 """Public Decision projections. Resolve the viewer and thread before a ballot or reporting link."""
 
+import unicodedata
+
 from django.db import connections, transaction
 
 from src.intevia.services import discussion as disc
@@ -69,7 +71,7 @@ def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
 
 # Explicit projection: the private opening roster, individual input acts and
 # commitment salts are never returned. Totals-only result facts contain no names.
-_RESULT = """SELECT a.act_uuid AS post_uuid,a.effective_at,a.thread_uuid,(a.facts->>'post_number')::integer AS post_number,
+_RESULT = """SELECT a.act_uuid AS post_uuid,a.effective_at,a.recorded_at,a.thread_uuid,(a.facts->>'post_number')::integer AS post_number,
  a.facts->>'event_kind' AS event_kind, a.facts->'invalid_provisions' AS invalid_provisions, a.facts->'ballot' AS ballot,a.facts->'attempt' AS attempt,a.facts->'count' AS count,
  a.facts->'reporting_rule' AS reporting_rule,a.facts->'group_gaze' AS participants,
  a.facts->'opened_at' AS opened_at,a.facts->'deadline' AS deadline,a.facts->'closed_at' AS closed_at,
@@ -173,6 +175,97 @@ _RESULT_DETAIL = """SELECT a.recorded_at,v.version_number AS wording_version_num
  WHERE a.operation IN ('SETTLE','CLOSE','NO_BALLOT') AND a.board_uuid=%s AND a.thread_uuid=%s AND a.act_uuid=%s"""
 
 
+# The closed vote's tally (HG captures AF and AK4 of 24 Nov 2026). The counts are the result's own.
+# Names are read only where the result itself carries its named answers (NAMED reporting, never an
+# election): every member the result counted, with their answer or none, each named by the office
+# record's name read (capture AM1: the current identity resolution, dropped once the link is
+# severed; "Member" where there is no name to show). Whether the vote allowed Abstain is the
+# ballot's own rule.
+_TALLY = """SELECT coalesce((ballot.facts->'rules'->>'abstention')::boolean,false) AS abstain_allowed,
+ CASE WHEN %s THEN (SELECT coalesce(jsonb_agg(jsonb_build_object('answer',g.entry->>'answer','name',
+        coalesce(nullif(btrim(r.display_name),''),'Member')) ORDER BY i.id),'[]'::jsonb)
+   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.facts->'participation_record')='array' THEN a.facts->'participation_record' ELSE '[]'::jsonb END) p(entry)
+   JOIN public.core_identity i ON i.identity_id=(p.entry->>'identity')::uuid
+   LEFT JOIN jsonb_array_elements(CASE WHEN jsonb_typeof(a.facts->'group_gaze')='array' THEN a.facts->'group_gaze' ELSE '[]'::jsonb END) g(entry) ON g.entry->>'identity'=p.entry->>'identity'
+   LEFT JOIN public.core_identityresolution r ON r.identity_id=i.id AND NOT EXISTS (
+        SELECT 1 FROM public.core_identityresolutionsevered z WHERE z.identity_id=i.id)) END AS people
+ FROM public.core_cqact a
+ LEFT JOIN public.core_cqact ballot ON ballot.act_uuid=(a.facts->>'ballot')::uuid
+      AND ballot.board_uuid=a.board_uuid AND ballot.thread_uuid=a.thread_uuid
+      AND ballot.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+ WHERE a.operation='SETTLE' AND a.board_uuid=%s AND a.thread_uuid=%s AND a.act_uuid=%s"""
+
+
+def _name_order(name):
+    """The sort key of a shown name: case-insensitive, an accented letter beside its plain letter."""
+    return unicodedata.normalize("NFKD", name).casefold()
+
+
+def _tally(board_uuid, thread, record):
+    """Count a recorded ordinary result for the closed vote's ring, or None where no ballot was counted.
+
+    ``names`` maps QUALIFIED, NOT_QUALIFIED, ABSTAIN and NO_ANSWER to the people's names, and is
+    None unless the result carries its named answers: a totals-only result and an election never
+    reach the name lookup.
+    """
+    count = record.get("count") or {}
+    if record.get("event_kind") != "DECISION" or record.get("ballot") is None or "qualified" not in count:
+        return None
+    named = record.get("participants") is not None
+    rows = disc._rows(_TALLY, [named, board_uuid, thread, record["post_uuid"]])
+    if not rows:
+        return None
+    tally = {"eligible": count["eligible"], "for": count["qualified"], "against": count["not_qualified"],
+             "abstain": count["abstained"], "no_answer": max(count["eligible"] - count["participated"], 0),
+             "abstain_allowed": rows[0]["abstain_allowed"], "names": None}
+    if named:
+        names = {"QUALIFIED": [], "NOT_QUALIFIED": [], "ABSTAIN": [], "NO_ANSWER": []}
+        for person in rows[0]["people"] or []:
+            names[person["answer"] or "NO_ANSWER"].append(person["name"])
+        # HG capture BW of 25 Nov 2026, BW5: alphabetical by display name in each row, case-insensitive.
+        # "Member" (no name to show) sorts as its own word. The sort is stable, so equal names keep
+        # the read's own order, which is by account.
+        for row in names.values():
+            row.sort(key=_name_order)
+        tally["names"] = names
+    return tally
+
+
+# The rule an ordinary result was counted by: what its ballot fixed when voting opened (the ballot
+# act's facts->'rules', which ``public.cq_ballot_facts`` reads back when it counts). Never today's settings.
+_RULE = """SELECT (ballot.facts->'rules')-'provisions'-'applied_provisions' AS rule
+ FROM public.core_cqact a
+ JOIN public.core_cqact ballot ON ballot.act_uuid=(a.facts->>'ballot')::uuid
+      AND ballot.board_uuid=a.board_uuid AND ballot.thread_uuid=a.thread_uuid
+      AND ballot.operation IN ('PROCEED','OPEN_VOTE','REOPEN_VOTE')
+ WHERE a.operation='SETTLE' AND a.board_uuid=%s AND a.thread_uuid=%s AND a.act_uuid=%s"""
+
+
+def _rule(board_uuid, thread, record):
+    """The recorded rule of an ordinary result's ballot, or None for an election or a result with no ballot."""
+    if record.get("event_kind") != "DECISION" or record.get("ballot") is None:
+        return None
+    rows = disc._rows(_RULE, [board_uuid, thread, record["post_uuid"]])
+    return rows[0]["rule"] if rows else None
+
+
+def _own_answer(board, thread, actor, record):
+    """This reader's own answer on the ballot an ordinary result decided, and nobody else's (capture AR2).
+
+    As on the Topic (``cq.board_topic_vote``, capture N): only for an active or probationary
+    member, never for an election, and None for a reader who did not answer.
+    """
+    if record.get("event_kind") != "DECISION" or record.get("ballot") is None:
+        return None
+    rows = disc._rows(
+        """SELECT a.request->>'choice' AS choice FROM public.core_cqact a
+           WHERE a.operation='ANSWER' AND a.board_uuid=%s AND a.thread_uuid=%s AND a.request->>'ballot'=%s AND a.actor_id=%s
+             AND public.disc_member_state(%s,%s,public.intevia_clock_statement()) IN ('ACTIVE','PROBATIONARY')
+           ORDER BY a.ordinal LIMIT 1""",
+        [board["board_uuid"], thread, str(record["ballot"]), actor.pk, board["organism_id"], actor.pk])
+    return rows[0]["choice"] if rows else None
+
+
 def _result_detail(board, circle_uuid, thread, record):
     """Add what the result page shows beyond the summary, to a reader ``_scope`` already admitted.
 
@@ -208,24 +301,32 @@ def _result_detail(board, circle_uuid, thread, record):
         owner_id=board["organism_id"], cut=max(record["effective_at"], row["recorded_at"]), circle=circle
     )
     record["deciding_body"] = {"full_name": full, "short_label": short}
+    record["tally"] = _tally(board["board_uuid"], thread, record)
+    record["rule"] = _rule(board["board_uuid"], thread, record)
     return record
 
 
 @transaction.atomic
 def result_post(
-    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None, governance_only=False, detail=False
+    *, credential, organism_uuid, thread_uuid, result_uuid, circle_uuid=None, governance_only=False, detail=False,
+    tally=False
 ):
     """Return one released result to a reader admitted to it, who need not be admitted to its Topic.
 
-    With ``detail`` the result also carries ``_result_detail``'s fields for the result page. The
-    default leaves the summary exactly as its other callers read it.
+    With ``detail`` the result also carries ``_result_detail``'s fields for the result page, and
+    with ``detail`` or ``tally`` the closed vote's ``tally`` (``_tally``). The default leaves the
+    summary exactly as its other callers read it.
     """
-    board = _scope(disc._actor(credential), organism_uuid, circle_uuid, thread_uuid)
+    actor = disc._actor(credential)
+    board = _scope(actor, organism_uuid, circle_uuid, thread_uuid)
     if governance_only and board["circle_kind"] != "GOVERNANCE":
         raise disc.DiscussionUnavailable()
     record = _result(board["board_uuid"], thread_uuid, result_uuid)
     if detail:
         _result_detail(board, circle_uuid, thread_uuid, record)
+        record["own_answer"] = _own_answer(board, thread_uuid, actor, record)
+    elif tally:
+        record["tally"] = _tally(board["board_uuid"], thread_uuid, record)
     return record
 
 

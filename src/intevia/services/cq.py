@@ -999,6 +999,8 @@ def _open_ballot(board, thread, actor, row):
     Interim, by the Human Governor's ruling of 24 Nov 2026 (capture E; owed row
     C1-401): while a vote is open no participant's name or identity is selected
     here, whatever reporting rule the ballot captured. Results follow that rule.
+    ``rule`` is the counting rule the ballot fixed at opening and ``required`` what
+    ``public.cq_count_decision`` requires of the present electorate under it.
     An election's ballot is never projected here.
     """
     at = row["read_at"]
@@ -1006,6 +1008,8 @@ def _open_ballot(board, thread, actor, row):
         """SELECT (o.facts->>'attempt')::int AS attempt,
                   coalesce((o.facts->'rules'->>'abstention')::boolean,false) AS abstention,
                   c.eligible, c.answered,
+                  (o.facts->'rules')-'provisions'-'applied_provisions' AS rule,
+                  (public.cq_count_decision(o.facts->'rules',c.eligible,0,0,0)->>'required')::int AS required,
                   CASE WHEN %s THEN (SELECT a.request->>'choice' FROM public.core_cqact a
                        WHERE a.operation='ANSWER' AND a.request->>'ballot'=o.act_uuid::text
                          AND a.actor_id=%s AND a.recorded_at<=%s
@@ -1024,7 +1028,11 @@ def _open_ballot(board, thread, actor, row):
     facts = rows[0]
     ballot = {"ballot_uuid": row["ballot_uuid"], "attempt": facts["attempt"],
               "options": [option for option in BALLOT_OPTIONS if option != "ABSTAIN" or facts["abstention"]],
-              "eligible": facts["eligible"], "answered": facts["answered"]}
+              "eligible": facts["eligible"], "answered": facts["answered"],
+              # Part PB-6d (capture AY3): the rule this ballot fixed when voting opened, and how many must take
+              # part by that rule for the electorate as it stands, counted by the engine's own function.
+              # Neither is personal, and neither is read from today's settings.
+              "rule": facts["rule"], "required": facts["required"]}
     if row["clarity_reader"]:
         # Only an active or probationary member receives their own state, as with their own conflict.
         refusal = _answer_refusal(board, thread, actor, row["ballot_uuid"], at)

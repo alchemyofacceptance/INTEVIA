@@ -1,0 +1,4 @@
+{% for locator, words in parts %}
+  {% if locator %}<p class="meta">Clause “{{ locator }}”</p>{% endif %}
+  <div class="office-clause">{{ words }}</div>
+{% endfor %}

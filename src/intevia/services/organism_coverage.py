@@ -11,6 +11,19 @@ from src.intevia.services.organism_relationship_event import append_relationship
 
 @dataclass(frozen=True)
 class Coverage:
+    """One LO's essential coverage at one cut, as assess reads it.
+
+    version is the roster version read (None if none is found).
+    result is SATISFIED, UNSATISFIED or UNKNOWN, as assess
+    decides it. deficits holds (scope, role code) pairs whose
+    QUALIFIED holders fall below the rule's minimum. coordinators
+    holds membership IDs of QUALIFIED LO Coordinator seats.
+    coordinator_result is c2_result's answer for the LO
+    Coordinator rule alone. occupied_coordinator is True when an
+    LO Coordinator seat is read in any standing. Seats leave out
+    the membership assess was told to exclude. The instance is
+    frozen; construction checks nothing.
+    """
     version: int | None
     result: str
     deficits: tuple
@@ -20,21 +33,49 @@ class Coverage:
 
     @property
     def coordinator_vacancy(self):
+        """Is the LO without any LO Coordinator?
+
+        True only when all three hold: coordinator_result is
+        UNSATISFIED, no LO Coordinator seat is read in any standing,
+        and (LIVING_ORGANISM, COORDINATOR) is among the deficits. A
+        seat read but not QUALIFIED is not a vacancy.
+        """
         return (self.coordinator_result == "UNSATISFIED" and not self.occupied_coordinator
                 and ("LIVING_ORGANISM", "COORDINATOR") in self.deficits)
 
     @property
     def care_warning(self):
+        """Is exactly one QUALIFIED LO Coordinator counted?
+
+        Reads the coordinators field only: no other office, no other
+        standing and nothing from the database.
+        """
         return len(self.coordinators) == 1
 
 
 def roster_at(alias, lo, at, known):
+    """Return the LO's latest coverage assessment visible at a cut.
+
+    Read on alias. The case must belong to the LO, effective_at
+    must be at or before at, and received_at and recorded_at must
+    both be at or before known. Order by effective_at, occurred_at,
+    received_at, recorded_at and sequence, all descending.
+    Return the first row, or None. No row lock is requested.
+    """
     return scoped.visible(CoverageAssessment.objects.using(alias), at, known).filter(
         case__living_organism=lo
     ).order_by("-effective_at", "-occurred_at", "-received_at", "-recorded_at", "-sequence").first()
 
 
 def office_scope(lo, assignment, appointment_basis):
+    """Build the COUNT_OFFICE scope for one assignment.
+
+    Use the LO's organism ID, the assignment UUID and the
+    appointment basis UUID. The kind is
+    EXECUTION_ELIGIBILITY_QUALIFICATION. The holder's membership
+    supplies the identity ID for both tested actor and beneficiary.
+    Return the Scope without validating it or writing anything.
+    """
     return scoped.Scope(lo.organism_id, assignment.assignment_uuid, "COUNT_OFFICE",
                         scoped.Type.EXECUTION_ELIGIBILITY_QUALIFICATION, assignment.membership.identity_id,
                         assignment.membership.identity_id, appointment_basis.basis_uuid)
@@ -85,6 +126,14 @@ def assess(alias, lo, at, known, *, excluding=None):
 
 @dataclass(frozen=True)
 class Cause:
+    """Who and what caused a coverage change, for its event writes.
+
+    Hold the actor, authority basis ID, decision reference,
+    evidence, command, request fingerprint and receipt time.
+    record_coverage reads the command's effective_at, occurred_at
+    and idempotency_key. The instance is frozen; construction
+    checks nothing.
+    """
     actor: object
     basis_id: int
     decision_reference: str
@@ -94,6 +143,13 @@ class Cause:
     received_at: object
 
     def append(self, alias, **fields):
+        """Append a relationship event and return its event UUID.
+
+        Forward the alias and caller's event fields with this cause's
+        actor, basis ID, decision reference, evidence, command,
+        fingerprint and receipt time to append_relationship_event.
+        The writer's errors propagate.
+        """
         return append_relationship_event(
             alias=alias, actor=self.actor, basis_id=self.basis_id, decision_reference=self.decision_reference,
             evidence=self.evidence, command=self.command, fingerprint=self.fingerprint,

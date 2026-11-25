@@ -46,6 +46,39 @@ REASONS = {
 }
 
 
+# The edit page's refusals (the posts box, part PB-4): why, then what the author can do next.
+EDIT_REASONS = {
+    # INTERIM (capture AM2 of 24 Nov 2026): refused by the edit route; a database guard replaces it in the December plan.
+    "edit_window": (409, "The 15 minutes for editing this post have ended."),
+    "edit_wording_ended": (409, "The time for changing this wording has ended."),
+    # Correction PC1-07 (HG capture BX of 25 Nov 2026, BX1): the vote read gave the edit page no panel.
+    "edit_wording_unread": (409, "The state of this Suggestion's vote could not be read just now, so its wording cannot be edited."),
+    "DISC_POST_INPUT": (400, "Enter the text of your post."),
+    "DISC_POST_AUTHORITY": (403, "Only a post's author can edit it, while their membership allows contributions."),
+    "DISC_POST_PREDECESSOR": (409, "This post has changed since you opened the edit page."),
+    "DISC_HIDDEN": (403, "A hidden post cannot be edited."),
+    "DISC_REQUEST_CONFLICT": (409, "This form already saved a different version."),
+    "CQ_VOTE_LOCKED": (409, "This wording is locked because voting has opened."),
+    "CQ_LOCKED": (409, "This wording is locked because the Board reached clarity on it."),
+    "CQ_WINDOW_LOCKED": (409, "The Clarity period has ended, so this wording can no longer change."),
+    "CQ_EDIT_DUE": (409, "The time for responding to Clarity has ended, so this wording can no longer change."),
+    "CQ_CLOSED_LOCKED": (409, "This Suggestion closed without a vote, so its wording can no longer change."),
+}
+EDIT_ACTIONS = {
+    "edit_window": "Go back to the Topic. You can post a reply to add to what you wrote.",
+    "DISC_POST_INPUT": "Go back to the Topic, open the edit page again and enter your text.",
+    "DISC_POST_PREDECESSOR": "Go back to the Topic to read the current version, then open the edit page again.",
+    "DISC_REQUEST_CONFLICT": "Go back to the Topic to read the saved version, then open the edit page again.",
+    "CQ_VOTE_LOCKED": "To change the wording, start a new Suggestion.",
+    "CQ_LOCKED": "To change the wording, start a new Suggestion.",
+    "CQ_WINDOW_LOCKED": "To change the wording, start a new Suggestion.",
+    "CQ_EDIT_DUE": "To change the wording, start a new Suggestion.",
+    "CQ_CLOSED_LOCKED": "To change the wording, start a new Suggestion.",
+    "edit_wording_ended": "To change the wording, start a new Suggestion.",
+    "edit_wording_unread": "Go back to the Topic and try again in a moment.",
+}
+
+
 VOTE_REASONS = {
     "DISC_CLOSED": "This Topic is closed.",
     "CQ_DISABLED": "Voting is switched off for this organisation.",
@@ -142,13 +175,16 @@ def refusal(request, code, context=None, entered=None, swept=False):
                       or (match.url_name or "").startswith("discussion_clarity_"))
     if vote:
         noun = "answer" if answer else "vote action"
-    title = f"Your {noun} could not be recorded."
+    edit = bool(match and match.url_name in ("discussion_edit_form", "discussion_edit"))
+    title = "Your edit could not be saved." if edit else f"Your {noun} could not be recorded."
     if code == "unknown":
         title = "Your change could not be confirmed."
         status, why = 503, "The service could not confirm the outcome. The cause is unknown."
         effect = "A vote action may already be recorded." if vote else "A contribution may already be recorded."
         if answer:
             effect = "Your answer may already be recorded."
+        if edit:
+            effect = "A new version may already be recorded."
         if match and match.url_name == "discussion_start":
             action = "Check the Board discussion for your Topic before trying the same submission again."
         else:
@@ -165,9 +201,13 @@ def refusal(request, code, context=None, entered=None, swept=False):
         if answer:
             effect = "This request recorded no answer."
             action = ANSWER_ACTIONS.get(code, action)
+        if edit:
+            status, why = EDIT_REASONS.get(code, (status, why))
+            effect = "This request recorded no new version."
+            action = EDIT_ACTIONS.get(code, "Go back to the Topic to see the post as it stands.")
     if code in ("method", "csrf", "preview", "form"):
         title = "The form could not be submitted."
-    if code == "DISC_POST_AUTHORITY" and context.get("category"):
+    if code == "DISC_POST_AUTHORITY" and context.get("category") and not edit:
         why = ("Only a Board Coordinator can start an announcement here."
                if noun == "Topic" and context["category"].get("functional_code") == "ANNOUNCEMENTS"
                else "This category is open to you for reading.")
@@ -180,7 +220,7 @@ def refusal(request, code, context=None, entered=None, swept=False):
             context["board_org"], context["board_circle"], context["topic"]["thread_uuid"])) + "#vote"
     if code == "office_type":
         action = "Submit the Topic below to keep the office link."
-    if code == "DISC_POST_INPUT":
+    if code == "DISC_POST_INPUT" and not edit:
         if match and match.url_name == "discussion_clarity_question":
             why = "Enter your question as plain text."
         elif noun == "reply":

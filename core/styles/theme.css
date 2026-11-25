@@ -38,8 +38,8 @@
 @layer base {
  *{box-sizing:border-box}
  body{margin:0;background:var(--color-page);color:var(--color-text);font-family:var(--font-sans);font-size:var(--text-base);line-height:var(--leading)}
- h1,h2,h3{color:var(--color-heading);font-family:var(--font-heading);line-height:var(--heading-leading);font-weight:var(--heading-weight);overflow-wrap:anywhere}
- h1{font-size:var(--text-2xl);margin-block:0 var(--space-md)} h2{font-size:var(--text-xl);margin-block:var(--space-lg) var(--space-sm)} h3{font-size:var(--text-lg);margin-block:var(--space-md) var(--space-sm)}
+ h1,h2,h3,.card-heading,.voice-heading{color:var(--color-heading);font-family:var(--font-heading);line-height:var(--heading-leading);font-weight:var(--heading-weight);overflow-wrap:anywhere}
+ h1{font-size:var(--text-2xl);margin-block:0 var(--space-md)} h2,.card-heading{font-size:var(--text-xl);margin-block:var(--space-lg) var(--space-sm)} h3,.voice-heading{font-size:var(--text-lg);margin-block:var(--space-md) var(--space-sm)}
  p{margin-block:var(--space-sm)} a{color:var(--color-primary);text-underline-offset:var(--space-xs)}
  main a:not(.button):not(.nav-item):not(.domain-item){display:inline-block;min-height:var(--touch);padding-block:var(--space-sm)}
  /* A paragraph can contain just one anchor and still have words around it.
@@ -48,6 +48,10 @@
    .link-row a,
    .discussion-topics > li > a, .circle-list > li > a, .history-row > a, nav a
  )){display:inline;min-height:0;padding-block:0;text-decoration-line:underline}
+ /* A link inside content is underlined wherever it sits: in a sentence, after a label, in a card
+    or on a row of its own. Only navigation rows with the chevron, breadcrumbs and buttons are not
+    (HG capture AH of 24 Nov 2026, Q17; a standing rule). */
+ main a:not(.button):not(.nav-item):not(.domain-item):not(:where(.circle-list > li > a, .version-list a, nav a)){text-decoration-line:underline}
  button,input,select,textarea{font:inherit} button,a,summary,input,select,textarea{-webkit-tap-highlight-color:transparent}
  a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:var(--focus-width) solid var(--color-focus);outline-offset:var(--focus-offset)}
  input,select,textarea{width:100%;min-height:var(--touch);border:var(--stroke) solid var(--color-control);border-radius:var(--radius-sm);padding:var(--space-sm) var(--space-md);background:var(--color-surface);color:var(--color-text)}
@@ -142,13 +146,14 @@
  .notice h2{color:inherit;margin-top:0}.notice a{color:inherit}
  /* Where CARE speaks (.notice.care), the box heading is CARE's own: bold sans in the box's ink (HG capture CZ).
     Every other INTEVIA box heading keeps the page's serif heading face. */
- .notice.care :is(h2,h3){font-family:var(--font-sans);font-size:var(--text-base);font-weight:var(--weight)}
+ .notice.care :is(h2,h3),.notice.care .voice-heading{font-family:var(--font-sans);font-size:var(--text-base);font-weight:var(--weight)}
  /* Every word INTEVIA or CARE says in its box takes the box's ink (HG capture CY, Q-B4). Pills and buttons keep their own. */
- .notice :is(h3,.meta,.help,.lede,dt){color:inherit}
+ .notice :is(h3,.meta,.help,.lede,dt),.notice .voice-heading{color:inherit}
  .notice>:first-child{margin-block-start:0}.notice>:last-child{margin-block-end:0}
- /* One glass for every card and every voice box (HG captures CB, CT and CY; practice item 278).
-    Ink: purple for cards; the box's own colour where INTEVIA or CARE speaks. */
- .panel,.event-item,.card,.notice{
+ /* One glass for every card, every voice box, every list of destinations and every organisation chip
+    (HG captures CB, CT, CY and AG of 24 Nov; practice item 278).
+    Ink: purple for cards, lists and chips; the box's own colour where INTEVIA or CARE speaks. */
+ .panel,.event-item,.card,.notice,.circle-list,.org-chip{
   --glass-ink:var(--color-primary);
   background-image:linear-gradient(in srgb, var(--glass-shine, #ffffff75), transparent 54%),
                    linear-gradient(in srgb, transparent 60%, var(--glass-tint, color-mix(in srgb, var(--glass-ink) 6%, transparent)));
@@ -201,7 +206,7 @@
  .office-source-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr)); gap:var(--space-md); align-items:start }
  /* CARE's observation is a .notice, INTEVIA's and CARE's one voice box; only its wrapping is its own. */
  .office-observation { overflow-wrap:anywhere }
- .office-observation h3 { margin-block-start:0 }
+ .office-observation h3,.notice .voice-heading { margin-block-start:0 }
  .office-adoption { margin-block-start:var(--space-md) }
  .office-provision summary { cursor:pointer; padding-block:var(--space-sm); color:var(--color-primary) }
  .office-facts { display:grid; grid-template-columns:fit-content(40%) minmax(0,1fr); gap:var(--space-xs) var(--space-md); margin-block:var(--space-sm) }
@@ -232,8 +237,14 @@
  .participation-summary .participation-ring{inline-size:8.75rem;margin:0}
  .participation-summary .counts{grid-template-columns:1fr;flex:1;min-inline-size:9rem}
  .participation-summary .counts p{display:flex;justify-content:space-between;align-items:center;margin:0}
+ .participation-summary .counts{max-inline-size:24rem}
+ /* The test rows and the count rows are each one outlined group with a thin divider between rows,
+    wherever they appear (HG capture BK of 25 Nov 2026, BK1; practice item 278). */
+ .result-tests{display:grid;grid-template-columns:1fr;gap:0;margin-block:var(--space-sm) var(--space-md);padding:0;list-style:none;border:var(--stroke) solid var(--color-line);border-radius:var(--radius-sm)}.result-tests li{display:flex;align-items:flex-start;gap:var(--space-sm);padding:var(--space-sm) var(--space-md)}.result-tests li+li{border-block-start:var(--stroke) solid var(--color-line)}.result-tests .answer{flex:none;white-space:nowrap}.result-tests p{margin:0;min-inline-size:0}
+ .card-heading{font-size:var(--text-xl)}
+ .card .participation-summary{gap:var(--space-md)}.card .participation-summary .participation-ring{inline-size:7rem}.card .participation-summary .counts{min-inline-size:8.5rem}
  .answer.answered{color:var(--color-primary);background:var(--color-primary-soft)}
- .counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-sm)}.counts p{padding:var(--space-sm);border:var(--stroke) solid var(--color-line);border-radius:var(--radius-sm)}
+ .counts{display:grid;grid-template-columns:1fr;gap:0;border:var(--stroke) solid var(--color-line);border-radius:var(--radius-sm);overflow:hidden}.counts p{margin:0;padding:var(--space-sm) var(--space-md)}.counts p+p{border-block-start:var(--stroke) solid var(--color-line)}
  .orbit{position:relative;min-height:calc(var(--orbit-radius) * 2 + var(--touch) * 2);margin-block:var(--space-md)}.orbit-centre{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center}.orbit-centre strong{display:block;font-size:var(--text-xl)}
  .orbit-node{position:absolute;left:50%;top:50%;transform:translate(calc(-50% + var(--x)),calc(-50% + var(--y)));display:flex;align-items:center;flex-direction:column;font-size:var(--text-xs)}
  .member-list{list-style:none;padding:0}.member-list li{padding-block:var(--space-sm);border-bottom:var(--stroke) solid var(--color-line)}
@@ -287,12 +298,15 @@ label:has(>input[type=radio]){display:flex;align-items:center;gap:var(--space-md
 .org-chip {
  display:inline-flex; align-items:center; max-inline-size:100%; min-block-size:var(--touch);
  padding:.35rem .85rem; border:var(--stroke) solid var(--color-control); border-radius:var(--radius-pill);
- background:var(--color-surface); color:var(--color-primary); overflow-wrap:anywhere; text-decoration:none;
+ background-color:var(--color-surface); color:var(--color-primary); overflow-wrap:anywhere; text-decoration:none;
 }
 .org-strip:has(+main>.page-title:first-child){padding-block-end:0}
-.org-chip[aria-current=true] { background:var(--color-primary-soft); font-weight:var(--weight) }
+.org-chip[aria-current=true] { background-color:var(--color-primary-soft); font-weight:var(--weight) }
+/* The lists and the chip set a colour only, so the shared glass above shows through (HG capture AG, 24 Nov).
+   A list takes the cards' purple stripe (AG2); a chip takes the glass with no stripe (AG3). */
 .circle-list { list-style:none; padding:0; margin:0; border:var(--stroke) solid var(--color-line);
- border-radius:var(--radius-sm); background:var(--color-surface) }
+ border-left:var(--stripe) solid var(--color-primary);
+ border-radius:var(--radius-sm); background-color:var(--color-surface) }
 .circle-list li + li { border-block-start:var(--stroke) solid var(--color-line) }
 .circle-list a { display:flex; align-items:center; justify-content:space-between; gap:var(--space-md);
  padding:var(--space-md); min-block-size:var(--touch); overflow-wrap:anywhere; text-decoration:none }
@@ -358,4 +372,10 @@ html{@variant dark-page {
 /* Follow the final branch of each card. Earlier paragraphs keep their reading space. */
 @scope (.card) {
  :is(p, blockquote):last-child:not(:where(:scope :not(:last-child) *)) { margin-block-end:0 }
+}
+
+/* Shared by version histories. Dates wrap with their version in the same touch target. */
+.version-list {
+ display:grid; gap:var(--space-xl); list-style:none; padding:0; margin:0; line-height:var(--leading);
+ & a > span:first-child { text-decoration:underline }
 }

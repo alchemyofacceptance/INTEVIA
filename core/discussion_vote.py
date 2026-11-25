@@ -12,7 +12,8 @@ from django.utils.formats import date_format
 
 from core.cache import personal_response
 from core import discussion_forms as forms
-from core.ui import ballot_choice_labels, count_ring, vote_status_line
+from core.vote_tests import progress_line, vote_rule_rows
+from core.ui import INSUFFICIENT_PARTICIPATION, ballot_choice_labels, count_ring, danger_card, own_answer_card, vote_status_line
 from core.ui_views import is_prefetch
 from src.intevia.services import cq, cq_reads, discussion, discussion_posts
 
@@ -69,6 +70,10 @@ def _vote_card(vote):
         outcome = outcome or cq_reads.NO_BALLOT_LABELS.get(kind)
         if kind == "NO_DECISION_BOARD_ACTIVATED":
             outcome = "The Board became active. No decision was reached."
+        if kind == INSUFFICIENT_PARTICIPATION and not vote.get("election"):
+            # Capture AQ1: the red card above the vote card says this, so the status line does not repeat it.
+            # An election has no red card (capture BW3), so its line keeps its outcome.
+            outcome = None
         if outcome and ". " not in outcome:
             outcome = outcome.removesuffix(".")
         date = vote.get("effective_at")
@@ -169,9 +174,17 @@ def _ballot_state(vote, request, org, circle, thread):
     if live:
         vote["status_line"] = vote_status_line(ballot["answered"], ballot["eligible"])
         vote["ring"] = count_ring(ballot["answered"], ballot["eligible"], vote["electorate_label"])
+        # Part PB-6d (capture AY3): the rule this vote will be decided by, from the ballot's own record, and
+        # how many more must answer. Only while voting is open; the result's summary takes over after it.
+        rows = vote_rule_rows(ballot["eligible"], ballot.get("required"), ballot.get("rule"), vote["electorate_label"])
+        if rows:
+            vote["rule_rows"] = rows
+            vote["progress"] = progress_line(ballot["answered"], ballot["required"])
     labels = ballot_choice_labels()
     if ballot.get("own_answer"):
         vote["own_answer_label"] = labels[ballot["own_answer"]]
+        # The card's wording follows the deadline, also while the result is still due (capture BK2; Astra's P2-2).
+        vote["own_answer_card"] = own_answer_card(ballot["own_answer"], voting_open=live)
     elif live and ballot.get("may_answer"):
         topic = reverse("discussion_topic", args=(org, circle, thread))
         if request.GET.get("ballot") == "answer":
@@ -239,6 +252,10 @@ def panel(request, org, circle, thread):
         return None
     if vote and vote.get("phase"):
         vote["line"], vote["wording_heading"], vote["editable_wording"] = _vote_card(vote)
+        if vote.get("outcome") == INSUFFICIENT_PARTICIPATION and not vote.get("election"):
+            # The page adds the counts from the result post once it has read it (discussion_pages._closed_vote_ring).
+            # An election never takes the red card (HG capture BW of 25 Nov 2026, BW3).
+            vote["danger"] = danger_card()
         body_kind = vote.get("body_kind", "BOARD")
         members, office = {
             "BOARD": ("Board members", "Board Chair"),
@@ -254,6 +271,7 @@ def panel(request, org, circle, thread):
         elif vote.get("decided_own_answer"):
             # Capture N: after the result, the member's own answer stays on their page.
             vote["own_answer_label"] = ballot_choice_labels()[vote["decided_own_answer"]]
+            vote["own_answer_card"] = own_answer_card(vote["decided_own_answer"], voting_open=False)
         if vote.get("confirm_version") is not None:
             vote["confirm_command"] = forms.issue_form(
                 request, "CONFIRM", org, circle, thread=thread, version=vote["confirm_version"])

@@ -115,10 +115,13 @@ class BallotPageTests(TransactionTestCase):
         self.assertEqual(answers(ballot), [{"actor_id": trustee.pk, "choice": "QUALIFIED"}],
                          "Exactly one answer must be recorded: this member's, on this ballot.")
         page, section = self.vote_section(client.get(case.url))
-        notice, = page.select("div", within=section, classes=("notice", "vote-feedback"))
-        self.assertIn("Your answer is recorded.", notice["text"], "INTEVIA must confirm the recorded answer.")
+        # Captures AH (Q18) and AQ2: while voting is open, one green card confirms the record and states the answer.
+        self.assertEqual(page.select("div", within=section, classes=("notice", "vote-feedback")), [],
+                         "INTEVIA's separate teal confirmation is merged into the member's own answer card.")
         own, = page.select("div", within=section, id="own-answer")
-        self.assertEqual(own["text"].strip(), "You answered For.", "The member must see their own answer.")
+        self.assertEqual((own["text"].strip(), own["attrs"]["class"].split()),
+                         ("Your answer is recorded. You answered For.", ["notice", "success"]),
+                         "The member must see their answer confirmed on one green card.")
         self.assertEqual([a for a in page.select("a", within=section) if a["text"].strip() == "Answer this vote"], [],
                          "A member who has answered must not be offered the ballot again.")
         self.assertTrue(self.status(page).endswith(" · Voting open · 1 of 3 answered"),
@@ -144,17 +147,24 @@ class BallotPageTests(TransactionTestCase):
         self.assertNotIn("Voting open", self.status(page),
                          "Once the result is recorded the Topic no longer says voting is open.")
         self.assertIn("Decided", section["text"], "The last voter must see that the vote is decided.")
-        notices = page.select("div", within=section, classes=("notice", "vote-feedback"))
-        self.assertEqual([p["text"] for notice in notices for p in page.select("p", within=notice)],
-                         ["Your answer is recorded."], "INTEVIA must confirm the last voter's recorded answer.")
-        self.assertEqual([own["text"].strip() for own in page.select("div", within=section, id="own-answer")],
-                         ["You answered Against."], "The last voter must see their own answer.")
+        # Captures AH (Q18) and AQ2: after the vote closes there is no teal line; the answer card is red for Against.
+        self.assertEqual(page.select("div", within=section, classes=("notice", "vote-feedback")), [],
+                         "After the vote closes no separate confirmation line is shown.")
+        self.assertEqual([(own["text"].strip(), own["attrs"]["class"].split())
+                          for own in page.select("div", within=section, id="own-answer")],
+                         [("You answered Against.", ["notice", "refusal"])],
+                         "The last voter must see their own answer, on a red card.")
         for reader in (client, signed_in(founder)):
             page, section = self.vote_section(reader.get(case.url))
             own, = page.select("div", within=section, id="own-answer")
             self.assertEqual(own["text"].strip(), "You answered For.",
                              "After the result each member who answered still sees their own answer.")
-            self.assertNotIn("Against", section["text"], "No other member's answer may appear in their vote section.")
+            # Capture AF (the posts box, part PB-5): once the vote has closed, the Board's ring counts Against and,
+            # under NAMED reporting, names who answered what, so "Against" is now in this section for every reader.
+            # The member's own card still states their own answer and no one else's.
+            self.assertEqual(own["attrs"]["class"].split(), ["notice", "success"], "A For answer sits on the green card.")
+            self.assertNotIn("Against", own["text"], "A member's own answer card must state no one else's answer.")
+            self.assertIn("Against", section["text"], "After the vote closes the section shows the Against count (capture AF).")
 
     def test_b8b_02_a_stale_form_records_nothing_and_a_replay_records_once(self):
         """D10. A form signed for the first attempt cannot answer the second; a replayed form answers once."""

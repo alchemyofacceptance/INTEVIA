@@ -91,6 +91,18 @@ def _check_coverage(alias, member, assessment, at, known):
 
 @dataclass
 class Departure:
+    """Hold a prepared self-departure for end_offices and finish.
+
+    Store the role service, membership, actor, departure decision,
+    command, receipt time, fingerprint and membership event UUID.
+    Pair each office to end with its decision. Keep assignments
+    reserved for an elected successor separately.
+
+    The closing head is the LO event used for dissolution, or None
+    when another membership continues. The recovery flag records
+    whether opening recovery is planned. Construction stores the
+    supplied values without validating them or writing an event.
+    """
     roles: OrganismRoleService
     member: OrganismMembership
     actor: object
@@ -237,6 +249,53 @@ def prepare_departure(
     event_uuid,
     roster,
 ):
+    """Check a self-departure and return its plan for writing.
+
+    Refuse an effective time after receipt, then read the database
+    clock (known). Refuse a platform root or an LO outside ACTIVE,
+    DORMANT and RESTRICTED_CONTINUITY. Require a nonmissing period
+    at (effective_at, received_at) equal to that at (known, known).
+    Refuse a membership head recorded after receipt.
+
+    Request row locks on this membership's assignments alone, in
+    primary-key order. For each, refuse a head recorded after
+    receipt. Reserve a future ASSIGN effective after receipt with
+    an "elect-result:" evidence prefix if the pending-successor
+    check passes. Otherwise refuse a missing head or one effective
+    after the departure.
+
+    Compare changes by (effective, occurred, received), in order.
+    For a Circle office not ENDED, refuse a later change or
+    collect the office to end. Then skip ENDED or PROPOSED heads.
+    Any remaining office must be ACTIVE, received and recorded by
+    receipt, scoped to LIVING_ORGANISM, with no INTEVIA_ prefix
+    on its role code and no later change. Collect it to end.
+
+    Next list the LO's other membership IDs once. At the request
+    cut and at (known, known), ask whether any folds to ACTIVE or
+    PROBATIONARY. Refuse if the two answers differ.
+
+    If another membership continues, require the supplied roster
+    and the assessment read at (known, known) to have the same
+    primary key. Check coverage with each at its respective cut.
+    Refuse if the two recovery-opening decisions differ; else
+    the recovery flag is that decision and the closing head is
+    unset. If nobody continues, require an LO event. Take the one
+    with the highest sequence as the closing head. Refuse if its
+    effective time or any LO membership transition's effective
+    time is after the departure. Leave the recovery flag false.
+
+    Use the departure decision for Circle offices. For each LO
+    office to end, qualify its own END/ENDED target tied to the
+    departure decision and membership event. Return a Departure
+    with these pairs, the reservations, head and recovery flag.
+
+    The actor, membership and departure decision are supplied.
+    This function does not verify that the actor is the member,
+    open a transaction or write an event itself. Its explicit
+    refusals raise S015MembershipEdgeRefused. Read, coverage and
+    authority errors propagate, including S015AuthorityDenied.
+    """
     alias = service._alias
     lo = membership.living_organism
     if effective_at > received_at:
@@ -316,6 +375,12 @@ def prepare_departure(
     )
 
     def has_continuing_member(at, known_at):
+        """Is any other listed membership ACTIVE or PROBATIONARY?
+
+        Read the saved IDs at (at, known_at), folding until a match.
+        Return True on a match, False for an empty list or if none
+        matches. Errors from folds actually attempted propagate.
+        """
         return any(
             _fold_state(alias, "core_organismmembership", pk, at, known_at)
             in {"ACTIVE", "PROBATIONARY"}

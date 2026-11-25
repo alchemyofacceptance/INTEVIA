@@ -1,29 +1,30 @@
 <section class="record-section" id="vote" aria-labelledby="vote-heading">
   <h2 class="record-heading" id="vote-heading">Board vote</h2>
   {% if vote.phase %}
-    <p>{{ vote.line }}</p>
-    {% if vote.count %}<p>{{ vote.count.confirmed }} of {{ vote.count.eligible }} are clear.</p>{% endif %}
-    {% if vote.opening_count %}
-      {% include 'core/components/vote_feedback.html' with rule_opened=True %}
-    {% endif %}
-    {% if vote.ring %}
-      <div class="participation-summary">
-        {% include 'core/components/participation_ring.html' with ring=vote.ring only %}
-        <div class="counts">{% for item in vote.ring.counts %}<p><span class="answer {{ item.key }}">{{ item.symbol }} {{ item.label }}</span> <strong>{{ item.count }}</strong></p>{% endfor %}</div>
-        {# Owed row C1-401: where a subscribing organisation turns names on, who has answered is listed here. Until then nothing is rendered. #}
-      </div>
-    {% endif %}
-    {% if not vote.opening_count %}{% if vote.editable_wording or vote.stepped_out or vote.own_clear or vote.own_conflict or vote.ballot_form or vote.own_answer_label or vote.ballot_note or vote.result_due %}
-      {% include 'core/components/vote_feedback.html' %}
-    {% endif %}{% endif %}
-    {% if vote.own_conflict_reason %}
-      <div class="card vote-reason">{{ vote.own_conflict_reason|linebreaks }}</div>
-    {% endif %}
-    <article aria-labelledby="vote-wording-heading">
-      <h3 id="vote-wording-heading">{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
+    {# Layout C (HG captures AQ1 and AR1 of 24 Nov 2026): the danger card, then one vote card, then the wording's own card. #}
+    {% if vote.danger %}<div class="notice refusal" id="vote-danger" role="status"><p><strong>{{ vote.danger.lead }}</strong> {{ vote.danger.rest }}</p>{% if vote.danger.counts %}<p>{{ vote.danger.counts }}</p>{% endif %}</div>{% endif %}
+    <div class="card vote-card">
+      <p class="meta">{{ vote.line }}</p>
+      {% if vote.count %}<p>{{ vote.count.confirmed }} of {{ vote.count.eligible }} are clear.</p>{% endif %}
+      {% if vote.opening_count %}
+        {% include 'core/components/vote_feedback.html' with rule_opened=True %}
+      {% endif %}
+      {% if vote.ring %}{% include 'core/components/vote_ring.html' with ring=vote.ring only %}{% endif %}
+      {% if vote.rule_rows %}<h3 id="vote-rule-heading">How this vote will be decided</h3>
+      {% include "core/components/vote_tests.html" with tests=vote.rule_rows heading="vote-rule-heading" only %}
+      <p class="meta" id="vote-progress">{{ vote.progress }}</p>{% endif %}
+      {% if not vote.opening_count %}{% if vote.editable_wording or vote.stepped_out or vote.own_clear or vote.own_conflict or vote.ballot_form or vote.ballot_note or vote.result_due %}
+        {% include 'core/components/vote_feedback.html' %}
+      {% endif %}{% endif %}
+      {% if vote.own_conflict_reason %}
+        <div class="card vote-reason">{{ vote.own_conflict_reason|linebreaks }}</div>
+      {% endif %}
+      {% if vote.own_answer_card %}<div class="notice {{ vote.own_answer_card.kind }}" id="own-answer" role="status"><p>{{ vote.own_answer_card.text }}</p></div>{% endif %}
+    </div>
+    <article class="card" aria-labelledby="vote-wording-heading">
+      <h3 id="vote-wording-heading" class="card-heading">{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
       <div class="card motion-wording">{{ vote.markdown|linebreaks }}</div>
     </article>
-    {% if vote.own_answer_label %}<div class="card vote-reason" id="own-answer"><p>You answered {{ vote.own_answer_label }}.</p></div>{% endif %}
   {% endif %}
   {% if vote.confirmation %}
     <article id="prepare" aria-labelledby="prepare-heading">

@@ -447,8 +447,10 @@ class ResultCardProjectionTests(SimpleTestCase):
         read = {"topic": {"thread_uuid": thread, "title": "Repair", "category_uuid": category}, "posts": [opening, result, reply]}
         with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
              mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
+             mock.patch.object(discussion_pages.discussion_posts, "edit_standing", return_value={"read_at": None, "own": set()}), \
              mock.patch.object(discussion_pages.member_navigation, "member_navigation", side_effect=discussion_pages.member_navigation.NavigationUnavailable), \
              mock.patch.object(discussion_pages.cq_reads, "result_post", side_effect=discussion_pages.discussion.DiscussionUnavailable) as destination:
+            # The page's read also takes the reader's edit standing (the posts box, part PB-4); this reader owns no post.
             template, context = discussion_pages._read_page.__wrapped__(AnonymousUser(), org, circle, thread)
             page = Markup(render_to_string(template, context, request=request))
             self.assertEqual([n["text"] for n in page.select("h3")], ["Post 2", "Post 3"], "A withheld result must keep its place.")
@@ -656,11 +658,21 @@ class VotePanelPresentationTests(SimpleTestCase):
                 if feedback:
                     self.assertLess(page.nodes.index(feedback[0]), page.nodes.index(section),
                                     "INTEVIA speaks before the wording heading.")
+                # Layout C (HG captures AQ1 and AR1 of 24 Nov 2026; the posts box, part PB-6b) replaces the earlier
+                # rule that phase, date and count sit outside the glass: they now lead the one vote card, and the
+                # wording's heading sits inside the wording's own card. The section's heading stays outside both.
+                glass = lambda node: [n for n in (*node["parents"], node)
+                                      if {"card", "notice"} & set(n["attrs"].get("class", "").split())]
+                for heading in page.select("h2"):
+                    self.assertEqual(glass(heading), [], "The section's heading sits outside the glass.")
+                card, = page.select("div", classes=("card", "vote-card"))
                 paragraphs = page.select("p")
                 status = paragraphs[:2] if "count" in facts else paragraphs[:1]
-                for placed in [*page.select("h2"), *page.select("h3"), *status]:
-                    self.assertFalse(any({"card", "notice"} & set(n["attrs"].get("class", "").split()) for n in (*placed["parents"], placed)),
-                                     "Headings, version, phase, date and count sit outside the glass.")
+                self.assertEqual(status[0]["attrs"].get("class"), "meta", "The phase and date lead the vote card as its quiet first line.")
+                for placed in status:
+                    self.assertEqual(glass(placed), [card], "Phase, date and count sit in the vote card, and in no other glass.")
+                title, = page.select("h3", id="vote-wording-heading")
+                self.assertEqual(glass(title), [section], "The wording's heading sits inside the wording's own card.")
 
     def test_response_row_orders_only_the_available_controls(self):
         context = {"board_org": uuid4(), "board_circle": uuid4(), "topic": {"thread_uuid": uuid4()}}
@@ -850,6 +862,16 @@ class VotePanelPresentationTests(SimpleTestCase):
                     page = self.vote_markup(phase=phase, outcome=kind, effective_at=self.when,
                                             ballot_uuid=uuid4(), closed_at=self.when)
                     expected = f"{status} · {outcome} · Voting closed 22 November 2026, 13:00 UTC"
+                if kind == "NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION":
+                    # Captures AH (Q19) and AQ1 (the posts box, part PB-6b): the red card says the outcome first,
+                    # and the status line no longer repeats it.
+                    danger, = page.select("div", classes=("notice", "refusal"), id="vote-danger")
+                    self.assertEqual([p["text"] for p in page.select("p", within=danger)], [outcome],
+                                     "Insufficient participation is said on the red card, above the vote card.")
+                    self.assertEqual(page.select("p", classes=("meta",))[0]["text"],
+                                     f"{status} · Voting closed 22 November 2026, 13:00 UTC")
+                    continue
+                self.assertEqual(page.select("div", id="vote-danger"), [], "No other result carries the red card.")
                 self.assertEqual(page.select("p")[0]["text"], expected)
         self.assertEqual(self.vote_markup(phase="PREPARATION_DUE").select("p")[0]["text"], "Preparation deadline passed")
 

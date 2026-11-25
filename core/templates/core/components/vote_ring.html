@@ -1,0 +1,6 @@
+<div class="participation-summary">
+  {% include 'core/components/participation_ring.html' with ring=ring only %}
+  <div class="counts">{% for item in ring.counts %}<p><span class="answer {{ item.key }}">{{ item.symbol }} {{ item.label }}</span> <strong>{{ item.count }}</strong></p>{% endfor %}</div>
+  {# Owed row C1-401: where a subscribing organisation turns names on for an open vote, who has answered is listed here. Until then an open vote names no one. #}
+</div>
+{% if ring.names %}<dl class="office-facts vote-names">{% for row in ring.names %}<dt>{{ row.label }}</dt><dd>{{ row.names|join:", " }}</dd>{% endfor %}</dl>{% endif %}

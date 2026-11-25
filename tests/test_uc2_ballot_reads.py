@@ -19,7 +19,8 @@ from tests.test_office_record_services import fixture_membership_state
 from tests.test_uc1_office_page import signed_in
 from tests.test_uc2_pages import FIXTURE_HASHERS, path
 
-COUNT_KEYS = {"ballot_uuid", "attempt", "options", "eligible", "answered"}
+# Part PB-6d: every reader of the vote section also receives the ballot's recorded rule and the engine's required count.
+COUNT_KEYS = {"ballot_uuid", "attempt", "options", "eligible", "answered", "rule", "required"}
 OWN_KEYS = {"own_answer", "may_answer", "answer_refusal"}
 FOR_AGAINST = ["QUALIFIED", "NOT_QUALIFIED"]
 
@@ -65,7 +66,8 @@ class OpenBallotGuardTests(SimpleTestCase):
 
     def project(self, clarity_reader):
         row = {"read_at": 1, "ballot_uuid": self.BALLOT, "clarity_reader": clarity_reader}
-        counted = [{"attempt": 1, "abstention": False, "eligible": 3, "answered": 2, "own_answer": None}]
+        counted = [{"attempt": 1, "abstention": False, "eligible": 3, "answered": 2, "own_answer": None,
+                    "rule": {"threshold": "MAJORITY"}, "required": 3}]
         with mock.patch.object(cq.disc, "_rows", return_value=counted), \
                 mock.patch.object(cq, "_answer_refusal", return_value=None) as probe:
             ballot = cq._open_ballot({"board_uuid": uuid4()}, uuid4(), SimpleNamespace(pk=7), row)

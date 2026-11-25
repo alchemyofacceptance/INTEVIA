@@ -55,8 +55,8 @@ class OfficePartsTests(SimpleTestCase):
 
     def test_current_law_precedes_collapsed_predecessor(self):
         """S01. Keep open current law ahead of its closed predecessor within its own group."""
-        policy = {"tier": "Policy", "library_reference": "duties"}
-        bylaw = {"tier": "Bylaw", "library_reference": "constitution"}
+        policy = {"tier": "Policy", "class_name": "POLICY", "library_reference": "duties"}
+        bylaw = {"tier": "Bylaw", "class_name": "BYLAW", "library_reference": "constitution"}
         rows = [self.earlier | policy, self.earlier | bylaw, self.current | policy,
                 self.current | bylaw, self.current | policy | {"clause": "Peer clause."}]
         for part, expected in (
@@ -83,12 +83,12 @@ class OfficePartsTests(SimpleTestCase):
         self.assertEqual(self.one(page, "blockquote", within=latest)["text"], self.current["clause"],
                          "The in-force quotation must preserve its own complete text and line breaks.")
         self.assertNotIn("open", old["attrs"], "The earlier version must start as a native disclosure.")
-        for card, row in ((old, self.earlier), (latest, self.current)):
+        for card, row, body in ((old, self.earlier, "River Trust"), (latest, self.current, "Board of Trustees · River Trust")):
             with self.subTest(version=row["version"]):
                 fields = self.facts(page, card)
                 self.assertEqual((fields["Adoption record"], fields["Adoption result"], fields["Adoption route"],
                                   fields["Adopting body"]),
-                                 (str(row["adoption_record"]), str(row["adoption_result_link"]), row["adoption_route"], "River Trust"),
+                                 (str(row["adoption_record"]), str(row["adoption_result_link"]), row["adoption_route"], body),
                                  "Each version must retain its own adoption, route and result under the organisation's full name.")
                 self.assertEqual([n["attrs"]["datetime"] for n in page.select("time", within=card)],
                                  [row[key].isoformat() for key in ("in_force_from", "recorded_at")],
@@ -124,7 +124,7 @@ class OfficePartsTests(SimpleTestCase):
         self.assertEqual([p["text"].strip() for p in page.select("p", within=children[1], classes=("meta",))],
                          ["Source: clause \u201capproval\u201d, version 2"],
                          "The guidance must name its own clause in quotation marks, and its own version.")
-        self.assertEqual(self.one(page, "h2", within=self.one(page, "article", classes=("office-provision",)))["text"],
+        self.assertEqual(self.one(page, "h3", within=self.one(page, "article", classes=("office-provision",)))["text"],
                          "Establishes this office",
                          "The unmapped provision heading must give its relationship.")
         # A clause identifier is shown as text, whatever characters it holds.
@@ -153,7 +153,7 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertIn(self.current["clause"], withheld, "Omitting guidance must preserve the human quotation.")
                 self.assertNotIn("Source: clause", withheld, "Withheld guidance must leave no source line.")
                 if "provisions" not in changes:
-                    self.assertIn("<h2>Establishes this office</h2>", withheld,
+                    self.assertIn('<h3 class="card-heading">Establishes this office</h3>', withheld,
                                   "Without CARE's guidance the human provision must keep its heading.")
 
     def test_inherited_whole_document_keeps_its_own_adoption(self):
@@ -167,10 +167,10 @@ class OfficePartsTests(SimpleTestCase):
                 raw = self.render(provisions=[charter | {"relationship": kind}])
                 page = Markup(raw)
                 card = self.one(page, "article", classes=("office-provision",))
-                self.assertEqual(self.facts(page, card)["Adopting body"], "Inherited from another organisation",
+                self.assertEqual(self.facts(page, card)["Adopting body"], "Inherited from INTEVIA",
                                  "An inherited provision must identify its origin with the neutral wording.")
                 self.assertNotIn(str(foreign), raw, "The other organisation's identifier must occur nowhere in this response.")
-                self.assertEqual(self.one(page, "h2", within=card)["text"], label,
+                self.assertEqual(self.one(page, "h3", within=card)["text"], label,
                                  "A whole document must have its own relationship heading without an invented locator.")
                 self.assertEqual(self.one(page, "p", within=card, classes=("meta",))["text"], "Version 2",
                                  "A whole-document citation must omit the clause segment.")
@@ -181,46 +181,85 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertIn("Cited and in force", card["text"], "A combined citation must display its combined status once.")
 
     def test_law_section_names_the_office_and_film_policy(self):
-        film = self.current | {"tier": "Policy", "library_reference": "alpha-treasurer-duties", "version": 1}
-        page = Markup(self.render(provisions=[film], care={"enabled": False}))
-        section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
-        self.assertEqual(self.one(page, "h2", within=section, id="office-provisions")["text"],
-                         "Constitutional Law related to this office", "Use the ruled section heading.")
-        self.assertEqual([n["text"] for n in page.select("h3", within=section)], ["Policy · Governance"],
-                         "The film Policy must identify its Governance family.")
-        card = self.one(page, "article", within=section)
-        self.assertEqual(self.one(page, "h2", within=card)["text"], "Treasurer office")
-        self.assertEqual(self.one(page, "p", within=card, classes=("meta",))["text"],
-                         "Establishes this office · Clause “approval” · Version 1")
+        film = self.current | {"tier": "Policy", "class_name": "POLICY", "library_reference": "alpha-treasurer-duties",
+                               "film_title": "Treasurer office", "film_family": "Governance", "version": 1}
+        for marked in (True, False):
+            provision = film if marked else film | {"film_title": None, "film_family": None}
+            with self.subTest(marked=marked):
+                page = Markup(self.render(provisions=[provision], care={"enabled": False}))
+                section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
+                self.assertEqual(self.one(page, "h2", within=section)["text"], "Constitutional Law related to this office")
+                self.assertEqual(self.one(page, "h3", within=section)["text"], "Policy · Governance" if marked else "Policy",
+                                 "Only a marked Policy may name its Governance family.")
+                card = self.one(page, "article", within=section)
+                self.assertEqual(self.one(page, "h4", within=card)["text"], "Treasurer office" if marked else "Establishes this office",
+                                 "The same reference alone cannot give an office card the film title.")
+                prefix = "Establishes this office" if marked else "alpha-treasurer-duties"
+                self.assertEqual(self.one(page, "p", within=card, classes=("meta",))["text"],
+                                 prefix + " · Clause “approval” · Version 1")
 
     def test_law_groups_keep_arrival_order_and_unknown_rows_stand_alone(self):
-        def row(tier, reference, words):
-            return self.current | {"tier": tier, "library_reference": reference, "clause": words}
+        def row(code, tier, words, **extra):
+            return dict(self.current, class_name=code, tier=tier, clause=words, **extra)
 
-        rows = [row("Bylaw", "local-a", "First bylaw."), row("Policy", "local-b", "Other policy."),
-                row(None, "unclassified", "Unknown tier."), row("Bylaw", "local-c", "Second bylaw.")]
-        page = Markup(self.render(provisions=rows, care={"enabled": False}))
+        rows = [row("BYLAW", "Bylaw", "First bylaw.", film_family="Governance"),
+                row("POLICY", "Bylaw", "Local policy label.", film_family="Governance"),
+                row(None, None, "Unknown tier."), row("BYLAW", "Bylaw", "Second bylaw.", film_family="Governance"),
+                row("ARTICLE", "  \t ", "Blank tier."), row(None, None, "Second unknown."),
+                row("MEMBERS_RESOLUTION", "<em>Rules</em>", "Escaped tier.")]
+        raw = self.render(provisions=rows, care={"enabled": False})
+        page = Markup(raw)
         section = self.one(page, "section", **{"aria-labelledby": "office-provisions"})
         groups = page.select("section", within=section)
-        self.assertEqual([n["text"] for n in page.select("h3", within=section)], ["Bylaw", "Policy"],
-                         "Each known tier gets one heading in first-seen order, with no guessed family or tier.")
+        headings = [self.one(page, "h3", within=g)["text"] for g in groups]
+        self.assertIn("&lt;em&gt;Rules&lt;/em&gt;", raw, "A governed display label must be escaped.")
+        self.assertFalse(page.select("em", within=section), "Tier text cannot create an HTML element.")
+        self.assertEqual(headings, ["Bylaw", "Bylaw · Governance", "<em>Rules</em>"],
+                         "Classes sharing a label stay separate in arrival order. Only POLICY can show a family.")
         self.assertEqual([[n["text"] for n in page.select("blockquote", within=g)] for g in groups],
-                         [["First bylaw.", "Second bylaw."], ["Other policy."]])
+                         [["First bylaw.", "Second bylaw."], ["Local policy label."], ["Escaped tier."]])
         cards = page.select("article", within=section)
-        self.assertEqual([self.one(page, "h2", within=c)["text"] for c in cards], ["Establishes this office"] * 4)
-        self.assertEqual([self.one(page, "p", within=c, classes=("meta",))["text"] for c in cards],
-                         ["Clause “approval” · Version 2"] * 4, "An unmapped law must use the untitled layout.")
-        ungrouped = [self.one(page, "blockquote", within=c)["text"] for c in cards if c["parents"][-1] is section]
-        self.assertEqual(ungrouped, ["Unknown tier."], "The unknown tier must sit outside every named group.")
+        loose = [c for c in cards if c["parents"][-1] is section]
+        self.assertEqual([self.one(page, "blockquote", within=c)["text"] for c in loose],
+                         ["Unknown tier.", "Blank tier.", "Second unknown."], "Each unknown or blank row stands alone.")
+        self.assertEqual([self.one(page, "h3" if c in loose else "h4", within=c)["text"] for c in cards],
+                         ["Establishes this office"] * len(rows), "Each card is one heading level below its parent.")
+        mixed = Markup(self.render(provisions=[rows[1], row("POLICY", "Bylaw", "Unmarked policy.")],
+                                   care={"enabled": False}))
+        self.assertEqual(self.one(mixed, "h3", id="office-law-tier-1")["text"], "Bylaw",
+                         "A shared heading cannot lend a family to an unmarked neighbour.")
 
-        film = row("Policy", "alpha-treasurer-duties", "Film policy.")
-        mixed = Markup(self.render(provisions=[film, rows[1]], care={"enabled": False}))
-        section = self.one(mixed, "section", **{"aria-labelledby": "office-provisions"})
-        self.assertEqual([n["text"] for n in mixed.select("h3", within=section)], ["Policy"],
-                         "A shared tier heading must not assign the film family to an unmapped neighbour.")
-        self.assertEqual([h["text"] for card in mixed.select("article", within=section, classes=("office-provision",))
-                          for h in mixed.select("h2", within=card)],
-                         ["Treasurer office", "Establishes this office"], "Only the mapped law gets a title.")
+    def test_citation_links_to_its_own_released_act_or_stays_plain(self):
+        from unittest.mock import patch
+        from src.intevia.services import library_laws, office_record
+
+        credentials = object()
+        original = dict(self.earlier, library_reference="example-law", class_name="POLICY")
+        current = dict(self.current, library_reference="example-law", class_name="POLICY")
+        for reason in ("released", "unavailable", "different act", "different reference"):
+            def release(*, credential, organism_uuid, binding, version_number):
+                self.assertIs(credential, credentials)
+                self.assertEqual(organism_uuid, self.owner)
+                item = next(r for r in (current, original) if (r["binding"], r["version"]) == (binding, version_number))
+                if item is original and reason == "unavailable":
+                    raise library_laws.LawReadUnavailable()
+                return {"act": uuid4() if item is original and reason == "different act" else item["adoption_record"],
+                        "library_reference": "other" if item is original and reason == "different reference"
+                        else item["library_reference"]}, "In force now" if item is current else "Superseded"
+
+            with self.subTest(reason=reason), patch.object(library_laws, "our_law_version", side_effect=release) as read:
+                rows = [original.copy(), current.copy()]
+                office_record._label_citations(credentials, self.owner, rows)
+                self.assertEqual(read.call_count, 2, "Check each distinct version under this reader's own grant.")
+                page = Markup(self.render(provisions=rows, care={"enabled": False}))
+                for row in rows:
+                    url = reverse("organisation_law_version", args=[self.owner, row["binding"], row["version"]])
+                    expected = row["version"] == current["version"] or reason == "released"
+                    self.assertEqual([a["text"] for a in page.select("a", href=url)],
+                                     [f"Version {row['version']}"] if expected else [],
+                                     "Only the independently released adoption has a version link.")
+                    self.assertTrue(any(n["text"] == row["clause"] for n in page.select("blockquote")),
+                                    "Withholding a destination must preserve the released quotation.")
 
     def test_later_reader_can_distinguish_the_two_results(self):
         adoption_id, payment_id = uuid4(), uuid4()

@@ -1,0 +1,2 @@
+{# The rows of a vote's tests (HG captures AT and AY of 24 Nov 2026): a shared chip beside each sentence. One markup for the result page and the open vote. #}
+<ul class="result-tests" aria-labelledby="{{ heading }}">{% for test in tests %}<li class="{{ test.state }}"><span class="answer {{ test.key }}">{% if test.symbol %}{{ test.symbol }} {% endif %}{{ test.label }}</span> <p>{{ test.text }}</p></li>{% endfor %}</ul>

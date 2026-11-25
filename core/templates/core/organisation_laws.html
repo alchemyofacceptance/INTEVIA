@@ -1,0 +1,22 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}Organisation laws | {{ organisation.full_name }} | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as home %}
+{% record_breadcrumb "Organisation laws" organisation.short_label home %}
+<h1 class="record-heading page-title">Organisation laws</h1>
+<section class="record-section" aria-labelledby="current-laws">
+  <h2 id="current-laws" class="record-heading">Laws in force</h2>
+  {% for group in groups %}
+    <section aria-labelledby="law-class-{{ forloop.counter }}">
+      <h3 id="law-class-{{ forloop.counter }}">{{ group.label }}{% if group.family %} · {{ group.family }}{% endif %}</h3>
+      <ul class="circle-list">
+        {% for law in group.rows %}<li><a href="{% url 'organisation_law_version' organisation.organism_uuid law.binding law.version_number %}">
+          <span><strong>{{ law.title }}</strong><small>{{ law.reference }} · Version {{ law.version_number }} · In force now</small></span><span aria-hidden="true">›</span>
+        </a></li>{% endfor %}
+      </ul>
+    </section>
+  {% empty %}<p>No laws were in force at this time.</p>{% endfor %}
+</section>
+<div class="discussion-actions">{% include "core/components/button.html" with href=home variant="secondary" label="Back to organisation" only %}</div>
+{% endblock %}

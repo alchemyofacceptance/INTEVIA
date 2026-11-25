@@ -120,6 +120,43 @@ class AlphaTrusteeSetupTests(TransactionTestCase):
             self.stage(stage)
         return models.LivingOrganism.objects.get(platform_root=False)
 
+    @override_settings(ALLOWED_HOSTS=["testserver"], PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
+    def test_film_law_titles_follow_real_adoption_and_successor(self):
+        from uuid import uuid4
+
+        from django.urls import reverse
+        from src.intevia.services import law_acts, library_laws, library_policy
+        from tests.test_law_acts import command
+        from tests.test_uc1_office_page import signed_in
+
+        lo = self.through("policies")
+        scope = dict(organism_uuid=lo.organism_id, credential=lo.founder_identity.credential)
+        client = signed_in(lo.founder_identity)
+        listing = reverse("organisation_laws", args=[lo.organism_id])
+        first_page = client.get(listing)
+        for title in ("Board membership", "Treasurer office"):
+            self.assertContains(first_page, f"<strong>{title}</strong>", html=True)
+        self.assertContains(first_page, "Policy · Governance")
+        first = next(row for row in library_laws.our_laws(**scope)["laws"]
+                     if row["library_reference"] == setup.DUTIES_REF)
+        version = library_policy.draft_policy(**scope, resource_reference=setup.DUTIES_REF,
+            content=setup.DUTIES_TEXT + " The Board reviews payments.", predecessor_version_id=first["version"],
+            authors=[lo.founder_identity.identity_id], declare_own_authorship=True, request_uuid=uuid4())
+        library_policy.publish_policy(**scope, version_id=version.pk, request_uuid=uuid4())
+        proposal = law_acts.LawProposal(organism=lo.organism_id, resource=setup.DUTIES_REF,
+            proposal=uuid4(), predecessor=first["binding"], operation="ADOPT", intent="ADOPT",
+            law_class="POLICY", version=version.version_number)
+        receipt = law_acts.OrganismLawService().adopt_law(command(lo.founder_identity, proposal))
+        self.assertEqual(receipt.status, "ADOPT", "The real film policy must have a recorded successor.")
+        page = client.get(listing)
+        self.assertContains(page, "<strong>Treasurer office</strong>", html=True, msg_prefix="Version 2 must inherit the film title.")
+        self.assertContains(page, "alpha-treasurer-duties · Version 2 · In force now")
+        detail = client.get(reverse("organisation_law_version", args=[lo.organism_id, proposal.proposal, 2]))
+        self.assertContains(detail, '<h1 class="record-heading page-title">Policy: Treasurer office</h1>', html=True)
+        self.assertContains(detail, '<p class="meta">alpha-treasurer-duties · Governance · Version 2 · In force now</p>', html=True)
+        old_url = reverse("organisation_law_version", args=[lo.organism_id, first["binding"], 1])
+        self.assertContains(detail, f'href="{old_url}"')
+
     @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
     def test_a0_finishes_on_original_appointments_after_interrupted_seating(self):
         """A1c-A0. An interrupted Board setup reaches the authorised A0 exactly once."""

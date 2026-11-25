@@ -11,4 +11,12 @@
     </a></li>{% endfor %}
   </ul>{% else %}<p>No Circles are available to you here.</p>{% endif %}
 </section>
+<section class="record-section" aria-labelledby="laws-heading">
+  <h2 class="record-heading" id="laws-heading">Laws</h2>
+  <ul class="circle-list">
+    <li><a href="{% url 'organisation_laws' organisation.organism_uuid %}">
+      <span><strong>Organisation laws</strong><small>The laws in force here, and their earlier versions</small></span><span aria-hidden="true">›</span>
+    </a></li>
+  </ul>
+</section>
 {% endblock %}

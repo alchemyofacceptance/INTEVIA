@@ -2,8 +2,8 @@
 {% if post.markdown == None %}
   <p>Post unavailable.</p>
 {% else %}
+  {% if post.author_name or post.version_number >= 2 %}<p class="meta post-byline">{{ post.author_name|default:"" }}{% if post.version_number >= 2 %}{% if post.author_name %} · {% endif %}Version {{ post.version_number }}{% if post.version_effective_at %} · Edited {% include "core/components/office_time.html" with stamp=post.version_effective_at only %}{% endif %}{% elif post.effective_at %} · {% include "core/components/office_time.html" with stamp=post.effective_at only %}{% endif %}</p>{% endif %}
   {% if post.hidden %}<p class="meta">Hidden</p>{% endif %}
-  {% if post.version_number >= 2 %}<p class="meta">Version {{ post.version_number }}</p>{% endif %}
   {% if post.quoted_markdown != None %}
     <blockquote class="post-quote">
       <p class="meta">Quoted text{% if post.quoted_version_number >= 2 %} (Version {{ post.quoted_version_number }}){% endif %}{% if post.quote_hidden %} · Hidden{% endif %}</p>
@@ -19,4 +19,5 @@
     </blockquote>
   {% elif post.quote_hidden %}<p>Quoted text unavailable.</p>{% endif %}
   <div class="post-text">{{ post.markdown|linebreaks }}</div>
+  {% if post.edit %}<p class="discussion-actions link-row">{% include "core/components/button.html" with href=post.edit.url variant="secondary" label=post.edit.label only %}</p>{% endif %}
 {% endif %}

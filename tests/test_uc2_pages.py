@@ -450,7 +450,9 @@ class BoardVotePageTests(TransactionTestCase):
         self.assertFalse(any("Post 2" in option["text"] for option in page.select("option")), "A result cannot be quoted as an editable post version.")
         observer = signed_in(laws.add_member(owner))
         permitted = observer.get(result_url)
-        self.assertContains(permitted, "Carried.", msg_prefix="A result-only member must be able to open the result itself.")
+        # Capture AT2 (the posts box, part PB-6c): the result page's Outcome row reads the outcome word only.
+        self.assertContains(permitted, "<dd>Carried</dd>", msg_prefix="A result-only member must be able to open the result itself.")
+        self.assertNotContains(permitted, "result-topic", msg_prefix="A member who may not open the Topic is not shown its title (capture AW1).")
         self.assertContains(permitted, "Revised payment terms.",
                             msg_prefix="A result-only member must see the wording that was decided (HG capture Z, Q1).")
         assert_private(self, permitted)

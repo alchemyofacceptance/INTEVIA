@@ -5,6 +5,7 @@ An outer-transaction caller translates deferred commit errors with
 """
 import hashlib
 import json
+from datetime import timedelta
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -176,6 +177,52 @@ POST_SELECT = """SELECT p.post_uuid,p.thread_uuid,p.author_id,p.post_number,
  """
 
 
+def _name_authors(posts):
+    """Give each readable post its author's name by the office record's name read.
+
+    The Human Governor's ruling of 24 Nov 2026 (capture AM1): the name is the person's current
+    identity resolution, and it is dropped once that link is severed, as on the office record
+    (office_record._office_setting). An author with no name to show (severed, or a blank name) is
+    "Member", the Group Gaze's word. A post whose text is withheld names no one.
+    """
+    authors = sorted({post["author_id"] for post in posts if post["markdown"] is not None})
+    names = {}
+    if authors:
+        rows = disc._rows("""SELECT i.id, coalesce(nullif(btrim(r.display_name),''),'Member') AS name
+            FROM public.core_identity i
+            LEFT JOIN public.core_identityresolution r ON r.identity_id=i.id AND NOT EXISTS (
+                 SELECT 1 FROM public.core_identityresolutionsevered z WHERE z.identity_id=i.id)
+            WHERE i.id = ANY(%s)""", [authors])
+        names = {row["id"]: row["name"] for row in rows}
+    for post in posts:
+        post["author_name"] = names.get(post["author_id"]) if post["markdown"] is not None else None
+
+
+# INTERIM (the Human Governor, capture AM2 of 24 Nov 2026): a reply, and the opening post of a Topic
+# or Question, may be edited by its author for 15 minutes after posting. Until the December plan the
+# limit is held by the edit page's route (core/discussion_edit.py), not by this service or the
+# database: edit_post itself accepts an author's edit at any time. A database guard beside
+# cq_edit_lock replaces the route's check in the December plan; edits recorded before then stay as
+# recorded. A Suggestion's opening post is outside this limit: cq_edit_lock decides it.
+EDIT_WINDOW = timedelta(minutes=15)
+
+
+def edit_standing(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
+    """For the edit control and the edit page: which posts of this Topic are the reader's own, and the time.
+
+    Returns {"read_at": the INTEVIA Clock's statement time, "own": the set of the reader's post
+    identities in this Topic}. Only a reader admitted to the Topic's category receives it, and it
+    tells that reader nothing about anyone else. A pure read.
+    """
+    with transaction.atomic():
+        actor = disc._actor(credential)
+        _thread(actor, organism_uuid, circle_uuid, thread_uuid)
+        read_at = disc._rows("SELECT public.intevia_clock_statement() AS read_at")[0]["read_at"]
+        rows = disc._rows("SELECT post_uuid FROM public.discp_posts WHERE thread_uuid=%s AND author_id=%s",
+                          [thread_uuid, actor.pk])
+        return {"read_at": read_at, "own": {row["post_uuid"] for row in rows}}
+
+
 def _thread(actor, organism_uuid, circle_uuid, thread_uuid):
     disc._read_owner(organism_uuid, circle_uuid)
     disc._read_uuid(thread_uuid)
@@ -211,6 +258,7 @@ def read_thread(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
             del topic["office_definition_uuid"], topic["office_definition_version"]
         posts = disc._rows(POST_SELECT + " WHERE p.thread_uuid=%s AND v.version_uuid=p.version_uuid ORDER BY p.post_number",
                            [coordinator, coordinator, thread_uuid])
+        _name_authors(posts)
         results = cq_reads._thread_results(board["board_uuid"], thread_uuid, title_visible)
         if results:
             posts = sorted([*posts, *results], key=lambda post: post["post_number"])

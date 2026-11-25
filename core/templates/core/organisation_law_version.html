@@ -1,0 +1,35 @@
+{% extends "core/base.html" %}
+{% load f0_ui tz %}
+{% block title %}{{ title }} · Version {{ version }} | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as home %}
+{% url 'organisation_laws' organisation.organism_uuid as list_url %}
+{% record_breadcrumb title organisation.short_label home "Organisation laws" list_url %}
+<h1 class="record-heading page-title">{{ title }}</h1>
+<p class="meta">{{ mark.reference }}{% if mark.family %} · {{ mark.family }}{% endif %} · Version {{ version }} · {{ status }}</p>
+{% if current_version %}
+<aside class="notice"><p>This is an earlier version. <a href="{% url 'organisation_law_version' organisation.organism_uuid current_version.binding current_version.version_number %}">Current version: Version {{ current_version.version_number }}</a></p></aside>
+{% endif %}
+<article class="card office-provision">
+  {% include "core/components/law_text.html" with parts=parts only %}
+  <details class="office-adoption">
+    <summary>Adoption record</summary>
+    <dl class="office-facts">
+      <dt>Adopting body</dt><dd>{{ body }}</dd>
+      <dt>Adoption route</dt><dd>{{ route }}</dd>
+      <dt>In force from</dt><dd>{% include "core/components/office_time.html" with stamp=in_force_from only %}</dd>
+      {% if end_at %}<dt>In force until</dt><dd>{% include "core/components/office_time.html" with stamp=end_at only %}</dd>{% endif %}
+      <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=recorded only %}</dd>
+    </dl>
+  </details>
+</article>
+{% if is_current %}
+<section class="record-section" aria-labelledby="earlier-versions">
+  <h2 class="record-heading" id="earlier-versions">Earlier versions</h2>
+  {% if earlier %}<ul class="version-list">
+    {% for law in earlier %}<li class="link-row"><a href="{% url 'organisation_law_version' organisation.organism_uuid law.binding law.version_number %}"><span>Version {{ law.version_number }}</span><span class="meta"> · in force between {{ law.in_force_from|utc|date:"j F Y" }} and {{ law.end_at|utc|date:"j F Y" }}</span></a></li>{% endfor %}
+  </ul>{% else %}<p>No earlier versions.</p>{% endif %}
+</section>
+{% endif %}
+<div class="discussion-actions">{% include "core/components/button.html" with href=list_url variant="secondary" label="Back to Organisation laws" only %}</div>
+{% endblock %}
