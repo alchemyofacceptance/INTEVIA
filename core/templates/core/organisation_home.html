@@ -19,4 +19,14 @@
     </a></li>
   </ul>
 </section>
+{% if show_settings %}
+<section class="record-section" aria-labelledby="settings-heading">
+  <h2 class="record-heading" id="settings-heading">Settings</h2>
+  <ul class="circle-list">
+    <li><a href="{% url 'organisation_settings' organisation.organism_uuid %}">
+      <span><strong>Organisation settings</strong><small>CARE assistance for this organisation</small></span><span aria-hidden="true">›</span>
+    </a></li>
+  </ul>
+</section>
+{% endif %}
 {% endblock %}

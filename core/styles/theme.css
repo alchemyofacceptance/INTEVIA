@@ -143,6 +143,7 @@
  .notice{border:var(--stroke) solid currentColor;border-left:var(--stripe) solid currentColor;border-radius:var(--radius-sm);padding:var(--space-md);margin-block:var(--space-md);background:var(--color-accent-soft);color:var(--color-accent)}
  /* A kind changes the box's colours only; the shared glass below stays on every kind. */
  .notice.success{background-color:var(--color-success-bg);color:var(--color-success);--glass-ink:var(--color-success)}.notice.warning{background-color:var(--color-warning-bg);color:var(--color-warning);--glass-ink:var(--color-warning)}.notice.refusal,.notice.error{background-color:var(--color-danger-bg);color:var(--color-danger);--glass-ink:var(--color-danger)}.notice.pending{background-color:var(--color-pending-bg);color:var(--color-pending);--glass-ink:var(--color-pending)}
+ .notice:is(.refusal,.error) .next-action .button{justify-content:flex-start;text-align:start}
  .notice h2{color:inherit;margin-top:0}.notice a{color:inherit}
  /* Where CARE speaks (.notice.care), the box heading is CARE's own: bold sans in the box's ink (HG capture CZ).
     Every other INTEVIA box heading keeps the page's serif heading face. */

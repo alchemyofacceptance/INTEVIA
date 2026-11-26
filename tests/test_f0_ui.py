@@ -492,7 +492,7 @@ class DesignLanguageStyleTests(SimpleTestCase):
         self.assertIn('<aside class="notice care office-observation" aria-label="CARE observation">',
                       self.template("components/office_provision.html"),
                       "CARE's observation must be the teal voice box, marked as CARE's voice.")
-        self.assertIn('<section class="notice care" aria-labelledby="office-assistance">', self.template("office_page.html"),
+        self.assertIn('<section class="notice care" aria-labelledby="settings-assistance">', self.template("organisation_settings.html"),
                       "The CARE assistance box must be the teal voice box, marked as CARE's voice.")
         self.assertIn('<section class="notice" aria-labelledby="status-heading">', self.template("circle_page.html"),
                       "The Operating status box states a condition, so it must be the teal voice box.")

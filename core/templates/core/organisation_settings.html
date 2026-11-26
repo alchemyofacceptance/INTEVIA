@@ -1,0 +1,36 @@
+{% extends "core/base.html" %}
+{% load f0_ui %}
+{% block title %}Organisation settings | {{ organisation.full_name }} | INTEVIA{% endblock %}
+{% block content %}
+{% url 'organisation_home' organisation.organism_uuid as home %}
+{% record_breadcrumb "Organisation settings" organisation.short_label home %}
+<h1 class="record-heading page-title">Organisation settings</h1>
+<section class="notice care" aria-labelledby="settings-assistance">
+  <h2 id="settings-assistance">CARE assistance</h2>
+  <p><span class="tag {% if setting.enabled %}ok{% else %}neutral{% endif %}">{% if setting.enabled %}On{% else %}Off{% endif %}</span>{% if setting.choice_source == "default" %} · On by default{% elif setting.choice_source == "chosen" %} · Organisation choice{% endif %}</p>
+  {% if setting.switched_by and setting.switched_by_name %}
+    <dl class="office-facts"><dt>Chosen by</dt><dd>{{ setting.switched_by_name }}</dd></dl>
+  {% endif %}
+  {% if setting.can_change %}
+    <p>As Organisation Coordinator, you can change this.</p>
+    <div class="office-switch-actions">
+      <form method="post" action="{% url 'organisation_assistance_change' organisation.organism_uuid %}">
+        {% csrf_token %}
+        <input type="hidden" name="predecessor" value="{{ setting.switch_receipt|default:'' }}">
+        <input type="hidden" name="request_uuid" value="{{ request_uuid }}">
+        {% if setting.enabled %}
+          <input type="hidden" name="enabled" value="off">
+          {% include "core/components/button.html" with type="submit" label="Turn assistance off" variant="secondary" only %}
+        {% else %}
+          <input type="hidden" name="enabled" value="on">
+          {% include "core/components/button.html" with type="submit" label="Turn assistance on" variant="primary" only %}
+        {% endif %}
+      </form>
+    </div>
+  {% else %}
+    {# Interim under capture CT. C1-473 replaces this with "Only a Board vote can change this." where a Board vote can carry out the change. #}
+    <p>Only the Organisation Coordinator can change this.</p>
+  {% endif %}
+</section>
+<div class="discussion-actions">{% include "core/components/button.html" with href=home variant="secondary" label="Back to organisation" only %}</div>
+{% endblock %}

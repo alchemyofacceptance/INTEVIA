@@ -346,6 +346,57 @@ class NoPanelNoEditWordingTests(SimpleTestCase):
 class EditPageShellTests(SimpleTestCase):
     """PC1-01 (Gemini I1): the edit form and the edit refusal keep the INTEVIA tab and the domain row. No database."""
 
+    @override_settings(ALLOWED_HOSTS=["testserver"])
+    def test_stale_edit_token_receives_the_five_part_refusal(self):
+        from django.conf import settings
+        from django.middleware.csrf import get_token
+        from django.test import Client, RequestFactory
+
+        client = Client(enforce_csrf_checks=True)
+        current = RequestFactory().get("/")
+        get_token(current)
+        client.cookies[settings.CSRF_COOKIE_NAME] = current.META["CSRF_COOKIE"]
+        stale = get_token(RequestFactory().get("/"))
+        org, circle, thread = uuid4(), uuid4(), uuid4()
+        address = reverse("discussion_edit", args=(org, circle, thread, uuid4()))
+        response = client.post(address, {"csrfmiddlewaretoken": stale, "thread": str(uuid4())})
+        self.assertEqual(response.status_code, 403, "An expired edit form must be refused.")
+        page = Markup(response.content.decode())
+        self.assertEqual([n["text"] for n in page.select("h1")], ["The form could not be submitted."],
+                         "An edit with a stale security token must receive INTEVIA's refusal.")
+        alert, = page.select("div", classes=("notice", "refusal"), role="alert")
+        rows = page.select("p", within=alert, classes=("next-action", "link-row"))
+        self.assertEqual(len(rows), 1, "The expired edit form must offer one action inside the red card.")
+        links = page.select("a", within=rows[0], classes=("button", "secondary"))
+        self.assertEqual([(n["text"].strip(), n["attrs"]["href"]) for n in links], [
+            ("Go back to the Topic to see the post as it stands.", reverse("discussion_topic", args=(org, circle, thread))),
+        ], "The action must return to the Topic in the expired edit's address.")
+        self.assertEqual([n["text"].strip() for n in page.select("p", within=alert)], [
+            "The form's security check did not pass.", "This request recorded no new version.",
+            "Go back to the Topic to see the post as it stands.", "If you need help, contact an Organisation Coordinator.",
+        ])
+        assert_private(self, response)
+
+    def test_other_discussion_refusals_keep_their_plain_action(self):
+        from django.test import RequestFactory
+        from django.urls import resolve
+        from core.discussion_forms import refusal
+
+        org, circle, thread, post = uuid4(), uuid4(), uuid4(), uuid4()
+        for name, args, code in (
+            ("discussion_reply", (org, circle, thread), "csrf"),
+            ("discussion_edit", (org, circle, thread, post), "form"),
+        ):
+            with self.subTest(name=name, code=code):
+                request = RequestFactory().post(reverse(name, args=args))
+                request.resolver_match = resolve(request.path)
+                request.user = SimpleNamespace(is_authenticated=False)
+                response = refusal(request, code)
+                page = Markup(response.content.decode())
+                alert, = page.select("div", classes=("notice", "refusal"), role="alert")
+                self.assertFalse(page.select("a", within=alert), "Other refusals must keep their action as text.")
+                self.assertEqual(len(page.select("p", within=alert)), 4)
+
     def test_pc1_01_the_edit_form_and_its_refusal_keep_the_intevia_tab_and_the_domain_row(self):
         """PC1-01. On both edit routes the served page has INTEVIA as its one current tab, and the domain row."""
         from django.template.loader import render_to_string

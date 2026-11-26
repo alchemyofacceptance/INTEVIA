@@ -4,7 +4,7 @@ from uuid import UUID
 from django.db import IntegrityError, connection, transaction
 from psycopg import sql
 
-from src.intevia.services import cq_reads, discussion as disc, discussion_posts
+from src.intevia.services import cq_reads, discussion as disc, discussion_posts, member_navigation
 from src.intevia.services.organism_command_support import _lock_registered_organism
 
 
@@ -176,6 +176,37 @@ def read_assistance(*, credential, organism_uuid, office_definition_uuid):
     return _setting_projection(access, actor, organism_uuid)
 
 
+@transaction.atomic
+def read_organisation_assistance(*, credential, organism_uuid):
+    """Read the organisation's CARE setting at the admitted member's post-lock cut.
+
+    Interim: probation does not admit this read (Human Governor's ruling CN, 26 Nov 2026).
+    The mentors-and-probation work will replace that rule. It affects visibility only
+    and leaves recorded facts intact.
+    """
+    try:
+        actor, owner_id, cut, state = member_navigation._admitted_scope(credential, organism_uuid)
+    except member_navigation.NavigationUnavailable:
+        raise SettingRefused("CARE_SETTING_UNAVAILABLE") from None
+    if state == "PROBATIONARY":
+        raise SettingRefused("CARE_SETTING_UNAVAILABLE")
+
+    row = disc._rows("""
+        SELECT public.disc_office(lo.id,NULL,%(reader)s,%(cut)s) IS NOT NULL AS can_change,
+               a.enabled,a.act_uuid,a.authority_source,j.identity_id AS enterer_identity_uuid
+          FROM public.core_livingorganism lo
+          LEFT JOIN LATERAL (
+              SELECT enabled,act_uuid,authority_source,enterer_id
+                FROM public.core_careassistancesettingact
+               WHERE organism_id=lo.id AND effective_at<=%(cut)s AND recorded_at<=%(cut)s
+               ORDER BY version DESC LIMIT 1
+          ) a ON true
+          LEFT JOIN public.core_identity j ON j.id=a.enterer_id
+         WHERE lo.id=%(owner)s
+    """, {"owner": owner_id, "reader": actor.pk, "cut": cut})[0]
+    return _setting_with_name(row, actor, organism_uuid)
+
+
 def _office_access_locked(credential, organism_uuid, office_definition_uuid, actor, owner_id):
     """Admit the requested Board definition under the actor and registered owner locks."""
     rows = disc._rows("""
@@ -218,3 +249,19 @@ def _setting_projection(row, actor, organism_uuid):
     if choice.get("enterer_identity_uuid") is not None:
         result["switched_by"] = choice["enterer_identity_uuid"]
     return result
+
+
+def _setting_with_name(access, actor, owner):
+    """Apply the who-chose rule first, then look up the current name."""
+    setting = _setting_projection(access, actor, owner)
+    chooser = setting.get("switched_by")
+    if chooser is not None:
+        rows = disc._rows("""
+            SELECT r.display_name FROM public.core_identity i
+              JOIN public.core_identityresolution r ON r.identity_id=i.id
+             WHERE i.identity_id=%s AND NOT EXISTS (
+                   SELECT 1 FROM public.core_identityresolutionsevered z WHERE z.identity_id=i.id)
+        """, [chooser])
+        if rows and rows[0]["display_name"].strip():
+            setting["switched_by_name"] = rows[0]["display_name"]
+    return setting

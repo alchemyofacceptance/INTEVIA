@@ -276,9 +276,9 @@ class LawMarkupTests(SimpleTestCase):
         for mode in ("light", "dark"):
             request.intevia_identity = SimpleNamespace(colour_mode=mode, display_name="Reader")
             page = Markup(render_to_string("core/organisation_home.html", {
-                "organisation": dict(organism_uuid=org, full_name="River Trust"), "circles": []}, request))
-            self.assertEqual([n["text"] for n in page.select("h2", classes=("record-heading",))], ["Circles", "Laws"],
-                             "The Laws section must follow Circles.")
+                "organisation": dict(organism_uuid=org, full_name="River Trust"), "circles": [], "show_settings": True}, request))
+            self.assertEqual([n["text"] for n in page.select("h2", classes=("record-heading",))], ["Circles", "Laws", "Settings"],
+                             "An admitted home must put Laws after Circles and before Settings.")
             section, = page.select("section", **{"aria-labelledby": "laws-heading"})
             divided, = page.select("ul", within=section, classes=("circle-list",))
             row, = page.select("li", within=divided)

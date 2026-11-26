@@ -16,12 +16,12 @@ from core.ui_views import is_prefetch, you
 _REFUSALS = {
     "CARE_SETTING_AUTHORITY": (
         403, "Your choice was refused.", "Only the Organisation Coordinator can change this setting.",
-        "This request left the setting unchanged.", "Return to the office record to see the current choice.",
+        "This request left the setting unchanged.", "Return to organisation settings to see the current choice.",
         "Ask the Organisation Coordinator if a change is needed.",
     ),
     "CARE_SETTING_INPUT": (
         400, "Your choice could not be recorded.", "The form needs a valid choice and its original references.",
-        "This request left the setting unchanged.", "Reopen the office record and choose On or Off.",
+        "This request left the setting unchanged.", "Reopen organisation settings and choose On or Off.",
         "If a fresh form fails, contact support.",
     ),
     "CARE_SETTING_PREDECESSOR": (
@@ -34,10 +34,9 @@ _REFUSALS = {
         "This request left the setting unchanged.", "Reopen the form before trying again.",
         "Contact support if a fresh form has the same problem.",
     ),
-    "CARE_SETTING_UNAVAILABLE": (
-        404, "This page is unavailable.", "This link does not open a record in your current view.",
-        "This request made no change.", "Open your organisation and choose a record from there.",
-        "Ask your Organisation Coordinator about access.",
+    "read_failed": (
+        503, "Organisation settings could not be shown.", "The setting could not be read.",
+        "This page offers no change.", "Try opening organisation settings again.", "If this continues, contact support.",
     ),
     "csrf": (
         403, "The form could not be submitted.", "Its security check did not pass.",
@@ -51,12 +50,12 @@ _REFUSALS = {
     ),
     "speculative": (
         400, "This request could not be used.", "A preview cannot submit a choice.",
-        "This request saved nothing.", "Open the office record and choose On or Off.",
+        "This request saved nothing.", "Open organisation settings and choose On or Off.",
         "Contact support if a fresh form is refused.",
     ),
     "unknown": (
         503, "Your change could not be confirmed.", "The service could not return the result.",
-        "The current choice must be checked.", "Reopen the page and check the current choice before submitting again.",
+        "The current choice must be checked.", "Reopen organisation settings and check the current choice before submitting again.",
         "Contact support if the outcome is still unclear.",
     ),
 }
@@ -70,11 +69,31 @@ def _refusal(request, code, next_url=None, choice=None):
     }, status=status)
 
 
-def csrf_failure(request, reason=""):
+def failed_settings_read(request):
     match = request.resolver_match
-    # These two personal forms use the five-part refusal. Cache policy belongs to the middleware.
+    org = match.kwargs.get("org") if match else None
+    next_url = reverse("organisation_settings", args=(org,)) if org is not None else None
+    return _refusal(request, "read_failed", next_url=next_url)
+
+
+@login_required(login_url="login")
+def settings_read_method_refusal(request):
+    """Refuse an unsupported method on the settings read before opening any record."""
+    response = _refusal(request, "method")
+    response["Allow"] = "GET, HEAD"
+    return response
+
+
+def csrf_failure(request, reason=""):
+    from core.organisation_pages import organisation_settings
+
+    match = request.resolver_match
+    # An unsafe method on the settings read has no form or token to validate.
+    if match and match.func is organisation_settings and request.method not in ("GET", "HEAD"):
+        return settings_read_method_refusal(request)
+    # Personal form failures use the five-part refusal. Cache policy belongs to the middleware.
     if match and (match.url_name in ("discussion_start", "discussion_reply", "discussion_put_forward",
-                                     "discussion_prepare", "discussion_confirm_clarity",
+                                     "discussion_edit", "discussion_prepare", "discussion_confirm_clarity",
                                      "discussion_answer", "discussion_record_result")
                   or (match.url_name or "").startswith("discussion_clarity_")):
         from core.discussion_forms import refusal
@@ -86,21 +105,23 @@ def csrf_failure(request, reason=""):
 
 @personal_response
 @login_required(login_url="login")
-def change_assistance(request, org, office):
+def change_assistance(request, org):
     from src.intevia.services import care_assistance as care
 
-    office_url = reverse("office_page", args=(org, office))
+    settings_url = reverse("organisation_settings", args=(org,))
     if request.method != "POST":
-        response = _refusal(request, "method", office_url)
+        response = _refusal(request, "method", settings_url)
         response["Allow"] = "POST"
         return response
     if is_prefetch(request):
-        return _refusal(request, "speculative", office_url)
+        return _refusal(request, "speculative", settings_url)
     retained = None
     try:
-        # Bind the submitted office to the caller's permitted record. The command itself
-        # decides authority and replay using the session credential and submitted predecessor.
-        setting = care.read_assistance(credential=request.user, organism_uuid=org, office_definition_uuid=office)
+        # The admission read finishes its own transaction before the durable command.
+        try:
+            setting = care.read_organisation_assistance(credential=request.user, organism_uuid=org)
+        except DatabaseError:
+            return failed_settings_read(request)
         try:
             choice, = request.POST.getlist("enabled")
             if choice not in ("on", "off"):
@@ -116,13 +137,14 @@ def change_assistance(request, org, office):
         receipt = care.set_assistance(credential=request.user, organism_uuid=org, enabled=choice == "on",
                                       predecessor=predecessor, request_uuid=request_uuid)
     except care.SettingRefused as exc:
-        next_url = reverse("f0-organisation") if exc.code == "CARE_SETTING_UNAVAILABLE" else office_url
-        return _refusal(request, exc.code, next_url, retained if exc.code in (
+        if exc.code == "CARE_SETTING_UNAVAILABLE":
+            return render(request, "core/organisation_unavailable.html", status=404)
+        return _refusal(request, exc.code, settings_url, retained if exc.code in (
             "CARE_SETTING_INPUT", "CARE_SETTING_PREDECESSOR", "CARE_SETTING_REPLAY"
         ) else None)
     except DatabaseError:
-        return _refusal(request, "unknown", office_url)
+        return _refusal(request, "unknown", settings_url)
 
     if receipt["status"] in ("already on", "already off"):
         messages.info(request, f'Assistance is {receipt["status"]}.')
-    return redirect(office_url)
+    return redirect(settings_url)

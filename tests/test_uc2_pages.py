@@ -576,8 +576,10 @@ class BoardVotePageTests(TransactionTestCase):
                          "Identical starts must return the same Topic and opening post.")
         topic_url, anchor = first["Location"].split("#")
         current_page = Markup(reader.get(office_url).content.decode())
-        self.assertEqual([a["text"].strip() for a in current_page.select("a", href=topic_url)], [data["title"]],
-                         "The Topic started at the office must appear once on its independently read office page.")
+        links = current_page.select("a", href=topic_url)
+        self.assertEqual(len(links), 1, "The Topic started at the office must have one link to its own page.")
+        self.assertEqual([n["text"] for n in current_page.select("strong", within=links[0])], [data["title"]],
+                         "The linked glass row must show the original Topic title.")
         saved = reader.get(topic_url)
         self.assertContains(saved, "Office definition · Version 2", msg_prefix="The original office version must remain visible.")
         self.assertContains(saved, f'id="{anchor}"', msg_prefix="The redirect must name the opening post on the page.")

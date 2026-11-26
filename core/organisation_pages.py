@@ -1,12 +1,15 @@
 """Organisation selection and member Circle pages."""
+from uuid import uuid4
+
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods
 
 from core.cache import personal_response
+from core.office_switch import failed_settings_read, settings_read_method_refusal
 from core.ui_views import PAGES
-from src.intevia.services import circle_commands, circle_participation, member_navigation as navigation
+from src.intevia.services import care_assistance, circle_commands, circle_participation, member_navigation as navigation
 from src.intevia.services.organism_membership_service import OrganismMembershipReader
 
 
@@ -78,7 +81,7 @@ def _member_page(request, org, circle=None):
         # Keep this owner's lock across the directory, participation and status reads.
         with transaction.atomic():
             page = navigation.member_navigation(credential=request.user, organism_uuid=org, circle_uuid=circle,
-                                                include_discussion=circle is not None)
+                                                include_discussion=circle is not None, include_settings_link=circle is None)
             selected = page.get("selected_circle")
             status = _status(request.user, org, selected) if selected else None
     except navigation.NavigationUnavailable:
@@ -87,7 +90,7 @@ def _member_page(request, org, circle=None):
     owner = page["organisation"]
     context = {"organisation": owner, "organisation_chips": _chips(request.user, memberships, owner)}
     if circle is None:
-        context["circles"] = page["circles"]
+        context.update(circles=page["circles"], show_settings=page.get("show_settings", False))
         return render(request, "core/organisation_home.html", context)
     if selected["kind"] == "GOVERNANCE":
         context["board_offices"] = page["board_offices"]
@@ -105,6 +108,28 @@ def _member_page(request, org, circle=None):
 @require_http_methods(["GET", "HEAD"])
 def home(request, org):
     return _member_page(request, org)
+
+
+@personal_response
+@login_required(login_url="login")
+def organisation_settings(request, org):
+    """Show the CARE choice and its released attribution to an admitted member."""
+    if request.method not in ("GET", "HEAD"):
+        return settings_read_method_refusal(request)
+
+    scope = {"credential": request.user, "organism_uuid": org}
+    try:
+        with transaction.atomic():
+            setting = care_assistance.read_organisation_assistance(**scope)
+            owner = navigation.member_organisation_name(**scope)
+    except (care_assistance.SettingRefused, navigation.NavigationUnavailable):
+        return render(request, "core/organisation_unavailable.html", status=404)
+    except DatabaseError:
+        return failed_settings_read(request)
+    context = {"organisation": owner, "setting": setting}
+    if setting["can_change"]:
+        context["request_uuid"] = uuid4()
+    return render(request, "core/organisation_settings.html", context)
 
 
 @personal_response

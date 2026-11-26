@@ -146,11 +146,12 @@ def _board_topic_count(credential, organism_uuid, circle_uuid):
 
 
 def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_discussion=False, office_pin=None,
-                      include_offices=True):
+                      include_offices=True, include_settings_link=False):
     """Read member destinations and the optional selected Circle's introduction at one cut.
 
     include_offices=False skips the Board's office list for a page that shows none (box 9 Advisor, part 2,
-    finding 1); a pinned office still reads it, so the pin is validated as before.
+    finding 1); a pinned office still reads it, so the pin is validated as before. The home
+    requests settings-link visibility from this admission cut without reading CARE.
     """
     with transaction.atomic():
         actor, owner_id, cut, state = _admitted_scope(credential, organism_uuid)
@@ -191,6 +192,8 @@ def member_navigation(*, credential, organism_uuid, circle_uuid=None, include_di
         page = {"evaluated_at": cut,
                 "organisation": _organisation_name(organism_uuid, owner_id, cut),
                 "circles": circles, "board_offices": offices}
+        if include_settings_link:
+            page["show_settings"] = state != "PROBATIONARY"
         if office_pin is not None:
             page["linked_office"] = _linked_office(offices, owner_id, cut, office_pin)
         if selected is not None:

@@ -114,17 +114,13 @@ class RoutedFixTests(SimpleTestCase):
 
 
     def read_card(self, *, enabled=True, chosen=False, coordinator=True):
-        org, office = uuid4(), uuid4()
-        request = RequestFactory().get(reverse("office_page", args=(org, office)))
-        request.resolver_match = match = resolve(request.path)
-        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Current reader")
+        from tests.test_uc4_settings_page import render_settings
         setting = {"enabled": enabled, "can_change": coordinator, "choice_source": "chosen" if chosen else "default"}
         if chosen:
             setting.update(switch_receipt=uuid4(), switched_by=uuid4(), switched_by_name="Earlier chooser")
-        with patch("src.intevia.services.office_record.office_record", return_value={"office": {"organism_uuid": org}, "care": setting}):
-            page = Markup(match.func(request, **match.kwargs).content.decode())
-        cards = page.select("section", **{"aria-labelledby": "office-assistance"})
-        self.assertEqual(len(cards), 1, "The office must show one assistance card for the delivered setting.")
+        page = Markup(render_settings(setting).content.decode())
+        cards = page.select("section", **{"aria-labelledby": "settings-assistance"})
+        self.assertEqual(len(cards), 1, "Organisation settings must show one assistance card for the delivered setting.")
         return page, cards[0]
 
     def test_state_pills_match_the_approved_card(self):
@@ -207,27 +203,37 @@ class RoutedFixTests(SimpleTestCase):
                 self.assertEqual([n["text"].strip() for f in forms for n in page.select("button", within=f)],
                                  ["Turn assistance off" if enabled else "Turn assistance on"],
                                  "The card must offer only the opposite setting, including at default On.")
-                expected = "text-command" if enabled else "button command primary"
+                expected = "button secondary" if enabled else "button command primary"
                 self.assertEqual([n["attrs"]["class"] for f in forms for n in page.select("button", within=f)], [expected],
-                                 "Turn assistance off must be a text command and Turn assistance on must remain primary.")
+                                 "Turn assistance off must be secondary and Turn assistance on must remain primary.")
                 self.assertEqual([n["attrs"]["value"] for f in forms for n in page.select("input", within=f, name="enabled")],
                                  ["off" if enabled else "on"], "The one card command must submit the indicated choice.")
 
-    def test_off_is_a_post_submit_with_the_appearance_of_a_link(self):
+    def test_off_is_a_secondary_native_post_submit(self):
         page, card = self.read_card()
         forms = page.select("form", within=card)
         self.assertEqual([form["attrs"].get("method") for form in forms], ["post"],
                          "Turn assistance off must use the existing POST form.")
         form = forms[0]
-        self.assertEqual(resolve(form["attrs"]["action"]).url_name, "office_switch",
-                         "The text command must post to the existing office switch.")
+        self.assertEqual(resolve(form["attrs"]["action"]).url_name, "organisation_assistance_change",
+                         "The command must post to the organisation’s change route.")
         self.assertTrue(page.select("input", within=form, name="csrfmiddlewaretoken"),
-                        "The text command must retain its CSRF field.")
+                        "The settings form must retain its CSRF field.")
         submits = page.select("button", within=form, type="submit")
         self.assertEqual([(n["text"].strip(), n["attrs"]["class"]) for n in submits],
-                         [("Turn assistance off", "text-command")],
-                         "The Off action must be a native submit button carrying only the text-command class.")
+                         [("Turn assistance off", "button secondary")],
+                         "The Off action must be a secondary native submit button.")
         self.assertFalse(page.select("a", within=form), "The Off form must contain no navigation link.")
+
+    def test_office_timeline_apply_keeps_text_command_style_and_contrast(self):
+        page = Markup(render_to_string("core/components/office_timeline.html", {
+            "rows": [{"number": 1, "action": "Office provision adopted"}],
+            "sizes": [10], "size": 10, "total": 1, "pages": 1,
+        }))
+        form, = page.select("form", classes=("office-history-size",), method="get", action="#office-history")
+        submits = page.select("button", within=form, type="submit", classes=("text-command",))
+        self.assertEqual([n["text"].strip() for n in submits], ["Apply"],
+                         "The timeline's Apply button must use the text command.")
         css = Path(finders.find("core/f0.css")).read_text()
         style = declarations(css, ".text-command")
         self.assertEqual([style.get(k) for k in ("appearance", "background", "border", "box-shadow")],
@@ -241,3 +247,5 @@ class RoutedFixTests(SimpleTestCase):
                 palette = declarations(css, selector)
                 self.assertGreaterEqual(contrast(palette["--color-primary"], palette["--color-surface"]), 4.5,
                                         "The link label must remain legible on the card in each mode.")
+                self.assertGreaterEqual(contrast(palette["--color-primary"], palette["--color-page"]), 4.5,
+                                        "Apply must remain legible on the timeline's page background in each mode.")

@@ -1,8 +1,14 @@
 {% extends "core/base.html" %}
 {% block title %}Office record unavailable | INTEVIA{% endblock %}
 {% block content %}
-<h1>Office record unavailable</h1>
+<h1 class="record-heading page-title">Office record unavailable</h1>
 <div class="notice refusal" role="alert">
   <p>This office record is unavailable to you.</p>
 </div>
+{% if back_organisation %}
+  {% url 'organisation_home' back_organisation.organism_uuid as back_url %}
+  {% with back_label="Back to "|add:back_organisation.full_name %}
+    <p class="board-discussion-destination link-row">{% include 'core/components/button.html' with href=back_url variant='secondary' label=back_label only %}</p>
+  {% endwith %}
+{% endif %}
 {% endblock %}

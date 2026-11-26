@@ -33,13 +33,14 @@ class OfficePartsTests(SimpleTestCase):
                          provisions=[self.earlier, self.current], topics=[self.topic], tenure=[], decisions=[],
                          history=[{"label": "History-only fixture text"}])
 
-    def render(self, *, mode="light", **changes):
+    def render(self, *, mode="light", board=None, **changes):
         path = reverse("office_page", args=[self.owner, uuid4()])
         request = RequestFactory().get(path)
         request.user = SimpleNamespace(is_authenticated=True)
         request.intevia_identity = SimpleNamespace(display_name="Reader Example", access_state="active", colour_mode=mode)
         request.resolver_match = resolve(path)
-        return render_to_string("core/office_page.html", {"record": self.page | changes}, request=request)
+        return render_to_string("core/office_page.html", {"record": self.page | changes, "office_org": self.owner,
+                                                         "office_board": board}, request=request)
 
     def one(self, page, tag, *, within=None, **attrs):
         nodes = page.select(tag, within=within, **attrs)
@@ -93,8 +94,9 @@ class OfficePartsTests(SimpleTestCase):
                 self.assertEqual([n["attrs"]["datetime"] for n in page.select("time", within=card)],
                                  [row[key].isoformat() for key in ("in_force_from", "recorded_at")],
                                  "Each version must show its own in-force and recorded instants.")
-        topic = self.one(page, "article", classes=("office-topic",))
-        self.assertEqual(self.one(page, "h3", within=topic)["text"], self.topic["title"], "The released Topic title must be verbatim.")
+        topics = self.one(page, "section", **{"aria-labelledby": "office-topics"})
+        topic = self.one(page, "li", within=topics)
+        self.assertEqual(self.one(page, "span", within=topic)["text"], self.topic["title"], "The released Topic title must be verbatim.")
         self.assertEqual(self.one(page, "time", within=topic)["attrs"]["datetime"], self.topic["created_at"].isoformat(),
                          "The Topic must show the recorded opening time supplied by the office read.")
         self.assertIn("Office version 1", topic["text"], "The Topic must retain its own pinned office version.")
@@ -111,6 +113,33 @@ class OfficePartsTests(SimpleTestCase):
         self.assertIn("No Topics to show here.", no_topic, "An empty Topic list must have a neutral message.")
         self.assertNotIn("CARE and the Board", no_topic, "A withheld title must occur nowhere in the response.")
         self.assertIn(self.current["clause"], no_topic, "Withholding a Topic must preserve independently permitted law.")
+
+    def test_office_topics_use_glass_rows_and_only_released_links(self):
+        board = uuid4()
+        linked = self.topic | {"circle_uuid": board}
+        plain = self.topic | {"title": "Earlier discussion", "office_version": 2,
+                              "thread_link": uuid4(), "circle_uuid": uuid4()}
+        page = Markup(self.render(board=board, topics=[linked, plain]))
+        section = self.one(page, "section", **{"aria-labelledby": "office-topics"})
+        lists = page.select("ul", within=section, classes=("circle-list",))
+        self.assertEqual(len(lists), 1, "Topics must share the Board's glass list.")
+        rows = page.select("li", within=lists[0])
+        self.assertEqual(len(rows), 2, "Each released Topic must occupy one list row.")
+        link = self.one(page, "a", within=rows[0])
+        self.assertEqual(link["attrs"]["href"], reverse("discussion_topic", args=(self.owner, board, linked["thread_link"])))
+        title = self.one(page, "strong", within=link)
+        detail = self.one(page, "small", within=link)
+        self.assertEqual((title["text"], title["attrs"]["id"], detail["attrs"]["id"]),
+                         (linked["title"], link["attrs"]["aria-labelledby"], link["attrs"]["aria-describedby"]))
+        self.assertEqual(self.one(page, "span", within=link, **{"aria-hidden": "true"})["text"], "›")
+        self.assertEqual(self.one(page, "span", within=rows[1])["text"], plain["title"])
+        self.assertFalse(page.select("a", within=rows[1]), "A released title alone must grant no destination.")
+        self.assertNotIn("›", rows[1]["text"], "A plain Topic must have no link marker.")
+        for row, topic in zip(rows, (linked, plain), strict=True):
+            detail = self.one(page, "small", within=row)
+            self.assertTrue(detail["text"].strip().startswith("Started "))
+            self.assertTrue(detail["text"].strip().endswith(f" · Office version {topic['office_version']}"))
+            self.assertEqual(self.one(page, "time", within=detail)["attrs"]["datetime"], topic["created_at"].isoformat())
 
     def test_observation_needs_one_matching_current_office_basis(self):
         raw = self.render()

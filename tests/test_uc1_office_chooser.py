@@ -1,9 +1,10 @@
-"""A current, permitted chooser name belongs to the office's setting block."""
+"""A current, permitted chooser name belongs to the organisation’s setting block."""
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 from django.db import connection
+from django.urls import reverse
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 
 from tests.test_f0_ui import Markup
@@ -11,7 +12,7 @@ from tests.test_uc1_office_page import assert_private, care_state_text, office_p
 
 
 def chosen_fields(page):
-    cards = page.select("section", **{"aria-labelledby": "office-assistance"})
+    cards = page.select("section", **{"aria-labelledby": "settings-assistance"})
     return [(term["text"], value["text"]) for card in cards for group in page.select("dl", within=card)
             for term, value in zip(page.select("dt", within=group), page.select("dd", within=group), strict=True)]
 
@@ -23,12 +24,12 @@ class OfficeChooserTests(TransactionTestCase):
         from tests.test_law_acts import add_member
 
         self.owner, self.chooser, self.office, _, _, _ = approved_office()
-        self.url = office_path(self.owner, self.office)
+        self.url = reverse("organisation_settings", args=(self.owner.organism_id,))
         self.member = signed_in(add_member(self.owner))
 
     def read(self, client):
-        response = client.get(self.url, headers={"Purpose": "prefetch"})
-        self.assertEqual(response.status_code, 200, "The admitted member must receive the office page.")
+        response = client.get(self.url)
+        self.assertEqual(response.status_code, 200, "The admitted member must receive the settings page.")
         assert_private(self, response)
         return response, Markup(response.content.decode())
 
@@ -54,26 +55,30 @@ class OfficeChooserTests(TransactionTestCase):
                 response, page = self.read(client)
                 self.assertEqual(chosen_fields(page), [("Chosen by", name)],
                                  "The setting must show the current resolved chooser name after the act.")
-                record = response.context["record"]
+                office_response = client.get(office_path(self.owner, self.office), headers={"Purpose": "prefetch"})
+                assert_private(self, office_response)
+                office_page = Markup(office_response.content.decode())
+                record = office_response.context["record"]
                 self.assertEqual(record["care"].get("switched_by_name"), name,
                                  "The office read must supply the current name in the setting projection.")
                 self.assertEqual(record["care"].get("switched_by"), self.chooser.identity_id,
                                  "The permitted service identity must be the person who made this choice.")
                 self.assertTrue(any(row["kind"] == "setting_change" for row in record["history"]),
                                 "The privacy witness must include the human choice in the office history.")
-                rows = page.select("ol", classes=("office-timeline",))
-                self.assertTrue(len(rows) == 1 and page.select("li", within=rows[0]),
+                rows = office_page.select("ol", classes=("office-timeline",))
+                self.assertTrue(len(rows) == 1 and office_page.select("li", within=rows[0]),
                                 "The rendered office must contain populated history rows.")
                 self.assertNotIn(name, rows[0]["text"], "No timeline row may attribute the choice to its Enterer.")
-                self.assertFalse(any(name in value for node in page.nodes if any(parent is rows[0] for parent in node["parents"])
+                self.assertFalse(any(name in value for node in office_page.nodes if any(parent is rows[0] for parent in node["parents"])
                                      for value in node["attrs"].values() if value),
                                  "A history attribute must not carry the chooser name.")
                 self.assertFalse(any("switched_by_name" in row for row in record["history"]),
                                  "No history row may receive the chooser-name field.")
-                card = page.select("section", **{"aria-labelledby": "office-assistance"})[0]
+                card = page.select("section", **{"aria-labelledby": "settings-assistance"})[0]
                 self.assertEqual(bool(page.select("form", within=card)), has_form,
                                  "The response-channel check must cover both the command form and the text-only setting.")
                 ref = str(self.chooser.identity_id)
+                self.assertNotIn(ref.encode(), office_response.content, "The office HTML must also omit the chooser UUID.")
                 self.assertNotIn(ref.encode(), response.content, "The chooser's UUID must be absent from all HTML, including hidden fields.")
                 self.assertFalse(any(ref in value for value in response.headers.values()),
                                  "Response headers must also omit the chooser's UUID.")
@@ -88,12 +93,12 @@ class OfficeChooserTests(TransactionTestCase):
     def test_default_blank_and_severed_choices_have_no_name_line(self):
         default, page = self.read(self.member)
         self.assertEqual(chosen_fields(page), [], "A default setting must have no chooser label or placeholder.")
-        self.assertNotIn("switched_by_name", default.context["record"]["care"], "The default must omit the chooser-name field.")
+        self.assertNotIn("switched_by_name", default.context["setting"], "The default must omit the chooser-name field.")
         self.choose()
         self.set_name(" \t ")
         blank, page = self.read(self.member)
         self.assertEqual(chosen_fields(page), [], "A whitespace-only resolution must omit the whole chooser line.")
-        self.assertNotIn("switched_by_name", blank.context["record"]["care"], "Blank names must be omitted at the read boundary.")
+        self.assertNotIn("switched_by_name", blank.context["setting"], "Blank names must be omitted at the read boundary.")
         old_name = "Chooser before severance"
         self.set_name(old_name)
         self.assertEqual(chosen_fields(self.read(self.member)[1]), [("Chosen by", old_name)],
@@ -105,7 +110,7 @@ class OfficeChooserTests(TransactionTestCase):
             self.assertTrue(cursor.fetchone()[0], "The database must witness the actual severance before the final read.")
         severed, page = self.read(self.member)
         self.assertEqual(chosen_fields(page), [], "A severed chooser must leave neither a name nor a placeholder.")
-        self.assertNotIn("switched_by_name", severed.context["record"]["care"], "Severance must remove the name from the office read.")
+        self.assertNotIn("switched_by_name", severed.context["setting"], "Severance must remove the name from the settings read.")
         self.assertNotContains(severed, old_name, msg_prefix="The previous chooser name must not survive elsewhere on the page.")
         self.assertNotContains(severed, str(self.chooser.identity_id), msg_prefix="A severed chooser must have no identifier fallback.")
         self.assertIn("Off · Organisation choice", care_state_text(severed.content.decode()), "Severance must preserve the recorded setting.")
@@ -114,7 +119,7 @@ class OfficeChooserTests(TransactionTestCase):
 class ChooserProjectionTests(SimpleTestCase):
     def test_withholding_precedes_name_resolution(self):
         from src.intevia.services import office_record as service
-        from tests.test_uc1_office_parts import OfficePartsTests
+        from tests.test_uc4_settings_page import render_settings
 
         person, owner, key = uuid4(), uuid4(), uuid4()
         row = dict(act_uuid=key, enabled=False, can_change=False, enterer_identity_uuid=person,
@@ -140,10 +145,8 @@ class ChooserProjectionTests(SimpleTestCase):
             read.return_value = []
             missing = service._office_setting(row.copy(), actor, owner)
             self.assertNotIn("switched_by_name", missing, "An admitted chooser with no matching resolution must omit the name.")
-        fixture = OfficePartsTests()
-        fixture.setUp()
         for setting in (withheld, missing):
-            raw = fixture.render(care=setting)
+            raw = render_settings(setting).content.decode()
             self.assertEqual(chosen_fields(Markup(raw)), [], "A withheld or missing name must produce no chooser line.")
             self.assertIn("Off · Organisation choice", care_state_text(raw), "Withholding a name must preserve the chosen Off setting.")
             self.assertNotIn(str(person), raw, "Neither withheld nor missing resolution may expose an identity reference.")

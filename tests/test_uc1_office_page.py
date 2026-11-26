@@ -18,7 +18,7 @@ from tests.test_f0_ui import Markup
 
 def care_state_text(markup):
     page = Markup(markup)
-    return [p["text"].strip() for card in page.select("section", **{"aria-labelledby": "office-assistance"})
+    return [p["text"].strip() for card in page.select("section", **{"aria-labelledby": "settings-assistance"})
             for p in page.select("p", within=card)]
 
 
@@ -96,10 +96,14 @@ class OfficePageTests(TransactionTestCase):
         foreign_office = record_office(foreign, foreign_founder, office_basis(foreign, foreign_founder))
         unknown = client.get(office_path(owner, uuid4()))
         self.assertEqual(unknown.status_code, 404, "An unknown office must return the unavailable page.")
-        self.assertNotContains(unknown, org_name, status_code=404, msg_prefix="The refusal must disclose no owner name.")
+        self.assertContains(unknown, f"Back to {org_name}", status_code=404,
+                            msg_prefix="The admitted reader may return to the organisation in the address.")
         wrong = client.get(office_path(foreign, old))
-        self.assertEqual((wrong.status_code, wrong.content), (404, unknown.content),
-                         "A foreign owner and local office must produce the neutral unavailable page.")
+        unknown_foreign = client.get(office_path(foreign, uuid4()))
+        self.assertEqual((wrong.status_code, wrong.content), (404, unknown_foreign.content),
+                         "In an unadmitted organisation a known office must be indistinguishable from a missing one.")
+        self.assertNotContains(wrong, "Back to ", status_code=404,
+                               msg_prefix="An unadmitted reader must receive no return destination.")
         foreign_target = client.get(office_path(owner, foreign_office))
         self.assertEqual((foreign_target.status_code, foreign_target.content), (404, unknown.content),
                          "A known foreign office must be indistinguishable from an unknown office.")
@@ -182,6 +186,39 @@ class OfficePageTests(TransactionTestCase):
 
 
 class OfficeMarkupTests(SimpleTestCase):
+    def test_unavailable_office_returns_only_to_an_admitted_organisation(self):
+        from unittest.mock import patch
+        from src.intevia.services import member_navigation
+        from src.intevia.services.care_assistance import SettingRefused
+
+        org, office = uuid4(), uuid4()
+        request = RequestFactory().get(reverse("office_page", args=(org, office)))
+        request.resolver_match = resolve(request.path)
+        request.user = SimpleNamespace(is_authenticated=True, get_full_name=lambda: "Reader")
+        name = "River Trust"
+        for admitted in (True, False):
+            with self.subTest(admitted=admitted), patch(
+                "src.intevia.services.office_record.office_record", side_effect=SettingRefused("CARE_SETTING_UNAVAILABLE")
+            ), patch.object(member_navigation, "member_organisation_name", return_value={"organism_uuid": org, "full_name": name},
+                            side_effect=None if admitted else member_navigation.NavigationUnavailable()) as read:
+                response = request.resolver_match.func(request, **request.resolver_match.kwargs)
+                self.assertEqual(response.status_code, 404)
+                page = Markup(response.content.decode())
+                main, = page.select("main")
+                self.assertEqual([n["text"] for n in page.select("h1", within=main, classes=("record-heading", "page-title"))],
+                                 ["Office record unavailable"])
+                notice, = page.select("div", within=main, classes=("notice", "refusal"), role="alert")
+                self.assertEqual(notice["text"].strip(), "This office record is unavailable to you.")
+                links = page.select("a", within=main)
+                expected = [(f"Back to {name}", reverse("organisation_home", args=(org,)))] if admitted else []
+                self.assertEqual([(a["text"].strip(), a["attrs"]["href"]) for a in links], expected,
+                                 "Only a reader admitted to the addressed organisation may receive its return link.")
+                if admitted:
+                    self.assertEqual(links, page.select("a", within=main, classes=("button", "secondary")))
+                else:
+                    self.assertNotIn(name, response.content.decode(), "The unavailable office must withhold the name.")
+                read.assert_called_once_with(credential=request.user, organism_uuid=org)
+
     def test_tenure_uses_the_permitted_name_and_dates(self):
         # Distinct full/short names exercise both template slots under today's equal organisation defaults.
         office = dict(organisation_full_name="River Organisation", organisation_short_label="RO",

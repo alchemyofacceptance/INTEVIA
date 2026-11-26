@@ -22,10 +22,23 @@ TYPES = {Type.EXECUTION_ELIGIBILITY_QUALIFICATION, Type.UNAVAILABILITY_DETERMINA
 
 
 class QualificationRefused(ValueError):
+    """Raised when a scoped finding cannot be used or recorded.
+
+    A plain ValueError subclass with no fields of its own; the
+    message is the whole explanation.
+    """
     pass
 
 
 def refuse(reason):
+    """Raise QualificationRefused with reason inside fixed text.
+
+    The message is "The requested finding cannot be used.",
+    then reason, then "No authority was transferred. Obtain a
+    current determination from a separately authorised person
+    for this act." Never returns. reason is inserted as given,
+    unchecked.
+    """
     raise QualificationRefused(
         f"The requested finding cannot be used. {reason} No authority was transferred. "
         "Obtain a current determination from a separately authorised person for this act."
@@ -34,6 +47,16 @@ def refuse(reason):
 
 @dataclass(frozen=True)
 class Scope:
+    """Identify the exact scope of a finding.
+
+    organism and target identify the organisation and target.
+    act names the act. kind names the determination type.
+    tested_actor_id identifies the person being tested.
+    beneficiary_id identifies the person the safeguard protects.
+    subject_basis identifies the subject's authority basis.
+
+    The fields are frozen. Construction does not validate them.
+    """
     organism: UUID
     target: UUID
     act: str
@@ -43,6 +66,19 @@ class Scope:
     subject_basis: UUID
 
     def fingerprint(self):
+        """Return the SHA-256 hex digest of this scope.
+
+        Check kind against TYPES, then act for nonblank text,
+        then tested_actor_id and beneficiary_id for truth.
+        The first failed check raises QualificationRefused.
+        Zero fails either ID check. With a valid kind, an act
+        without strip() raises AttributeError.
+
+        Schema "S:scope:1" includes organism, target and
+        subject_basis as text without validating them. It also
+        includes act with its original spacing, kind and both
+        person IDs.
+        """
         if self.kind not in TYPES or not self.act.strip() or not self.tested_actor_id or not self.beneficiary_id:
             refuse("The act, determination type or affected person is missing.")
         return authority_target_fingerprint({
@@ -53,15 +89,36 @@ class Scope:
 
 
 def visible(rows, at, known):
+    """Narrow rows to those visible at a cut.
+
+    Keeps rows with effective_at at or before at, and
+    received_at and recorded_at both at or before known. Adds no
+    other filter and no order; the queryset is not evaluated.
+    """
     return rows.filter(effective_at__lte=at, received_at__lte=known, recorded_at__lte=known)
 
 
 def mandate_scope(scope, verifier_id, basis):
+    """Return the SHA-256 hex digest of the mandate target.
+
+    Schema "S:mandate:1" includes the scope fingerprint,
+    verifier_id as supplied and basis.basis_uuid as text.
+    Errors from scope.fingerprint() propagate. A missing
+    basis_uuid raises AttributeError. This helper checks
+    neither the verifier ID nor the validity of the mandate.
+    """
     return authority_target_fingerprint({"schema": "S:mandate:1", "subject": scope.fingerprint(),
                                          "verifier": verifier_id, "basis": str(basis.basis_uuid)})
 
 
 def expiry(text):
+    """Parse an ISO 8601 expiry that carries a time zone.
+
+    Returns the parsed datetime in its own offset, unconverted.
+    Refuses when text is not a string, does not parse, or has no
+    time zone. Whether the instant is past or future is not
+    checked here.
+    """
     try:
         instant = datetime.fromisoformat(text)
         if instant.tzinfo is None:
@@ -94,6 +151,15 @@ def check_mandate(alias, scope, mandate_id, verifier_id, verifier_basis, at, kno
 
 
 def finding_method(mandate, verifier_basis, until, subject_basis):
+    """Return the pipe-delimited method reference for a finding.
+
+    Join "S:finding:1", mandate, verifier_basis, the UTC
+    timestamp of until, and subject_basis, in that order.
+    The timestamp has six fractional digits and ends in Z.
+    A naive until or one whose type is not exactly datetime
+    raises ValueError. Format the other values as text
+    without validation or escaping embedded pipes.
+    """
     return f"S:finding:1|{mandate}|{verifier_basis}|{canonical_timestamp(until)}|{subject_basis}"
 
 

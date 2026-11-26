@@ -27,6 +27,16 @@ class GlassButtonTests(SimpleTestCase):
         cls.panes = [Markup(frame["attrs"]["srcdoc"]) for frame in Markup(cls.reference.decode()).select("iframe")]
         cls.frozen = cls.panes[0].select("style", id="served-theme")[0]["text"]
 
+    def test_only_the_command_inside_a_red_notice_aligns_left(self):
+        ordinary = declarations(self.css, ".button,button.command")
+        for selector in (".button", ".secondary", ".button.secondary", ".button.secondary" + LIVE):
+            ordinary.update(declarations(self.css, selector))
+        self.assertEqual((ordinary.get("text-align"), ordinary.get("justify-content")), ("center", "center"),
+                         "An ordinary secondary button must keep its centred label.")
+        rule = declarations(self.css, ".notice:is(.refusal,.error) .next-action .button")
+        self.assertEqual((rule.get("text-align"), rule.get("justify-content")), ("start", "flex-start"),
+                         "A wrapped next action in either red notice must align its text and flex content to the start.")
+
     def test_secondary_glass_keeps_the_surface_and_violet_outline(self):
         edge = declarations(self.css, ".button.secondary" + LIVE)
         self.assertEqual((edge.get("color"), edge.get("border-color")), ("var(--color-primary)",) * 2,

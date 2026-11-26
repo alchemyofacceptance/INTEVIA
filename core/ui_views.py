@@ -2,7 +2,6 @@
 import json
 import re
 from pathlib import Path
-from uuid import uuid4
 from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -52,14 +51,9 @@ def office_page(request, org, office):
     except SettingRefused as exc:
         if exc.code != "CARE_SETTING_UNAVAILABLE":
             raise
-        return render(request, "core/office_unavailable.html", status=404)
-    setting = page.get("care", {})
-    forms = []
-    if setting.get("can_change"):
-        if setting["enabled"]:
-            forms.append(("off", "Turn assistance off", uuid4(), "text-command"))
-        else:
-            forms.append(("on", "Turn assistance on", uuid4(), "primary"))
+        from core.discussion_pages import _back_organisation
+        return render(request, "core/office_unavailable.html",
+                      {"back_organisation": _back_organisation(request.user, org)}, status=404)
     organisation_url = board_url = start_topic_url = office_board = None
     facts = page["office"]
     if facts.get("organisation_short_label"):
@@ -82,8 +76,7 @@ def office_page(request, org, office):
     return render(request, "core/office_page.html", {
         "office_org": org, "office_board": office_board, "start_topic_url": start_topic_url,
         "organisation_url": organisation_url, "board_url": board_url,
-        "record": page, "switch_forms": forms,
-        "switch_url": reverse("office_switch", args=(org, office)) if forms else None,
+        "record": page,
     })
 
 

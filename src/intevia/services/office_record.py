@@ -21,18 +21,7 @@ _PAIR = """public.core_careofficeobservation o JOIN public.core_livingorganismev
 
 
 def _office_setting(access, actor, owner):
-    setting = care._setting_projection(access, actor, owner)
-    chooser = setting.get("switched_by")
-    if chooser is not None:
-        rows = disc._rows("""
-            SELECT r.display_name FROM public.core_identity i
-              JOIN public.core_identityresolution r ON r.identity_id=i.id
-             WHERE i.identity_id=%s AND NOT EXISTS (
-                   SELECT 1 FROM public.core_identityresolutionsevered z WHERE z.identity_id=i.id)
-        """, [chooser])
-        if rows and rows[0]["display_name"].strip():
-            setting["switched_by_name"] = rows[0]["display_name"]
-    return setting
+    return care._setting_with_name(access, actor, owner)
 
 
 def _office_facts(params, access, setting):

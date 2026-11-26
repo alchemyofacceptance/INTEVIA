@@ -233,6 +233,9 @@ def refusal(request, code, context=None, entered=None, swept=False):
         title = "Not all due work could be recorded."
         effect = "Some due work may already have been recorded before this stopped."
         action = "Reopen the Topic to check where the vote stands."
+    if code == "csrf" and request.method == "POST" and match and match.url_name == "discussion_edit":
+        route = match.kwargs
+        context["edit_action_url"] = reverse("discussion_topic", args=(route["org"], route["circle"], route["thread"]))
     context.update(title=title, why=why, effect=effect, action=action, help_text=help_line(context), entered=entered or {})
     response = render(request, "core/discussion_refusal.html", context, status=status)
     if code == "method":

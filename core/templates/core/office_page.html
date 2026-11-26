@@ -28,43 +28,33 @@
 </section>
 {% endif %}
 
-{% if record.care %}
-<section class="notice care" aria-labelledby="office-assistance">
-  <h2 id="office-assistance">CARE assistance</h2>
-  <p><span class="tag {% if record.care.enabled %}ok{% else %}neutral{% endif %}">{% if record.care.enabled %}On{% else %}Off{% endif %}</span>{% if record.care.choice_source == "default" %} · On by default{% elif record.care.choice_source == "chosen" %} · Organisation choice{% endif %}</p>
-  {% if record.care.switched_by and record.care.switched_by_name %}
-    <dl class="office-facts"><dt>Chosen by</dt><dd>{{ record.care.switched_by_name }}</dd></dl>
-  {% endif %}
-  {% if switch_forms %}
-    <p>As Organisation Coordinator, you can change this.</p>
-    <div class="office-switch-actions">
-    {% for choice, label, key, variant in switch_forms %}
-      <form method="post" action="{{ switch_url }}">
-        {% csrf_token %}
-        <input type="hidden" name="enabled" value="{{ choice }}">
-        <input type="hidden" name="predecessor" value="{{ record.care.switch_receipt|default:'' }}">
-        <input type="hidden" name="request_uuid" value="{{ key }}">
-        {% include "core/components/button.html" with type="submit" label=label variant=variant only %}
-      </form>
-    {% endfor %}
-    </div>
-  {% endif %}
-</section>
-{% endif %}
-
 {% office_provisions record %}
 
 <section class="record-section" aria-labelledby="office-topics">
   <h2 class="record-heading" id="office-topics">Discussion topics about this office</h2>
-  {% for topic in record.topics %}
-    <article class="card office-topic">
-      {% url 'discussion_topic' office_org topic.circle_uuid topic.thread_link as topic_url %}
-      <h3>{% if topic_url and topic.circle_uuid == office_board %}<a href="{{ topic_url }}">{{ topic.title }}</a>{% else %}{{ topic.title }}{% endif %}</h3>
-      <p class="meta">Started {% include "core/components/office_time.html" with stamp=topic.created_at only %} · Office version {{ topic.office_version }}</p>
-    </article>
-  {% empty %}
+  {% if record.topics %}
+    <ul class="circle-list">
+      {% for topic in record.topics %}
+        {% url 'discussion_topic' office_org topic.circle_uuid topic.thread_link as topic_url %}
+        {% if topic_url and topic.circle_uuid == office_board %}
+          <li><a href="{{ topic_url }}" aria-labelledby="office-topic-title-{{ forloop.counter }}" aria-describedby="office-topic-detail-{{ forloop.counter }}">
+            <span>
+              <strong id="office-topic-title-{{ forloop.counter }}">{{ topic.title }}</strong>
+              <small id="office-topic-detail-{{ forloop.counter }}">Started {% include "core/components/office_time.html" with stamp=topic.created_at only %} · Office version {{ topic.office_version }}</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </a></li>
+        {% else %}
+          <li class="content-insets">
+            <span>{{ topic.title }}</span>
+            <small>Started {% include "core/components/office_time.html" with stamp=topic.created_at only %} · Office version {{ topic.office_version }}</small>
+          </li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  {% else %}
     <p>No Topics to show here.</p>
-  {% endfor %}
+  {% endif %}
   {% if start_topic_url %}<p class="discussion-actions link-row">{% include 'core/components/button.html' with href=start_topic_url label="Start a Topic about this office" variant="primary" only %}</p>{% endif %}
 </section>
 

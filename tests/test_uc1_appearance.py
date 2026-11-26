@@ -284,8 +284,12 @@ class AppearanceCsrfTests(SimpleTestCase):
         you = client.post(reverse("f0-you"), {})
         self.assertEqual(you.status_code, 403, "The You form must reject a missing CSRF token.")
         page = Markup(you.content.decode())
-        parts = [(node["tag"], node["text"].strip()) for alert in page.select("aside", role="alert")
-                 for node in page.nodes if node["parents"] and node["parents"][-1] is alert]
+        main, = page.select("main")
+        alert, = page.select("aside", within=main, role="alert")
+        heading, = page.select("h1", within=main, classes=("record-heading", "page-title"))
+        self.assertIs(heading["parents"][-1], main, "The refusal heading belongs above the red card.")
+        parts = [(node["tag"], node["text"].strip()) for node in page.nodes
+                 if node is heading or node["parents"] and node["parents"][-1] is alert]
         self.assertEqual(parts, [
             ("h1", "The form could not be submitted."), ("p", "Its security check did not pass."),
             ("p", "This request saved nothing."), ("p", "Reopen the page and submit a fresh form."),

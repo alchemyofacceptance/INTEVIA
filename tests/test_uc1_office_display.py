@@ -247,3 +247,50 @@ class OfficeDisplayTests(TransactionTestCase):
         self.assertIn(self.source["clause_text"].strip(), main, "An Off choice must preserve the human source clause.")
         self.assertEqual(main, Markup(oracle.content.decode()).select("main")[0]["text"], "An Off display must agree with the facts-only read.")
         self.assertEqual(self.history(), before, "Off-first must create neither an observation nor a page-view entry.")
+
+    def test_office_has_no_switch(self):
+        page = signed_in(self.founder).get(self.path, headers={"Purpose": "prefetch"})
+        self.assertEqual(page.status_code, 200, "The Coordinator must be able to open the office.")
+        html = Markup(page.content.decode())
+        self.assertFalse(html.select("section", **{"aria-labelledby": "office-assistance"}),
+                         "The office must contain no CARE setting card, even for the Coordinator.")
+        self.assertFalse(html.select("input", name="enabled") or html.select("input", name="predecessor"),
+                         "The office must offer no setting command.")
+        self.assertNotContains(page, "Organisation settings", msg_prefix="Option A removes the setting link as well.")
+        self.assertNotContains(page, "On by default", msg_prefix="The office must not retain a setting-status line.")
+        for key in ("switch_url", "switch_forms"):
+            self.assertNotIn(key, page.context, "The office view must cease constructing the old form context.")
+        self.assertIn("The path here", html.select("main")[0]["text"], "Keep the human office history.")
+
+    def test_scene_8_off_preserves_human_record(self):
+        from tests.test_uc1_office_switch import bound_client
+        from django.urls import reverse
+
+        on = self.client.get(self.path)
+        self.assertContains(on, self.source["sentence"], msg_prefix="The positive control must first present CARE’s observation.")
+        seen = self.history()
+        self.assert_only_new_pair(seen, self.before)
+        operator = bound_client(self.founder)
+        settings_path = reverse("organisation_settings", args=[self.owner.organism_id])
+        target = reverse("organisation_assistance_change", args=[self.owner.organism_id])
+        form_page = Markup(operator.get(settings_path).content.decode())
+        form, = form_page.select("form", action=target, method="post")
+        fields = {n["attrs"]["name"]: n["attrs"]["value"] for n in form_page.select("input", within=form)}
+        switched = operator.post(target, fields)
+        self.assertEqual((switched.status_code, switched.get("Location")), (302, settings_path),
+                         "The Coordinator’s real Off submission must return to organisation settings.")
+        off = self.client.get(self.path)
+        page = Markup(off.content.decode())
+        timeline, = page.select("ol", classes=("office-timeline",))
+        labels = [n["text"] for n in page.select("strong", within=timeline)]
+        self.assertIn("CARE assistance turned Off", labels, "The human Off choice must remain in the office history.")
+        self.assertIn("Office provision adopted", labels, "The prior human adoption must remain in the office history.")
+        self.assertNotIn(self.source["sentence"], unescape(off.content.decode()),
+                         "The earlier CARE observation must be hidden while Off.")
+        self.assertIn(self.source["clause_text"].strip(), page.select("main")[0]["text"],
+                      "The governing human clause must stay readable after assistance is switched off.")
+        after = self.history()
+        self.assertEqual((after.details, after.observations), (seen.details, seen.observations),
+                         "Hiding the observation must preserve its stored detail and event.")
+        self.assertEqual(after.events, seen.events + [UUID(fields["request_uuid"])],
+                         "The human switching event must be the only added organisation event.")
