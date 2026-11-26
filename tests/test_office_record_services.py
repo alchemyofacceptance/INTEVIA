@@ -1326,9 +1326,9 @@ class OfficeRecordTests(TransactionTestCase):
         self.assertIsNotNone(cq_reads.reporting_decision(**(paid[0] | {"credential": viewer.credential}),
                                                        result_uuid=payment["reporting_rule_link"]),
                              "The separately shown reporting link must open for the same reader.")
-        with self.assertRaises(discussion.DiscussionUnavailable,
-                               msg="The Board-result exception must leave the unseated member outside the private thread."):
-            discussion_posts.read_thread(**(paid[0] | {"credential": viewer.credential}))
+        thread = discussion_posts.read_thread(**(paid[0] | {"credential": viewer.credential}))
+        self.assertEqual(str(thread["topic"]["thread_uuid"]), str(paid[0]["thread_uuid"]),
+                         "The unseated member must also be able to open the payment's own Board Topic.")
 
         def hide(vote, hidden):
             journey, category, topic, _ = vote

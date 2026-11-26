@@ -113,7 +113,7 @@ def visible_boards(*, credential):
           FROM public.core_discboard b JOIN public.core_livingorganism lo ON lo.id=b.organism_id
           LEFT JOIN public.core_circle c ON c.id=b.circle_id
           WHERE EXISTS(SELECT FROM public.disc_categories cat WHERE cat.board_uuid=b.board_uuid
-            AND public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()))
+            AND public.disc_read_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()))
           ORDER BY lo.organism_id,c.circle_uuid NULLS FIRST""", [actor.pk])
         if not rows:
             raise disc.DiscussionUnavailable()
@@ -124,7 +124,7 @@ def _category(actor, organism_uuid, circle_uuid, category_uuid):
     board = disc._audience(actor, organism_uuid, circle_uuid, category_uuid)
     rows = disc._rows("""SELECT c.* FROM public.disc_categories c JOIN public.core_discboard b USING(board_uuid)
       WHERE c.category_uuid=%s AND c.board_uuid=%s
-      AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,%s)""",
+      AND public.disc_read_audience(b.organism_id,b.circle_id,%s,c.access_level,%s)""",
                      [category_uuid, board["board_uuid"], actor.pk, board["audience_at"]])
     if not rows:
         raise disc.DiscussionUnavailable()
@@ -291,7 +291,7 @@ def topics_about_office(*, credential, organism_uuid, office_definition_uuid) ->
                 JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
                 JOIN public.core_livingorganismevent event ON event.event_uuid=t.creation_act
                 WHERE b.circle_id IS NOT NULL
-                  AND public.disc_audience(b.organism_id,b.circle_id,%(reader)s,c.access_level,b.audience_at)
+                  AND public.disc_read_audience(b.organism_id,b.circle_id,%(reader)s,c.access_level,b.audience_at)
                   AND {_title_visible_sql(coordinator)}
             )
             SELECT v.thread_uuid, v.board_uuid, v.circle_uuid, v.category_uuid, v.title, v.created_at,

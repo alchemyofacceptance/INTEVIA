@@ -377,17 +377,38 @@ class BoardTopicPageTests(TransactionTestCase):
         permitted = read(reader)
         self.assertIn(title, topics(permitted), "A seated Board participant must see the released Board Topic title.")
         self.assertFalse(Markup(permitted).select("minutes"), "The Board Topic title must remain text on the real page.")
-        withheld = read(outside)
-        self.assertEqual(topics(withheld), baseline, "A member without a Board place must see the same empty part as before the Topic.")
-        self.assertNotIn(title, unescape(withheld), "A withheld Board title must leave no trace anywhere in the response.")
-        for key in ("thread", "post"):
-            self.assertNotIn(str(receipt[key]), withheld, "A member outside the Board must not receive the hidden Topic's identifiers.")
-        self.assertIn("The Treasurer keeps the accounts.", withheld, "Withheld discussion must preserve the member's permitted provision.")
+        released = read(outside)
+        self.assertIn("The Treasurer keeps the accounts.", released)
+        topic_url = reverse("discussion_topic", args=(owner.organism_id, board.circle_uuid, receipt["thread"]))
+        office_page = Markup(released)
+        links = office_page.select("a", href=topic_url)
+        self.assertEqual(len(links), 1, "The member must receive the exact pinned Topic link.")
+        self.assertEqual([n["text"] for n in office_page.select("strong", within=links[0])], [title])
+        self.assertNotIn("Start a Topic about this office", released)
+        detail = outside.get(links[0]["attrs"]["href"])
+        self.assertEqual(detail.status_code, 200, "An unseated member must be able to follow the office pin.")
+        assert_private(self, detail)
+        self.assertContains(detail, "You can read this Board discussion. Only Board members can contribute.", count=1)
+        self.assertContains(detail, args["markdown"])
+        markup = Markup(detail.content.decode())
+        main, = markup.select("main")
+        self.assertFalse(markup.select("form", within=main), "Remy may read this Topic without a contribution form.")
+        self.assertFalse(markup.select("button", within=main), "Remy's ordinary Topic has no command buttons.")
+        destinations = {a["attrs"].get("href") for a in markup.select("a", within=main)}
+        navigation = {url, reverse("organisation_home", args=(owner.organism_id,)),
+                      reverse("circle_page", args=(owner.organism_id, board.circle_uuid)),
+                      reverse("board_discussion", args=(owner.organism_id, board.circle_uuid))}
+        self.assertEqual(destinations - navigation, set(),
+                         "Only links back to the office, organisation, Board or discussion may appear here.")
 
         discussion_posts.set_post_hidden(credential=coordinator.credential, organism_uuid=owner.organism_id,
                                          circle_uuid=board.circle_uuid, category_uuid=args["category_uuid"],
                                          thread_uuid=receipt["thread"], post_uuid=receipt["post"],
                                          request_uuid=uuid4(), hidden=True, as_coordinator=True)
+        withheld = read(outside)
+        self.assertEqual(topics(withheld), baseline, "The member loses the pinned link when the opening is hidden.")
+        for value in (title, str(receipt["thread"]), str(receipt["post"])):
+            self.assertNotIn(value, unescape(withheld), "A hidden Topic leaves no title or identifiers.")
         hidden = read(reader)
         self.assertEqual(topics(hidden), baseline, "The participant must lose a hidden opening without a count or placeholder.")
         self.assertNotIn(title, unescape(hidden), "A hidden opening must leave no title in auxiliary markup.")

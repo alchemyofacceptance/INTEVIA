@@ -26,9 +26,10 @@ NO_BALLOT_LABELS = {
 }
 
 
-def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
-    """The existing thread and GOVERNANCE-result audience at the current cut."""
-    query = """SELECT b.board_uuid,b.organism_id,circle.kind AS circle_kind,
+def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid, *, discussion_read=False):
+    """Keep private standing in thread_audience; only the Topic panel admits a discussion-only read."""
+    audience = "public.disc_read_audience" if discussion_read else "public.disc_audience"
+    query = f"""SELECT b.board_uuid,b.organism_id,circle.kind AS circle_kind,
         public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement()) AS thread_audience
         FROM public.core_discboard b
         JOIN public.core_livingorganism lo ON lo.id=b.organism_id
@@ -37,7 +38,7 @@ def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
         JOIN public.core_discthread t USING(category_uuid)
         JOIN public.discp_posts first ON first.thread_uuid=t.thread_uuid AND first.post_number=1
         WHERE lo.organism_id=%s AND circle.circle_uuid IS NOT DISTINCT FROM %s::uuid AND t.thread_uuid=%s
-        AND (public.disc_audience(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement())
+        AND ({audience}(b.organism_id,b.circle_id,%s,cat.access_level,public.intevia_clock_statement())
           OR (circle.kind='GOVERNANCE' AND cat.access_level<>'COORDINATORS'
             AND EXISTS(SELECT FROM public.core_cqact o WHERE o.thread_uuid=t.thread_uuid AND o.operation IN ('PROCEED','OPEN_VOTE','CLOSE','NO_BALLOT'))
             AND public.disc_audience(b.organism_id,NULL,%s,'MEMBERS',public.intevia_clock_statement())))
@@ -56,10 +57,11 @@ def result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid):
     return query, args
 
 
-def _scope(actor, organism_uuid, circle_uuid, thread_uuid):
+def _scope(actor, organism_uuid, circle_uuid, thread_uuid, *, discussion_read=False):
     disc._read_owner(organism_uuid, circle_uuid)
     disc._read_uuid(thread_uuid)
-    query, args = result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid)
+    query, args = result_scope_query(actor, organism_uuid, circle_uuid, thread_uuid,
+                                    discussion_read=discussion_read)
     if not disc._rows(query, args):
         raise disc.DiscussionUnavailable()
     disc._lock_registered_organism("default", organism_uuid)

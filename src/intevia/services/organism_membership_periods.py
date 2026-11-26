@@ -90,12 +90,39 @@ def rejoin_predecessor(
 
 
 def period_at(membership_id, at, known, alias):
+    """Return the opening event UUID of a membership period.
+
+    Calls public.c1b_period_at on alias with the membership's
+    primary key, effective cut at and knowledge cut known. A
+    NULL SQL input returns None.
+    Count transitions effective by at and received and recorded
+    by known. Pick the head by latest effective, occurred,
+    received, recorded, sequence and event UUID, in that order.
+
+    The head must be ACTIVE or PROBATIONARY. Pick the highest
+    eligible opening sequence at or below the head: sequence
+    one in PROPOSED, ACTIVE or PROBATIONARY, or a transition
+    from ENDED to PROPOSED. No eligible ENDED may lie from the
+    opening through the head in sequence order. Return None if
+    no period qualifies. Takes no explicit row lock.
+    """
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT public.c1b_period_at(%s,%s,%s)", [membership_id, at, known])
         return cursor.fetchone()[0]
 
 
 def bound_periods(condition, alias):
+    """Return the period starts a condition was recorded against.
+
+    Reads public.c1b_condition_period for condition.pk on alias:
+    (subject_start, mentor_start), each as period_at gives it at
+    the condition's first state event's effective_at, with that
+    event's recorded_at as the knowledge cut. mentor_start is
+    None when there is no mentor; both are None when there is no
+    first state event; either is None when no period is found.
+    Returns None when no row matches (an unsaved condition).
+    Takes no lock.
+    """
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT subject_start, mentor_start FROM public.c1b_condition_period WHERE condition_id=%s",
                        [condition.pk])
@@ -103,5 +130,11 @@ def bound_periods(condition, alias):
 
 
 def condition_bound(condition, alias):
+    """Report whether a condition's periods can be proven.
+
+    True when bound_periods gives a subject period start and,
+    if the condition names a mentor, a mentor period start too.
+    When no row matches, unpacking None raises TypeError.
+    """
     subject, mentor = bound_periods(condition, alias)
     return subject is not None and (condition.mentor_membership_id is None or mentor is not None)

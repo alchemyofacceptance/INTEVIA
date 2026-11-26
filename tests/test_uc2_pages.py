@@ -393,12 +393,18 @@ class BoardVotePageTests(TransactionTestCase):
                          "The vote must follow an edit during Preparation.")
         self.assertIn("Wording to be decided · Version 2", [n["text"] for n in page.select("h3")])
         self.assertIn("Revised opening.", [n["text"] for n in page.select("div", classes=("post-text",))])
+        member = laws.add_member(owner)
+        reader = signed_in(member)
+        other_scope = scope | {"credential": member.credential}
+        preparing = reader.get(url)
+        self.assertEqual(preparing.status_code, 200, "An unseated reader must open the Suggestion during Preparation.")
+        self.assertContains(preparing, "Revised opening.")
+        self.assertNotContains(preparing, 'id="vote"')
+        self.assertNotContains(preparing, 'name="vote_command"')
         cq.mark_prepared(**scope, request_uuid=uuid4())
-        outsider = laws.add_member(owner)
-        other_scope = scope | {"credential": outsider.credential}
         self.assertEqual(cq.phase(**other_scope)["phase"], "VOTING", "This member may read the released vote phase.")
-        self.assertIsNone(cq.board_topic_vote(**other_scope), "A result-only member must receive no motion text or command.")
-        self.assertEqual(signed_in(outsider).get(url).status_code, 404, "Result access must never open the private Topic.")
+        self.assertIsNone(cq.board_topic_vote(**other_scope), "An unseated member receives no vote panel or command.")
+        self.assertContains(reader.get(url), "Revised opening.", msg_prefix="The Topic stays readable after the vote opens.")
 
     @override_settings(PASSWORD_HASHERS=FIXTURE_HASHERS)
     def test_board_result_occupies_its_recorded_post_number(self):
@@ -451,15 +457,19 @@ class BoardVotePageTests(TransactionTestCase):
         observer = signed_in(laws.add_member(owner))
         permitted = observer.get(result_url)
         # Capture AT2 (the posts box, part PB-6c): the result page's Outcome row reads the outcome word only.
-        self.assertContains(permitted, "<dd>Carried</dd>", msg_prefix="A result-only member must be able to open the result itself.")
-        self.assertNotContains(permitted, "result-topic", msg_prefix="A member who may not open the Topic is not shown its title (capture AW1).")
+        self.assertContains(permitted, "<dd>Carried</dd>", msg_prefix="An unseated member must be able to open the result itself.")
+        self.assertEqual([a["text"].strip() for a in Markup(permitted.content.decode()).select("a", href=url)],
+                         ["Private opening title", "Back to Topic"], "Both links must lead to the released Topic.")
         self.assertContains(permitted, "Revised payment terms.",
-                            msg_prefix="A result-only member must see the wording that was decided (HG capture Z, Q1).")
+                            msg_prefix="An unseated member must see the wording that was decided (HG capture Z, Q1).")
         assert_private(self, permitted)
-        for withheld in ("Private opening title", "One payment.", "Back to Topic", "Thank you."):
+        for withheld in ("One payment.", "Thank you."):
             self.assertNotContains(permitted, withheld,
-                                   msg_prefix="The result page must withhold the Topic's title, its earlier wording and the way back.")
-        self.assertEqual(observer.get(url).status_code, 404)
+                                   msg_prefix="The result page must omit earlier wording and ordinary replies.")
+        released = observer.get(url)
+        self.assertContains(released, "Thank you.")
+        self.assertContains(released, result_url, msg_prefix="The unseated reader must be able to follow the recorded result.")
+        self.assertNotContains(released, 'id="vote"')
         self.assertEqual(observer.get(reverse("discussion_result", args=(owner.organism_id, board.circle_uuid, uuid4(), receipt))).status_code, 404)
 
     def test_board_lists_only_visible_topics(self):
@@ -1291,6 +1301,14 @@ class BoardClarityResponseTests(BoardClarityFixture, TransactionTestCase):
             self.assertNotIn(self.own_status, card["text"], "The stepped-out explanation replaces personal status.")
             self.assertEqual(bool(page.select("form", within=card, action=self.endpoint("discussion_clarity_proceed"))),
                              client is chair_client, "Only the Board Chair can open this stepped-out vote.")
+        former = signed_in(leaving)
+        former_page = former.get(self.url)
+        self.assertContains(former_page, "You can read this Board discussion. Only Board members can contribute.", count=1)
+        self.assertNotContains(former_page, 'id="vote"')
+        token = discussion_forms.issue_form(former_page.wsgi_request, "reply", self.owner.organism_id,
+                                           self.board.circle_uuid, thread=self.thread)
+        refused = former.post(self.endpoint("discussion_reply"), {"command": token, "markdown": "A late reply."})
+        self.assertContains(refused, "Only Board members can reply here.", status_code=403)
         prior_page = chair_client.get(path(self.owner, self.board, prior["thread"]))
         self.assertContains(prior_page, "All 4 eligible Board members were clear, so voting opened on this wording.",
                             msg_prefix="Departure cannot revise the electorate recorded when the earlier ballot opened.")

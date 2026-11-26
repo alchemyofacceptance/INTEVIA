@@ -226,7 +226,8 @@ class ResultTimeWordTests(SimpleTestCase):
         low, carried = result("NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION", 2), result("QUALIFIED", 3)
         read = {"topic": {"thread_uuid": thread, "title": "Repair", "category_uuid": category}, "posts": [opening, low, carried]}
         unavailable = discussion_pages.discussion.DiscussionUnavailable
-        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
+        listing = {"categories": [{"category_uuid": category}], "reads_without_board_place": False}
+        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value=listing), \
              mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
              mock.patch.object(discussion_pages.discussion_posts, "edit_standing", return_value={"read_at": None, "own": set()}), \
              mock.patch.object(discussion_pages.member_navigation, "member_navigation", side_effect=discussion_pages.member_navigation.NavigationUnavailable), \
@@ -257,7 +258,8 @@ class ResultTimeWordTests(SimpleTestCase):
         low, carried = result("NOT_QUALIFIED_INSUFFICIENT_PARTICIPATION", 2), result("QUALIFIED", 3)
         read = {"topic": {"thread_uuid": thread, "title": "Repair", "category_uuid": category},
                 "posts": [{"post_number": 1, "markdown": "Opening"}, low, carried]}
-        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
+        listing = {"categories": [{"category_uuid": category}], "reads_without_board_place": False}
+        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value=listing), \
              mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
              mock.patch.object(discussion_pages.discussion_posts, "edit_standing", return_value={"read_at": None, "own": set()}), \
              mock.patch.object(discussion_pages.member_navigation, "member_navigation", side_effect=discussion_pages.member_navigation.NavigationUnavailable), \

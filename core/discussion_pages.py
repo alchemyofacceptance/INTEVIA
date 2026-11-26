@@ -17,8 +17,10 @@ from src.intevia.services import cq, cq_reads, discussion, discussion_posts, mem
 @transaction.atomic
 def _read_page(credential, org, circle, thread):
     scope = {"credential": credential, "organism_uuid": org, "circle_uuid": circle}
-    categories = discussion.board_categories(**scope, governance_only=True)["categories"]
-    context = {"board_org": org, "board_circle": circle, "governance_board": True}
+    listing = discussion.board_categories(**scope, governance_only=True)
+    categories = listing["categories"]
+    context = {"board_org": org, "board_circle": circle, "governance_board": True,
+               "reads_without_board_place": listing["reads_without_board_place"]}
     pinned_office = None
     if thread is None:
         # Count only, for every open vote on this Board, in one statement.

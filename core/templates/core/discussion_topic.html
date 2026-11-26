@@ -40,6 +40,6 @@
 {% endif %}
 {% if category.retired %}<p>This category is retired. You can still read its Topics.</p>{% endif %}
 {% if topic.closed %}<p>This Topic is closed. You can still read its posts.</p>{% endif %}
-{% if not category.retired and not category.can_reply %}<p>This category is open to you for reading.</p>{% endif %}
+{% if reads_without_board_place %}{% include "core/components/board_read_only.html" %}{% elif not category.retired and not category.can_reply %}<p>This category is open to you for reading.</p>{% endif %}
 <p class="discussion-actions link-row">{% url 'board_discussion' board_org board_circle as back_url %}{% include 'core/components/button.html' with href=back_url variant='secondary' label='Back to Board discussion' only %}</p>
 {% endblock %}

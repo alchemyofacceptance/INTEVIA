@@ -211,6 +211,12 @@ MIGRATION_SEED_ROW_COUNTS_BY_HEAD = {
         "core_careassistancesettingact": 0, "core_careofficeobservation": 0,
         "auth_user": 1, "core_identity": 1, "core_identityresolution": 1,
     },
+    "0119_board_discussion_read_audience": {
+        "core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0,
+        "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0,
+        "core_careassistancesettingact": 0, "core_careofficeobservation": 0,
+        "auth_user": 1, "core_identity": 1, "core_identityresolution": 1,
+    },
     "0110_discussion_office_link": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0095_te_c2_join": {"core_governedrule": 4, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0, "core_c108restoration": 0, "core_tereceipt": 0, "core_teorigin": 0},
     "0085_board_voting": {"core_governedrule": 3, "core_cqreportingdefault": 1, "cmt_refresh_batch": 0},
@@ -314,6 +320,7 @@ REQUIRED_TRIGGER_COUNT = {"0022_s015_governed_chain_contract": 322, "0023_s015_c
                           "0116_clarity_full_participation": 739,  # cq_br2_confirm.
                           "0117_board_chair_commands": 739,  # Function body only.
                           "0118_author_clarity_and_conflict": 739,  # Five function bodies only.
+                          "0119_board_discussion_read_audience": 739,  # Two helpers and one function body only.
                           "0110_discussion_office_link": 727,  # FK triggers are internal; the two posting functions keep their OIDs.
                           "0103_clock_storage_column_defaults": 726,  # Column defaults only: no trigger added or removed.
                           "0085_board_voting": 699,  # No trigger added or removed.

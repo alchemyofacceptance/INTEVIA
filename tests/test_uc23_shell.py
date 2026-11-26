@@ -261,7 +261,7 @@ def projected_forms(*, office_id=None):
          mock.patch.object(discussion_forms, "atomic", nullcontext), \
          mock.patch("django.contrib.auth.middleware.get_user", return_value=user), \
          mock.patch("core.session.IdentityAccessMiddleware._valid_identity", return_value=identity), \
-         mock.patch.object(discussion_forms, "_categories", return_value=[row]), \
+         mock.patch.object(discussion_forms, "_board_listing", return_value={"categories": [row], "reads_without_board_place": False}), \
          mock.patch.object(discussion_forms.member_navigation, "member_navigation", return_value=directory), \
          mock.patch.object(discussion_pages, "_read_page", side_effect=lambda *args: ("core/discussion_topic.html", dict(topic))), \
          mock.patch.object(discussion_forms, "_read_page", side_effect=lambda *args: ("core/discussion_topic.html", dict(topic))):
@@ -445,7 +445,8 @@ class ResultCardProjectionTests(SimpleTestCase):
         result = {"post_number": 2, "markdown": None, "post_type": "GROUP_GAZE", "hidden": True, "post_uuid": post}
         reply = {"post_number": 3, "markdown": "Reply"}
         read = {"topic": {"thread_uuid": thread, "title": "Repair", "category_uuid": category}, "posts": [opening, result, reply]}
-        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value={"categories": [{"category_uuid": category}]}), \
+        listing = {"categories": [{"category_uuid": category}], "reads_without_board_place": False}
+        with mock.patch.object(discussion_pages.discussion, "board_categories", return_value=listing), \
              mock.patch.object(discussion_pages.discussion_posts, "read_thread", return_value=read), \
              mock.patch.object(discussion_pages.discussion_posts, "edit_standing", return_value={"read_at": None, "own": set()}), \
              mock.patch.object(discussion_pages.member_navigation, "member_navigation", side_effect=discussion_pages.member_navigation.NavigationUnavailable), \

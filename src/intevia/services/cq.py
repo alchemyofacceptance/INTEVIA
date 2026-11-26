@@ -1091,7 +1091,7 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     member their own answer on the decided ballot, and nobody else's (capture N).
     """
     actor = disc._actor(credential)
-    board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid)
+    board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid, discussion_read=True)
     if not board["thread_audience"]:
         return None
     rows = disc._rows(

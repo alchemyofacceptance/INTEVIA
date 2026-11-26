@@ -227,8 +227,8 @@ _READABLE_BOARDS = """
     LEFT JOIN public.core_circle circle ON circle.id=b.circle_id
     CROSS JOIN (SELECT public.intevia_clock_statement() AS cut) clock
     WHERE lo.organism_id=%(owner)s
-      AND (public.disc_audience(b.organism_id,b.circle_id,%(reader)s,'MEMBERS',clock.cut)
-        OR public.disc_audience(b.organism_id,b.circle_id,%(reader)s,'PROBATIONARY',clock.cut))
+      AND (public.disc_read_audience(b.organism_id,b.circle_id,%(reader)s,'MEMBERS',clock.cut)
+        OR public.disc_read_audience(b.organism_id,b.circle_id,%(reader)s,'PROBATIONARY',clock.cut))
 """
 
 
@@ -238,6 +238,7 @@ def _audience(actor, organism_uuid, circle_uuid, category_uuid=_NO_CATEGORY):
     if category_uuid is not _NO_CATEGORY:
         _read_uuid(category_uuid)
     query = f"""SELECT b.*, public.disc_member_state(b.organism_id,%(reader)s,b.audience_at) AS member_state,
+        NOT public.disc_board_place_ok(b.organism_id,b.circle_id,%(reader)s,b.audience_at) AS reads_without_board_place,
         public.disc_office(b.organism_id,b.circle_id,%(reader)s,b.audience_at) AS office
         FROM ({_READABLE_BOARDS}) b WHERE b.circle_uuid IS NOT DISTINCT FROM %(circle)s::uuid"""
     params = {"owner": organism_uuid, "reader": actor.pk, "circle": circle_uuid}
@@ -262,16 +263,20 @@ def board_categories(*, credential, organism_uuid, circle_uuid=None, governance_
             raise DiscussionUnavailable()
         rows = _rows("""SELECT c.*,public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='ACTIVE'
               OR public.disc_member_state(b.organism_id,%s,public.intevia_clock_statement())='PROBATIONARY' AS posting_state,
+            public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement()) AS posting_audience,
             public.disc_office(b.organism_id,b.circle_id,%s,public.intevia_clock_statement()) IS NOT NULL AS coordinator
             FROM public.disc_categories c JOIN public.core_discboard b ON b.board_uuid=c.board_uuid
-            WHERE b.board_uuid=%s AND public.disc_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())
-            ORDER BY c.sort_order,c.name,c.category_uuid""", [actor.pk, actor.pk, actor.pk, board["board_uuid"], actor.pk])
+            WHERE b.board_uuid=%s AND public.disc_read_audience(b.organism_id,b.circle_id,%s,c.access_level,public.intevia_clock_statement())
+            ORDER BY c.sort_order,c.name,c.category_uuid""", [actor.pk, actor.pk, actor.pk, actor.pk, board["board_uuid"], actor.pk])
         for row in rows:
-            allowed = row.pop("posting_state") and not row["retired"]
+            posting_audience = row.pop("posting_audience")
+            allowed = (row.pop("posting_state") and posting_audience
+                       and not board["reads_without_board_place"] and not row["retired"])
             coordinator = row.pop("coordinator")
             row["can_reply"] = allowed
             row["can_start_topic"] = allowed and (row["functional_code"] != "ANNOUNCEMENTS" or coordinator)
         return {"board": board["board_uuid"], "categories": rows,
+                "reads_without_board_place": board["reads_without_board_place"],
                 "subscriber_categories": entitlement_effective(organism_uuid, CAPABILITY)}
 
 
@@ -286,7 +291,7 @@ def category_history(*, credential, organism_uuid, category_uuid, circle_uuid=No
             JOIN public.core_discact a ON a.act_uuid=v.act_uuid
             JOIN public.core_livingorganismevent e ON e.event_uuid=a.act_uuid
             WHERE current.category_uuid=%s AND current.board_uuid=%s
-              AND public.disc_audience(b.organism_id,b.circle_id,%s,current.access_level,public.intevia_clock_statement())
+              AND public.disc_read_audience(b.organism_id,b.circle_id,%s,current.access_level,public.intevia_clock_statement())
             ORDER BY v.version_number""", [category_uuid, board["board_uuid"], actor.pk])
         if not rows:
             raise DiscussionUnavailable()

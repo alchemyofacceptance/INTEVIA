@@ -149,10 +149,12 @@ class BoardTopicCountTests(TransactionTestCase):
         """PB7-05. Each reader's count equals the Topics the Board discussion lists for that reader; no title leaks."""
         from tests import test_discussion_posts as post_support
         from tests.test_uc1_office_page import signed_in
+        from tests.test_law_acts import add_member
         from tests.test_uc2_pages import path, read_counts, seated_board
         from src.intevia.services import discussion
 
         owner, board, _, coordinator, trustee = seated_board()
+        member = signed_in(add_member(owner))
         reader, steward = signed_in(trustee), signed_in(coordinator)
         index = path(owner, board)
         self.assertEqual(self.shown_count(reader, owner, board)[1], "No Topics yet",
@@ -175,6 +177,17 @@ class BoardTopicCountTests(TransactionTestCase):
             for withheld in ("Open question one", "Withheld opening", "Private coordination"):
                 self.assertNotContains(response, withheld,
                                        msg_prefix="The Board page gives a count only, never a Topic's or category's name.")
+            response, shown = self.shown_count(member, owner, board)
+            self.assertContains(response, index, msg_prefix="The Board row must link to its own discussion.")
+            self.assertEqual(shown, "2 Topics", "An unseated member counts only the two released openings.")
+            listing = member.get(index)
+            self.assertContains(listing, "You can read this Board discussion. Only Board members can contribute.", count=1)
+            self.assertNotContains(listing, "Start a Topic")
+            markup = Markup(listing.content.decode())
+            titles = [a["text"] for topics in markup.select("ul", classes=("discussion-topics",))
+                      for a in markup.select("a", within=topics)]
+            self.assertCountEqual(titles, ["Open question one", "Open question two"],
+                                  "Coordination and the hidden opening must stay out of the member's list.")
             _, wider = self.shown_count(steward, owner, board)
             self.assertEqual(wider, f"{self.listed(steward, index)} Topics",
                              "The Coordinator's count must equal the Topics the Board discussion lists for the Coordinator.")

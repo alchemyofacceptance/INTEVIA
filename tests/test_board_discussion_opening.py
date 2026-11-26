@@ -15,6 +15,7 @@ from django.urls import reverse
 
 from core import models
 from src.intevia.services import circle_commands, cq, discussion
+from tests.test_law_acts import add_member
 from tests.test_uc2_pages import read_counts
 from tests import cq_authority_support as boards
 from tests.test_uc1_office_page import signed_in
@@ -107,10 +108,12 @@ class BoardDiscussionOpeningTests(TransactionTestCase):
         """BD-05. The Board page shows "Board discussion" only once the discussion exists."""
         owner, scope, trustees, board = seated()
         reader = signed_in(trustees[1])
+        member = signed_in(add_member(owner))
         kwargs = {"org": owner.organism_id, "circle": board.circle_uuid}
         page, index = reverse("circle_page", kwargs=kwargs), reverse("board_discussion", kwargs=kwargs)
         with patch("src.intevia.services.timed_events.run") as wake:
             before = read_counts()
+            self.assertNotContains(member.get(page), index, msg_prefix="Before activation the member has no Board discussion link.")
             self.assertNotContains(reader.get(page), index,
                                    msg_prefix="A dormant Board has no discussion, so its page must not link to one.")
             self.assertEqual(reader.get(index).status_code, 404,
@@ -121,6 +124,7 @@ class BoardDiscussionOpeningTests(TransactionTestCase):
         activate(scope, board)
         self.assertContains(reader.get(page), index,
                             msg_prefix="Once the Board is activated its page must link to its discussion.")
+        self.assertContains(member.get(page), index, msg_prefix="An unseated organisation member must receive the Board discussion link.")
         self.assertEqual(reader.get(index).status_code, 200,
                          "The link on an activated Board's page must open its discussion.")
 

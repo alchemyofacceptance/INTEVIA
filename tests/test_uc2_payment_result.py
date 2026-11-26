@@ -170,11 +170,11 @@ class CarriedPaymentPageTests(TransactionTestCase):
     """B9-02 and B9-03 (plan rows D13 and D15), on a carried plain decision."""
 
     def test_b9_02_result_only_member_reads_the_whole_result(self):
-        """D13. A member who cannot open the Board's Topic still reads the body, outcome, times and decided wording."""
+        """D13. An unseated member reads the released Board Topic and the full, independent result."""
         owner, board, trustee, topic_url, result_url = carried_payment()
         observer = signed_in(laws.add_member(owner))
-        self.assertEqual(observer.get(topic_url).status_code, 404,
-                         "The fixture needs a member who cannot open the Board's Topic.")
+        self.assertEqual(observer.get(topic_url).status_code, 200,
+                         "Membership admits this reader to the ordinary Board Topic.")
         response = observer.get(result_url)
         self.assertEqual(response.status_code, 200, "A member admitted to the result must not be refused for want of the Topic.")
         assert_private(self, response)
@@ -185,19 +185,25 @@ class CarriedPaymentPageTests(TransactionTestCase):
         # Capture AT2 (the posts box, part PB-6c): the Outcome row reads the outcome word only.
         self.assertEqual(rows["Outcome"]["text"].strip(), "Carried", "The outcome must be shown.")
         self.assertIsNotNone(row_time(page, rows["Took effect"]), "The effective time must be shown.")
-        # Reviewer (Grok), box 9 step 2, 1.2: the result-only member reads every Decision row a Board member reads.
+        # Reviewer (Grok), box 9 step 2, 1.2: the unseated member reads every Decision row a Board member reads.
         board_rows = facts(Markup(signed_in(trustee).get(result_url).content.decode()))
         self.assertIn("Voting closed", rows, "A held vote's result must say when voting closed.")
         self.assertEqual({term: node["text"].strip() for term, node in rows.items()},
                          {term: node["text"].strip() for term, node in board_rows.items()},
-                         "The result-only member must read the same Decision rows as a Board member, times included.")
+                         "The unseated member must read the same Decision rows as a Board member, times included.")
         self.assertIn("Wording decided · Version 2", [node["text"].strip() for node in page.select("h2")],
                       "The decided version must be named.")
         self.assertEqual([node["text"].strip() for node in page.select("div", classes=("motion-wording",))],
                          [DECIDED_WORDING], "The decided wording must be shown, and only that version.")
-        html = response.content.decode()
-        for withheld in (TITLE, FIRST_WORDING, "Back to Topic"):
-            self.assertNotIn(withheld, html, "The result page must withhold the Topic's title, its earlier wording and the way back.")
+        self.assertEqual([a["text"].strip() for a in page.select("a", href=topic_url)], [TITLE, "Back to Topic"],
+                         "The released Topic's title and return control must point to exactly that Topic.")
+        self.assertNotContains(response, FIRST_WORDING, msg_prefix="The result gives the decided wording.")
+        # Preserve the independently admitted result when the Topic read itself is withheld.
+        with mock.patch.object(discussion_posts, "read_thread", side_effect=discussion.DiscussionUnavailable):
+            result_only = observer.get(result_url)
+        self.assertContains(result_only, DECIDED_WORDING)
+        for withheld in (TITLE, FIRST_WORDING, "Back to Topic", topic_url + '"'):
+            self.assertNotContains(result_only, withheld, msg_prefix="A withheld Topic has no link or title on its result.")
         # Advisor, box 9 part 1: a signed-in person who is not a member of this organisation gets the private refusal.
         from tests.s015_0021_support import register_test_learner
         stranger = signed_in(register_test_learner(username="b9-result-stranger-" + uuid4().hex))
@@ -354,7 +360,8 @@ class StartTopicPageTests(SimpleTestCase):
         org, circle = uuid4(), uuid4()
         request = SimpleNamespace(user=AnonymousUser())
         directory = {"board_offices": [self.OFFICE], "organisation": None, "circles": []}
-        with mock.patch.object(discussion_forms, "_categories", return_value=[]), \
+        listing = {"categories": [], "reads_without_board_place": False}
+        with mock.patch.object(discussion_forms, "_board_listing", return_value=listing), \
                 mock.patch.object(discussion_forms.member_navigation, "member_navigation", return_value=directory):
             plain = discussion_forms._start_context(request, org, circle, None, None)
             pinned = discussion_forms._start_context(request, org, circle, None, str(self.OFFICE["office_definition_uuid"]))

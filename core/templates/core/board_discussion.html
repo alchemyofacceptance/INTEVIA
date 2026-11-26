@@ -7,6 +7,7 @@
 {% record_breadcrumb "Board discussion" organisation.short_label|default:"Organisation" organisation_url circle.short_label|default:'Board' circle_url %}
 <h1 class="page-title record-heading">Board discussion</h1>
 <p>{{ circle.full_name|default:"Board" }}{% if organisation %} · {{ organisation.full_name }}{% endif %}</p>
+{% if reads_without_board_place %}{% include "core/components/board_read_only.html" %}{% endif %}
 <section class="record-section" aria-labelledby="categories-heading">
   <h2 id="categories-heading" class="record-heading">Categories</h2>
   {% for category in categories %}

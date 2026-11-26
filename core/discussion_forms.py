@@ -207,7 +207,9 @@ def refusal(request, code, context=None, entered=None, swept=False):
             action = EDIT_ACTIONS.get(code, "Go back to the Topic to see the post as it stands.")
     if code in ("method", "csrf", "preview", "form"):
         title = "The form could not be submitted."
-    if code == "DISC_POST_AUTHORITY" and context.get("category") and not edit:
+    if code == "DISC_POST_AUTHORITY" and context.get("reads_without_board_place") and not edit and not vote:
+        why = "Only Board members can reply here." if noun == "reply" else "Only Board members can start a Topic here."
+    elif code == "DISC_POST_AUTHORITY" and context.get("category") and not edit:
         why = ("Only a Board Coordinator can start an announcement here."
                if noun == "Topic" and context["category"].get("functional_code") == "ANNOUNCEMENTS"
                else "This category is open to you for reading.")
@@ -243,15 +245,15 @@ def refusal(request, code, context=None, entered=None, swept=False):
     return response
 
 
-def _categories(credential, org, circle):
+def _board_listing(credential, org, circle):
     return discussion.board_categories(credential=credential, organism_uuid=org, circle_uuid=circle,
-                                       governance_only=True)["categories"]
+                                       governance_only=True)
 
 
 def office_start_url(credential, org, circle, pin):
     """Offer the office action when at least one current Board category admits START."""
     try:
-        categories = _categories(credential, org, circle)
+        categories = _board_listing(credential, org, circle)["categories"]
     except discussion.DiscussionUnavailable:
         return None
     allowed = [row for row in categories if row["can_start_topic"]]
@@ -263,7 +265,8 @@ def office_start_url(credential, org, circle, pin):
 
 
 def _start_context(request, org, circle, category_id, office_id, allow_prior=False):
-    categories = _categories(request.user, org, circle)
+    listing = _board_listing(request.user, org, circle)
+    categories = listing["categories"]
     selected = next((row for row in categories if str(row["category_uuid"]) == category_id), None)
     if category_id and selected is None:
         raise discussion.DiscussionUnavailable()
@@ -288,6 +291,7 @@ def _start_context(request, org, circle, category_id, office_id, allow_prior=Fal
         "board_org": org, "board_circle": circle, "organisation": directory["organisation"],
         "circle": next((row for row in directory["circles"] if row["circle_uuid"] == circle), None),
         "category": selected, "office": office, "types": TOPIC_TYPES.items(),
+        "reads_without_board_place": listing["reads_without_board_place"],
         "categories": [row for row in categories if row["can_start_topic"]],
     }
 

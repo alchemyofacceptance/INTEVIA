@@ -16,10 +16,21 @@ RULE_VERSION = 1
 
 
 def encoded(data):
+    """Return bytes as unpadded base64url ASCII text.
+
+    decode_reference reads this form back and refuses any text
+    that does not re-encode to itself.
+    """
     return urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
 def instant(value):
+    """Encode an aware datetime as 8 signed big-endian bytes.
+
+    The bytes hold whole microseconds since the UTC Unix epoch,
+    the instant layout decode_reference reads. Any offset is
+    honoured; a naive datetime raises TypeError.
+    """
     micros = (value - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
     return micros.to_bytes(8, "big", signed=True)
 
@@ -97,10 +108,71 @@ def probation_grant(alias, organism_id, at, known):
 
 
 class V10ConditionQualificationSource:
+    """Supply condition-rule references to the S015 authority.
+
+    The post-founding authority uses itself as provider when
+    no condition source is supplied. On the rule-reference
+    path it reads at the request's effective and evaluation
+    cuts, then at database now for both cuts. It requires a
+    nonempty original reference equal to the current one.
+    On success it appends the encoded cuts to the reference.
+    """
     def __init__(self, provider):
+        """Keep provider for reference_at.
+
+        reference_at reads provider.database_alias and calls
+        provider._effective_coordinator_office. Nothing is checked
+        here.
+        """
         self.provider = provider
 
     def reference_at(self, request, *, effective_at, known_at):
+        """Return the rule reference at effective_at, known_at.
+
+        Read on the provider's alias. A missing or unknown
+        target kind raises KeyError; an unhashable kind
+        raises TypeError. Return None unless rule_uuid is
+        the kind's UUID string, rule_version equals 1 and
+        capacity is LO_COORDINATOR.
+
+        In the request's LO, find the actor by identity
+        (actor_pk). Return None if absent or not ACTIVE at
+        the cuts. Ask for the actor's effective Coordinator
+        office with those effective and evaluation cuts.
+        Return None if absent. Read its latest assignment
+        event by effective and recorded cuts; received_at
+        orders ties but does not filter this read.
+
+        Find the subject by subject_uuid in the same LO.
+        Return None if absent or if its period at the cuts
+        is missing or differs from the subject_start string.
+        MENTORSHIP uses that period alone for the subject.
+        Find the mentor by mentor_uuid in the LO. Return
+        None if absent, the subject, or not ACTIVE at the
+        cuts, then if its period is missing or differs from
+        the mentor_start string. A missing subject_uuid or
+        required mentor_uuid raises KeyError when read.
+
+        Pack four 16-byte UUIDs in network order: rule,
+        office assignment, head event and subject start.
+        If the head was absent, reading its event_uuid
+        raises AttributeError here. Append one flag byte:
+        1 and the mentor start UUID for MENTORSHIP, or 0
+        for PROBATION, which ignores any mentor supplied.
+
+        MENTORSHIP uses BY_DEFAULT_V1_0. For PROBATION,
+        return None unless the subject folds PROBATIONARY,
+        then unless probation_grant finds a grant for the
+        actor's LO at the cuts. Use BY_ENTITLEMENT_V1_0
+        and append the grant UUID and effective instant
+        (a signed 8-byte big-endian count of microseconds
+        since the UTC Unix epoch). A naive grant instant
+        raises TypeError during encoding.
+
+        Return activation:1:facts with facts in unpadded
+        base64url. The caller supplies the cuts field.
+        Reads only and takes no explicit row lock.
+        """
         from src.intevia.services.organism_application_authority import (
             _fold_state,
             _latest_transition,

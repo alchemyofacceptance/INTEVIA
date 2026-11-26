@@ -1161,9 +1161,11 @@ class CQDecisionTests(TransactionTestCase):
             )
 
         journey, reader, wording, _ = begin()
-        for read in (posts.read_thread, cq_reads.vote_status):
-            with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
-                read(**reader)
+        thread = posts.read_thread(**reader)
+        self.assertEqual(str(thread["topic"]["thread_uuid"]), str(reader["thread_uuid"]),
+                         "An unseated member reads the exact Board Topic during Clarity.")
+        with self.assertRaisesMessage(disc.DiscussionUnavailable, disc.UNAVAILABLE):
+            cq_reads.vote_status(**reader)
         for trustee in cq_settings_support.response_members(journey["thread_uuid"], people):
             cq.confirm_clarity(
                 **(journey | {"credential": trustee.credential}),
