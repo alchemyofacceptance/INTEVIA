@@ -8,9 +8,9 @@ from django.shortcuts import render
 from django.views.decorators.http import require_safe
 
 from core.cache import personal_response
-from core.templatetags.law_facts import adopting_body_name
-from src.intevia.services import library_laws, member_navigation
-from src.intevia.services.office_record import _ADOPTIONS
+from src.intevia.services import library_laws, member_navigation, policy_work
+from src.intevia.services.office_record import adoption_disclosure
+from src.intevia.services.policy_provenance import board_publication
 
 # Match the two line-start locator forms in 0067, public.l_clauses.
 _LOCATOR = r"[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*"
@@ -34,6 +34,32 @@ def law_text_parts(content):
         end = len(body) if last else offset + matches[index + 1].start() - 1
         parts.append((match.group(1) or match.group(2), body[offset + match.end():end]))
     return parts
+
+
+def law_display_parts(credential, org, content):
+    """Prepare both law cards; render the payment clause only through its own reader grant."""
+    parts = []
+    for locator, words in law_text_parts(content):
+        if locator == "payment-result":
+            payment = policy_work.cited_payment(credential, org, words)
+            parts.append((locator, payment))
+        else:
+            parts.append((locator, words))
+    return parts
+
+
+def split_policy_heading(content, title=None):
+    """Separate the exact opening title line from the wording a reader may edit or see."""
+    heading, body = library_laws.law_heading(content)
+    if heading is None or (title is not None and heading != title):
+        return "", content
+    return content[:len(content) - len(body)], body
+
+
+def policy_display_parts(credential, org, content, title=None):
+    """Render the Policy body with the same clause and payment grants as the law page."""
+    _, body = split_policy_heading(content, title)
+    return law_display_parts(credential, org, body)
 
 
 def _unavailable(request):
@@ -71,24 +97,24 @@ def law_version(request, org, binding, version_number):
                 **scope, binding=binding, version_number=version_number)
             owner = member_navigation.member_organisation_name(**scope)
             row = page["law"]
-            board_name = None
-            if row["issuer"] == org and row["decision_route"] == "CQ_GOVERNANCE_CIRCLE":
-                board_name, _ = library_laws.governance_board_names(org, row["adoption_recorded_at"])
+            access = policy_work.revision_access(request.user, org, row, page["status"])
+            mark = page["display"]
+            heading, remaining = library_laws.law_heading(row["content"])
+            content = remaining if heading == mark["title"] else row["content"]
+            parts = law_display_parts(request.user, row["issuer"], content)
+            adoption = adoption_disclosure(request.user, org, row, board_name_allowed=True,
+                                           end_at=page["end_at"])
+            publication = board_publication(request.user, org, row)
     except (library_laws.LawReadUnavailable, member_navigation.NavigationUnavailable):
         return _unavailable(request)
-    mark = page["display"]
-    route = _ADOPTIONS.get(row["decision_route"], "Adoption route unavailable")
-    body = adopting_body_name(row["issuer"], org, owner["full_name"], route, board_name)
-    heading, remaining = library_laws.law_heading(row["content"])
-    content = remaining if heading == mark["title"] else row["content"]
     class_label = mark["display_class"] or mark["class_name"]
     named = mark["title"] != class_label or (heading == class_label and heading != mark["reference"])
     page_title = f'{class_label}: {mark["title"]}' if named else class_label
     return render(request, "core/organisation_law_version.html", {
+        "can_revise": bool(access and access["authorised"] and access["current"]),
         "organisation": owner, "catalogue_domains": True, "mark": mark, "earlier": page["earlier"],
         "title": page_title, "version": row["version_number"],
         "is_current": page["status"] == "In force now", "status": page["status"],
-        "end_at": page["end_at"], "current_version": page["current_version"], "in_force_from": row["in_force_from"],
-        "body": body, "route": route, "recorded": row["adoption_recorded_at"],
-        "parts": law_text_parts(content),
+        "current_version": page["current_version"], "adoption": adoption, "publication": publication,
+        "parts": parts,
     })

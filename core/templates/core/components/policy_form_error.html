@@ -1,0 +1,6 @@
+<div class="notice refusal" role="alert">
+  <h2>The form needs your attention.</h2>
+  <p>{{ error }}</p><p>{{ effect }}</p>
+  <p class="next-action link-row">{% include "core/components/button.html" with href="#policy-form" variant="secondary" label="Correct the form below and submit it again." only %}</p>
+  <p>{{ help_text }}</p>
+</div>

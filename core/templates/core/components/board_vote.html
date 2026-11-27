@@ -22,9 +22,16 @@
       {% if vote.own_answer_card %}<div class="notice {{ vote.own_answer_card.kind }}" id="own-answer" role="status"><p>{{ vote.own_answer_card.text }}</p></div>{% endif %}
     </div>
     <article class="card" aria-labelledby="vote-wording-heading">
-      <h3 id="vote-wording-heading" class="card-heading">{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
+      <h3 id="vote-wording-heading" class="card-heading">{% if vote.policy_kind %}Motion · {% endif %}{{ vote.wording_heading }}{% if vote.version_number >= 2 %} · Version {{ vote.version_number }}{% endif %}</h3>
       <div class="card motion-wording">{{ vote.markdown|linebreaks }}</div>
     </article>
+    {% if vote.policy_kind %}
+      <article class="card office-provision" aria-labelledby="vote-policy-heading">
+        <h3 class="card-heading" id="vote-policy-heading">{% if vote.policy_kind == "PUBLISH_POLICY" %}Policy proposed for publication{% else %}Policy proposed for adoption{% endif %} · Version {{ vote.policy_version }}</h3>
+        <p class="meta">{{ vote.policy_reference }}</p>
+        {% include "core/components/law_text.html" with parts=vote.instrument_parts only %}
+      </article>
+    {% endif %}
   {% endif %}
   {% if vote.confirmation %}
     <article id="prepare" aria-labelledby="prepare-heading">
@@ -41,6 +48,7 @@
           <p>Marking this Suggestion as prepared will record that no vote opened.</p>
           <p>{{ vote.no_vote_reason }}</p>
         {% endif %}
+        {% if vote.policy_kind %}<p>The motion concerns version {{ vote.policy_version }} of this Policy. Its text is fixed.</p>{% endif %}
         <form class="discussion-actions" method="post" action="{% url 'discussion_prepare' board_org board_circle topic.thread_uuid %}">
           {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.command }}">
           {% if vote.confirmation.destination == "CLARITY" %}
@@ -125,9 +133,20 @@
     {% if vote.prepare_url %}
       <p class="discussion-actions link-row">{% include "core/components/button.html" with href=vote.prepare_url label="Mark as prepared" only %}</p>
     {% elif vote.command %}
-      <form method="post" class="discussion-actions" action="{% url vote.route board_org board_circle topic.thread_uuid %}">
-        {% csrf_token %}<input type="hidden" name="vote_command" value="{{ vote.command }}">
+      <form method="post" class="{% if vote.publications or vote.adoptions %}discussion-form{% else %}discussion-actions{% endif %}" action="{% url vote.route board_org board_circle topic.thread_uuid %}">
+        {% csrf_token %}
+        {% if vote.publications or vote.adoptions %}
+          <label for="publication-choice">What are you putting to a vote?
+          <select id="publication-choice" name="vote_command">
+            <option value="{{ vote.command }}" selected>Proposal only</option>
+            {% for item in vote.publications %}<option value="{{ item.token }}">Publish a Policy version · {{ item.title }} · {{ item.reference }} · Version {{ item.version_number }}</option>{% endfor %}
+            {% for item in vote.adoptions %}<option value="{{ item.token }}">Adopt a published Policy version · {{ item.title }} · {{ item.reference }} · Version {{ item.version_number }}</option>{% endfor %}
+          </select></label>
+          <p>Proposal only puts the motion to a vote now. Choose a Policy to review its wording first.</p>
+        {% else %}<input type="hidden" name="vote_command" value="{{ vote.command }}">{% endif %}
+        {% if vote.publications or vote.adoptions %}<div class="discussion-actions">{% endif %}
         {% include "core/components/button.html" with type="submit" label=vote.label only %}
+        {% if vote.publications or vote.adoptions %}</div>{% endif %}
       </form>
     {% endif %}
   {% endif %}

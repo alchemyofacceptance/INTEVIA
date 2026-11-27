@@ -1,0 +1,6 @@
+<p class="meta">Payment decision cited</p>
+{% if words.address %}
+  <p>{{ words.wording }} · {{ words.body }} · {% include "core/components/office_time.html" with stamp=words.recorded_at only %} · {% include "core/components/vote_result_link.html" with address=words.address only %}</p>
+{% else %}
+  <p>This payment decision is unavailable to you.</p>
+{% endif %}

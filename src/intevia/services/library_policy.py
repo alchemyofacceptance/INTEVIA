@@ -192,7 +192,7 @@ def draft_policy(*, credential, organism_uuid, resource_reference, content, auth
             if (old['actor_id'], old['organism_id'], old['resource_id'], old['content_sha256'], old['author_ids'],
                 old['predecessor_id'], old['declared_self'], _decoded_authority_source(old['authority_source'])['route']) != (
                 actor.pk, lo.pk, resource_reference, digest, author_ids, predecessor_version_id, declare_own_authorship, route):
-                raise PolicyRefused("This request already records different Policy content or authorship.")
+                raise PolicyRefused("This request already records different Policy content or authorship.", code="LIB_REQUEST_CONFLICT")
             return models.LibraryResourceVersion.objects.get(pk=old['version_id'])
         library = LibraryService(authority=_PolicyAuthority(lo, actor, route, received, resource_reference))
         inherited = []
@@ -202,10 +202,11 @@ def draft_policy(*, credential, organism_uuid, resource_reference, content, auth
             version = resource.current_version
         else:
             meta = _meta(predecessor_version_id)
-            predecessor = models.LibraryResourceVersion.objects.select_related('resource').get(pk=predecessor_version_id)
-            models.LibraryResource.objects.select_for_update().get(pk=predecessor.resource_id)
-            if meta['organism_id'] != lo.pk or predecessor.resource.resource_id != resource_reference or predecessor.resource.current_version_id != predecessor.pk:
-                raise PolicyRefused("Revise the owning organisation's current exact Policy version.")
+            predecessor = models.LibraryResourceVersion.objects.get(pk=predecessor_version_id)
+            resource = models.LibraryResource.objects.select_for_update().get(pk=predecessor.resource_id)
+            if (meta['organism_id'] != lo.pk or resource.resource_id != resource_reference
+                    or resource.current_version_id != predecessor.pk):
+                raise PolicyRefused("Revise the owning organisation's current exact Policy version.", code="LIB_STALE_HEAD")
             # Carry one attribution per author. Prefer their explicit declaration
             # when the predecessor also records an earlier carried attribution.
             inherited = _rows('SELECT DISTINCT ON (author_id) * FROM public.core_libauthorclaim '

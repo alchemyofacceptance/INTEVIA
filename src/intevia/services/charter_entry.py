@@ -21,15 +21,32 @@ class CharterEntryRefused(RuntimeError):
 
 @dataclass(frozen=True)
 class Charter:
+    """One ratified GRP-13 instrument and its pinned text digest.
+
+    resource is the LIBRARY resource id, filename the file's name
+    under docs/constitution, and digest the SHA-256 hex of its
+    ratified bytes. Frozen; CHARTERS holds the two instruments.
+    """
     resource: str
     filename: str
     digest: str
 
     @property
     def ratification(self):
+        """The GRP-13 ratification reference for this instrument.
+
+        The text "GRP-13:ratified:<RATIFIED_ON>:<filename>". Entry
+        records it as version 1's creation evidence, and an existing
+        version 1 must carry it.
+        """
         return f"GRP-13:ratified:{RATIFIED_ON.isoformat()}:{self.filename}"
 
     def check(self, data):
+        """Refuse bytes that are not the ratified text.
+
+        Raises CharterEntryRefused unless the SHA-256 of data equals
+        digest; returns None otherwise. Compares the digest only.
+        """
         if sha256(data).hexdigest() != self.digest:
             raise CharterEntryRefused(f"The bytes of {self.filename} differ from the ratified text.")
 
@@ -42,6 +59,24 @@ _DOCUMENTS = Path(__file__).resolve().parents[3] / "docs" / "constitution"
 
 
 def _published_version(library, charter, text, actor):
+    """Return the number of the charter's verified version 1.
+
+    Call inside a transaction. Lock the resource row if it exists.
+    If absent, create it from the exact text with the ratification
+    reference, then publish it with the reference
+    GRP-13:initial-publication:<filename>. Both calls use the
+    actor's credential. A state
+    that disallows publication raises InvalidLibraryTransition.
+
+    Refuse with CharterEntryRefused if version 1 is missing, its
+    creator differs from the actor, or the actor did not supply
+    the ratification as creation evidence. Also refuse if the
+    actor has no publish_library_resource transition to published
+    for that version. This tests publication history only.
+
+    Finally check the stored text's UTF-8 bytes against the
+    charter digest. A mismatch raises CharterEntryRefused.
+    """
     resource = models.LibraryResource.objects.select_for_update().filter(resource_id=charter.resource).first()
     if resource is None:
         resource = library.create_resource(
@@ -66,6 +101,29 @@ def _published_version(library, charter, text, actor):
 
 
 def _prepare_publications(credential, library):
+    """Prepare both charter publications before LAW intake.
+
+    Read each file, check its digest, then decode it as UTF-8.
+    A mismatch raises CharterEntryRefused. File and decoding
+    errors propagate before the transaction opens.
+
+    In one transaction, lock the Identity for the credential,
+    then the LivingOrganism marked as the platform root. Each
+    lookup requires one row. The model's DoesNotExist or
+    MultipleObjectsReturned propagates if the lookup fails.
+
+    Look up the founder office with the clock's statement time
+    as both cuts.
+    Raise CharterEntryRefused if the actor differs from the root
+    founder or the lookup returns no qualifying assignment.
+    In charter order, create any missing resource and verify
+    version 1 of each. Provenance or stored-digest failures raise
+    CharterEntryRefused. A failure in either publication rolls
+    back the writes from this block.
+
+    Return the root organism UUID and a mapping from each Charter
+    to its verified version number.
+    """
     texts = {}
     for charter in CHARTERS:
         data = (_DOCUMENTS / charter.filename).read_bytes()

@@ -47,7 +47,7 @@ def office_page(request, org, office):
     prefetch = is_prefetch(request)
     try:
         page = office_record(credential=request.user, organism_uuid=org, office_definition_uuid=office,
-                             present_care=request.method == "GET" and not prefetch)
+                             present_care=request.method == "GET" and not prefetch, include_adoption=True)
     except SettingRefused as exc:
         if exc.code != "CARE_SETTING_UNAVAILABLE":
             raise

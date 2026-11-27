@@ -163,9 +163,14 @@ def _result(board, thread, post):
 # version the ballot fixed: never the Topic's title, another version or a reply. no_attached_act
 # is the record's own test, as office_record._decision_result reads it.
 _RESULT_DETAIL = """SELECT a.recorded_at,v.version_number AS wording_version_number,body.markdown AS wording,
- a.operation='SETTLE' AND NOT EXISTS (SELECT FROM public.core_cqact i
-     WHERE i.organism_id=a.organism_id AND i.thread_uuid=a.thread_uuid
-       AND i.operation='INITIATE' AND i.request ? 'attachment') AS no_attached_act
+ a.operation='SETTLE' AND NOT coalesce(init.request ? 'attachment',false) AS no_attached_act,
+ adopted.version_number AS adopted_version,
+ (a.operation='SETTLE' AND init.request->'attachment' @>
+      '{"kind":"LAW","spec":{"operation":"ADOPT","law_class":"POLICY","scope":"LIVING_ORGANISM"}}'::jsonb
+  AND a.facts->>'disposition' IN ('NO_EFFECT','NO_AUTHORITY')) AS unadopted,
+ pub.version_number AS published_version,
+ (a.operation='SETTLE' AND init.request#>>'{attachment,kind}'='PUBLISH_POLICY'
+  AND a.facts->>'disposition' IN ('NO_EFFECT','NO_AUTHORITY')) AS unpublished
  FROM public.core_cqact a
  LEFT JOIN public.core_cqact ballot ON ballot.act_uuid=(a.facts->>'ballot')::uuid
       AND ballot.board_uuid=a.board_uuid AND ballot.thread_uuid=a.thread_uuid
@@ -174,6 +179,54 @@ _RESULT_DETAIL = """SELECT a.recorded_at,v.version_number AS wording_version_num
  LEFT JOIN public.core_discpostversion v ON v.post_uuid=opening.post_uuid
       AND v.version_uuid=(ballot.facts->>'version')::uuid
  LEFT JOIN public.core_discbody body ON body.version_uuid=v.version_uuid
+ LEFT JOIN public.core_cqact init ON init.organism_id=a.organism_id AND init.board_uuid=a.board_uuid
+      AND init.thread_uuid=a.thread_uuid AND init.operation='INITIATE'
+ LEFT JOIN LATERAL (
+     SELECT released.version_number
+       FROM public.core_cqact effect
+       JOIN public.core_libpublicationfact f ON f.operation_uuid=a.act_uuid AND f.kind='PUBLICATION'
+            AND f.organism_id=a.organism_id AND f.authority_source=effect.authority_source
+       JOIN public.core_libraryresourceversion released ON released.id=f.version_id
+            AND released.id::text=effect.facts#>>'{domain_plan,version}'
+       JOIN public.core_libraryresource resource ON resource.id=released.resource_id
+            AND resource.id::text=effect.facts#>>'{domain_plan,resource}'
+       JOIN public.core_libraryresourcetransition tr ON tr.id=f.transition_id AND tr.to_state='published'
+            AND tr.version_id=released.id AND tr.resource_id=resource.id
+      WHERE a.operation='SETTLE' AND a.facts->>'disposition'='APPLIED'
+        AND init.request#>>'{attachment,kind}'='PUBLISH_POLICY'
+        AND resource.resource_id=init.request#>>'{attachment,spec,resource}'
+        AND released.version_number::text=init.request#>>'{attachment,spec,version}'
+        AND effect.operation='IMPLEMENT' AND effect.organism_id=a.organism_id
+        AND effect.board_uuid=a.board_uuid AND effect.thread_uuid=a.thread_uuid
+        AND effect.request->>'result'=a.act_uuid::text
+        AND effect.facts->>'disposition'='APPLIED' AND effect.facts->'domain_plan'=a.facts->'domain_plan'
+        AND effect.facts#>>'{domain_plan,domain}'='PUBLISH_POLICY'
+ ) pub ON true
+ LEFT JOIN LATERAL (
+     SELECT v.version_number
+       FROM public.core_cqact effect
+       JOIN public.core_livingorganismevent e ON e.event_uuid=effect.act_uuid
+            AND e.living_organism_id=effect.organism_id
+       JOIN public.core_organismlawbinding b ON b.adoption_event_id=e.id AND b.organism_id=a.organism_id
+            AND b.scope_kind='LIVING_ORGANISM' AND b.law_class='POLICY'
+       JOIN public.core_libraryresourceversion v ON v.id=b.version_id AND v.resource_id=b.resource_id
+       JOIN public.core_libraryresource r ON r.id=b.resource_id
+      WHERE a.operation='SETTLE' AND a.facts->>'disposition'='APPLIED'
+        AND effect.operation='IMPLEMENT' AND effect.organism_id=a.organism_id
+        AND effect.board_uuid=a.board_uuid AND effect.thread_uuid=a.thread_uuid
+        AND effect.request->>'result'=a.act_uuid::text AND effect.authority_source->>'reference'=a.act_uuid::text
+        AND effect.facts->>'disposition'='APPLIED'
+        AND effect.facts->'domain_plan'=a.facts->'domain_plan'
+        AND effect.facts#>>'{domain_plan,domain}'='LAW' AND effect.facts#>>'{domain_plan,kind}'='ADOPT'
+        AND init.request#>>'{attachment,kind}'='LAW' AND init.request#>>'{attachment,spec,operation}'='ADOPT'
+        AND init.request#>>'{attachment,spec,law_class}'='POLICY'
+        AND init.request#>>'{attachment,spec,scope}'='LIVING_ORGANISM'
+        AND b.binding_uuid::text=init.request#>>'{attachment,spec,proposal}'
+        AND b.predecessor_id::text=init.request#>>'{attachment,spec,predecessor}'
+        AND r.resource_id=init.request#>>'{attachment,spec,resource}'
+        AND v.version_number::text=init.request#>>'{attachment,spec,version}'
+        AND public.l_visible_window(b,public.intevia_clock_statement(),public.intevia_clock_statement())
+ ) adopted ON true
  WHERE a.operation IN ('SETTLE','CLOSE','NO_BALLOT') AND a.board_uuid=%s AND a.thread_uuid=%s AND a.act_uuid=%s"""
 
 
@@ -275,7 +328,8 @@ def _result_detail(board, circle_uuid, thread, record):
     version an ordinary decision's ballot fixed, and None for an election or a result with no
     ballot. ``carried_no_attached_act`` is true only for a carried, not restarted, ordinary
     decision whose Suggestion had no act attached. ``deciding_body`` is the body's name at the
-    later of the result's effective and recorded times.
+    later of the result's effective and recorded times. A publication notice reports the
+    exact version's recorded effect. The only wording released here comes from the motion.
     """
     from core.models import Circle
     from src.intevia.services import _record_names
@@ -285,6 +339,15 @@ def _result_detail(board, circle_uuid, thread, record):
         raise disc.DiscussionUnavailable()
     row = rows[0]
     decided = record["event_kind"] == "DECISION" and record["ballot"] is not None
+    # DW3: the result releases an outcome only. Even a published clause belongs on the law page.
+    if row.get("adopted_version") is not None:
+        record["adoption_notice"] = f"Version {row['adopted_version']} is in force."
+    elif row.get("unadopted"):
+        record["adoption_notice"] = "This vote did not put the Policy into force."
+    if row["published_version"] is not None:
+        record["publication_notice"] = f"Version {row['published_version']} was published."
+    elif row["unpublished"]:
+        record["publication_notice"] = "The Policy was not published."
     record["recorded_at"] = row["recorded_at"]
     record["wording"] = row["wording"] if decided else None
     record["wording_version_number"] = row["wording_version_number"] if decided else None

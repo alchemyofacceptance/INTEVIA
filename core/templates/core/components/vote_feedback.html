@@ -8,5 +8,5 @@
   {% if vote.ballot_form %}<p>Your answer is recorded once and cannot be changed.</p>{% endif %}
   {% if vote.ballot_note %}<p>{{ vote.ballot_note }}</p>{% endif %}
   {% if vote.result_due %}<p>Voting has closed. The result has not been recorded yet.</p>{% if vote.due_command %}<p>Recording it also records any other result or deadline that is due in your organisations.</p>{% endif %}{% endif %}
-  {% if vote.editable_wording %}<p class="vote-edit-note">The wording can still change until voting opens.</p>{% endif %}
+  {% if vote.editable_wording %}<p class="vote-edit-note">{% if vote.policy_kind %}The motion wording can still change until voting opens. The Policy text is fixed.{% else %}The wording can still change until voting opens.{% endif %}</p>{% endif %}
 </div>

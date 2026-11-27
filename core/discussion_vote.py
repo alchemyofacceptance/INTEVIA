@@ -12,6 +12,8 @@ from django.utils.formats import date_format
 
 from core.cache import personal_response
 from core import discussion_forms as forms
+from core import publication_vote
+from core.law_pages import policy_display_parts
 from core.vote_tests import progress_line, vote_rule_rows
 from core.ui import INSUFFICIENT_PARTICIPATION, ballot_choice_labels, count_ring, danger_card, own_answer_card, vote_status_line
 from core.ui_views import is_prefetch
@@ -247,7 +249,9 @@ def panel(request, org, circle, thread):
     try:
         vote = cq.board_topic_vote(credential=request.user, organism_uuid=org,
                                    circle_uuid=circle, thread_uuid=thread,
-                                   preview_prepared=request.GET.get("prepare") == "1")
+                                   preview_prepared=request.GET.get("prepare") == "1", include_publications=True)
+        if vote and vote.get("policy_kind"):
+            vote["instrument_parts"] = policy_display_parts(request.user, org, vote.pop("instrument_text"))
     except DatabaseError:
         return None
     if vote and vote.get("phase"):
@@ -291,6 +295,7 @@ def panel(request, org, circle, thread):
         if op == "INITIATE":
             vote["command"] = forms.issue_form(request, op, org, circle, thread=thread,
                                                version=vote["opening_version"])
+            publication_vote.sign_choices(request, vote, org, circle, thread)
             vote.update(route="discussion_put_forward", label="Put to a Board vote")
         else:
             topic = reverse("discussion_topic", args=(org, circle, thread))
@@ -331,18 +336,28 @@ def submit(request, org, circle, thread, operation):
                 raise discussion.DiscussionRefused(code="form")
         if operation == "RECORD_DUE":
             return _record_due(request, org, circle, thread, context)
+        if operation == "INITIATE" and "confirmation" in data:
+            if not isinstance(data["confirmation"], dict):
+                raise discussion.DiscussionRefused(code="form")
+            context["policy_vote_intent"] = data["confirmation"].get("intent")
         key = UUID(data["request"])
         with transaction.atomic():
             # Take the writer's identity, request and organisation locks in its order.
-            discussion._actor(request.user)
+            actor = discussion._actor(request.user)
             cq._lock(key, org)
-            _, context = forms._read_page(request.user, org, circle, thread)
+            _, released = forms._read_page(request.user, org, circle, thread)
+            context.update(released)
             if context["topic"]["topic_type"] != "SUGGESTION" or context["posts"][0]["hidden"]:
                 raise discussion.DiscussionUnavailable()
             args = dict(credential=request.user, organism_uuid=org, circle_uuid=circle,
                         thread_uuid=thread, request_uuid=key)
             if operation == "INITIATE":
-                cq.put_forward(**args, version_uuid=UUID(data["version"]))
+                if "policy_vote_intent" in context:
+                    reviewed = publication_vote.submit(request, context, args, actor, data)
+                    if reviewed is not None:
+                        return reviewed
+                else:
+                    cq.put_forward(**args, version_uuid=UUID(data["version"]))
             elif operation == "CONFIRM":
                 cq.confirm_clarity(**args, version_uuid=UUID(data["version"]))
             elif operation == "QUESTION":
@@ -410,6 +425,10 @@ def submit(request, org, circle, thread, operation):
             return forms.refusal(request, "unknown", context)
     except DatabaseError:
         return forms.refusal(request, "unknown", context)
+    if context.get("policy_vote_intent") == "adopt":
+        messages.success(request, f"Adoption of version {data['confirmation']['number']} was put to a Board vote.")
+    elif context.get("policy_vote_intent") == "publish":
+        messages.success(request, f"Publication of version {data['confirmation']['number']} was put to a Board vote.")
     response = HttpResponseRedirect(reverse("discussion_topic", args=(org, circle, thread)) + "#vote")
     response.status_code = 303
     return response

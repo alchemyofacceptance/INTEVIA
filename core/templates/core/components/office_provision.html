@@ -1,10 +1,13 @@
-{% load law_facts %}
 {% with provision=row.provision observation=row.observation %}
 {% if grouped %}<h4 class="card-heading">{{ row.title|default:row.label }}</h4>{% else %}<h3 class="card-heading">{{ row.title|default:row.label }}</h3>{% endif %}
 <p class="meta">{% if row.title %}{{ row.label }} · {% elif provision.library_reference %}{{ provision.library_reference }} · {% endif %}{% if provision.locator %}Clause “{{ provision.locator }}” · {% endif %}{% if provision.version_link %}<a href="{% url 'organisation_law_version' office.organism_uuid provision.binding provision.version %}">Version {{ provision.version }}</a>{% else %}Version {{ provision.version }}{% endif %}</p>
 {% if provision.status == "cited_and_in_force" %}<p>Cited and in force</p>{% elif provision.status == "in_force_now" %}<p>In force now</p>{% endif %}
 <div{% if observation %} class="office-source-pair"{% endif %}>
-  <blockquote class="office-clause">{{ provision.clause }}</blockquote>
+  {% if provision.locator == "payment-result" %}
+    {% include "core/components/payment_citation.html" with words=provision.payment only %}
+  {% else %}
+    <blockquote class="office-clause">{{ provision.clause }}</blockquote>
+  {% endif %}
   {% if observation %}
     <aside class="notice care office-observation" aria-label="CARE observation">
       <p class="eyebrow">{{ observation.label }}</p>
@@ -14,15 +17,6 @@
     </aside>
   {% endif %}
 </div>
-<details class="office-adoption">
-  <summary>Adoption record</summary>
-  <dl class="office-facts">
-    {% if provision.adopting_body %}<dt>Adopting body</dt><dd>{% adopting_body_name provision.adopting_body office.organism_uuid office.organisation_full_name provision.adoption_route office.board_full_name %}</dd>{% endif %}
-    {% if provision.adoption_route %}<dt>Adoption route</dt><dd>{{ provision.adoption_route }}</dd>{% endif %}
-    <dt>In force from</dt><dd>{% include "core/components/office_time.html" with stamp=provision.in_force_from only %}</dd>
-    <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=provision.recorded_at only %}</dd>
-    <dt>Adoption record</dt><dd>{{ provision.adoption_record }}</dd>
-    {% if provision.adoption_result_link %}<dt>Adoption result</dt><dd>{{ provision.adoption_result_link }}</dd>{% endif %}
-  </dl>
-</details>
+{% include "core/components/board_publication.html" with publication=provision.publication only %}
+{% include "core/components/adoption_record.html" with adoption=provision.adoption only %}
 {% endwith %}

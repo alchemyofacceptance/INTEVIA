@@ -791,7 +791,9 @@ def phase(*, credential, organism_uuid, thread_uuid, circle_uuid=None):
 def _preparation_preview(board, thread, actor, owner):
     """Read the PREPARED facts and the ordinary RULE_OPEN conditions at one cut.
 
-    The parent projection admits only Board Suggestions without an attachment.
+    The caller admits plain Suggestions, Policy publications and Policy adoptions.
+    These use the ordinary PREPARED phase facts and roster. The Policy instrument
+    stays pinned at INITIATE, independently of the opening post version in facts.
     Keep roster identities, the applied provisions and the authority source in SQL.
     """
     return disc._rows(
@@ -1079,7 +1081,8 @@ def board_open_vote_counts(*, credential, organism_uuid, circle_uuid):
 
 
 @transaction.atomic
-def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, preview_prepared=False):
+def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, preview_prepared=False,
+                     include_publications=False):
     """Return the admitted Board reader's vote line, wording and available command.
 
     A live draft follows the opening post. An opened ballot pins its own version;
@@ -1089,6 +1092,8 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     ``result_due`` tells an active member that the deadline has passed with no result.
     Once a result is recorded, ``decided_own_answer`` gives an active or probationary
     member their own answer on the decided ballot, and nobody else's (capture N).
+    Only this panel, after the private thread_audience check, reads instrument_text
+    from INITIATE. The Topic's shared _read_page context never receives this text.
     """
     actor = disc._actor(credential)
     board = cq_reads._scope(actor, organism_uuid, circle_uuid, thread_uuid, discussion_read=True)
@@ -1098,6 +1103,10 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
         """SELECT opening.version_uuid, opening.author_id=%s AS is_author, initiated.act_uuid, v.version_number, body.markdown,
                   initiated.request ? 'attachment' AS attached,
                   initiated.request->'attachment'->>'kind' AS attachment_kind,
+                  policy.instrument->>'kind' AS policy_kind,
+                  policy.instrument#>>'{spec,resource}' AS policy_reference,
+                  policy.instrument#>>'{spec,version}' AS policy_version,
+                  policy.instrument->>'text' AS instrument_text,
                   state.act_uuid AS clarity_window, state.phase, state.deadline, state.response_deadline,
                   public.intevia_clock_statement() AS read_at, head.effective_at,
                   (head.facts->>'closed_at')::timestamptz AS closed_at,
@@ -1118,6 +1127,12 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
            JOIN public.discp_posts opening ON opening.thread_uuid=t.thread_uuid AND opening.post_number=1
            LEFT JOIN public.core_cqact initiated ON initiated.thread_uuid=t.thread_uuid
                 AND initiated.board_uuid=b.board_uuid AND initiated.operation='INITIATE'
+           LEFT JOIN LATERAL (
+               SELECT initiated.request->'attachment' AS instrument
+               WHERE initiated.request#>>'{attachment,kind}'='PUBLISH_POLICY'
+                  OR initiated.request->'attachment' @>
+                     '{"kind":"LAW","spec":{"operation":"ADOPT","law_class":"POLICY"}}'::jsonb
+           ) policy ON true
            LEFT JOIN public.cq_phases state ON state.board_uuid=b.board_uuid AND state.thread_uuid=t.thread_uuid
            LEFT JOIN public.core_cqact head ON head.act_uuid=state.act_uuid
            LEFT JOIN public.core_cqact ballot ON ballot.act_uuid=(head.facts->>'ballot')::uuid
@@ -1143,6 +1158,10 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
             "head_operation", "outcome", "ballot_uuid", "version_number", "markdown",
         )})
         panel["specialist_preparation"] = row["attachment_kind"] in ("ELECTION", "COMMITTEE")
+        if row["policy_kind"] and row["phase"] in ("PREPARATION", "CLARITY", "VOTING"):
+            panel.update({name: row[name] for name in (
+                "policy_kind", "policy_reference", "policy_version", "instrument_text",
+            )})
         if row["clarity_reader"]:
             if row["phase"] == "CLARITY":
                 panel.update(_clarity_responses(board, thread_uuid, actor, row))
@@ -1187,7 +1206,7 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
                 panel["decided_own_answer"] = own[0]["choice"]
         panel["body_kind"] = row["body_kind"]
         panel["election"] = row["attachment_kind"] == "ELECTION"
-        if row["phase"] != "PREPARATION" or row["attached"]:
+        if row["phase"] != "PREPARATION" or (row["attached"] and not row["policy_kind"]):
             return panel
         op, args = "PREPARED", {}
     else:
@@ -1197,8 +1216,12 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     if op == "PREPARED" and preview_prepared:
         try:
             with transaction.atomic():
-                disc._rows("SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL",
-                           [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk])
+                authority, = disc._rows(
+                    "SELECT public.cq_source(%s,%s,%s,%s,%s,public.intevia_clock_statement()) IS NOT NULL AS allowed",
+                    [board["organism_id"], board["board_uuid"], thread_uuid, op, actor.pk],
+                )
+                if not authority["allowed"]:
+                    return panel
                 preview = _preparation_preview(board, thread_uuid, actor, organism_uuid)
         except IntegrityError as error:
             code = getattr(getattr(error.__cause__, "diag", None), "message_primary", None)
@@ -1214,4 +1237,10 @@ def board_topic_vote(*, credential, organism_uuid, circle_uuid, thread_uuid, pre
     panel["operation"] = op
     if op == "INITIATE":
         panel["opening_version"] = row["version_uuid"]
+        if include_publications and row["is_author"]:
+            from src.intevia.services import policy_adoption, policy_publication
+            eligible = policy_publication.choices(organism_uuid, board, actor, row["read_at"])
+            if eligible is not None:
+                adoptions = policy_adoption.choices(organism_uuid, board["organism_id"], row["read_at"])
+                panel.update(publications=eligible, adoptions=adoptions, motion=row["markdown"])
     return panel

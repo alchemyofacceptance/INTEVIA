@@ -1,0 +1,26 @@
+{% extends "core/base.html" %}
+{% block title %}Review adoption | INTEVIA{% endblock %}
+{% block content %}
+<h1 class="record-heading page-title">Review adoption</h1>
+<div class="office-source-pair">
+  <article class="card">
+    <h2 class="card-heading">Motion wording</h2>
+    <div class="motion-wording">{{ motion|linebreaks }}</div>
+  </article>
+  <article class="card office-provision">
+    <h2 class="card-heading">{{ policy.title }}</h2>
+    <p>In force now: <a href="{{ current_policy_url }}">{{ policy.title }} · Version {{ policy.previous_number }}</a></p>
+    <p class="meta">This organisation · {{ organisation.full_name }}</p>
+    <h3 class="card-heading">Proposed for adoption · Version {{ policy.version_number }}</h3>
+    {% include "core/components/law_text.html" with parts=parts only %}
+  </article>
+</div>
+<div class="card prompt notice">
+  <p>Publication made this wording available. Adoption by the Board would put it into force.</p>
+  <form method="post" class="discussion-actions" action="{% url 'discussion_put_forward' board_org board_circle topic.thread_uuid %}">
+    {% csrf_token %}<input type="hidden" name="vote_command" value="{{ command }}">
+    {% include "core/components/button.html" with type="submit" label="Put adoption to a Board vote" only %}
+    {% include "core/components/button.html" with href=back variant="secondary" label="Cancel" only %}
+  </form>
+</div>
+{% endblock %}

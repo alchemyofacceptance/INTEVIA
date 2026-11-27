@@ -1,0 +1,26 @@
+{% extends "core/base.html" %}
+{% block title %}Policy draft · Version {{ work.number }} | INTEVIA{% endblock %}
+{% block content %}
+<h1 class="record-heading page-title">Policy draft · Version {{ work.number }}</h1>
+<p class="meta">{{ work.reference }} · Draft</p>
+<aside class="notice"><p>Version {{ work.number }} is a draft. Version {{ work.version_number }} still governs.</p></aside>
+<article class="card office-provision">{% include "core/components/law_text.html" with parts=parts only %}</article>
+<h2 class="record-heading">Authors</h2>
+{% include "core/components/policy_authors.html" with authors=work.authors number=work.version_number only %}
+<h2 class="record-heading">Authorship declaration</h2>
+{% if work.claim %}
+  <p>{{ work.claim.declaration }}</p>
+  <p>Declaration recorded · {% include "core/components/office_time.html" with stamp=work.claim.recorded_at only %}</p>
+{% else %}
+  <p>The drafter’s declaration is still to be recorded.</p>
+{% endif %}
+{% if error %}{% include "core/components/policy_form_error.html" with effect="This request recorded no declaration." %}{% endif %}
+{% if review %}
+  <form id="policy-form" class="discussion-form" method="post">
+    {% csrf_token %}<input type="hidden" name="review" value="{{ review }}">
+    <label><input type="checkbox" name="affirm" value="yes" required> I declare my authorship of this exact version and confirm its recorded author list is complete.</label>
+    <div class="discussion-actions">{% include "core/components/button.html" with type="submit" label="I declare my authorship" only %}</div>
+  </form>
+{% endif %}
+{% if back %}<div class="discussion-actions">{% include "core/components/button.html" with href=back variant="secondary" label="Back to Policy" only %}</div>{% endif %}
+{% endblock %}

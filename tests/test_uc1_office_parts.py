@@ -26,6 +26,9 @@ class OfficePartsTests(SimpleTestCase):
         self.earlier = {**self.current, "status": "cited_at_definition", "clause": "The Treasurer approves payments.",
                         "version": 1, "adoption_record": uuid4(), "binding": uuid4(), "adoption_result_link": uuid4(),
                         "in_force_from": self.at - timedelta(days=1), "adoption_route": "Organisation Coordinator decision"}
+        for row, body in ((self.earlier, "River Trust"), (self.current, "Board of Trustees · River Trust")):
+            row["adoption"] = dict(body=body, route=row["adoption_route"],
+                                   in_force_from=row["in_force_from"], recorded=row["recorded_at"])
         self.observation = dict(label="CARE", words="Compare the approval clause with the vacancy.",
                                 source_version=2, source_locator="approval", source_link=uuid4(), event_ref=uuid4())
         self.topic = dict(title="CARE and the Board <minutes>", created_at=self.at, office_version=1, thread_link=uuid4())
@@ -87,10 +90,11 @@ class OfficePartsTests(SimpleTestCase):
         for card, row, body in ((old, self.earlier, "River Trust"), (latest, self.current, "Board of Trustees · River Trust")):
             with self.subTest(version=row["version"]):
                 fields = self.facts(page, card)
-                self.assertEqual((fields["Adoption record"], fields["Adoption result"], fields["Adoption route"],
-                                  fields["Adopting body"]),
-                                 (str(row["adoption_record"]), str(row["adoption_result_link"]), row["adoption_route"], body),
-                                 "Each version must retain its own adoption, route and result under the organisation's full name.")
+                self.assertEqual((fields["Adoption route"], fields["Adopting body"]), (row["adoption_route"], body))
+                self.assertNotIn("Adoption record", fields, "The disclosure summary must not be a raw-ID row.")
+                self.assertNotIn("Adoption result", fields, "A result without a released link has no row.")
+                self.assertNotIn(str(row["adoption_record"]), raw)
+                self.assertNotIn(str(row["adoption_result_link"]), raw)
                 self.assertEqual([n["attrs"]["datetime"] for n in page.select("time", within=card)],
                                  [row[key].isoformat() for key in ("in_force_from", "recorded_at")],
                                  "Each version must show its own in-force and recorded instants.")
@@ -189,6 +193,8 @@ class OfficePartsTests(SimpleTestCase):
         foreign = uuid4()
         charter = {k: v for k, v in self.current.items() if k not in ("locator", "adoption_route", "adoption_result_link")}
         charter.update(adopting_body=foreign, clause="First charter line.\nSecond charter line.", status="cited_and_in_force")
+        charter["adoption"] = dict(body="Inherited from INTEVIA", in_force_from=charter["in_force_from"],
+                                   recorded=charter["recorded_at"])
         for kind, label in (("OFFICE_BASIS", "Establishes this office"), ("APPOINTING_AUTHORITY", "Appointing authority"),
                             ("ALTERNATIVE_ROUTE", "Alternative route"), ("NOMINATION_ROUTE", "Nomination route"),
                             ("PARTICIPATION_REQUIRED", "Required participation"), ("EX_OFFICIO_SEAT", "Seat held by virtue of office")):
@@ -205,7 +211,7 @@ class OfficePartsTests(SimpleTestCase):
                                  "A whole-document citation must omit the clause segment.")
                 self.assertEqual(self.one(page, "blockquote", within=card)["text"], charter["clause"],
                                  "The whole-document citation must preserve its complete text.")
-                self.assertEqual(set(self.facts(page, card)), {"Adopting body", "Adoption record", "In force from", "Recorded"},
+                self.assertEqual(set(self.facts(page, card)), {"Adopting body", "In force from", "Recorded"},
                                  "Missing route and result permissions must remove their labels and values.")
                 self.assertIn("Cited and in force", card["text"], "A combined citation must display its combined status once.")
 
@@ -298,6 +304,8 @@ class OfficePartsTests(SimpleTestCase):
         payment = dict(purpose="one_payment", label="cited by the Policy in force", outcome="Carried.", body=adoption["body"],
                        effective_at=self.at - timedelta(hours=1), recorded_at=self.at - timedelta(minutes=55),
                        result_uuid=payment_id, result_link=payment_id, reporting_rule_link=payment_id)
+        for row in (adoption, payment):
+            row["result_address"] = (self.owner, row["body"], uuid4(), row["result_uuid"])
         for mode in ("light", "dark"):
             for rows in ([adoption, payment], [payment], [adoption], []):
                 with self.subTest(mode=mode, purposes=[r["purpose"] for r in rows]):
@@ -308,24 +316,24 @@ class OfficePartsTests(SimpleTestCase):
                     self.assertEqual(len(cards), len(rows), "Only independently released vote results may produce decision cards.")
                     for card, row in zip(cards, rows):
                         fields = self.facts(page, card)
+                        url = reverse("discussion_result", args=row["result_address"])
+                        self.assertEqual([a["text"] for a in page.select("a", within=card, href=url)], ["View vote result"],
+                                         "Each decision links to its own independently released result.")
+                        self.assertNotIn(str(row["result_uuid"]), card["text"])
                         if row["purpose"] == "one_payment":
-                            self.assertEqual(fields.get("Result reference"), str(payment_id), "The one-payment card must carry the payment’s own result.")
                             self.assertEqual(self.one(page, "h3", within=card)["text"], "One payment", "The payment must be described as one payment.")
                             self.assertNotIn("Adopted provision reference", fields, "The payment must not acquire the adoption's binding.")
-                            self.assertEqual(fields.get("Reporting rule reference"), str(payment_id), "The payment must keep its allowed reporting reference.")
                         else:
-                            self.assertEqual(fields.get("Result reference"), str(adoption_id), "The adoption must carry its own settled result.")
                             self.assertEqual(self.one(page, "h3", within=card)["text"], "Adoption of the standing Policy",
                                              "The adoption card must identify the standing Policy.")
-                            self.assertEqual(fields.get("Adopted provision reference"), str(adoption["adopted_binding"]),
-                                             "The standing result must carry its own adopted binding.")
+                            self.assertNotIn(str(adoption["adopted_binding"]), card["text"])
                             self.assertIn("Version 2", card["text"], "The standing result must name the adopted version.")
                             self.assertNotIn("Reporting rule reference", fields, "A result without reporting permission must omit that field.")
                         self.assertIn(row["label"][0].upper() + row["label"][1:], card["text"],
                                       "The result must explain its own relationship to the Policy.")
                         self.assertIn(row["outcome"], card["text"], "The result must display its returned outcome.")
                         self.assertEqual(fields.get("Deciding body"), "Board", "A Board vote must name the deciding body by short label.")
-                        self.assertNotIn(str(row["body"]), raw, "The Board identifier must not substitute for its name.")
+                        self.assertNotIn(str(row["body"]), card["text"], "The Board identifier must not substitute for its name.")
                         self.assertEqual([n["attrs"]["datetime"] for n in page.select("time", within=card)],
                                          [row[key].isoformat() for key in ("effective_at", "recorded_at")],
                                          "Each result must retain its own effective and recorded times.")

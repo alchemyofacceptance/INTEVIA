@@ -1,0 +1,11 @@
+<details class="office-adoption">
+  <summary>Adoption record</summary>
+  <dl class="office-facts">
+    {% if adoption.body %}<dt>Adopting body</dt><dd>{{ adoption.body }}</dd>{% endif %}
+    {% if adoption.route %}<dt>Adoption route</dt><dd>{{ adoption.route }}</dd>{% endif %}
+    <dt>In force from</dt><dd>{% include "core/components/office_time.html" with stamp=adoption.in_force_from only %}</dd>
+    {% if adoption.end_at %}<dt>In force until</dt><dd>{% include "core/components/office_time.html" with stamp=adoption.end_at only %}</dd>{% endif %}
+    <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=adoption.recorded only %}</dd>
+    {% if adoption.result_address %}<dt>Adoption vote</dt><dd>{% include "core/components/vote_result_link.html" with address=adoption.result_address only %}</dd>{% endif %}
+  </dl>
+</details>

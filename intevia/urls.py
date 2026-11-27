@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from core import policy_pages
 from core import discussion_edit, discussion_forms, discussion_pages, discussion_vote, law_pages, office_switch, organisation_pages, views, ui_views
 
 urlpatterns = [
@@ -28,6 +29,10 @@ urlpatterns = [
     path('intevia/<uuid:org>/laws/', law_pages.law_list, name='organisation_laws'),
     path('intevia/<uuid:org>/laws/<uuid:binding>/versions/<int:version_number>/',
          law_pages.law_version, name='organisation_law_version'),
+    path('intevia/<uuid:org>/laws/<uuid:binding>/<int:version_number>/revise/',
+         policy_pages.revise, name='policy_revise'),
+    path('intevia/<uuid:org>/policy-work/<path:reference>/<int:version_number>/',
+         policy_pages.receipt, name='policy_draft_receipt'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/', organisation_pages.circle_page, name='circle_page'),
     path('intevia/<uuid:org>/offices/<uuid:office>/', ui_views.office_page, name='office_page'),
     path('intevia/<uuid:org>/circles/<uuid:circle>/discussion/', discussion_pages.board_discussion, name='board_discussion'),

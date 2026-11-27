@@ -1,4 +1,8 @@
 {% for locator, words in parts %}
-  {% if locator %}<p class="meta">Clause “{{ locator }}”</p>{% endif %}
-  <div class="office-clause">{{ words }}</div>
+  {% if locator == "payment-result" %}
+    {% include "core/components/payment_citation.html" with words=words only %}
+  {% else %}
+    {% if locator %}<p class="meta">Clause “{{ locator }}”</p>{% endif %}
+    <div class="office-clause">{{ words }}</div>
+  {% endif %}
 {% endfor %}

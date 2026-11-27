@@ -69,9 +69,7 @@
         {% if decision.body %}<dt>Deciding body</dt><dd>{{ record.office.board_short_label|default:"Board" }}</dd>{% endif %}
         <dt>Effective</dt><dd>{% include "core/components/office_time.html" with stamp=decision.effective_at only %}</dd>
         <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=decision.recorded_at only %}</dd>
-        <dt>Result reference</dt><dd>{{ decision.result_link }}</dd>
-        {% if decision.adopted_binding %}<dt>Adopted provision reference</dt><dd>{{ decision.adopted_binding }}</dd>{% endif %}
-        {% if decision.reporting_rule_link %}<dt>Reporting rule reference</dt><dd>{{ decision.reporting_rule_link }}</dd>{% endif %}
+        {% if decision.result_address %}<dt>Vote result</dt><dd>{% include "core/components/vote_result_link.html" with address=decision.result_address only %}</dd>{% endif %}
       </dl>
     </article>
   {% empty %}

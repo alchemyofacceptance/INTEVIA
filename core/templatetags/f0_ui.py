@@ -42,7 +42,7 @@ def ui_frame(context):
     name = (getattr(identity, "display_name", "") or request.user.get_full_name()) if signed_in else ""
     you_url = reverse("restricted") + "#you" if restricted else reverse("f0-you")
     current = request.resolver_match.url_name if request.resolver_match else ""
-    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "organisation_settings":"organisation", "organisation_assistance_change":"organisation", "organisation_laws":"organisation", "organisation_law_version":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "discussion_edit_form":"organisation", "discussion_edit":"organisation", "discussion_put_forward":"organisation", "discussion_prepare":"organisation", "discussion_confirm_clarity":"organisation", "discussion_clarity_question":"organisation", "discussion_result":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
+    active = {"shell":"home", "f0-explore":"explore", "f0-organisation":"organisation", "office_page":"organisation", "organisation_home":"organisation", "organisation_settings":"organisation", "organisation_assistance_change":"organisation", "organisation_laws":"organisation", "organisation_law_version":"organisation", "policy_revise":"organisation", "policy_draft_receipt":"organisation", "circle_page":"organisation", "board_discussion":"organisation", "discussion_topic":"organisation", "discussion_start_form":"organisation", "discussion_start":"organisation", "discussion_reply":"organisation", "discussion_edit_form":"organisation", "discussion_edit":"organisation", "discussion_put_forward":"organisation", "discussion_prepare":"organisation", "discussion_confirm_clarity":"organisation", "discussion_clarity_question":"organisation", "discussion_result":"organisation", "f0-history":"history", "f0-you":"you", "login":"you", "restricted":"you"}.get(current, "organisation" if current.startswith("event-") else "history" if current in {"registration-history","attendance-history","registration-detail","attendance-detail"} else "")
     restricted_page = current == "restricted"
     tabs = [
         {"id":"home", "label":"Home", "icon":"home", "url":reverse("shell")},
@@ -159,18 +159,22 @@ def office_timeline(record, query=None):
     for entry in record.get("history", ()):
         kind = entry.get("kind")
         key = (entry.get("ilc_link"), entry.get("source_link"))
+        address = entry.get("result_address")
         if kind == "law_adoption":
             version = versions.get(key)
             sentence = (f"Version {version} of the office provision came into force." if version is not None
                         else "The office provision came into force.")
         elif kind == "decision":
             decision = decisions.get(key, {})
+            address = decision.get("result_address")
             if decision.get("purpose") == "standing_adoption" and decision.get("adopted_version") is not None:
                 sentence = f'The Board voted to adopt version {decision["adopted_version"]} of the Policy in force.'
             elif decision.get("purpose") == "one_payment":
                 sentence = f'The Board approved the one payment {decision["label"]}.'
             else:
                 sentence = "The Board carried the vote."
+        elif kind == "publication":
+            sentence = f'The Board published version {entry["version"]} of the Policy.'
         elif kind == "topic":
             sentence = titles.get(entry.get("source_link"), "A Topic about this office was started.")
         elif kind == "setting_change":
@@ -181,7 +185,10 @@ def office_timeline(record, query=None):
             continue
         else:
             continue
-        rows.append({"at": entry["at"], "action": entry["label"], "sentence": sentence})
+        row = {"at": entry["at"], "action": entry["label"], "sentence": sentence}
+        if address:
+            row["result_address"] = address
+        rows.append(row)
 
     query = query or {}
     size = next((n for n in _HISTORY_SIZES if str(n) == query.get("show")), 10)

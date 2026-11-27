@@ -60,7 +60,9 @@ class LawMarkupTests(SimpleTestCase):
                          patch.object(library_laws, "our_laws", return_value={"laws": [law, later_row]}) as read_list, \
                          patch.object(library_laws, "law_display_rows", return_value=[mark, unlabelled]), \
                          patch.object(library_laws, "_law_ranks", return_value={"POLICY": 4}), \
-                         patch.object(library_laws, "governance_board_names", return_value=(board_name, "Board")), \
+                         patch.object(law_pages, "adoption_disclosure", return_value=dict(
+                             body=f"{board_name} · Alder Beck Community Trust", route="Board vote",
+                             in_force_from=stamp, recorded=stamp)), \
                          patch.object(library_laws, "our_law_version_page", return_value=version_page) as read_one:
                         response = match.func(request, **match.kwargs)
                     page = response.content.decode()
@@ -125,8 +127,8 @@ class LawMarkupTests(SimpleTestCase):
             "organisation": {"organism_uuid": org, "short_label": "Alder Beck"},
             "title": "Policy", "mark": {"reference": "local-office-policy"}, "class_label": "Policy",
             "status": "Superseded", "version": 2, "parts": [("review", "The Board reviews the record.")],
-            "body": "Board of Trustees · Alder Beck", "route": "Board vote",
-            "in_force_from": since, "end_at": end, "recorded": recorded,
+            "adoption": dict(body="Board of Trustees · Alder Beck", route="Board vote",
+                             in_force_from=since, end_at=end, recorded=recorded),
             "is_current": False, "current_version": {"binding": successor, "version_number": 5},
             "earlier": [{"binding": previous, "version_number": 1, "status": "Superseded",
                          "in_force_from": since}],
@@ -784,9 +786,36 @@ class AdoptionBodyPageTests(TransactionTestCase):
         from tests.test_uc1_office_page import signed_in
 
         owner, reader, office, target, name = self.board_adoption()
+        from src.intevia.services import _record_names, office_record
+
         client = signed_in(reader)
-        office_facts, _ = self.read_office_adoption(client, owner, office, target)
-        response = client.get(target)
+        binding = resolve(target).kwargs["binding"]
+        selected, _ = library_laws.our_law_version(credential=reader.credential, organism_uuid=owner.organism_id,
+                                                   binding=binding, version_number=resolve(target).kwargs["version_number"])
+        adopted = selected["in_force_from"]
+        original_org = office_record.full_name_and_short_label
+        original_board = library_laws.governance_board_names
+
+        def org_at(*, owner_id, cut, circle=None):
+            """Keep the real historical name; the resolver supplies a different name at later cuts."""
+            if circle is None and cut > adopted:
+                return "Later Trust", "Later"
+            return original_org(owner_id=owner_id, cut=cut, circle=circle)
+
+        def board_at(org, cut):
+            """Represent a later Board name at the read boundary until governed renaming lands."""
+            if cut > adopted:
+                return "Later Board", "Later"
+            return original_board(org, cut)
+
+        with patch.object(_record_names, "full_name_and_short_label", side_effect=org_at), \
+             patch.object(office_record, "full_name_and_short_label", side_effect=org_at), \
+             patch.object(library_laws, "governance_board_names", side_effect=board_at):
+            office_facts, current = self.read_office_adoption(client, owner, office, target)
+            response = client.get(target)
+            self.assertEqual(response.context["organisation"]["full_name"], "Later Trust")
+            self.assertEqual((current["board_full_name"], current["organisation_full_name"]),
+                             ("Later Board", "Later Trust"), "The page must exercise the later name state.")
         self.assertEqual(response.status_code, 200)
         page = Markup(response.content.decode())
         law_card, = page.select("article", classes=("office-provision",))
@@ -794,7 +823,17 @@ class AdoptionBodyPageTests(TransactionTestCase):
         self.assertEqual((office_facts["Adoption route"], law_facts["Adoption route"]), ("Board vote", "Board vote"))
         expected = f"Board of Trustees · {name}"
         self.assertEqual((office_facts["Adopting body"], law_facts["Adopting body"]), (expected, expected),
-                         "Both adoption records must name the Board and its organisation.")
+                         "Both adoption records must name the Board and its organisation at adoption.")
+        from src.intevia.services import cq_reads, discussion
+        for denied in ("result_post", "implementation_record"):
+            with self.subTest(denied=denied), patch.object(cq_reads, denied, side_effect=discussion.DiscussionUnavailable()):
+                response = client.get(target)
+                self.assertEqual(response.status_code, 200)
+                limited = Markup(response.content.decode())
+                card, = limited.select("article", classes=("office-provision",))
+                limited_facts = self.adoption_facts(limited, card)
+                self.assertEqual((limited_facts["Adopting body"], limited_facts["Adoption route"]), (name, "Board vote"))
+                self.assertEqual("Adoption vote" in limited_facts, denied == "implementation_record")
 
     def test_probationary_exact_pin_withholds_the_board_name_but_keeps_the_route(self):
         from tests.test_uc1_office_page import signed_in
@@ -804,3 +843,113 @@ class AdoptionBodyPageTests(TransactionTestCase):
         self.assertNotIn("board_full_name", office_read, "The exact pin must not admit the Board's name.")
         self.assertEqual(facts["Adoption route"], "Board vote")
         self.assertEqual(facts["Adopting body"], name, "An exact Topic pin must not restore the withheld Board name.")
+
+    def test_original_minimum_keeps_its_interim_authority_after_activation(self):
+        """L05-min. Record the issued founding minimum and a successor before a real Board activation."""
+        from core.management.commands import setup_alpha_trustee as setup
+        from src.intevia.services import circle_commands, law_acts, library_policy
+        from tests import cq_authority_support as boards
+        from tests import test_law_acts as acts
+        from tests.office_record_support import a1_adopt_policy
+        from tests.test_uc1_office_page import signed_in
+
+        owner, scope, trustees, board = boards.ordinary(3, board=True)
+        founder = trustees[0]
+        version = library_policy.draft_policy(**scope, resource_reference=setup.MINIMUM_REF,
+            content=setup.MINIMUM_TEXT, authors=[founder.identity_id], declare_own_authorship=True,
+            request_uuid=uuid4(), route="COORDINATOR_ROUTE")
+        library_policy.publish_policy(**scope, version_id=version.pk, request_uuid=uuid4(), route="COORDINATOR_ROUTE")
+        spec = law_acts.LawProposal(organism=owner.organism_id, resource=setup.MINIMUM_REF,
+            proposal=setup.scenario_id("adopt-" + setup.MINIMUM_REF), operation="ADOPT", intent="ADOPT",
+            law_class="POLICY", version=version.version_number)
+        receipt = law_acts.OrganismLawService().adopt_law(acts.command(founder, spec))
+        self.assertEqual((receipt.status, receipt.route), ("ADOPT", "COORDINATOR_ROUTE"))
+        client = signed_in(founder)
+        first_url = reverse("organisation_law_version", args=[owner.organism_id, spec.proposal, 1])
+
+        def facts_at(url):
+            """Read the actual member page and its own native adoption disclosure."""
+            response = client.get(url)
+            self.assertEqual(response.status_code, 200)
+            page = Markup(response.content.decode())
+            card, = page.select("article", classes=("office-provision",))
+            return self.adoption_facts(page, card)
+
+        interim = "Interim authority before Board activation"
+        self.assertNotContains(client.get(first_url), "View vote result", msg_prefix="A founding adoption has no Board vote.")
+        self.assertEqual(facts_at(first_url)["Adoption route"], interim, "Only the founding adoption has interim authority.")
+        # The same issued Policy text can also be adopted elsewhere under another binding.
+        other, coordinator = acts.ordinary_birth()
+        other_spec = replace(spec, organism=other.organism_id, proposal=uuid4())
+        other_receipt = law_acts.OrganismLawService().adopt_law(acts.command(coordinator, other_spec))
+        self.assertEqual(other_receipt.status, "ADOPT")
+        other_url = reverse("organisation_law_version", args=[other.organism_id, other_spec.proposal, 1])
+        self.assertNotContains(signed_in(coordinator).get(other_url), interim)
+
+        later, successor, receipt = a1_adopt_policy(owner, founder, setup.MINIMUM_REF, setup.MINIMUM_TEXT + "\n",
+                                                   prior_version=version, prior_binding=spec.proposal)
+        self.assertEqual(receipt.status, "ADOPT")
+        second_url = reverse("organisation_law_version", args=[owner.organism_id, successor, later.version_number])
+        self.assertEqual(facts_at(second_url)["Adoption route"], "Organisation Coordinator decision")
+        from src.intevia.services import cq
+        cq.change_settings(**scope, predecessor=None, changes={"enabled": True, "clarity_stage": False},
+                           request_uuid=uuid4())
+        circle_commands.activate(**scope, circle_uuid=board.circle_uuid, request_uuid=uuid4())
+        historic = facts_at(first_url)
+        self.assertEqual(historic["Adoption route"], interim)
+        self.assertIn("In force until", historic)
+        self.assertNotIn("Board vote", historic.values())
+
+
+class AdoptionDisclosureTests(SimpleTestCase):
+    def test_withheld_board_label(self):
+        """L05-withheld. The office's grant controls Board identity even if all optional evidence would confirm it."""
+        from src.intevia.services import office_record
+
+        org = uuid4()
+        at = datetime(2026, 11, 24, 19, 1, tzinfo=timezone.utc)
+        law = dict(issuer=org, decision_route="CQ_GOVERNANCE_CIRCLE", in_force_from=at, adoption_recorded_at=at)
+        with patch.object(models.LivingOrganism.objects, "values_list") as ids, \
+             patch.object(office_record, "full_name_and_short_label", return_value=("Historic Trust", "Trust")), \
+             patch.object(office_record, "_board_adoption", return_value=(True, {"body": uuid4(), "result_address": (uuid4(),) * 4}, True)) as evidence, \
+             patch.object(library_laws, "governance_board_names", return_value=("Historical Board", "Board")) as names:
+            ids.return_value.get.return_value = 1
+            result = office_record.adoption_disclosure(object(), org, law, board_name_allowed=False)
+            self.assertEqual(result["body"], "Historic Trust", "The office grant withholds the Board name.")
+            self.assertEqual(result["route"], "Board vote")
+            evidence.assert_not_called()
+            names.assert_not_called()
+            admitted = office_record.adoption_disclosure(object(), org, law, board_name_allowed=True)
+            self.assertEqual(admitted["body"], "Historical Board · Historic Trust")
+            names.assert_called_once_with(org, at)
+            inherited = office_record.adoption_disclosure(object(), uuid4(), law, board_name_allowed=True)
+            self.assertEqual(inherited["body"], "Inherited from INTEVIA")
+            names.assert_called_once_with(org, at)
+
+    def test_founding_route_requires_activation_to_be_absent_at_the_adoption_cut(self):
+        """Check both cuts and the activation predicate without introducing another adoption journey."""
+        from src.intevia.services import office_record
+
+        org = uuid4()
+        start = datetime(2026, 11, 24, 19, 1, tzinfo=timezone.utc)
+        recorded = start.replace(minute=3)
+        law = dict(issuer=org, decision_route="COORDINATOR_ROUTE", library_reference="alpha-board-minimum",
+                   class_name="POLICY", scope_kind="LIVING_ORGANISM", predecessor=None, version_number=1,
+                   binding=library_laws._film_root("alpha-board-minimum"),
+                   in_force_from=start, adoption_recorded_at=recorded)
+        with patch.object(models.LivingOrganism.objects, "values_list") as ids, \
+             patch.object(office_record, "full_name_and_short_label", return_value=("River Trust", "River")), \
+             patch.object(models.CircleStateEvent.objects, "filter") as activations, \
+             patch.object(office_record, "_board_adoption") as votes:
+            ids.return_value.get.return_value = 7
+            activations.return_value.exists.return_value = True
+            facts = office_record.adoption_disclosure(object(), org, law, board_name_allowed=True)
+            self.assertEqual(facts["route"], "Organisation Coordinator decision")
+            activations.assert_called_once_with(circle__parent_organism_id=7, circle__kind="GOVERNANCE",
+                action="ACTIVATE", effective_at__lte=start, received_at__lte=recorded, recorded_at__lte=recorded)
+            activations.return_value.exists.return_value = False
+            facts = office_record.adoption_disclosure(object(), org, law, board_name_allowed=True)
+            self.assertEqual((facts["body"], facts["route"]), ("River Trust", "Interim authority before Board activation"))
+            inherited = office_record.adoption_disclosure(object(), uuid4(), law, board_name_allowed=True)
+            self.assertEqual((inherited["body"], inherited["route"]), ("Inherited from INTEVIA", "Organisation Coordinator decision"))
+            votes.assert_not_called()

@@ -291,7 +291,7 @@ html {
 .appearance-options input{width:auto}
 /* Every radio button, on any form: the size of the ruled ballot render, on a row a finger can hit. */
 input[type=radio]{inline-size:22px;block-size:22px;min-block-size:0;flex:none;margin:0;padding:0;accent-color:var(--color-primary)}
-label:has(>input[type=radio]){display:flex;align-items:center;gap:var(--space-md);min-block-size:var(--touch)}
+label:has(>input[type=radio]),label:has(>input[type=checkbox]){display:flex;align-items:center;gap:var(--space-md);min-block-size:var(--touch)}
 
 .org-strip {
  display:flex; flex-wrap:wrap; gap:var(--space-sm); padding-block:24px var(--space-sm);
@@ -361,6 +361,9 @@ html{@variant dark-page {
 }
 .discussion-form label { display:grid; gap:8px; min-width:0; }
 .discussion-form :is(input:not([type=hidden]),textarea,select) { width:100%; min-height:44px; }
+input[type=checkbox],.discussion-form input[type=checkbox] {
+ inline-size:1.125rem; block-size:1.125rem; min-block-size:0; flex:none; margin:0; padding:0; accent-color:var(--color-primary);
+}
 .card.prompt { border-left-color:var(--color-accent); background-color:var(--color-accent-soft); }
 .discussion-actions { display:flex; align-items:center; flex-wrap:wrap; gap:32px; margin-block:32px; }
 .card > .discussion-actions:last-child { margin-block-end:0; }

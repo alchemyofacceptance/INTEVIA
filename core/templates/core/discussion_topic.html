@@ -18,7 +18,7 @@
   <h2 class="record-heading" id="replies-heading">Replies</h2>
   {% for post in posts|slice:"1:" %}
     {% if post.post_type == "GROUP_GAZE" %}
-      <article class="card"{% if not post.hidden %} id="post-{{ post.post_uuid }}"{% endif %}>
+      <article class="card"{% if post.result_url %} id="post-{{ post.post_uuid }}"{% endif %}>
         <h3>Post {{ post.post_number }}{% if not post.hidden %} · Vote result{% endif %}</h3>
         {% if post.hidden %}<p>Post unavailable.</p>{% else %}
           {% include "core/components/vote_result.html" with result=post %}

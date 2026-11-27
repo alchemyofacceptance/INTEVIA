@@ -98,6 +98,9 @@ def csrf_failure(request, reason=""):
                   or (match.url_name or "").startswith("discussion_clarity_")):
         from core.discussion_forms import refusal
         return refusal(request, "csrf")
+    if match and match.url_name in ("policy_revise", "policy_draft_receipt"):
+        from core.policy_pages import csrf_refusal
+        return csrf_refusal(request)
     if match and match.func in (you, change_assistance):
         return _refusal(request, "csrf")
     return django_csrf_failure(request, reason=reason)

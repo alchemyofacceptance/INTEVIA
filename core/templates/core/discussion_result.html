@@ -25,6 +25,8 @@
   <h2 id="result-wording">{{ wording_heading }}{% if result.wording_version_number >= 2 %} · Version {{ result.wording_version_number }}{% endif %}</h2>
   <div class="card motion-wording">{{ result.wording|linebreaks }}</div>
 </article>{% endif %}
+{% if result.adoption_notice %}{% include "core/components/notice.html" with kind="info" message=result.adoption_notice only %}{% endif %}
+{% if result.publication_notice %}{% include "core/components/notice.html" with kind="info" message=result.publication_notice only %}{% endif %}
 {% if no_action %}{% include "core/components/notice.html" with kind="info" message=no_action only %}{% endif %}
 {% if topic_url %}<p class="discussion-actions link-row">{% include "core/components/button.html" with href=topic_url variant="secondary" label="Back to Topic" only %}</p>{% endif %}
 {% endblock %}

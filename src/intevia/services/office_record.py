@@ -4,12 +4,14 @@ from uuid import UUID, uuid4
 from django.db import DatabaseError, connection, transaction
 from psycopg import Cursor
 
+from core import models
 from core.care_identity import CARE_ID
+from src.intevia.services.policy_provenance import board_publication, result_address
 from src.intevia.services._office_family import office_family
-from src.intevia.services._record_names import full_name_and_short_label, office_label
+from src.intevia.services._record_names import adopting_body_name, full_name_and_short_label, office_label
 from src.intevia.services import care_assistance as care
 from src.intevia.services import discussion as disc
-from src.intevia.services import cq_reads, discussion_posts, law_records, library_laws
+from src.intevia.services import cq_reads, discussion_posts, law_records, library_laws, policy_work
 
 
 # Only public fields leave this module. The event join also requires the stored pair.
@@ -66,7 +68,47 @@ _ADOPTIONS = {
 }
 
 
-def _provision_at(citation, binding, allowed, status):
+def adoption_disclosure(credential, owner, law, *, board_name_allowed, end_at=None):
+    """Project an already released adoption at its own cut, inside the admitting read."""
+    route = _ADOPTIONS.get(law["decision_route"], "Adoption route unavailable")
+    cut = law["in_force_from"]
+    facts = dict(body="Inherited from INTEVIA", route=route, in_force_from=cut,
+                 recorded=law["adoption_recorded_at"], end_at=end_at)
+    if law["issuer"] != owner or law.get("inherited"):
+        return facts
+
+    owner_id = models.LivingOrganism.objects.values_list("pk", flat=True).get(organism_id=owner)
+    org_name, _ = full_name_and_short_label(owner_id=owner_id, cut=cut)
+    board = None
+    if board_name_allowed and law["decision_route"] == "CQ_GOVERNANCE_CIRCLE":
+        _, decision, effect_admitted = _board_adoption(credential, owner, law)
+        if decision is not None:
+            facts["result_address"] = decision["result_address"]
+            if effect_admitted:
+                board, _ = library_laws.governance_board_names(owner, cut)
+    elif (law["decision_route"] == "COORDINATOR_ROUTE"
+          and law["library_reference"] == "alpha-board-minimum" and law["class_name"] == "POLICY"
+          and law["scope_kind"] == "LIVING_ORGANISM" and law["predecessor"] is None
+          and law["version_number"] == 1 and law["binding"] == library_laws._film_root("alpha-board-minimum")):
+        activated = models.CircleStateEvent.objects.filter(
+            circle__parent_organism_id=owner_id, circle__kind="GOVERNANCE", action="ACTIVATE",
+            effective_at__lte=cut, received_at__lte=law["adoption_recorded_at"],
+            recorded_at__lte=law["adoption_recorded_at"],
+        ).exists()
+        if not activated:
+            facts["route"] = "Interim authority before Board activation"
+    # A pin never supplies a Board name. A result already released by the law
+    # register can still be checked against its own independent destination.
+    if (not board_name_allowed and law["decision_route"] == "CQ_GOVERNANCE_CIRCLE"
+            and (law.get("authority_source") or {}).get("result_post")):
+        _, decision, _ = _board_adoption(credential, owner, law)
+        if decision is not None:
+            facts["result_address"] = decision["result_address"]
+    facts["body"] = adopting_body_name(law["issuer"], owner, org_name, route, board)
+    return facts
+
+
+def _provision_at(citation, binding, allowed, status, *, adoption_laws=None):
     if not binding:
         return None
     law = allowed.get((binding["binding_uuid"], binding["version_id"]))
@@ -96,10 +138,12 @@ def _provision_at(citation, binding, allowed, status):
     if source.get("kind") == "CQ_RESULT" and result_post and source.get("reference") == result_post:
         # Only the adoption vote. A referral is a different act, even when visible.
         result["adoption_result_link"] = result_post
+    if adoption_laws is not None:
+        adoption_laws[law["binding"]] = law
     return result
 
 
-def _provisions(credential, owner, definition):
+def _provisions(credential, owner, definition, *, board_name_allowed=None):
     candidates = disc._rows("""
         SELECT p.provision_uuid FROM public.core_organismroledefinitionprovision p
           JOIN public.core_organismroledefinition d ON d.id=p.definition_id
@@ -121,6 +165,7 @@ def _provisions(credential, owner, definition):
 
     provisions = []
     policies = []
+    adoption_laws = {} if board_name_allowed is not None else None
     for candidate in candidates:
         views = law_records.resolve_citation(owner, candidate["provision_uuid"])
         if not views:
@@ -130,13 +175,13 @@ def _provisions(credential, owner, definition):
         if not origin or origin["version_id"] != cited["cited_version"]:
             continue
         historical = _provision_at(cited, origin, allowed(cited["received_at"], cited["recorded_at"]),
-                                   "cited_at_definition")
+                                   "cited_at_definition", adoption_laws=adoption_laws)
         now = views["now"]
         current = None
         if now["governing"]:
             governing = now["governing"]
             permitted = allowed(now["at"], now["known_at"])
-            current = _provision_at(cited, governing, permitted, "in_force_now")
+            current = _provision_at(cited, governing, permitted, "in_force_now", adoption_laws=adoption_laws)
             if current and cited["relationship"] == "OFFICE_BASIS":
                 law = permitted[(governing["binding_uuid"], governing["version_id"])]
                 if law["class_name"] == "POLICY":
@@ -149,11 +194,12 @@ def _provisions(credential, owner, definition):
                 provisions.append(historical)
             if current:
                 provisions.append(current)
-    _label_citations(credential, owner, provisions)
+    _label_citations(credential, owner, provisions, adoption_laws=adoption_laws,
+                     board_name_allowed=board_name_allowed)
     return provisions, policies
 
 
-def _label_citations(credential, owner, provisions):
+def _label_citations(credential, owner, provisions, *, adoption_laws=None, board_name_allowed=None):
     """Name released citations and test each distinct destination under the current member grant."""
     titles = library_laws.film_law_titles(owner, provisions)
     destinations = {}
@@ -163,13 +209,25 @@ def _label_citations(credential, owner, provisions):
         key = (row["binding"], row["version"])
         if key not in destinations:
             try:
-                released, _ = library_laws.our_law_version(
+                released, status = library_laws.our_law_version(
                     credential=credential, organism_uuid=owner, binding=key[0], version_number=key[1])
             except library_laws.LawReadUnavailable:
-                destinations[key] = None
+                destinations[key] = (None, None)
             else:
-                destinations[key] = (released["act"], released["library_reference"])
-        row["version_link"] = destinations[key] == (row["adoption_record"], row["library_reference"])
+                destinations[key] = (released, status)
+        target, status = destinations[key]
+        row["version_link"] = bool(target and target["act"] == row["adoption_record"]
+                                   and target["library_reference"] == row["library_reference"])
+        if adoption_laws is not None:
+            law = adoption_laws[row["binding"]]
+            if row.get("locator") == "payment-result":
+                row["payment"] = policy_work.cited_payment(credential, law["issuer"], row.pop("clause"))
+            end_at = target["effective_until"] if row["version_link"] and status != "In force now" else None
+            row["adoption"] = adoption_disclosure(
+                credential, owner, law, board_name_allowed=board_name_allowed, end_at=end_at)
+            publication = board_publication(credential, owner, law)
+            if publication:
+                row["publication"] = publication
 
 
 def _topics(rows):
@@ -215,12 +273,8 @@ def _decision_result(credential, owner, reference, *, plain=False):
     return row, scope
 
 
-def _decisions(credential, owner, policies):
-    if len(policies) != 1:
-        return []
-    law = policies[0]
-    # The binding's real Board adoption establishes the Policy's authority to cite.
-    # Its result may be withheld independently of a readable payment result.
+def _board_adoption(credential, owner, law):
+    """Match this binding to its Board implementation, then independently admit its result and effect."""
     adoptions = disc._rows("""
         SELECT r.act_uuid AS result
           FROM public.core_organismlawbinding b
@@ -233,13 +287,12 @@ def _decisions(credential, owner, policies):
           JOIN public.core_discboard board ON board.board_uuid=r.board_uuid AND board.organism_id=lo.id
           JOIN public.core_circle c ON c.id=board.circle_id AND c.parent_organism_id=lo.id AND c.kind='GOVERNANCE'
          WHERE lo.organism_id=%s AND b.binding_uuid=%s AND b.version_id=%s AND e.event_uuid=%s
-           AND b.law_class='POLICY' AND b.scope_kind='LIVING_ORGANISM'
+           AND b.scope_kind='LIVING_ORGANISM' AND b.law_class=%s
            AND b.decision_route='CQ_GOVERNANCE_CIRCLE' AND r.facts->'count'->>'kind'='QUALIFIED'
            AND r.facts->>'disposition'='APPLIED'
-    """, [owner, law["binding"], law["version"], law["act"]])
+    """, [owner, law["binding"], law["version"], law["act"], law["class_name"]])
     if len(adoptions) != 1:
-        return []
-    decisions = []
+        return False, None, False
     adoption = _decision_result(credential, owner, adoptions[0]["result"])
     if adoption is not None:
         row, scope = adoption
@@ -247,10 +300,25 @@ def _decisions(credential, owner, policies):
             effect = cq_reads.implementation_record(**scope)["effect"]
         except disc.DiscussionUnavailable:
             effect = None
-        if (effect and effect.get("domain") == "LAW" and effect.get("implementation") == law["act"]
-                and effect.get("adopted_binding") == law["binding"]):
-            decisions.append(dict(row, purpose="standing_adoption", label="adopted the Policy in force",
-                                  adopted_binding=law["binding"], adopted_version=law["version_number"]))
+        effect_admitted = bool(effect and effect.get("domain") == "LAW" and effect.get("implementation") == law["act"]
+                               and effect.get("adopted_binding") == law["binding"])
+        return True, dict(row, result_address=result_address(scope)), effect_admitted
+    return True, None, False
+
+
+def _decisions(credential, owner, policies, *, include_addresses=False):
+    if len(policies) != 1:
+        return []
+    law = policies[0]
+    authentic, adoption, effect_admitted = _board_adoption(credential, owner, law)
+    if not authentic:
+        return []
+    decisions = []
+    if adoption is not None and (include_addresses or effect_admitted):
+        if not include_addresses:
+            adoption.pop("result_address")
+        decisions.append(dict(adoption, purpose="standing_adoption", label="adopted the Policy in force",
+                              adopted_binding=law["binding"], adopted_version=law["version_number"]))
     markers = disc._rows("SELECT content FROM public.l_clauses(%s) WHERE locator='payment-result'", [law["content"]])
     if len(markers) != 1:
         return decisions
@@ -263,7 +331,9 @@ def _decisions(credential, owner, policies):
         return decisions
     payment = _decision_result(credential, owner, reference, plain=True)
     if payment is not None:
-        row, _ = payment
+        row, scope = payment
+        if include_addresses:
+            row["result_address"] = result_address(scope)
         decisions.append(dict(row, purpose="one_payment", label="cited by the Policy in force"))
     return decisions
 
@@ -281,6 +351,16 @@ def _human_history(page, params):
         key = ("law_adoption", law["adoption_record"])
         rows[key] = _history_row("law_adoption", law["in_force_from"], "Office provision adopted",
                                  law["binding"], law["adoption_record"])
+        address = law.get("adoption", {}).get("result_address")
+        if address:
+            rows[key]["result_address"] = address
+        publication = law.get("publication")
+        if publication and publication.get("result_address"):
+            address = publication["result_address"]
+            key = ("publication", address[-1])
+            rows[key] = _history_row("publication", publication["at"], "Policy version published",
+                                     None, None, version=publication["version"],
+                                     result_address=address)
     for decision in page["decisions"]:
         key = ("decision", decision["result_uuid"])
         rows[key] = _history_row("decision", decision["effective_at"], "Board vote carried",
@@ -440,7 +520,7 @@ def _retryable(error):
             getattr(getattr(native, "diag", None), "constraint_name", None) == "care_observation_source_key")
 
 
-def _attempt(credential, owner, office, present, publish, *, facts_only=False):
+def _attempt(credential, owner, office, present, publish, *, facts_only=False, include_adoption=False):
     optional = False
     publication_started = False
 
@@ -459,8 +539,10 @@ def _attempt(credential, owner, office, present, publish, *, facts_only=False):
             params = dict(owner=owner, owner_id=owner_id, office=office, reader=actor.pk, epoch=actor.access_epoch)
             page = _office_facts(params, access, setting)
             current = page["office"].get("current_definition")
-            page["provisions"], policies = _provisions(credential, owner, current or office)
-            page["decisions"] = _decisions(credential, owner, policies)
+            board_name_allowed = bool(page["office"].get("board_full_name")) if include_adoption else None
+            page["provisions"], policies = _provisions(credential, owner, current or office,
+                                                       board_name_allowed=board_name_allowed)
+            page["decisions"] = _decisions(credential, owner, policies, include_addresses=include_adoption)
             topics = access.get("visible_topics")
             if topics is None:
                 topics = discussion_posts.topics_about_office(credential=credential, organism_uuid=owner,
@@ -485,7 +567,7 @@ def _attempt(credential, owner, office, present, publish, *, facts_only=False):
         raise RuntimeError("The office facts could not be committed for delivery.")
 
 
-def publish_office_record(*, credential, organism_uuid, office_definition_uuid, publish, present_care=False):
+def publish_office_record(*, credential, organism_uuid, office_definition_uuid, publish, present_care=False, include_adoption=False):
     """Deliver a permitted payload to the response consumer after the owning transaction commits."""
     if (not isinstance(organism_uuid, UUID) or not isinstance(office_definition_uuid, UUID)
             or type(present_care) is not bool):
@@ -493,17 +575,17 @@ def publish_office_record(*, credential, organism_uuid, office_definition_uuid, 
     args = (credential, organism_uuid, office_definition_uuid, present_care, publish)
     for attempt in range(2):
         try:
-            _attempt(*args)
+            _attempt(*args, include_adoption=include_adoption)
             return
         except _PresentationFailed as exc:
             if attempt or not _retryable(exc.__cause__):
                 break
-    _attempt(*args, facts_only=True)
+    _attempt(*args, facts_only=True, include_adoption=include_adoption)
 
 
-def office_record(*, credential, organism_uuid, office_definition_uuid, present_care=False):
+def office_record(*, credential, organism_uuid, office_definition_uuid, present_care=False, include_adoption=False):
     """Synchronous office read. Its return value comes from the post-commit publisher."""
     delivered = []
     publish_office_record(credential=credential, organism_uuid=organism_uuid, office_definition_uuid=office_definition_uuid,
-                          present_care=present_care, publish=delivered.append)
+                          present_care=present_care, publish=delivered.append, include_adoption=include_adoption)
     return delivered[0]

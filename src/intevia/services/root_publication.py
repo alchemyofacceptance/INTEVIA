@@ -7,12 +7,33 @@ from core.root_publication_contract import DECLARATION_TEXT,SOURCE_HASHES,VERIFI
 from src.intevia.services import circle_commands as circles
 
 class PublicationRefused(ValueError):
+    """A root declaration or publication act was refused.
+
+    A ValueError carrying a stable refusal code in code; its text
+    is the message for the reader.
+    """
     def __init__(self,code,message):
+        """Keep code and give message to ValueError."""
         self.code=code
         super().__init__(message)
 
 
 def _office(alias,lo,actor,at):
+    """Return the lowest qualifying Founder & Steward assignment ID.
+
+    Query r_founder_office on alias using at for both the
+    effective time and the knowledge cut. Among the organism's
+    seat facts, require a QUALIFIED INTEVIA_FOUNDER_STEWARD role
+    in LIVING_ORGANISM scope, with no Circle on the assignment.
+    The membership must belong to the actor, who must also be
+    the organism's founder.
+
+    The root Circles must qualify, the organism's effective state
+    must be ACTIVE, and its founding basis must be in force.
+    A nomination alone grants no assignment. If SQL returns NULL,
+    raise PublicationRefused with the code
+    R_EFFECTIVE_AUTHORITY_REQUIRED.
+    """
     with connections[alias].cursor() as cursor:
         cursor.execute('SELECT public.r_founder_office(%s,%s,%s,%s)',[lo.pk,actor.pk,at,at])
         office=cursor.fetchone()[0]

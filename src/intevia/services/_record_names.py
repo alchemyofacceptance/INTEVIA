@@ -54,3 +54,12 @@ def full_name_and_short_label(*, owner_id, cut, circle=None):
 def office_label(code):
     """Render the admitted office's code for display."""
     return " ".join("INTEVIA" if word.upper() == "INTEVIA" else word.title() for word in code.split("_"))
+
+
+def adopting_body_name(issuer, organisation, organisation_name, route, board_name):
+    """Name the adopting body from the visible route and the page's admitted names."""
+    if issuer != organisation:
+        return "Inherited from INTEVIA"
+    if route == "Board vote" and board_name:
+        return f"{board_name} · {organisation_name}"
+    return organisation_name

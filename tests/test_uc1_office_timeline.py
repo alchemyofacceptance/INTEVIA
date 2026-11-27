@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from django.contrib.staticfiles import finders
 from django.template import Context, Template
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
+from django.urls import reverse
 
 from tests.test_f0_ui import Markup
 from tests.test_uc1_render import contrast, declarations
@@ -67,6 +68,26 @@ class TimelineTests(SimpleTestCase):
         self.assertEqual(self.sentences(raw), ["The Board approved the one payment cited by the Policy in force."],
                          "The payment history must describe the one payment identified by its own result.")
         self.assertNotIn("version 2", raw, "The payment row must not inherit the standing adoption's version.")
+
+    def test_history_links_follow_each_released_result(self):
+        """L12-history. Different result receipts and a withheld sibling can share a timestamp."""
+        org, board = uuid4(), uuid4()
+        history, decisions, expected = [], [], []
+        for purpose in ("one_payment", "standing_adoption", "publication", "withheld"):
+            address = (org, board, uuid4(), uuid4())
+            if purpose == "publication":
+                entry = self.entry("publication", "Policy version published", version=2, result_address=address)
+            else:
+                entry = self.entry("decision", "Board vote carried", ilc_link=address[-1])
+                if purpose != "withheld":
+                    decisions.append(dict(purpose=purpose, label="cited by the Policy in force", adopted_version=2,
+                                          result_uuid=address[-1], result_link=address[-1], result_address=address))
+            history.append(entry)
+            expected.append([] if purpose == "withheld" else [reverse("discussion_result", args=address)])
+        page = Markup(self.render(history, decisions=list(reversed(decisions))))
+        urls = [[a["attrs"]["href"] for a in page.select("a", within=row)] for row in page.select("li")]
+        self.assertEqual(urls, expected, "L12-history exact destinations")
+        self.assertNotIn(str(history[-1]["ilc_link"]), page.select("ol")[0]["text"])
 
     def test_topic_uses_the_verbatim_title(self):
         title = "CARE & Board <minutes> — Do we need £84?"

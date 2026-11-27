@@ -1,0 +1,5 @@
+<ul>
+  {% for author in authors %}
+    <li>{{ author.name }}{% if author.carried %} · Carried from version {{ number }}{% endif %}{% if author.drafter %} · Drafter{% endif %}</li>
+  {% endfor %}
+</ul>

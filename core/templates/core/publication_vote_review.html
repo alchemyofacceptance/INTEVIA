@@ -1,0 +1,24 @@
+{% extends "core/base.html" %}
+{% block title %}Review publication | INTEVIA{% endblock %}
+{% block content %}
+<h1 class="record-heading page-title">Review publication</h1>
+<div class="office-source-pair">
+  <article class="card">
+    <h2 class="card-heading">Motion wording</h2>
+    <div class="motion-wording">{{ motion|linebreaks }}</div>
+  </article>
+  <article class="card office-provision">
+    <h2 class="card-heading">{{ title }}</h2>
+    <p class="meta">{{ organisation.full_name }} · {{ reference }} · Version {{ number }} · Draft</p>
+    {% include "core/components/law_text.html" with parts=parts only %}
+  </article>
+</div>
+<div class="card prompt notice">
+  <p>Putting publication to a vote starts preparation. The Policy remains a draft.</p>
+  <form method="post" class="discussion-actions" action="{% url 'discussion_put_forward' board_org board_circle topic.thread_uuid %}">
+    {% csrf_token %}<input type="hidden" name="vote_command" value="{{ command }}">
+    {% include "core/components/button.html" with type="submit" label="Put publication to a Board vote" only %}
+    {% include "core/components/button.html" with href=back variant="secondary" label="Cancel" only %}
+  </form>
+</div>
+{% endblock %}

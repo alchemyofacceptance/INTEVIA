@@ -153,7 +153,11 @@ def issue_form(request, operation, org, circle, *, thread=None, office=None, ver
 def _envelope(request, token, operation, org, circle, thread):
     try:
         data = signing.loads(token, salt=FORM_SALT)
-        if data["binding"] != _binding(request, operation, org, circle, thread):
+        expected = _binding(request, operation, org, circle, thread)
+        if data["binding"] != expected:
+            if (operation == "INITIATE" and data.get("confirmation") and data["binding"][:3] == expected[:3]
+                    and data["binding"][3:] != expected[3:]):
+                raise discussion.DiscussionUnavailable()
             raise ValueError
         return data
     except (signing.BadSignature, KeyError, TypeError, ValueError):
@@ -238,6 +242,39 @@ def refusal(request, code, context=None, entered=None, swept=False):
     if code == "csrf" and request.method == "POST" and match and match.url_name == "discussion_edit":
         route = match.kwargs
         context["edit_action_url"] = reverse("discussion_topic", args=(route["org"], route["circle"], route["thread"]))
+    if match and match.url_name == "discussion_put_forward":
+        topic_url = reverse("discussion_topic", kwargs={name: match.kwargs[name] for name in ("org", "circle", "thread")})
+        context["vote_action_url"] = topic_url + "#vote"
+        if not context.get("circle"):
+            context["circle"] = {"short_label": "Board"}
+        if code == "unknown":
+            why = "The cause is unknown."
+            if "policy_vote_intent" in context and not context.get("policy_vote_writing"):
+                title, why = "The page could not be shown.", "The record could not be read just now."
+                effect, action = "This request started no vote.", "Back to Topic"
+        elif context.get("policy_vote_intent") == "adopt" and code in ("adoption_changed", "CQ_ATTACHMENT"):
+            title = "The adoption could not be put to a vote."
+            why = "The published wording or the law it would replace has changed."
+            effect, action = "This request started no vote.", "Review the current Policy"
+            context["vote_action_url"] = context.get("current_policy_url") or reverse(
+                "organisation_laws", args=(match.kwargs["org"],))
+        elif code in ("publication_claims", "publication_changed", "publication_old", "CQ_ATTACHMENT") and context.get("policy_vote_intent") == "publish":
+            title, effect = "The publication could not be put to a vote.", "This request started no vote."
+            if code == "publication_claims":
+                why, action = "A named author still needs to declare their authorship of this version.", "Back to Topic"
+            elif code == "CQ_ATTACHMENT":
+                why, action = "The reviewed version is no longer ready to put to a vote.", "Review the version"
+                context["review_again"] = context.get("publication_review_token")
+            elif code == "publication_old":
+                why, action = "This version is no longer available as the current draft.", "Back to Topic"
+            else:
+                why, action = "The version has changed since you reviewed it.", "Review the version"
+        elif code == "publication_authority":
+            why, action = "Putting this Policy to a vote is no longer available to you on this Topic.", "Back to Topic"
+        elif code == "CQ_BODY":
+            why = ("This Board cannot decide adoption of this Policy." if context.get("policy_vote_intent") == "adopt"
+                   else "This Board cannot decide publication of this Policy.")
+            action = "Back to Topic"
     context.update(title=title, why=why, effect=effect, action=action, help_text=help_line(context), entered=entered or {})
     response = render(request, "core/discussion_refusal.html", context, status=status)
     if code == "method":

@@ -1,0 +1,1 @@
+{% load tz %}{% if publication %}<p>The Board published version {{ publication.version }} on <time datetime="{{ publication.at|utc|date:'c' }}">{{ publication.at|utc|date:"j F Y, H:i" }} UTC</time>.{% if publication.result_address %} {% include "core/components/vote_result_link.html" with address=publication.result_address only %}{% endif %}</p>{% endif %}

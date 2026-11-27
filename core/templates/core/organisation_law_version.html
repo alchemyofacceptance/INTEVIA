@@ -12,17 +12,13 @@
 {% endif %}
 <article class="card office-provision">
   {% include "core/components/law_text.html" with parts=parts only %}
-  <details class="office-adoption">
-    <summary>Adoption record</summary>
-    <dl class="office-facts">
-      <dt>Adopting body</dt><dd>{{ body }}</dd>
-      <dt>Adoption route</dt><dd>{{ route }}</dd>
-      <dt>In force from</dt><dd>{% include "core/components/office_time.html" with stamp=in_force_from only %}</dd>
-      {% if end_at %}<dt>In force until</dt><dd>{% include "core/components/office_time.html" with stamp=end_at only %}</dd>{% endif %}
-      <dt>Recorded</dt><dd>{% include "core/components/office_time.html" with stamp=recorded only %}</dd>
-    </dl>
-  </details>
+  {% include "core/components/board_publication.html" with publication=publication only %}
+  {% include "core/components/adoption_record.html" with adoption=adoption only %}
 </article>
+{% if can_revise %}
+  {% url 'policy_revise' organisation.organism_uuid mark.binding version as revise_url %}
+  <div class="discussion-actions">{% include "core/components/button.html" with href=revise_url label="Revise this Policy" only %}</div>
+{% endif %}
 {% if is_current %}
 <section class="record-section" aria-labelledby="earlier-versions">
   <h2 class="record-heading" id="earlier-versions">Earlier versions</h2>
