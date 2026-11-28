@@ -64,7 +64,7 @@ It also contains implementation and test-definition paths from earlier work: Ide
 
 ## What this repository currently lets you inspect
 
-You can inspect the source, database changes and tests for the foundations below. Recorded founding and registration now have working code. That does not provide course delivery, a complete website, or authority to use the software for a real organisation.
+You can inspect the source, database changes and tests for the foundations below. Recorded founding and registration now have working code. Course delivery and the complete website are still in development. This pre-alpha build has not been qualified for live organisational use.
 
 Each unit is designed, reviewed and verified under the Human Governor's authority. **Designated** names the controlling design; **implemented** means built; **landed** means included on `main`; **accepted** records the applicable Human decision. A file being present proves neither verification nor acceptance. Under the standing 19 October ruling, the Human Governor committing or authorising commitment of a Datacron accepts that record. It does not accept unfinished product work. See the [PKT-B record](docs/holocron/datacrons/D-S015-PKT-B-GOVERNED-ORGANISATIONS-MEMBERSHIP-AND-OFFICES.md).
 
@@ -260,7 +260,15 @@ See [Current Direction and Decision Gates](ROADMAP.md), the [selected change rec
 
 ## Licensing
 
-Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+INTEVIA is open source under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). [LICENSE](LICENSE) holds the licence text, and [NOTICE](NOTICE) says how it applies.
+
+A charity can run INTEVIA for its trustees. Using it does not put its minutes, votes or member records under the software licence. If you distribute covered software, keep its notices and meet the AGPL’s source requirements for the form you distribute. If you modify it and people use that version over a network, prominently offer all those users its Corresponding Source from a network server, free of charge. This includes users inside your organisation. Supplying software to a browser may engage distribution or network-use obligations depending on the facts. See the licence for the full terms.
+
+- **Earlier versions.** The last Apache-2.0 version on main before this switch is `00a3890e`. Its Apache grants continue. See [NOTICE](NOTICE) for the full reference and scope.
+- **Ownership.** This release carries no public assignment record. [NOTICE](NOTICE) identifies the basis on which the rights holders offer this release.
+- **Name and logo.** The INTEVIA name and logo are not covered by the code licence ([TRADEMARKS.md](TRADEMARKS.md)).
+- **Contributions.** Outside code contributions are not being accepted yet ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Source for network users.** A built-in Source link is planned. If section 13 applies to your deployment, provide the offer now and link to the Corresponding Source for the version you actually run, including the required build and installation scripts.
 
 ## Current non-claims
 

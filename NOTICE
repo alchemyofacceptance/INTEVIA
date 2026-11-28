@@ -1,15 +1,79 @@
 NOTICE
 
 INTEVIA — A Living Organisational Platform
-Copyright 2026 Open INTEVIA Ltd
+Copyright 2026, respective rights holders.
 
-This product includes software developed by Open INTEVIA Ltd.
+INTEVIA is developed under the direction of its founder.
 
-Project repository: https://github.com/OpenIntevia
+Source code: https://github.com/alchemyofacceptance/INTEVIA
+Organisation: https://github.com/OpenIntevia
 
-The INTEVIA codebase is licensed under the Apache License, Version 2.0.
+Licence
 
-The INTEVIA name and logo are not licensed under the Apache License,
-Version 2.0. See TRADEMARKS.md.
+INTEVIA is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License only
+(SPDX identifier: AGPL-3.0-only). This election applies to this version of the Program.
 
-This NOTICE file is provided for attribution and informational purposes only. It does not modify the terms of the Apache License, Version 2.0.
+INTEVIA is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+License for more details.
+
+The full text of the licence is in the LICENSE file. The sample notice
+at the end of that file, with its words "or (at your option) any later
+version", is part of the Free Software Foundation's standard text. It
+is not the notice that applies to INTEVIA. This file is.
+
+What the licence covers
+
+The AGPL applies to project-authored code, migrations, tests, tools,
+documentation and records distributed in this repository, to the extent
+the project has authority to license them. Separately licensed material
+retains its own terms. Third-party quotations remain subject to the
+rights in the material quoted. See TRADEMARKS.md for the separate logo
+artwork and use of the marks.
+
+Bundled third-party material includes:
+- Tailwind CSS portions: MIT, core/static/core/TAILWIND-LICENSE.txt.
+- Inter fonts: SIL Open Font License 1.1,
+  core/static/core/fonts/Inter-OFL.txt.
+- EB Garamond fonts: SIL Open Font License 1.1,
+  core/static/core/fonts/EBGaramond-OFL.txt.
+
+Earlier versions
+
+This version offers the project material identified above under
+AGPL-3.0-only. For another version, consult the LICENSE, NOTICE and
+applicable component notices distributed with that version. The last
+Apache-2.0 version on main before this switch is
+00a3890e23550a9f837241b66ebd990ce82bb7ce.
+
+The Apache grants for material released under them continue on their
+original terms, including permission to make and distribute changes.
+Those grants do not, by themselves, license new material first
+released only under the AGPL.
+
+
+Ownership
+
+No assignment from Carmian Owen to Open INTEVIA Ltd is recorded here.
+Each grants the licence for this release only to the extent of the
+rights it holds or is authorised to license. Third-party material
+retains its own terms.
+
+Contributions
+
+Open INTEVIA Ltd is not accepting outside code contributions yet.
+See CONTRIBUTING.md.
+
+Name and logo
+
+Trade mark permissions and separate artwork permissions are described
+in TRADEMARKS.md. This NOTICE imposes no additional condition on
+exercising the software licence.
+
+Contact
+
+Questions about licensing, the name or the logo: write to
+Open INTEVIA Ltd, 71-75 Shelton Street, Covent Garden, London WC2H 9JQ.
